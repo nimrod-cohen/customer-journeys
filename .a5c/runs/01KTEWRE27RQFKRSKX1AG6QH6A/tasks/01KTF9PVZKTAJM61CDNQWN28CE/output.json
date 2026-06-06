@@ -1,0 +1,22 @@
+{
+  "score": 95,
+  "allCriteriaVerified": true,
+  "usesRealPostgres": true,
+  "coverage": [
+    {"criterion":"Drives actual production cores","verified":true,"evidence":"imports real ingest+processor cores; ingestThenProcess calls resolveWorkspaceId/buildProfileUpsert/buildSqsMessage then parseProcessorMessage+runPlanInWorkspaceTx (prod tx path invoking real evaluateRealtimeSegmentsForProfile). No re-implementation."},
+    {"criterion":"Real DB, SQS mocked at boundary","verified":true,"evidence":"adminPool() real pg; describeMaybe skips without DATABASE_URL; SQS mocked via sqs.input.MessageBody. Real rows verified."},
+    {"criterion":"AC1 tenant isolation","verified":true,"evidence":"shared external_id+email; A=2 events/gold, B=1 event/silver; B asserted unaffected while A grows. Not vacuous."},
+    {"criterion":"AC2 ordering convergence","verified":true,"evidence":"created->progress and progress-first both profileCount=1 total=2; created attrs merged onto stub (k=late)."},
+    {"criterion":"AC3 idempotency","verified":true,"evidence":"replay same event_id: total stays 1, monetary stays 40, one events row. Real CTE gate."},
+    {"criterion":"AC4 segment enter/exit","verified":true,"evidence":"real compiled {total_events<3} segment via evaluator in prod tx: event1 enters, event2 no change, event3 exits; WS_B never enters A's segment. Evaluator-diff-driven."},
+    {"criterion":"No scope creep","verified":true,"evidence":"only legitimate email attribute; no broadcast/campaign/dispatch/metering."},
+    {"criterion":"Cold suite green, no regression","verified":true,"evidence":"29/29 turbo tasks 0 cached; processor 50/1 skipped, batch-eval 11, api 17, authorizer 18; typecheck+lint exit 0."}
+  ],
+  "recommendations": [
+    "Assert monetary isolation explicitly with a purchase in A only, B.monetary_total unchanged.",
+    "Give WS_B its own identical segment to prove A's eval never writes B's membership/change_log even when both match.",
+    "Gate the FIFO/LocalStack e2e on a CI LocalStack profile so at-least-once delivery is exercised end-to-end.",
+    "Assert last_event_at / counters in the integration suite (only total_events+monetary checked e2e)."
+  ],
+  "criticalIssues": []
+}

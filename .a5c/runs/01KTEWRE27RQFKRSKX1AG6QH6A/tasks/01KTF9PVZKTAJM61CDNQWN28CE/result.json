@@ -1,0 +1,117 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTF9PVZKTAJM61CDNQWN28CE",
+  "taskId": "integration-gate",
+  "invocationKey": "cdp/foundation:S000022:integration-gate",
+  "status": "ok",
+  "result": {
+    "allCriteriaVerified": true,
+    "coverage": [
+      {
+        "criterion": "Drives actual production cores",
+        "evidence": "imports real ingest+processor cores; ingestThenProcess calls resolveWorkspaceId/buildProfileUpsert/buildSqsMessage then parseProcessorMessage+runPlanInWorkspaceTx (prod tx path invoking real evaluateRealtimeSegmentsForProfile). No re-implementation.",
+        "verified": true
+      },
+      {
+        "criterion": "Real DB, SQS mocked at boundary",
+        "evidence": "adminPool() real pg; describeMaybe skips without DATABASE_URL; SQS mocked via sqs.input.MessageBody. Real rows verified.",
+        "verified": true
+      },
+      {
+        "criterion": "AC1 tenant isolation",
+        "evidence": "shared external_id+email; A=2 events/gold, B=1 event/silver; B asserted unaffected while A grows. Not vacuous.",
+        "verified": true
+      },
+      {
+        "criterion": "AC2 ordering convergence",
+        "evidence": "created->progress and progress-first both profileCount=1 total=2; created attrs merged onto stub (k=late).",
+        "verified": true
+      },
+      {
+        "criterion": "AC3 idempotency",
+        "evidence": "replay same event_id: total stays 1, monetary stays 40, one events row. Real CTE gate.",
+        "verified": true
+      },
+      {
+        "criterion": "AC4 segment enter/exit",
+        "evidence": "real compiled {total_events<3} segment via evaluator in prod tx: event1 enters, event2 no change, event3 exits; WS_B never enters A's segment. Evaluator-diff-driven.",
+        "verified": true
+      },
+      {
+        "criterion": "No scope creep",
+        "evidence": "only legitimate email attribute; no broadcast/campaign/dispatch/metering.",
+        "verified": true
+      },
+      {
+        "criterion": "Cold suite green, no regression",
+        "evidence": "29/29 turbo tasks 0 cached; processor 50/1 skipped, batch-eval 11, api 17, authorizer 18; typecheck+lint exit 0.",
+        "verified": true
+      }
+    ],
+    "criticalIssues": [],
+    "recommendations": [
+      "Assert monetary isolation explicitly with a purchase in A only, B.monetary_total unchanged.",
+      "Give WS_B its own identical segment to prove A's eval never writes B's membership/change_log even when both match.",
+      "Gate the FIFO/LocalStack e2e on a CI LocalStack profile so at-least-once delivery is exercised end-to-end.",
+      "Assert last_event_at / counters in the integration suite (only total_events+monetary checked e2e)."
+    ],
+    "score": 95,
+    "usesRealPostgres": true
+  },
+  "startedAt": "2026-06-06T20:27:14.647Z",
+  "finishedAt": "2026-06-06T20:27:14.647Z",
+  "value": {
+    "allCriteriaVerified": true,
+    "coverage": [
+      {
+        "criterion": "Drives actual production cores",
+        "evidence": "imports real ingest+processor cores; ingestThenProcess calls resolveWorkspaceId/buildProfileUpsert/buildSqsMessage then parseProcessorMessage+runPlanInWorkspaceTx (prod tx path invoking real evaluateRealtimeSegmentsForProfile). No re-implementation.",
+        "verified": true
+      },
+      {
+        "criterion": "Real DB, SQS mocked at boundary",
+        "evidence": "adminPool() real pg; describeMaybe skips without DATABASE_URL; SQS mocked via sqs.input.MessageBody. Real rows verified.",
+        "verified": true
+      },
+      {
+        "criterion": "AC1 tenant isolation",
+        "evidence": "shared external_id+email; A=2 events/gold, B=1 event/silver; B asserted unaffected while A grows. Not vacuous.",
+        "verified": true
+      },
+      {
+        "criterion": "AC2 ordering convergence",
+        "evidence": "created->progress and progress-first both profileCount=1 total=2; created attrs merged onto stub (k=late).",
+        "verified": true
+      },
+      {
+        "criterion": "AC3 idempotency",
+        "evidence": "replay same event_id: total stays 1, monetary stays 40, one events row. Real CTE gate.",
+        "verified": true
+      },
+      {
+        "criterion": "AC4 segment enter/exit",
+        "evidence": "real compiled {total_events<3} segment via evaluator in prod tx: event1 enters, event2 no change, event3 exits; WS_B never enters A's segment. Evaluator-diff-driven.",
+        "verified": true
+      },
+      {
+        "criterion": "No scope creep",
+        "evidence": "only legitimate email attribute; no broadcast/campaign/dispatch/metering.",
+        "verified": true
+      },
+      {
+        "criterion": "Cold suite green, no regression",
+        "evidence": "29/29 turbo tasks 0 cached; processor 50/1 skipped, batch-eval 11, api 17, authorizer 18; typecheck+lint exit 0.",
+        "verified": true
+      }
+    ],
+    "criticalIssues": [],
+    "recommendations": [
+      "Assert monetary isolation explicitly with a purchase in A only, B.monetary_total unchanged.",
+      "Give WS_B its own identical segment to prove A's eval never writes B's membership/change_log even when both match.",
+      "Gate the FIFO/LocalStack e2e on a CI LocalStack profile so at-least-once delivery is exercised end-to-end.",
+      "Assert last_event_at / counters in the integration suite (only total_events+monetary checked e2e)."
+    ],
+    "score": 95,
+    "usesRealPostgres": true
+  }
+}

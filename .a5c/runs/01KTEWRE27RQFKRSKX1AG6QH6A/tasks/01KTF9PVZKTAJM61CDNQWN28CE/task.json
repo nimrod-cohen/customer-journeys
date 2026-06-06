@@ -1,0 +1,233 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "allCriteriaVerified": {
+          "type": "boolean"
+        },
+        "coverage": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "criticalIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "recommendations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "usesRealPostgres": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "score",
+        "allCriteriaVerified",
+        "recommendations"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "implReport": {
+          "allPass": true,
+          "commandsRun": [
+            "pnpm install",
+            "pnpm --filter ... build",
+            "DATABASE_URL=... pnpm --filter @cdp/tests exec vitest run integration",
+            "rm -rf .turbo && DATABASE_URL=... pnpm test (x2 cold)",
+            "pnpm typecheck",
+            "pnpm lint"
+          ],
+          "entrypoint": "pnpm test:integration",
+          "filesCreated": [
+            "tests/integration/foundation-pipeline.integration.test.ts"
+          ],
+          "filesModified": [
+            "tests/package.json",
+            "package.json"
+          ],
+          "notes": "AC1 tenant isolation: two workspaces share external_id+email; event via key A only affects A (A total_events=2, B=1; A plan=gold, B=silver); processor runs on adminPool (service-role bypass) so isolation is in-code (workspace_id $1 + (workspace_id,external_id)). AC2 ordering: created->progress AND progress-first both converge to ONE profile, total_events=2, profile_created attrs merged onto stub. AC3 idempotency: replaying same event_id leaves total_events=1, monetary_total=40, one events row. AC4 segment enter/exit: realtime 'total_events < 3' segment -> event1 enters (1 membership, change_log ['entered']), event2 no change, event3 exits (0 membership, ['entered','exited']); workspace B with same external_id never enters A's segment. Used REAL cores (no re-implementation); added root test:integration script. Bootstrap applies migrations only if schema absent (DB already migrated). Unique workspace UUIDs + event_id namespace. NOTE: original integration agent dropped on a transient socket error after writing only tests/package.json dep additions; orchestrator completed the test file directly and verified.",
+          "testSummary": "Cross-phase integration suite (tests/integration/foundation-pipeline.integration.test.ts) 4 tests green against REAL Postgres, driving the actual production cores end-to-end: ingest (resolveWorkspaceId+buildProfileUpsert+buildSqsMessage) -> SQS message body (SQS mocked at boundary) -> processor (parseProcessorMessage->planProcessing) -> runPlanInWorkspaceTx (event insert + profile upsert + feature aggregates + realtime segment re-eval). Full cold suite 29/29 turbo tasks green TWICE (0 cached), no regression. typecheck + lint exit 0."
+        },
+        "invariants": [
+          "Tenant isolation is the top property: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id.",
+          "Service-role Lambda code bypasses RLS — it MUST scope by workspace_id in code; RLS is only the backstop for user-context (admin app) reads.",
+          "workspace_id is NEVER taken from a client payload — derive it from the API key (ingest) or the authorizer-injected claim (admin API).",
+          "Per-profile ordering via MessageGroupId=profile_id; code must be idempotent and order-convergent (progress-before-profile_created still converges).",
+          "Idempotency: events.event_id is the dedupe key (INSERT ... ON CONFLICT DO NOTHING).",
+          "Segment rule-AST -> SQL is compiled with a field/operator whitelist, parameterized SQL only, and ALWAYS prepends workspace_id = $ws. Never interpolate raw input.",
+          "Local-only: verify against LocalStack + Supabase CLI/Testcontainers. Do NOT mock Postgres in the integration tier. Mock SES (never send real mail).",
+          "Scope discipline: implement exactly what the cited spec sections require — no extra features, no gold-plating."
+        ],
+        "phaseCriteria": [
+          {
+            "criteria": [
+              "A Workspace-A JWT cannot read/modify Workspace-B rows under RLS; service-role code paths still scope by workspace_id in code.",
+              "Two workspaces with the same external_id/email keep fully separate profiles (UNIQUE(workspace_id, external_id)).",
+              "Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/campaigns; owner can do both within the workspace.",
+              "system-admin can view across companies and every cross-tenant access is recorded in admin_audit_log.",
+              "Multi-workspace switching: a user in two workspaces sees only the active workspace; switching changes the workspace_id claim and re-scopes; no cross-bleed."
+            ],
+            "id": "phase2-auth"
+          },
+          {
+            "criteria": [
+              "profile_created then immediately progress (same external_id+workspace) -> profile exists, progress applied, in order.",
+              "progress-first -> idempotent upsert still correct (stub profile created, converges).",
+              "No loss: forced Processor failures retried then processed or sent to DLQ; none vanish.",
+              "Idempotency: repeated event_id applied once.",
+              "An API key for Workspace A can only create events in Workspace A."
+            ],
+            "id": "phase3-ingest"
+          },
+          {
+            "criteria": [
+              "Feature aggregates update correctly and idempotently as events are processed (replaying an event does not double-count).",
+              "profile_features rows are always workspace-scoped and never mix workspaces."
+            ],
+            "id": "phase4-profiles"
+          },
+          {
+            "criteria": [
+              "Given an AST, the compiler emits the exact parameterized SQL, ALWAYS injects workspace_id, and REJECTS unknown fields/operators (security-critical).",
+              "Crossing a predicate -> exactly one entered; crossing back -> one exited; never matches another workspace's profiles.",
+              "Manual segments change only via user edit/CSV and are not touched by the evaluator; both dynamic and manual are usable as audiences."
+            ],
+            "id": "phase5-segments"
+          }
+        ],
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Independently boot local Postgres + run the integration entrypoint. Record real results; do not trust the self-report.",
+        "Confirm the suite actually uses a REAL database (not mocked) and that isolation, ordering, idempotency, and segment enter/exit are each proven by an assertion.",
+        "Confirm SES/AWS are mocked (no real mail/calls).",
+        "Score 0-100 and set allCriteriaVerified honestly. Give concrete recommendations for any gap."
+      ],
+      "outputFormat": "JSON: { score: number, allCriteriaVerified: boolean, usesRealPostgres: boolean, coverage: [{criterion, verified:boolean, evidence}], recommendations: string[], criticalIssues: string[] }",
+      "role": "adversarial principal reviewer verifying the foundation is production-trustworthy",
+      "task": "Independently run the integration suite and confirm every foundation acceptance criterion is verified end-to-end against real Postgres."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTF9PVZKTAJM61CDNQWN28CE/input.json",
+    "outputJsonPath": "tasks/01KTF9PVZKTAJM61CDNQWN28CE/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "integration",
+    "iteration-1",
+    "quality-gate"
+  ],
+  "title": "Integration gate (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTF9PVZKTAJM61CDNQWN28CE",
+  "taskId": "integration-gate",
+  "invocationKey": "cdp/foundation:S000022:integration-gate",
+  "stepId": "S000022",
+  "inputs": {
+    "impl": {
+      "allPass": true,
+      "commandsRun": [
+        "pnpm install",
+        "pnpm --filter ... build",
+        "DATABASE_URL=... pnpm --filter @cdp/tests exec vitest run integration",
+        "rm -rf .turbo && DATABASE_URL=... pnpm test (x2 cold)",
+        "pnpm typecheck",
+        "pnpm lint"
+      ],
+      "entrypoint": "pnpm test:integration",
+      "filesCreated": [
+        "tests/integration/foundation-pipeline.integration.test.ts"
+      ],
+      "filesModified": [
+        "tests/package.json",
+        "package.json"
+      ],
+      "notes": "AC1 tenant isolation: two workspaces share external_id+email; event via key A only affects A (A total_events=2, B=1; A plan=gold, B=silver); processor runs on adminPool (service-role bypass) so isolation is in-code (workspace_id $1 + (workspace_id,external_id)). AC2 ordering: created->progress AND progress-first both converge to ONE profile, total_events=2, profile_created attrs merged onto stub. AC3 idempotency: replaying same event_id leaves total_events=1, monetary_total=40, one events row. AC4 segment enter/exit: realtime 'total_events < 3' segment -> event1 enters (1 membership, change_log ['entered']), event2 no change, event3 exits (0 membership, ['entered','exited']); workspace B with same external_id never enters A's segment. Used REAL cores (no re-implementation); added root test:integration script. Bootstrap applies migrations only if schema absent (DB already migrated). Unique workspace UUIDs + event_id namespace. NOTE: original integration agent dropped on a transient socket error after writing only tests/package.json dep additions; orchestrator completed the test file directly and verified.",
+      "testSummary": "Cross-phase integration suite (tests/integration/foundation-pipeline.integration.test.ts) 4 tests green against REAL Postgres, driving the actual production cores end-to-end: ingest (resolveWorkspaceId+buildProfileUpsert+buildSqsMessage) -> SQS message body (SQS mocked at boundary) -> processor (parseProcessorMessage->planProcessing) -> runPlanInWorkspaceTx (event insert + profile upsert + feature aggregates + realtime segment re-eval). Full cold suite 29/29 turbo tasks green TWICE (0 cached), no regression. typecheck + lint exit 0."
+    },
+    "iteration": 1,
+    "phases": [
+      {
+        "criteria": [
+          "A Workspace-A JWT cannot read/modify Workspace-B rows under RLS; service-role code paths still scope by workspace_id in code.",
+          "Two workspaces with the same external_id/email keep fully separate profiles (UNIQUE(workspace_id, external_id)).",
+          "Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/campaigns; owner can do both within the workspace.",
+          "system-admin can view across companies and every cross-tenant access is recorded in admin_audit_log.",
+          "Multi-workspace switching: a user in two workspaces sees only the active workspace; switching changes the workspace_id claim and re-scopes; no cross-bleed."
+        ],
+        "id": "phase2-auth",
+        "scope": [
+          "packages/db: workspaces, workspace_users, platform_admins, admin_audit_log, workspace_api_keys tables + RLS policies (workspace_id = auth.jwt()->>workspace_id) with the narrow system-admin (is_platform_admin) exception.",
+          "packages/tenancy: workspace-context + role-check helpers (owner/marketer/accounting capability matrix from §3A).",
+          "services/authorizer: Lambda authorizer that validates a Supabase JWT (JWKS), resolves workspace membership + role (or is_platform_admin), and injects workspace_id + role into request context. Logic in a pure injected function.",
+          "Multi-workspace membership + active-workspace switching (claim re-issue)."
+        ],
+        "specSections": "§3 (multi-tenancy + RLS caveat), §3A (4-role model), §6 (workspaces, workspace_users, platform_admins, admin_audit_log, workspace_api_keys), §12 (role-aware API), §13 (security)",
+        "title": "Auth + authorizer + roles"
+      },
+      {
+        "criteria": [
+          "profile_created then immediately progress (same external_id+workspace) -> profile exists, progress applied, in order.",
+          "progress-first -> idempotent upsert still correct (stub profile created, converges).",
+          "No loss: forced Processor failures retried then processed or sent to DLQ; none vanish.",
+          "Idempotency: repeated event_id applied once.",
+          "An API key for Workspace A can only create events in Workspace A."
+        ],
+        "id": "phase3-ingest",
+        "scope": [
+          "API Gateway REST request model + per-workspace API key resolution (workspace_api_keys).",
+          "services/ingest: resolve workspace_id from API key (never payload), upsert profile by (workspace_id, external_id), enqueue SQS FIFO (MessageGroupId=profile_id, MessageDeduplicationId=event_id, workspace_id in body), return 200 only after SQS accepts.",
+          "services/processor: FIFO consumer — INSERT events ON CONFLICT(event_id) DO NOTHING, upsert profile (stub if progress arrives first), workspace-scoped throughout, DLQ on repeated failure.",
+          "Logic in pure injected functions; mock SQS/AWS with aws-sdk-client-mock; integration against local Postgres."
+        ],
+        "specSections": "§7 (event envelope, ingest, processor, ordering), §6 (events, profiles)",
+        "title": "Ingestion + tenancy + ordering"
+      },
+      {
+        "criteria": [
+          "Feature aggregates update correctly and idempotently as events are processed (replaying an event does not double-count).",
+          "profile_features rows are always workspace-scoped and never mix workspaces."
+        ],
+        "id": "phase4-profiles",
+        "scope": [
+          "packages/db: profile_features table.",
+          "processor feature-update step: total_events, last_event_at, last_email_open_at, counters (jsonb rolling aggregates), monetary_total — all workspace-scoped, idempotent under event replay.",
+          "Pure, unit-tested aggregate-update functions."
+        ],
+        "specSections": "§6 (profile_features), §7 step 3 (update profile_features, scoped)",
+        "title": "Profiles + features"
+      },
+      {
+        "criteria": [
+          "Given an AST, the compiler emits the exact parameterized SQL, ALWAYS injects workspace_id, and REJECTS unknown fields/operators (security-critical).",
+          "Crossing a predicate -> exactly one entered; crossing back -> one exited; never matches another workspace's profiles.",
+          "Manual segments change only via user edit/CSV and are not touched by the evaluator; both dynamic and manual are usable as audiences."
+        ],
+        "id": "phase5-segments",
+        "scope": [
+          "packages/segments: rule-AST -> parameterized SQL WHERE compiler over profiles JOIN profile_features, with a field/operator WHITELIST and workspace_id = $ws ALWAYS prepended. Reject unknown fields/operators.",
+          "Dynamic realtime eval in the processor on profile change; dynamic batch eval (EventBridge-style scheduled entrypoint); membership diff + segment_change_log (entered/exited).",
+          "Manual segments: membership rows (source=manual) added/removed by user (hand-pick + CSV import); evaluator never touches them."
+        ],
+        "specSections": "§8 (rule AST + SQL compiler, dynamic realtime/batch, manual), §6 (segments, segment_memberships, segment_change_log)",
+        "title": "Segmentation engine"
+      }
+    ]
+  }
+}

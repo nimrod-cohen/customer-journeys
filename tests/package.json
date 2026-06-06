@@ -7,12 +7,17 @@
     "build": "tsc -b --noEmit false || true",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
+    "test:integration": "vitest run integration",
     "lint": "eslint . --no-error-on-unmatched-pattern"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.620.0",
     "@cdp/db": "workspace:*",
+    "@cdp/segments": "workspace:*",
     "@cdp/service-api": "workspace:*",
     "@cdp/service-authorizer": "workspace:*",
+    "@cdp/service-ingest": "workspace:*",
+    "@cdp/service-processor": "workspace:*",
     "@cdp/shared": "workspace:*",
     "@cdp/tenancy": "workspace:*"
   },

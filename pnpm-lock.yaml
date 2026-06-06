@@ -232,15 +232,27 @@ importers:
 
   tests:
     dependencies:
+      '@aws-sdk/client-sqs':
+        specifier: ^3.620.0
+        version: 3.1063.0
       '@cdp/db':
         specifier: workspace:*
         version: link:../packages/db
+      '@cdp/segments':
+        specifier: workspace:*
+        version: link:../packages/segments
       '@cdp/service-api':
         specifier: workspace:*
         version: link:../services/api
       '@cdp/service-authorizer':
         specifier: workspace:*
         version: link:../services/authorizer
+      '@cdp/service-ingest':
+        specifier: workspace:*
+        version: link:../services/ingest
+      '@cdp/service-processor':
+        specifier: workspace:*
+        version: link:../services/processor
       '@cdp/shared':
         specifier: workspace:*
         version: link:../packages/shared
