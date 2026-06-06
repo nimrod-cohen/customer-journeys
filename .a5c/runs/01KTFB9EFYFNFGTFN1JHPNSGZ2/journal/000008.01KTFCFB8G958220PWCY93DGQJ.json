@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T21:12:26.640Z",
+  "data": {
+    "effectId": "01KTFCFB7Y903RN09J8V39AAT6",
+    "invocationKey": "cdp/email-dispatch:S000004:commit-phase",
+    "invocationHash": "2da243ef4842b2a84cecead725cde534b3062f4bf247a8285df3b3ad265443b9",
+    "stepId": "S000004",
+    "taskId": "commit-phase",
+    "kind": "agent",
+    "label": "commit",
+    "taskDefRef": "tasks/01KTFCFB7Y903RN09J8V39AAT6/task.json",
+    "labels": [
+      "commit",
+      "phase6-email-onboarding"
+    ]
+  },
+  "checksum": "778419a2f95ce1b667db36e9a2e022f9644eb921f2d7b850e69139ab42e02deb"
+}

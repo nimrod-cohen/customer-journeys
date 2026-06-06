@@ -1,0 +1,449 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commandsRun": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesCreated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesModified": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "lintOk": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "testsPass": {
+          "type": "boolean"
+        },
+        "testSummary": {
+          "type": "string"
+        },
+        "typecheckOk": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "filesCreated",
+        "filesModified",
+        "testsPass"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "env": "Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp (migrations 0001-0006 applied). turbo test task is cache:false.",
+        "firstIteration": true,
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or the trusted message body set by an earlier server step.",
+          "LOCAL-only: SES (SendEmail), SNS, and the onboarding DNS/SES-status checks are MOCKED (aws-sdk-client-mock + injected resolvers). NEVER send real mail or hit real DNS/SES. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433.",
+          "Sending is gated on verification: the Dispatcher refuses to send for any workspace whose status is not active/verified (§10). Every send passes suppression -> frequency-cap -> quiet-hours, in that order.",
+          "Suppression is per-workspace: keyed (workspace_id, email); an unsubscribe/bounce in workspace A must NOT suppress the same email in workspace B. Hard bounces are ALSO recorded in the cross-workspace global_hard_bounces.",
+          "Idempotency: outbox.dedupe_key prevents double-sends; feedback handlers are idempotent on the SES message id / event.",
+          "Logic in pure injected functions; Lambda handlers stay thin and are unit-tested via the pure function. Reuse the Phase 2-5 harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text, values} shape.",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id is a GLOBAL PK). No cross-file races.",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), campaigns (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
+        ],
+        "iteration": 1,
+        "phase": {
+          "criteria": [
+            "The Dispatcher refuses to send for a workspace whose status != active/verified.",
+            "A recipient on the workspace suppression list (or in global_hard_bounces) is skipped; suppression is checked before sending.",
+            "Per-workspace frequency cap holds (a recipient over the cap within the window is not sent again); quiet-hours defer/re-queue rather than send.",
+            "A successful send is recorded once in messages_log (+ usage_counters emails_sent); the dedupe_key prevents double-sends on retry; SES is called with the workspace Configuration Set only after suppression/cap/quiet-hours pass."
+          ],
+          "id": "phase7-dispatch",
+          "scope": [
+            "services/dispatcher: SQS-triggered Lambda. For each outbox row id: load profile + template (workspace-scoped); REFUSE if the workspace is not active/verified; check suppressions for (workspace_id, email) AND global_hard_bounces (skip if suppressed); enforce per-workspace frequency cap via messages_log; enforce quiet-hours (defer/re-queue); render template + inject List-Unsubscribe headers; SES SendEmail (MOCKED) with the workspace Configuration Set / sending identity; on success write messages_log (+ usage_counters emails_sent); on failure bounded retries -> DLQ.",
+            "The outbox -> second SQS queue -> Dispatcher wiring (enqueue an outbox id; Dispatcher consumes). Idempotent dedupe_key prevents double-sends.",
+            "Pure functions for the decision pipeline (suppression decision, frequency-cap, quiet-hours defer) so they are unit-tested without AWS; SES mocked with aws-sdk-client-mock."
+          ],
+          "specSections": "§9 (outbox -> second SQS queue -> Dispatcher: suppression -> frequency-cap -> quiet-hours -> SES send -> messages_log), §6 (outbox, messages_log, suppressions, email_templates), §10 (send gated on active/verified)",
+          "title": "Dispatch core"
+        },
+        "plan": {
+          "implUnits": [
+            "Extend @cdp/email SesEmailClient + ProdSesEmailClient with sendEmail wrapping SESv2 SendEmailCommand (+aws-sdk-client-mock unit test) — before send path",
+            "services/dispatcher/src/core.ts pure (decideDispatch+types, isOverCap, windowStart, quiet-hours, renderTemplateBody, buildSendEmailInput, all SqlStatement builders)",
+            "services/dispatcher/src/dispatch.ts orchestrator: load outbox->workspace+profile+template scoped->canSend->isSuppressed->cap->quiet->buildSendEmailInput->ses.sendEmail->messages_log+usage+outbox-sent in ONE tx",
+            "services/dispatcher/src/deps.ts reuse runPlanInWorkspaceTx + scoped readers + ProdSesEmailClient",
+            "services/dispatcher/src/handler.ts thin SQS -> dispatch per record -> SQSBatchResponse.batchItemFailures",
+            "index.ts export handler + makeProdDeps; replace placeholder.ts"
+          ],
+          "mocks": [
+            "aws-sdk-client-mock over SESv2 SendEmail — assert input (ConfigurationSetName,headers)+call count, never real mail",
+            "Injected SesEmailClient fake (add sendEmail returning {sesMessageId})",
+            "Injected suppression/cap reader predicates + spies for order + lazy short-circuit",
+            "Synthetic SQSEvent (no real queue/LocalStack this phase)",
+            "Clock injection (now)",
+            "Real Postgres localhost:5433 for integration (NOT mocked)"
+          ],
+          "notes": "Guard ORDER is load-bearing (inv.7, §9 1-7): gate(canSend Phase6)->suppression(workspace+global_hard_bounces)->cap(messages_log window per-workspace+profile)->quiet(defer)->render+headers->SES(workspace Configuration Set)->messages_log+usage+outbox-sent ONE tx. aws-sdk-client-mock: assert SendEmail ONLY on all-pass path, NOT when refused/suppressed/capped/quiet, not twice on replay. email pkg has NO send yet — add sendEmail to SesEmailClient (own prod-impl test) first; reuse compiled_html + Phase-6 List-Unsubscribe (no hand-rolled HTML). Integration on adminPool (service-role bypass) -> in-code scoping (workspace_id $1 every stmt); reuse runPlanInWorkspaceTx for atomic messages_log+usage. Don't unit-test SQS delivery/order (§16A); synthetic events; LocalStack out of scope. Dedupe = outbox dedupe_key + atomic claim (UPDATE WHERE status=pending RETURNING). Unique workspace namespace per integration file + cleanup. Injected clock for cap/quiet determinism. global_hard_bounces has no workspace_id (cross-workspace): suppression = suppressions(workspace_id,email) OR global_hard_bounces(email).",
+          "pureFunctions": [
+            "decideDispatch(ctx) gate->suppression->cap->quiet->send short-circuit",
+            "isOverCap(count,cap)",
+            "windowStart(now,capPerDays)",
+            "isInQuietHours(now,config)",
+            "nextSendableAt(now,config)",
+            "buildSendEmailInput({workspace,profile,template,unsubHeaders})",
+            "buildRecentSendCountQuery(workspaceId,profileId,windowStart)",
+            "buildIsSuppressedQuery(workspaceId,email)",
+            "buildMessagesLogInsert",
+            "buildUsageCounterIncrement(upsert)",
+            "buildOutboxClaim(UPDATE WHERE status=pending RETURNING)",
+            "buildOutboxMarkSent",
+            "parseOutboxIdFromSqsRecord",
+            "renderTemplateBody(compiledHtml,merge)"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "decideDispatch send only when canSend && !suppressed && underCap && !quiet",
+                "unverified->refuse stoppedAt gate, later checks NOT consulted",
+                "suppressed->skip stoppedAt suppression",
+                "over cap->skip stoppedAt frequency_cap",
+                "quiet->defer stoppedAt quiet_hours",
+                "all pass->send",
+                "precedence gate>suppression>cap>quiet earliest stoppedAt",
+                "pure + lazy short-circuit (cap predicate not invoked if suppressed)"
+              ],
+              "criterion": "ordering",
+              "path": "services/dispatcher/test/dispatch-decision-pipeline.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "isOverCap count>=cap blocks, count==cap-1 sends",
+                "buildRecentSendCountQuery binds workspace_id $1+profile_id+window, messages_log status=sent",
+                "scoped by workspace_id never cross-workspace",
+                "windowStart deterministic from injected now"
+              ],
+              "criterion": "AC3",
+              "path": "services/dispatcher/test/frequency-cap-core.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "isInQuietHours handles midnight-wrap window",
+                "null config->never quiet",
+                "nextSendableAt returns window end (re-queue time)"
+              ],
+              "criterion": "AC3",
+              "path": "services/dispatcher/test/quiet-hours-core.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "uses workspace sending_identity.config_set as ConfigurationSetName",
+                "From from sending_identity never client value",
+                "body = template compiled_html + merge (no hand-rolled HTML)",
+                "List-Unsubscribe headers from Phase-6 builder, workspace-scoped URL",
+                "destination = profile email",
+                "pure"
+              ],
+              "criterion": "AC4",
+              "path": "services/dispatcher/test/send-email-input-builder.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "all pass -> SES SendEmail called once AFTER guards (order spy gate->suppression->cap->quiet->send)",
+                "not active/verified -> SES NOT called, no writes",
+                "suppressed -> SES NOT called, suppression before build",
+                "over cap -> NOT called",
+                "quiet -> NOT called, defer outcome",
+                "send path -> ConfigurationSetName set",
+                "dedupe guard: replay -> no re-call SES",
+                "SES failure surfaces for retry/DLQ"
+              ],
+              "criterion": "AC1-4",
+              "path": "services/dispatcher/test/dispatch-handler.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "synthetic SQSEvent N records -> dispatch core once per record",
+                "retryable error -> batchItemFailures itemIdentifier=messageId",
+                "permanent failure bounded by outbox.attempts -> DLQ semantics",
+                "parses only outbox id; workspace_id from outbox row not SQS body",
+                "no SQS delivery/order assertions"
+              ],
+              "criterion": "AC4 wiring",
+              "path": "services/dispatcher/test/sqs-handler.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "isSuppressed true when (workspace_id,email) exists else false (adminPool)",
+                "email suppressed in A not suppressed in B",
+                "email only in global_hard_bounces suppressed for ANY workspace",
+                "query binds workspace_id $1 + email, citext case-insensitive",
+                "full dispatch core (SES mocked) to suppressed recipient writes nothing + never calls SES"
+              ],
+              "criterion": "AC2",
+              "path": "services/dispatcher/test/suppression-scoping.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "seed messages_log to cap within window; count scoped workspace+profile+sent_at",
+                "at/over cap -> skip no SES no new row",
+                "rows outside window don't count -> sends",
+                "another workspace's rows for same profile don't count"
+              ],
+              "criterion": "AC3",
+              "path": "services/dispatcher/test/frequency-cap.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "success -> exactly one messages_log row status=sent + ses_message_id",
+                "usage_counters (workspace,month,emails_sent) +1 (second send ->2)",
+                "both writes in SAME tx via runPlanInWorkspaceTx (forced failure rolls back both)",
+                "all binds workspace_id $1; outbox marked sent"
+              ],
+              "criterion": "AC4",
+              "path": "services/dispatcher/test/messages-log-usage-write.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "same outbox id twice -> one messages_log row + one usage increment",
+                "idempotency short-circuits before SES (commandCalls stays 1)",
+                "guard = outbox dedupe_key/status=sent claim-or-skip",
+                "concurrent dispatch of same outbox id -> only one sends (atomic UPDATE WHERE status=pending RETURNING)"
+              ],
+              "criterion": "AC4",
+              "path": "services/dispatcher/test/dedupe-idempotency.integration.test.ts",
+              "tier": "integration"
+            }
+          ]
+        },
+        "previousGateFeedback": null,
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §9 (outbox -> second SQS queue -> Dispatcher: suppression -> frequency-cap -> quiet-hours -> SES send -> messages_log), §6 (outbox, messages_log, suppressions, email_templates), §10 (send gated on active/verified).",
+        "FIRST write the failing tests from the plan (red), then implement to green. Logic lives in pure injected functions; handlers only wire them up.",
+        "Honor every invariant in context.invariants — tenant isolation, suppression scoping, the verification gate, and idempotency are pass/fail.",
+        "MOCK SES (SendEmail/identity/config-set), SNS, and DNS/SES-status checks (aws-sdk-client-mock + injected resolvers). NEVER send real mail or hit real DNS/SES. Integration tests run against the REAL local Postgres; do NOT mock the DB. Reuse the Phase 2-5 testutil harness.",
+        "Run the relevant `pnpm test` (with DATABASE_URL set), `pnpm typecheck`, `pnpm lint`. Iterate until GREEN, including a COLD turbo run. Confirm no regression in phases 2-5. Report the actual command output summary.",
+        "Implement ONLY what the cited sections require — no broadcasts/campaigns/image/frontend/metering.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { filesCreated: string[], filesModified: string[], testsPass: boolean, testSummary: string, typecheckOk: boolean, lintOk: boolean, commandsRun: string[], notes: string }",
+      "role": "senior TypeScript engineer building a serverless multi-tenant CDP, test-first",
+      "task": "Implement \"Dispatch core\" to satisfy its test plan and §18 criteria. Red -> green -> refactor."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFCN4995NJPBBFZD2N2YR1M/input.json",
+    "outputJsonPath": "tasks/01KTFCN4995NJPBBFZD2N2YR1M/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "implement",
+    "iteration-1",
+    "phase7-dispatch"
+  ],
+  "title": "Implement: Dispatch core (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFCN4995NJPBBFZD2N2YR1M",
+  "taskId": "implement-phase",
+  "invocationKey": "cdp/email-dispatch:S000006:implement-phase",
+  "stepId": "S000006",
+  "inputs": {
+    "firstIteration": true,
+    "iteration": 1,
+    "phase": {
+      "criteria": [
+        "The Dispatcher refuses to send for a workspace whose status != active/verified.",
+        "A recipient on the workspace suppression list (or in global_hard_bounces) is skipped; suppression is checked before sending.",
+        "Per-workspace frequency cap holds (a recipient over the cap within the window is not sent again); quiet-hours defer/re-queue rather than send.",
+        "A successful send is recorded once in messages_log (+ usage_counters emails_sent); the dedupe_key prevents double-sends on retry; SES is called with the workspace Configuration Set only after suppression/cap/quiet-hours pass."
+      ],
+      "id": "phase7-dispatch",
+      "scope": [
+        "services/dispatcher: SQS-triggered Lambda. For each outbox row id: load profile + template (workspace-scoped); REFUSE if the workspace is not active/verified; check suppressions for (workspace_id, email) AND global_hard_bounces (skip if suppressed); enforce per-workspace frequency cap via messages_log; enforce quiet-hours (defer/re-queue); render template + inject List-Unsubscribe headers; SES SendEmail (MOCKED) with the workspace Configuration Set / sending identity; on success write messages_log (+ usage_counters emails_sent); on failure bounded retries -> DLQ.",
+        "The outbox -> second SQS queue -> Dispatcher wiring (enqueue an outbox id; Dispatcher consumes). Idempotent dedupe_key prevents double-sends.",
+        "Pure functions for the decision pipeline (suppression decision, frequency-cap, quiet-hours defer) so they are unit-tested without AWS; SES mocked with aws-sdk-client-mock."
+      ],
+      "specSections": "§9 (outbox -> second SQS queue -> Dispatcher: suppression -> frequency-cap -> quiet-hours -> SES send -> messages_log), §6 (outbox, messages_log, suppressions, email_templates), §10 (send gated on active/verified)",
+      "title": "Dispatch core"
+    },
+    "plan": {
+      "implUnits": [
+        "Extend @cdp/email SesEmailClient + ProdSesEmailClient with sendEmail wrapping SESv2 SendEmailCommand (+aws-sdk-client-mock unit test) — before send path",
+        "services/dispatcher/src/core.ts pure (decideDispatch+types, isOverCap, windowStart, quiet-hours, renderTemplateBody, buildSendEmailInput, all SqlStatement builders)",
+        "services/dispatcher/src/dispatch.ts orchestrator: load outbox->workspace+profile+template scoped->canSend->isSuppressed->cap->quiet->buildSendEmailInput->ses.sendEmail->messages_log+usage+outbox-sent in ONE tx",
+        "services/dispatcher/src/deps.ts reuse runPlanInWorkspaceTx + scoped readers + ProdSesEmailClient",
+        "services/dispatcher/src/handler.ts thin SQS -> dispatch per record -> SQSBatchResponse.batchItemFailures",
+        "index.ts export handler + makeProdDeps; replace placeholder.ts"
+      ],
+      "mocks": [
+        "aws-sdk-client-mock over SESv2 SendEmail — assert input (ConfigurationSetName,headers)+call count, never real mail",
+        "Injected SesEmailClient fake (add sendEmail returning {sesMessageId})",
+        "Injected suppression/cap reader predicates + spies for order + lazy short-circuit",
+        "Synthetic SQSEvent (no real queue/LocalStack this phase)",
+        "Clock injection (now)",
+        "Real Postgres localhost:5433 for integration (NOT mocked)"
+      ],
+      "notes": "Guard ORDER is load-bearing (inv.7, §9 1-7): gate(canSend Phase6)->suppression(workspace+global_hard_bounces)->cap(messages_log window per-workspace+profile)->quiet(defer)->render+headers->SES(workspace Configuration Set)->messages_log+usage+outbox-sent ONE tx. aws-sdk-client-mock: assert SendEmail ONLY on all-pass path, NOT when refused/suppressed/capped/quiet, not twice on replay. email pkg has NO send yet — add sendEmail to SesEmailClient (own prod-impl test) first; reuse compiled_html + Phase-6 List-Unsubscribe (no hand-rolled HTML). Integration on adminPool (service-role bypass) -> in-code scoping (workspace_id $1 every stmt); reuse runPlanInWorkspaceTx for atomic messages_log+usage. Don't unit-test SQS delivery/order (§16A); synthetic events; LocalStack out of scope. Dedupe = outbox dedupe_key + atomic claim (UPDATE WHERE status=pending RETURNING). Unique workspace namespace per integration file + cleanup. Injected clock for cap/quiet determinism. global_hard_bounces has no workspace_id (cross-workspace): suppression = suppressions(workspace_id,email) OR global_hard_bounces(email).",
+      "pureFunctions": [
+        "decideDispatch(ctx) gate->suppression->cap->quiet->send short-circuit",
+        "isOverCap(count,cap)",
+        "windowStart(now,capPerDays)",
+        "isInQuietHours(now,config)",
+        "nextSendableAt(now,config)",
+        "buildSendEmailInput({workspace,profile,template,unsubHeaders})",
+        "buildRecentSendCountQuery(workspaceId,profileId,windowStart)",
+        "buildIsSuppressedQuery(workspaceId,email)",
+        "buildMessagesLogInsert",
+        "buildUsageCounterIncrement(upsert)",
+        "buildOutboxClaim(UPDATE WHERE status=pending RETURNING)",
+        "buildOutboxMarkSent",
+        "parseOutboxIdFromSqsRecord",
+        "renderTemplateBody(compiledHtml,merge)"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "decideDispatch send only when canSend && !suppressed && underCap && !quiet",
+            "unverified->refuse stoppedAt gate, later checks NOT consulted",
+            "suppressed->skip stoppedAt suppression",
+            "over cap->skip stoppedAt frequency_cap",
+            "quiet->defer stoppedAt quiet_hours",
+            "all pass->send",
+            "precedence gate>suppression>cap>quiet earliest stoppedAt",
+            "pure + lazy short-circuit (cap predicate not invoked if suppressed)"
+          ],
+          "criterion": "ordering",
+          "path": "services/dispatcher/test/dispatch-decision-pipeline.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "isOverCap count>=cap blocks, count==cap-1 sends",
+            "buildRecentSendCountQuery binds workspace_id $1+profile_id+window, messages_log status=sent",
+            "scoped by workspace_id never cross-workspace",
+            "windowStart deterministic from injected now"
+          ],
+          "criterion": "AC3",
+          "path": "services/dispatcher/test/frequency-cap-core.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "isInQuietHours handles midnight-wrap window",
+            "null config->never quiet",
+            "nextSendableAt returns window end (re-queue time)"
+          ],
+          "criterion": "AC3",
+          "path": "services/dispatcher/test/quiet-hours-core.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "uses workspace sending_identity.config_set as ConfigurationSetName",
+            "From from sending_identity never client value",
+            "body = template compiled_html + merge (no hand-rolled HTML)",
+            "List-Unsubscribe headers from Phase-6 builder, workspace-scoped URL",
+            "destination = profile email",
+            "pure"
+          ],
+          "criterion": "AC4",
+          "path": "services/dispatcher/test/send-email-input-builder.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "all pass -> SES SendEmail called once AFTER guards (order spy gate->suppression->cap->quiet->send)",
+            "not active/verified -> SES NOT called, no writes",
+            "suppressed -> SES NOT called, suppression before build",
+            "over cap -> NOT called",
+            "quiet -> NOT called, defer outcome",
+            "send path -> ConfigurationSetName set",
+            "dedupe guard: replay -> no re-call SES",
+            "SES failure surfaces for retry/DLQ"
+          ],
+          "criterion": "AC1-4",
+          "path": "services/dispatcher/test/dispatch-handler.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "synthetic SQSEvent N records -> dispatch core once per record",
+            "retryable error -> batchItemFailures itemIdentifier=messageId",
+            "permanent failure bounded by outbox.attempts -> DLQ semantics",
+            "parses only outbox id; workspace_id from outbox row not SQS body",
+            "no SQS delivery/order assertions"
+          ],
+          "criterion": "AC4 wiring",
+          "path": "services/dispatcher/test/sqs-handler.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "isSuppressed true when (workspace_id,email) exists else false (adminPool)",
+            "email suppressed in A not suppressed in B",
+            "email only in global_hard_bounces suppressed for ANY workspace",
+            "query binds workspace_id $1 + email, citext case-insensitive",
+            "full dispatch core (SES mocked) to suppressed recipient writes nothing + never calls SES"
+          ],
+          "criterion": "AC2",
+          "path": "services/dispatcher/test/suppression-scoping.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "seed messages_log to cap within window; count scoped workspace+profile+sent_at",
+            "at/over cap -> skip no SES no new row",
+            "rows outside window don't count -> sends",
+            "another workspace's rows for same profile don't count"
+          ],
+          "criterion": "AC3",
+          "path": "services/dispatcher/test/frequency-cap.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "success -> exactly one messages_log row status=sent + ses_message_id",
+            "usage_counters (workspace,month,emails_sent) +1 (second send ->2)",
+            "both writes in SAME tx via runPlanInWorkspaceTx (forced failure rolls back both)",
+            "all binds workspace_id $1; outbox marked sent"
+          ],
+          "criterion": "AC4",
+          "path": "services/dispatcher/test/messages-log-usage-write.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "same outbox id twice -> one messages_log row + one usage increment",
+            "idempotency short-circuits before SES (commandCalls stays 1)",
+            "guard = outbox dedupe_key/status=sent claim-or-skip",
+            "concurrent dispatch of same outbox id -> only one sends (atomic UPDATE WHERE status=pending RETURNING)"
+          ],
+          "criterion": "AC4",
+          "path": "services/dispatcher/test/dedupe-idempotency.integration.test.ts",
+          "tier": "integration"
+        }
+      ]
+    },
+    "prevFeedback": null
+  }
+}

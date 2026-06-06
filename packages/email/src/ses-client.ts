@@ -8,6 +8,7 @@ import {
   CreateEmailIdentityCommand,
   GetEmailIdentityCommand,
   CreateConfigurationSetCommand,
+  SendEmailCommand,
 } from '@aws-sdk/client-sesv2';
 
 /** DKIM verification status as reported by SES (the §10A activate gate). */
@@ -37,12 +38,42 @@ export interface IdentityVerificationAttributes {
 }
 
 /**
+ * A single outbound email, fully prepared by the Dispatcher core (§9 step 5/6).
+ * The Dispatcher builds this (no hand-rolled HTML — `html` is the workspace's
+ * compiled template with merge tags substituted) and the wrapper maps it 1:1
+ * onto the SESv2 SendEmailCommand. `configurationSetName` routes via the
+ * workspace's Configuration Set / sending identity (§10).
+ */
+export interface SendEmailInput {
+  /** From address built from the workspace sending identity (§10). */
+  readonly from: string;
+  /** Single recipient address. */
+  readonly to: string;
+  /** Subject line. */
+  readonly subject: string;
+  /** Compiled, merge-substituted HTML body (never hand-rolled). */
+  readonly html: string;
+  /** The workspace's Configuration Set name (routes IP pool + tracking). */
+  readonly configurationSetName?: string;
+  /** Extra message headers — the RFC 8058 List-Unsubscribe pair (§9 step 5). */
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+/** Result of a successful SES send — the message id for messages_log (§9). */
+export interface SendEmailResult {
+  /** SES's MessageId (empty string if SES omits one). */
+  readonly sesMessageId: string;
+}
+
+/**
  * The injectable SES surface this phase needs:
  *   - createDomainIdentity — create a domain identity with Easy DKIM (returns
  *     the CNAME tokens to publish).
  *   - getIdentityVerificationAttributes — read the DKIM status (the gate).
  *   - createConfigurationSet — create the workspace's Configuration Set at
  *     activation time.
+ *   - sendEmail — send one prepared email via SESv2 SendEmail (§9 step 6),
+ *     returning the SES message id. Mocked in tests; never sends real mail.
  */
 export interface SesEmailClient {
   createDomainIdentity(domain: string): Promise<CreateDomainIdentityResult>;
@@ -50,6 +81,7 @@ export interface SesEmailClient {
     identity: string,
   ): Promise<IdentityVerificationAttributes>;
   createConfigurationSet(name: string): Promise<void>;
+  sendEmail(input: SendEmailInput): Promise<SendEmailResult>;
 }
 
 function normalizeDkimStatus(status: string | undefined): DkimStatus {
@@ -108,5 +140,29 @@ export class ProdSesEmailClient implements SesEmailClient {
     await this.client.send(
       new CreateConfigurationSetCommand({ ConfigurationSetName: name }),
     );
+  }
+
+  async sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
+    const headers = Object.entries(input.headers ?? {}).map(([Name, Value]) => ({
+      Name,
+      Value,
+    }));
+    const out = await this.client.send(
+      new SendEmailCommand({
+        FromEmailAddress: input.from,
+        Destination: { ToAddresses: [input.to] },
+        ...(input.configurationSetName
+          ? { ConfigurationSetName: input.configurationSetName }
+          : {}),
+        Content: {
+          Simple: {
+            Subject: { Data: input.subject },
+            Body: { Html: { Data: input.html } },
+            ...(headers.length > 0 ? { Headers: headers } : {}),
+          },
+        },
+      }),
+    );
+    return { sesMessageId: out.MessageId ?? '' };
   }
 }

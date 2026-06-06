@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTFDD385DJAQNZDB2MEDV7FA",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/email-dispatch:S000007:quality-gate",
+  "status": "ok",
+  "result": {
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "canSend requires status=active && verified=true; decideDispatch gate first -> refuse/stoppedAt=gate; dispatch-handler 'not verified' proves SES count 0.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "buildIsSuppressedQuery EXISTS suppressions(workspace_id,email) OR global_hard_bounces(email), checked before send; suppression-scoping.integration (real PG) A doesn't block B, global blocks both, citext; handler 'suppressed->skip' SES count 0.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "isOverCap count>=cap; recent count scoped workspace+profile+window; frequency-cap.integration only in-window counts, other workspace's rows don't inflate. Quiet->defer re-queue pending never sends; handler SES count 0 for cap and quiet.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "all-pass SES once with workspace config_set; messages_log+usage_counters(emails_sent)+mark-sent in one tx; dedupe-idempotency.integration replay noop sends once, concurrent x3 exactly 1; atomic claim UPDATE WHERE status=pending RETURNING; forced-failure rolls back both.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "mocksOk": true,
+    "recommendations": [
+      "Add integration test asserting workspace_id from outbox row even when SQS body carries a forged workspace_id (proven structurally now).",
+      "Add a full real-PG dispatchOutbox test exercising a cap-block and quiet-defer re-queue.",
+      "Quiet hours UTC-only this phase; per-recipient tz deferred (documented)."
+    ],
+    "scopeCreep": [],
+    "score": 96,
+    "testsPass": true
+  },
+  "startedAt": "2026-06-06T21:32:04.618Z",
+  "finishedAt": "2026-06-06T21:32:04.618Z",
+  "value": {
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "canSend requires status=active && verified=true; decideDispatch gate first -> refuse/stoppedAt=gate; dispatch-handler 'not verified' proves SES count 0.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "buildIsSuppressedQuery EXISTS suppressions(workspace_id,email) OR global_hard_bounces(email), checked before send; suppression-scoping.integration (real PG) A doesn't block B, global blocks both, citext; handler 'suppressed->skip' SES count 0.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "isOverCap count>=cap; recent count scoped workspace+profile+window; frequency-cap.integration only in-window counts, other workspace's rows don't inflate. Quiet->defer re-queue pending never sends; handler SES count 0 for cap and quiet.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "all-pass SES once with workspace config_set; messages_log+usage_counters(emails_sent)+mark-sent in one tx; dedupe-idempotency.integration replay noop sends once, concurrent x3 exactly 1; atomic claim UPDATE WHERE status=pending RETURNING; forced-failure rolls back both.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "mocksOk": true,
+    "recommendations": [
+      "Add integration test asserting workspace_id from outbox row even when SQS body carries a forged workspace_id (proven structurally now).",
+      "Add a full real-PG dispatchOutbox test exercising a cap-block and quiet-defer re-queue.",
+      "Quiet hours UTC-only this phase; per-recipient tz deferred (documented)."
+    ],
+    "scopeCreep": [],
+    "score": 96,
+    "testsPass": true
+  }
+}

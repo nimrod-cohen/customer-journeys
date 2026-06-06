@@ -25,4 +25,6 @@ export {
   type CreateDomainIdentityResult,
   type IdentityVerificationAttributes,
   type DkimStatus,
+  type SendEmailInput,
+  type SendEmailResult,
 } from './ses-client.js';

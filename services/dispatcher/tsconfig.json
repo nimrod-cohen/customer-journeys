@@ -4,5 +4,11 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/db" },
+    { "path": "../../packages/email" },
+    { "path": "../processor" }
+  ]
 }
