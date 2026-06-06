@@ -41,6 +41,7 @@ describe.skipIf(!RUN)('processor in-code workspace isolation (AC5)', () => {
   afterAll(async () => {
     if (admin) {
       for (const ws of [wsA, wsB]) {
+        await admin.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
         await admin.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
         await admin.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
         await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);

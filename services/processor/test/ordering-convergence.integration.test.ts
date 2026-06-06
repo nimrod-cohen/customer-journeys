@@ -28,6 +28,7 @@ const created = () => ev('profile_created', 'aaaa0001-0000-0000-0000-00000000000
 const progress = () => ev('progress', 'bbbb0001-0000-0000-0000-000000000001', { step: 5 });
 
 async function reset(admin: Pool): Promise<void> {
+  await admin.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
   await admin.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
   await admin.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
   await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);
@@ -42,6 +43,7 @@ describe.skipIf(!RUN)('processor order convergence on real Postgres (AC1/AC2)', 
   });
   afterAll(async () => {
     if (admin) {
+      await admin.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
       await admin.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
       await admin.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
       await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);

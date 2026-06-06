@@ -34,6 +34,7 @@ describe.skipIf(!RUN)('processor idempotency on real Postgres (AC4)', () => {
 
   beforeAll(async () => {
     admin = adminPool();
+    await admin.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);
@@ -42,6 +43,7 @@ describe.skipIf(!RUN)('processor idempotency on real Postgres (AC4)', () => {
 
   afterAll(async () => {
     if (admin) {
+      await admin.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
       await admin.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
       await admin.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
       await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);

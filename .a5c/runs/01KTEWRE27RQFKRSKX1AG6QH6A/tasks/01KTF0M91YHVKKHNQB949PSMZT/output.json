@@ -1,0 +1,17 @@
+{
+  "score": 96,
+  "testsPass": true,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {"criterion":"AC1","met":true,"evidence":"applyEventToFeatures + buildFeatureUpsert mirror; features-core 20 unit; features-aggregate integration on real PG via runPlanInWorkspaceTx (prod path): total/counters/monetary/last_event_at advances/last_email_open_at MAX + REPLAY no double-count, one events row. Independently re-verified: replay byte-for-byte unchanged even with mutated amount, older event doesn't regress last_event_at, non-numeric amount -> 0 no NaN."},
+    {"criterion":"AC2","met":true,"evidence":"workspace_id $1 every statement; profile_id via (workspace_id,external_id) subquery never client; features-workspace-scoping 2 tests on BYPASSRLS pool prove two ws same external_id keep separate rows counting only own events, distinct profile_id, one row per ws. postgres role rolbypassrls=true confirms in-code isolation not RLS."}
+  ],
+  "isolationOk": true,
+  "scopeCreep": [],
+  "recommendations": [
+    "buildEventInsert is superseded by buildFeatureUpsert in planProcessing but still exported/unused; remove dead export to avoid drift.",
+    "Add integration test for GREATEST against NULL prior last_email_open_at column directly.",
+    "Add end-to-end SQL test for numeric-string monetary amount (covered in pure layer only)."
+  ],
+  "criticalIssues": []
+}

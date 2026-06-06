@@ -93,6 +93,36 @@ export interface ProcessorMessage {
   readonly envelope: EventEnvelope;
 }
 
+/**
+ * The rolling per-profile aggregates the processor maintains (§6 `profile_features`).
+ * Written by the processor's feature-upsert; read by the §8 segmentation engine.
+ * `counters` is a per-event-type running tally (jsonb). All numeric fields are
+ * non-null with DB defaults (total_events/monetary_total default 0).
+ */
+export interface ProfileFeatures {
+  readonly profile_id: string;
+  readonly workspace_id: string;
+  readonly total_events: number;
+  readonly last_event_at: string | null;
+  readonly last_email_open_at: string | null;
+  readonly counters: Record<string, number>;
+  readonly monetary_total: number;
+  readonly updated_at: string;
+}
+
+/**
+ * Event types that count as an email open (drive `last_email_open_at`, §6/§10).
+ * Opens are a SOFT engagement signal (Apple MPP inflates them, §10) — kept as a
+ * small whitelist so feature logic and segments agree on what an "open" is.
+ */
+export const OPEN_EVENT_TYPES = ['email_open', 'open'] as const;
+
+/**
+ * Event types that count as purchase-like (contribute to `monetary_total`, §6).
+ * The monetary amount is read from the event attributes (see extractAmount).
+ */
+export const PURCHASE_EVENT_TYPES = ['purchase', 'order_completed'] as const;
+
 /** A row of the `workspace_api_keys` map (§6) — API Gateway key id → workspace. */
 export interface WorkspaceApiKeyRow {
   readonly api_key_id: string;

@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTF02TV3W7W0B82QB7FHGQCB",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/foundation:S000013:plan-phase",
+  "status": "ok",
+  "result": {
+    "implUnits": [
+      "buildEventInsert RETURNING event_id (newness observable)",
+      "buildFeatureUpsert: single CTE WITH ins AS (INSERT events ON CONFLICT DO NOTHING RETURNING) INSERT profile_features SELECT WHERE EXISTS(ins) ON CONFLICT(profile_id) DO UPDATE total+1, last_event_at=GREATEST, last_email_open_at=GREATEST, counters jsonb increment, monetary+EXCLUDED",
+      "wire into planProcessing replacing standalone event insert with combined CTE, after profile upsert",
+      "ProfileFeatures type in shared",
+      "OPEN/PURCHASE event-type constants shared"
+    ],
+    "notes": "Idempotency = option (a) gate feature update on event being NEW in same tx. Since runPlanInWorkspaceTx runs statements separately (no JS RETURNING handoff), gate must live INSIDE feature SQL via single CTE: WITH ins AS (INSERT events ... ON CONFLICT DO NOTHING RETURNING event_id) INSERT profile_features ... WHERE EXISTS(SELECT 1 FROM ins) ON CONFLICT(profile_id) DO UPDATE. Replay -> ins empty -> no-op. Merges event insert + feature upsert into ONE statement, after buildProcessorProfileUpsert (keeps profile row for FKs). Workspace scoping: workspace_id $1 + (workspace_id,external_id) subquery, never client profile_id; holds on BYPASSRLS pool. SQL mirrors applyEventToFeatures: total+=1; last_event_at=GREATEST(existing,occurred_at); last_email_open_at=GREATEST only when open (NULL otherwise so GREATEST preserves); counters jsonb per-type COALESCE+1; monetary+=extractAmount for purchase-like. Reuse adminPool/hasDatabaseUrl + runPlanInWorkspaceTx; unique workspace UUID namespace per file; cleanup also DELETE profile_features. Excludes segment re-eval (Phase 5 extension point).",
+    "pureFunctions": [
+      "isEmailOpenType(type)",
+      "isPurchaseLike(type)",
+      "extractAmount(attributes)",
+      "applyEventToFeatures(prev,envelope)",
+      "buildFeatureUpsert(msg)"
+    ],
+    "testFiles": [
+      {
+        "assertions": [
+          "applyEventToFeatures(null,progress@T1)->total=1,last_event_at=T1,counters={progress:1}",
+          "purchase@T2 amount30->total=2,last_event_at=T2,monetary=30",
+          "last_event_at=MAX (older event doesn't regress)",
+          "isEmailOpenType open types; last_email_open_at set+MAX on open only",
+          "isPurchaseLike+extractAmount; missing amount->0 no NaN",
+          "per-type counter increment; unknown type ->1",
+          "buildFeatureUpsert text INSERT...ON CONFLICT(profile_id) DO UPDATE gated WHERE EXISTS(event-insert CTE)",
+          "binds workspace_id $1, profile_id via (workspace_id,external_id) subquery",
+          "feature step after event insert"
+        ],
+        "criterion": "AC1 pure aggregates",
+        "path": "services/processor/test/features-core.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "[progress@T1,email_open@T2,purchase@T3 amt40]->one row total=3,last_event_at=T3,last_email_open_at=T2,counters all 1,monetary=40",
+          "REPLAY same event_id->unchanged (total 3,monetary 40,counters.purchase 1)",
+          "events has one row for replayed id",
+          "older occurred_at doesn't regress last_event_at end-to-end",
+          "exactly one profile_features row per profile"
+        ],
+        "criterion": "AC1 idempotent",
+        "path": "services/processor/test/features-aggregate.integration.test.ts",
+        "tier": "integration"
+      },
+      {
+        "assertions": [
+          "two ws same external_id -> two distinct feature rows, no cross-bleed",
+          "workspace_id matches processing ws; count WHERE ws=A returns A only",
+          "A totals/counters/monetary reflect only A events",
+          "runs on admin BYPASSRLS pool proving in-code isolation"
+        ],
+        "criterion": "AC2 scoping",
+        "path": "services/processor/test/features-workspace-scoping.integration.test.ts",
+        "tier": "integration"
+      }
+    ]
+  },
+  "startedAt": "2026-06-06T17:38:05.220Z",
+  "finishedAt": "2026-06-06T17:38:05.220Z",
+  "value": {
+    "implUnits": [
+      "buildEventInsert RETURNING event_id (newness observable)",
+      "buildFeatureUpsert: single CTE WITH ins AS (INSERT events ON CONFLICT DO NOTHING RETURNING) INSERT profile_features SELECT WHERE EXISTS(ins) ON CONFLICT(profile_id) DO UPDATE total+1, last_event_at=GREATEST, last_email_open_at=GREATEST, counters jsonb increment, monetary+EXCLUDED",
+      "wire into planProcessing replacing standalone event insert with combined CTE, after profile upsert",
+      "ProfileFeatures type in shared",
+      "OPEN/PURCHASE event-type constants shared"
+    ],
+    "notes": "Idempotency = option (a) gate feature update on event being NEW in same tx. Since runPlanInWorkspaceTx runs statements separately (no JS RETURNING handoff), gate must live INSIDE feature SQL via single CTE: WITH ins AS (INSERT events ... ON CONFLICT DO NOTHING RETURNING event_id) INSERT profile_features ... WHERE EXISTS(SELECT 1 FROM ins) ON CONFLICT(profile_id) DO UPDATE. Replay -> ins empty -> no-op. Merges event insert + feature upsert into ONE statement, after buildProcessorProfileUpsert (keeps profile row for FKs). Workspace scoping: workspace_id $1 + (workspace_id,external_id) subquery, never client profile_id; holds on BYPASSRLS pool. SQL mirrors applyEventToFeatures: total+=1; last_event_at=GREATEST(existing,occurred_at); last_email_open_at=GREATEST only when open (NULL otherwise so GREATEST preserves); counters jsonb per-type COALESCE+1; monetary+=extractAmount for purchase-like. Reuse adminPool/hasDatabaseUrl + runPlanInWorkspaceTx; unique workspace UUID namespace per file; cleanup also DELETE profile_features. Excludes segment re-eval (Phase 5 extension point).",
+    "pureFunctions": [
+      "isEmailOpenType(type)",
+      "isPurchaseLike(type)",
+      "extractAmount(attributes)",
+      "applyEventToFeatures(prev,envelope)",
+      "buildFeatureUpsert(msg)"
+    ],
+    "testFiles": [
+      {
+        "assertions": [
+          "applyEventToFeatures(null,progress@T1)->total=1,last_event_at=T1,counters={progress:1}",
+          "purchase@T2 amount30->total=2,last_event_at=T2,monetary=30",
+          "last_event_at=MAX (older event doesn't regress)",
+          "isEmailOpenType open types; last_email_open_at set+MAX on open only",
+          "isPurchaseLike+extractAmount; missing amount->0 no NaN",
+          "per-type counter increment; unknown type ->1",
+          "buildFeatureUpsert text INSERT...ON CONFLICT(profile_id) DO UPDATE gated WHERE EXISTS(event-insert CTE)",
+          "binds workspace_id $1, profile_id via (workspace_id,external_id) subquery",
+          "feature step after event insert"
+        ],
+        "criterion": "AC1 pure aggregates",
+        "path": "services/processor/test/features-core.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "[progress@T1,email_open@T2,purchase@T3 amt40]->one row total=3,last_event_at=T3,last_email_open_at=T2,counters all 1,monetary=40",
+          "REPLAY same event_id->unchanged (total 3,monetary 40,counters.purchase 1)",
+          "events has one row for replayed id",
+          "older occurred_at doesn't regress last_event_at end-to-end",
+          "exactly one profile_features row per profile"
+        ],
+        "criterion": "AC1 idempotent",
+        "path": "services/processor/test/features-aggregate.integration.test.ts",
+        "tier": "integration"
+      },
+      {
+        "assertions": [
+          "two ws same external_id -> two distinct feature rows, no cross-bleed",
+          "workspace_id matches processing ws; count WHERE ws=A returns A only",
+          "A totals/counters/monetary reflect only A events",
+          "runs on admin BYPASSRLS pool proving in-code isolation"
+        ],
+        "criterion": "AC2 scoping",
+        "path": "services/processor/test/features-workspace-scoping.integration.test.ts",
+        "tier": "integration"
+      }
+    ]
+  }
+}
