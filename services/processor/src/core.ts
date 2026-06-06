@@ -28,11 +28,30 @@ export interface SqlStatement {
   readonly values: unknown[];
 }
 
+/**
+ * A request to re-evaluate the workspace's active dynamic_realtime segments for
+ * the CHANGED profile (§8). The re-eval needs reads (each segment's compiled
+ * rule), so it can't be a static SqlStatement — it rides on the plan as a marker
+ * that deps.ts executes against the SAME tx client, AFTER the feature upsert (so
+ * it sees post-update features). The concrete profile id is resolved inside the
+ * tx from (workspace_id, external_id).
+ */
+export interface SegmentReeval {
+  readonly workspaceId: string;
+  readonly profileExternalId: string;
+}
+
 /** The ordered, workspace-scoped work to apply for one message, in one tx. */
 export interface ProcessingPlan {
   readonly workspaceId: string;
   readonly profileExternalId: string;
   readonly statements: readonly SqlStatement[];
+  /**
+   * Phase 5: when present, deps.ts runs realtime segment re-eval for the changed
+   * profile in the SAME tx, AFTER the statements above. Omitted only if a phase
+   * ever needs to opt out; planProcessing always sets it.
+   */
+  readonly segmentReeval?: SegmentReeval;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -263,13 +282,20 @@ export function buildProcessorProfileUpsert(msg: ProcessorMessage): SqlStatement
  * statement means the gate (WHERE EXISTS ins) can never drift from the insert —
  * a replayed event_id inserts nothing and the aggregates are not double-counted.
  *
- * Phase 5 extension point: append segment re-eval statements after this —
- * intentionally not implemented here (out of scope).
+ * Phase 5 (§8, §7 step 4/5): after the profile + feature upserts, the plan
+ * carries a `segmentReeval` marker so deps.ts re-evaluates the workspace's active
+ * dynamic_realtime segments for the CHANGED profile in the SAME tx — reading
+ * POST-update features. The static ordering (profile upsert → feature upsert) is
+ * unchanged so Phase 4 does not regress.
  */
 export function planProcessing(msg: ProcessorMessage): ProcessingPlan {
   return {
     workspaceId: msg.workspace_id,
     profileExternalId: msg.envelope.external_id,
     statements: [buildProcessorProfileUpsert(msg), buildFeatureUpsert(msg)],
+    segmentReeval: {
+      workspaceId: msg.workspace_id,
+      profileExternalId: msg.envelope.external_id,
+    },
   };
 }

@@ -1,0 +1,108 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "implUnits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "pureFunctions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "testFiles": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "testFiles",
+        "implUnits"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "invariants": [
+          "Tenant isolation is the top property: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id.",
+          "Service-role Lambda code bypasses RLS — it MUST scope by workspace_id in code; RLS is only the backstop for user-context (admin app) reads.",
+          "workspace_id is NEVER taken from a client payload — derive it from the API key (ingest) or the authorizer-injected claim (admin API).",
+          "Per-profile ordering via MessageGroupId=profile_id; code must be idempotent and order-convergent (progress-before-profile_created still converges).",
+          "Idempotency: events.event_id is the dedupe key (INSERT ... ON CONFLICT DO NOTHING).",
+          "Segment rule-AST -> SQL is compiled with a field/operator whitelist, parameterized SQL only, and ALWAYS prepends workspace_id = $ws. Never interpolate raw input.",
+          "Local-only: verify against LocalStack + Supabase CLI/Testcontainers. Do NOT mock Postgres in the integration tier. Mock SES (never send real mail).",
+          "Scope discipline: implement exactly what the cited spec sections require — no extra features, no gold-plating."
+        ],
+        "phase": {
+          "criteria": [
+            "Given an AST, the compiler emits the exact parameterized SQL, ALWAYS injects workspace_id, and REJECTS unknown fields/operators (security-critical).",
+            "Crossing a predicate -> exactly one entered; crossing back -> one exited; never matches another workspace's profiles.",
+            "Manual segments change only via user edit/CSV and are not touched by the evaluator; both dynamic and manual are usable as audiences."
+          ],
+          "id": "phase5-segments",
+          "scope": [
+            "packages/segments: rule-AST -> parameterized SQL WHERE compiler over profiles JOIN profile_features, with a field/operator WHITELIST and workspace_id = $ws ALWAYS prepended. Reject unknown fields/operators.",
+            "Dynamic realtime eval in the processor on profile change; dynamic batch eval (EventBridge-style scheduled entrypoint); membership diff + segment_change_log (entered/exited).",
+            "Manual segments: membership rows (source=manual) added/removed by user (hand-pick + CSV import); evaluator never touches them."
+          ],
+          "specSections": "§8 (rule AST + SQL compiler, dynamic realtime/batch, manual), §6 (segments, segment_memberships, segment_change_log)",
+          "title": "Segmentation engine"
+        },
+        "spec": "CDP-BUILD-SPEC.md",
+        "testingStrategy": "§16A serverless pyramid: many pure unit tests; DB-integration tests against REAL local Postgres (no mocking the DB); thin LocalStack E2E. Mock SES."
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §8 (rule AST + SQL compiler, dynamic realtime/batch, manual), §6 (segments, segment_memberships, segment_change_log), plus §16A and §18.",
+        "For each acceptance criterion, define the test file(s), tier (unit | integration | e2e), and the exact assertions — especially the tenant-isolation and ordering/idempotency assertions.",
+        "Identify the pure functions that should hold the logic (so handlers stay thin and unit-testable).",
+        "List the implementation units required and their dependency order.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { testFiles: [{path, tier, criterion, assertions:[...]}], pureFunctions: string[], implUnits: string[], notes: string }",
+      "role": "senior test architect practicing TDD on a serverless multi-tenant system",
+      "task": "Turn the §18 acceptance criteria for \"Segmentation engine\" into a concrete, test-first plan."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTF13QSD1DM2NMYNVX573MRF/input.json",
+    "outputJsonPath": "tasks/01KTF13QSD1DM2NMYNVX573MRF/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "phase5-segments",
+    "plan"
+  ],
+  "title": "Plan tests: Segmentation engine",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTF13QSD1DM2NMYNVX573MRF",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/foundation:S000017:plan-phase",
+  "stepId": "S000017",
+  "inputs": {
+    "phase": {
+      "criteria": [
+        "Given an AST, the compiler emits the exact parameterized SQL, ALWAYS injects workspace_id, and REJECTS unknown fields/operators (security-critical).",
+        "Crossing a predicate -> exactly one entered; crossing back -> one exited; never matches another workspace's profiles.",
+        "Manual segments change only via user edit/CSV and are not touched by the evaluator; both dynamic and manual are usable as audiences."
+      ],
+      "id": "phase5-segments",
+      "scope": [
+        "packages/segments: rule-AST -> parameterized SQL WHERE compiler over profiles JOIN profile_features, with a field/operator WHITELIST and workspace_id = $ws ALWAYS prepended. Reject unknown fields/operators.",
+        "Dynamic realtime eval in the processor on profile change; dynamic batch eval (EventBridge-style scheduled entrypoint); membership diff + segment_change_log (entered/exited).",
+        "Manual segments: membership rows (source=manual) added/removed by user (hand-pick + CSV import); evaluator never touches them."
+      ],
+      "specSections": "§8 (rule AST + SQL compiler, dynamic realtime/batch, manual), §6 (segments, segment_memberships, segment_change_log)",
+      "title": "Segmentation engine"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTF13J38HQXJQ80M66YD3RHC",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/foundation:S000016:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "05f7f5d5f58bb0ae2687f5ffcea80d47d470a979",
+    "committed": true,
+    "message": "feat(phase4): profile_features rolling aggregates (idempotent)"
+  },
+  "startedAt": "2026-06-06T17:53:46.274Z",
+  "finishedAt": "2026-06-06T17:53:46.274Z",
+  "value": {
+    "commitHash": "05f7f5d5f58bb0ae2687f5ffcea80d47d470a979",
+    "committed": true,
+    "message": "feat(phase4): profile_features rolling aggregates (idempotent)"
+  }
+}

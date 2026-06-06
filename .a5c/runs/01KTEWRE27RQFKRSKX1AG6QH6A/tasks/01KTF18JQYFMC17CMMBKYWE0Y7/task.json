@@ -1,0 +1,387 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commandsRun": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesCreated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesModified": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "lintOk": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "testsPass": {
+          "type": "boolean"
+        },
+        "testSummary": {
+          "type": "string"
+        },
+        "typecheckOk": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "filesCreated",
+        "filesModified",
+        "testsPass"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "firstIteration": true,
+        "invariants": [
+          "Tenant isolation is the top property: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id.",
+          "Service-role Lambda code bypasses RLS — it MUST scope by workspace_id in code; RLS is only the backstop for user-context (admin app) reads.",
+          "workspace_id is NEVER taken from a client payload — derive it from the API key (ingest) or the authorizer-injected claim (admin API).",
+          "Per-profile ordering via MessageGroupId=profile_id; code must be idempotent and order-convergent (progress-before-profile_created still converges).",
+          "Idempotency: events.event_id is the dedupe key (INSERT ... ON CONFLICT DO NOTHING).",
+          "Segment rule-AST -> SQL is compiled with a field/operator whitelist, parameterized SQL only, and ALWAYS prepends workspace_id = $ws. Never interpolate raw input.",
+          "Local-only: verify against LocalStack + Supabase CLI/Testcontainers. Do NOT mock Postgres in the integration tier. Mock SES (never send real mail).",
+          "Scope discipline: implement exactly what the cited spec sections require — no extra features, no gold-plating."
+        ],
+        "iteration": 1,
+        "phase": {
+          "criteria": [
+            "Given an AST, the compiler emits the exact parameterized SQL, ALWAYS injects workspace_id, and REJECTS unknown fields/operators (security-critical).",
+            "Crossing a predicate -> exactly one entered; crossing back -> one exited; never matches another workspace's profiles.",
+            "Manual segments change only via user edit/CSV and are not touched by the evaluator; both dynamic and manual are usable as audiences."
+          ],
+          "id": "phase5-segments",
+          "scope": [
+            "packages/segments: rule-AST -> parameterized SQL WHERE compiler over profiles JOIN profile_features, with a field/operator WHITELIST and workspace_id = $ws ALWAYS prepended. Reject unknown fields/operators.",
+            "Dynamic realtime eval in the processor on profile change; dynamic batch eval (EventBridge-style scheduled entrypoint); membership diff + segment_change_log (entered/exited).",
+            "Manual segments: membership rows (source=manual) added/removed by user (hand-pick + CSV import); evaluator never touches them."
+          ],
+          "specSections": "§8 (rule AST + SQL compiler, dynamic realtime/batch, manual), §6 (segments, segment_memberships, segment_change_log)",
+          "title": "Segmentation engine"
+        },
+        "plan": {
+          "implUnits": [
+            "packages/segments/src/compile.ts (compileWhere+validateAst+resolveField+resolveOperator+whitelist tables)",
+            "src/diff.ts",
+            "src/statements.ts (membership/change_log/manual/audience builders, SqlStatement shape)",
+            "src/evaluate.ts (evaluateRealtimeSegmentsForProfile, scopes to changed profile)",
+            "src/manual.ts",
+            "src/index.ts re-export",
+            "services/processor/src/core.ts append re-eval after buildFeatureUpsert",
+            "processor deps.ts wire evaluator into runPlanInWorkspaceTx",
+            "services/batch-eval/src/core.ts planBatchEval",
+            "batch-eval handler+deps scheduled sweep",
+            "segments package.json @cdp/db + test script"
+          ],
+          "notes": "Realtime hook: planProcessing extension point; append re-eval AFTER buildFeatureUpsert so it reads updated features (§7 step4->5), in SAME workspace-scoped tx (atomic). Realtime path scopes matching to CHANGED profile (AND p.id=$profile), diffs that one profile's match vs its membership rows (not whole-segment rematerialize). Compiler follows scopedQuery precedent: workspace_id structurally always $1, never from AST (invariant #6, highest-value unit). jsonb KEY names bound as params never concatenated (closes field-name injection). Reuse SqlStatement {text,values}. Integration reuse testutil (adminPool, hasDatabaseUrl, skipIf), evaluator service-role bypass -> in-code isolation. Unique workspace UUIDs + file-local event_id namespace (global event_id PK). Whitelist: attributes.* , features.counters.* (::numeric), scalar feature columns. TDD order: compile unit -> diff -> statements -> evaluate+integration -> manual+integration -> processor hook -> batch.",
+          "pureFunctions": [
+            "compileWhere(workspaceId,ast)",
+            "validateAst(ast)",
+            "resolveField(field)",
+            "resolveOperator(operator)",
+            "buildSelectMatchingProfileIds(workspaceId,ast)",
+            "diffMembership(currentIds,matchedIds)",
+            "buildEntered/buildExitedStatements",
+            "selectActiveRealtime/BatchSegments",
+            "buildAdd/RemoveManualMembers",
+            "buildResolveAudience",
+            "planBatchEval"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "§8 AST -> exact {text,values}",
+                "workspace_id ALWAYS first predicate $1, present even for empty AST",
+                "every value is $n (no literal in text); in/not in -> ANY/ALL with array as one param",
+                "whitelisted field mapping attributes->>key (key as param), counters->>key::numeric, scalar columns",
+                "unknown field THROWS",
+                "unknown operator THROWS",
+                "injection in field name rejected (whitelist)",
+                "injection in value safely parameterized (only in values[])",
+                "exists -> IS NOT NULL no extra param",
+                "deep nested and/or/not exact text+params balanced parens",
+                "comparison ops table-driven",
+                "malformed node THROWS no partial SQL"
+              ],
+              "criterion": "AC1 compiler (security-critical)",
+              "path": "packages/segments/test/compile-where.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "diffMembership: new->entered once, gone->exited once",
+                "in both -> neither (idempotent)",
+                "empty matched all exited; empty current all entered",
+                "duplicates deduped"
+              ],
+              "criterion": "AC2 diff",
+              "path": "packages/segments/test/evaluate-diff.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildEntered: membership source=evaluator + change_log entered, workspace_id $1",
+                "buildExited: delete scoped + change_log exited",
+                "membership writes constrained source='evaluator' (never touch manual)",
+                "selectActive segments filter workspace+status+kind, EXCLUDE manual",
+                "every statement binds workspace_id $1"
+              ],
+              "criterion": "AC2/3 builders",
+              "path": "packages/segments/test/build-eval-statements.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "below predicate -> no match no rows",
+                "cross predicate -> exactly one membership(source=evaluator)+one change_log entered",
+                "re-eval same state -> no new rows (idempotent)",
+                "drop below -> membership removed + one exited",
+                "cross-workspace: wsB match never affected by wsA eval; workspace_id=$1 binds wsA",
+                "admin pool in-code scoping; unique UUIDs+event_id namespace",
+                "in + nested not match real rows end-to-end"
+              ],
+              "criterion": "AC2 realtime real PG",
+              "path": "packages/segments/test/segment-eval.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "enumerate only dynamic_batch active, per-workspace",
+                "reuses compileWhere+diff+builders",
+                "manual excluded"
+              ],
+              "criterion": "AC2 batch plan",
+              "path": "services/batch-eval/test/batch-eval-core.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "time-based predicate one entered crossing + one exited back",
+                "wsA sweep never touches wsB",
+                "re-run unchanged idempotent"
+              ],
+              "criterion": "AC2 batch real PG",
+              "path": "services/batch-eval/test/batch-eval.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "profile upsert first, event+feature second (no regression)",
+                "segment re-eval appended AFTER feature upsert (reads post-update features)",
+                "workspace-scoped, dynamic_realtime only",
+                "invoked with changed profile id; no change -> no writes"
+              ],
+              "criterion": "AC2 processor hook",
+              "path": "services/processor/test/segment-reeval-plan.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "evaluator skips kind=manual: manual membership unchanged, no change_log",
+                "addManualMembers/removeManualMembers workspace-scoped; CSV batch insert",
+                "manual member also matching dynamic -> only dynamic(source=evaluator) rows affected",
+                "resolveAudience returns members for BOTH manual and dynamic"
+              ],
+              "criterion": "AC3 manual",
+              "path": "packages/segments/test/manual-segments.integration.test.ts",
+              "tier": "integration"
+            }
+          ]
+        },
+        "previousGateFeedback": null,
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §8 (rule AST + SQL compiler, dynamic realtime/batch, manual), §6 (segments, segment_memberships, segment_change_log).",
+        "FIRST write the failing tests from the plan (red), then implement to green. Logic lives in pure injected functions; handlers only wire them up.",
+        "Honor every invariant in context.invariants — tenant isolation and the workspace_id rules are pass/fail.",
+        "Integration tests MUST run against a real local Postgres (Supabase CLI/Testcontainers); do NOT mock the DB. Mock SES and AWS SDK (aws-sdk-client-mock).",
+        "Run `pnpm test` (the relevant package/filter), `pnpm typecheck`, `pnpm lint`. Iterate until tests are GREEN. Report the actual command output summary.",
+        "Implement ONLY what the cited sections require — no out-of-scope features.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { filesCreated: string[], filesModified: string[], testsPass: boolean, testSummary: string, typecheckOk: boolean, lintOk: boolean, commandsRun: string[], notes: string }",
+      "role": "senior TypeScript engineer building a serverless multi-tenant CDP, test-first",
+      "task": "Implement \"Segmentation engine\" to satisfy its test plan and §18 criteria. Red -> green -> refactor."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTF18JQYFMC17CMMBKYWE0Y7/input.json",
+    "outputJsonPath": "tasks/01KTF18JQYFMC17CMMBKYWE0Y7/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "implement",
+    "iteration-1",
+    "phase5-segments"
+  ],
+  "title": "Implement: Segmentation engine (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTF18JQYFMC17CMMBKYWE0Y7",
+  "taskId": "implement-phase",
+  "invocationKey": "cdp/foundation:S000018:implement-phase",
+  "stepId": "S000018",
+  "inputs": {
+    "firstIteration": true,
+    "iteration": 1,
+    "phase": {
+      "criteria": [
+        "Given an AST, the compiler emits the exact parameterized SQL, ALWAYS injects workspace_id, and REJECTS unknown fields/operators (security-critical).",
+        "Crossing a predicate -> exactly one entered; crossing back -> one exited; never matches another workspace's profiles.",
+        "Manual segments change only via user edit/CSV and are not touched by the evaluator; both dynamic and manual are usable as audiences."
+      ],
+      "id": "phase5-segments",
+      "scope": [
+        "packages/segments: rule-AST -> parameterized SQL WHERE compiler over profiles JOIN profile_features, with a field/operator WHITELIST and workspace_id = $ws ALWAYS prepended. Reject unknown fields/operators.",
+        "Dynamic realtime eval in the processor on profile change; dynamic batch eval (EventBridge-style scheduled entrypoint); membership diff + segment_change_log (entered/exited).",
+        "Manual segments: membership rows (source=manual) added/removed by user (hand-pick + CSV import); evaluator never touches them."
+      ],
+      "specSections": "§8 (rule AST + SQL compiler, dynamic realtime/batch, manual), §6 (segments, segment_memberships, segment_change_log)",
+      "title": "Segmentation engine"
+    },
+    "plan": {
+      "implUnits": [
+        "packages/segments/src/compile.ts (compileWhere+validateAst+resolveField+resolveOperator+whitelist tables)",
+        "src/diff.ts",
+        "src/statements.ts (membership/change_log/manual/audience builders, SqlStatement shape)",
+        "src/evaluate.ts (evaluateRealtimeSegmentsForProfile, scopes to changed profile)",
+        "src/manual.ts",
+        "src/index.ts re-export",
+        "services/processor/src/core.ts append re-eval after buildFeatureUpsert",
+        "processor deps.ts wire evaluator into runPlanInWorkspaceTx",
+        "services/batch-eval/src/core.ts planBatchEval",
+        "batch-eval handler+deps scheduled sweep",
+        "segments package.json @cdp/db + test script"
+      ],
+      "notes": "Realtime hook: planProcessing extension point; append re-eval AFTER buildFeatureUpsert so it reads updated features (§7 step4->5), in SAME workspace-scoped tx (atomic). Realtime path scopes matching to CHANGED profile (AND p.id=$profile), diffs that one profile's match vs its membership rows (not whole-segment rematerialize). Compiler follows scopedQuery precedent: workspace_id structurally always $1, never from AST (invariant #6, highest-value unit). jsonb KEY names bound as params never concatenated (closes field-name injection). Reuse SqlStatement {text,values}. Integration reuse testutil (adminPool, hasDatabaseUrl, skipIf), evaluator service-role bypass -> in-code isolation. Unique workspace UUIDs + file-local event_id namespace (global event_id PK). Whitelist: attributes.* , features.counters.* (::numeric), scalar feature columns. TDD order: compile unit -> diff -> statements -> evaluate+integration -> manual+integration -> processor hook -> batch.",
+      "pureFunctions": [
+        "compileWhere(workspaceId,ast)",
+        "validateAst(ast)",
+        "resolveField(field)",
+        "resolveOperator(operator)",
+        "buildSelectMatchingProfileIds(workspaceId,ast)",
+        "diffMembership(currentIds,matchedIds)",
+        "buildEntered/buildExitedStatements",
+        "selectActiveRealtime/BatchSegments",
+        "buildAdd/RemoveManualMembers",
+        "buildResolveAudience",
+        "planBatchEval"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "§8 AST -> exact {text,values}",
+            "workspace_id ALWAYS first predicate $1, present even for empty AST",
+            "every value is $n (no literal in text); in/not in -> ANY/ALL with array as one param",
+            "whitelisted field mapping attributes->>key (key as param), counters->>key::numeric, scalar columns",
+            "unknown field THROWS",
+            "unknown operator THROWS",
+            "injection in field name rejected (whitelist)",
+            "injection in value safely parameterized (only in values[])",
+            "exists -> IS NOT NULL no extra param",
+            "deep nested and/or/not exact text+params balanced parens",
+            "comparison ops table-driven",
+            "malformed node THROWS no partial SQL"
+          ],
+          "criterion": "AC1 compiler (security-critical)",
+          "path": "packages/segments/test/compile-where.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "diffMembership: new->entered once, gone->exited once",
+            "in both -> neither (idempotent)",
+            "empty matched all exited; empty current all entered",
+            "duplicates deduped"
+          ],
+          "criterion": "AC2 diff",
+          "path": "packages/segments/test/evaluate-diff.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildEntered: membership source=evaluator + change_log entered, workspace_id $1",
+            "buildExited: delete scoped + change_log exited",
+            "membership writes constrained source='evaluator' (never touch manual)",
+            "selectActive segments filter workspace+status+kind, EXCLUDE manual",
+            "every statement binds workspace_id $1"
+          ],
+          "criterion": "AC2/3 builders",
+          "path": "packages/segments/test/build-eval-statements.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "below predicate -> no match no rows",
+            "cross predicate -> exactly one membership(source=evaluator)+one change_log entered",
+            "re-eval same state -> no new rows (idempotent)",
+            "drop below -> membership removed + one exited",
+            "cross-workspace: wsB match never affected by wsA eval; workspace_id=$1 binds wsA",
+            "admin pool in-code scoping; unique UUIDs+event_id namespace",
+            "in + nested not match real rows end-to-end"
+          ],
+          "criterion": "AC2 realtime real PG",
+          "path": "packages/segments/test/segment-eval.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "enumerate only dynamic_batch active, per-workspace",
+            "reuses compileWhere+diff+builders",
+            "manual excluded"
+          ],
+          "criterion": "AC2 batch plan",
+          "path": "services/batch-eval/test/batch-eval-core.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "time-based predicate one entered crossing + one exited back",
+            "wsA sweep never touches wsB",
+            "re-run unchanged idempotent"
+          ],
+          "criterion": "AC2 batch real PG",
+          "path": "services/batch-eval/test/batch-eval.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "profile upsert first, event+feature second (no regression)",
+            "segment re-eval appended AFTER feature upsert (reads post-update features)",
+            "workspace-scoped, dynamic_realtime only",
+            "invoked with changed profile id; no change -> no writes"
+          ],
+          "criterion": "AC2 processor hook",
+          "path": "services/processor/test/segment-reeval-plan.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "evaluator skips kind=manual: manual membership unchanged, no change_log",
+            "addManualMembers/removeManualMembers workspace-scoped; CSV batch insert",
+            "manual member also matching dynamic -> only dynamic(source=evaluator) rows affected",
+            "resolveAudience returns members for BOTH manual and dynamic"
+          ],
+          "criterion": "AC3 manual",
+          "path": "packages/segments/test/manual-segments.integration.test.ts",
+          "tier": "integration"
+        }
+      ]
+    },
+    "prevFeedback": null
+  }
+}

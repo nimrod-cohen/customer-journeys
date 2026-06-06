@@ -1,5 +1,45 @@
-// @cdp/segments — rule AST + SQL compiler (mandatory workspace_id).
-// Scaffolding only. The compiler itself (whitelisted fields/operators,
-// parameterized SQL, always-prepended `workspace_id = $ws`) is implemented in
-// the §5/§8 phase, test-first. See CDP-BUILD-SPEC.md §8, §16A, CLAUDE.md inv. 6.
-export {};
+// @cdp/segments — rule AST + SQL compiler (mandatory workspace_id) + the
+// realtime/batch evaluator builders and manual-segment membership.
+// See CDP-BUILD-SPEC.md §8, §16A, CLAUDE.md invariant 6.
+
+export {
+  compileWhere,
+  validateAst,
+  resolveField,
+  resolveOperator,
+  SCALAR_FEATURE_FIELDS,
+  OPERATORS,
+  type SqlStatement,
+  type AstNode,
+  type GroupNode,
+  type ConditionNode,
+  type OperatorToken,
+  type ResolvedField,
+} from './compile.js';
+
+export { diffMembership, type MembershipDiff } from './diff.js';
+
+export {
+  selectActiveRealtimeSegments,
+  selectActiveBatchSegments,
+  buildSegmentMatch,
+  selectEvaluatorMembership,
+  buildInsertMemberships,
+  buildDeleteMemberships,
+  buildChangeLog,
+  buildResolveAudience,
+  type MembershipSource,
+  type SegmentRow,
+} from './statements.js';
+
+export {
+  evaluateRealtimeSegmentsForProfile,
+  planProfileSegmentTransition,
+  type EvaluateDeps,
+  type QueryFn,
+  type RunInWorkspaceTx,
+  type SegmentDelta,
+  type RealtimeEvalResult,
+} from './evaluate.js';
+
+export { addManualMembers, removeManualMembers, resolveAudience } from './manual.js';

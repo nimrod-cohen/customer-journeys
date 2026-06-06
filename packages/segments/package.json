@@ -18,6 +18,11 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@cdp/db": "workspace:*",
     "@cdp/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.6",
+    "pg": "^8.12.0"
   }
 }

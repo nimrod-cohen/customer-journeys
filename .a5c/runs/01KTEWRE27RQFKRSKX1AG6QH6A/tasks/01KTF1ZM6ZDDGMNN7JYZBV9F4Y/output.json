@@ -1,0 +1,18 @@
+{
+  "score": 96,
+  "testsPass": true,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {"criterion":"AC1","met":true,"evidence":"compile.ts: compileWhere always emits text starting p.workspace_id=$1 AND (...) with workspaceId at values[0] (proven for §8 AST, null AST, and reviewer's throwaway probe). AST field named workspace_id rejected by whitelist. Whitelist rejects unknown fields (password, profiles.email, 'evil; DROP') + operators (LIKE, ~, '=1; DROP'). jsonb keys + values bound as $n; in/not-in bind array as ONE param. Probe confirmed no injection string lands in text; grep shows only $n, whitelisted columns, exact-match operator token interpolated."},
+    {"criterion":"AC2","met":true,"evidence":"segment-eval.integration (real PG, ran both cold runs): cross >=3 -> exactly one entered (0->1, change_log ['entered']); re-eval matching -> nothing (idempotent); drop below -> one exited. Cross-workspace: ws-B profile under ws-A scoping matches nothing, both untouched (p.workspace_id=$1 AND p.id=$profile). Service-role bypass -> in-code isolation verified."},
+    {"criterion":"AC3","met":true,"evidence":"manual-segments.integration (real PG): add/removeManualMembers only source='manual' (idempotent); evaluator never selects kind='manual' so manual membership unchanged; evaluator-scoped delete (source='evaluator') can't remove manual rows; both kinds resolve as audiences via buildResolveAudience (all sources)."}
+  ],
+  "isolationOk": true,
+  "scopeCreep": [],
+  "recommendations": [
+    "Add negative integration test for cross-workspace manual membership add (join guard sound but only code-read).",
+    "Fold the optional p.id=$n profile filter into the compiler's structured output so workspace_id placeholder numbering can't drift on FROM/JOIN refactor.",
+    "Add a defensive cap on AST depth/condition count for resource hygiene."
+  ],
+  "criticalIssues": []
+}
