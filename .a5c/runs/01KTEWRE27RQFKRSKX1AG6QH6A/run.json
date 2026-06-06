@@ -1,0 +1,13 @@
+{
+  "runId": "01KTEWRE27RQFKRSKX1AG6QH6A",
+  "request": "cdp/foundation",
+  "processId": "cdp/foundation",
+  "entrypoint": {
+    "importPath": "../../processes/cdp-foundation.js",
+    "exportName": "process"
+  },
+  "processPath": "../../processes/cdp-foundation.js",
+  "layoutVersion": "2026.01-storage-preview",
+  "createdAt": "2026-06-06T16:37:47.217Z",
+  "completionProof": "36bbab0594e6581dc83e707c0aedd8cd"
+}

@@ -1,0 +1,191 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "criticalIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "installOk": {
+          "type": "boolean"
+        },
+        "layoutOk": {
+          "type": "boolean"
+        },
+        "recommendations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "schemaOk": {
+          "type": "boolean"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "typecheckOk": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "score",
+        "installOk",
+        "typecheckOk",
+        "recommendations"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "implReport": {
+          "commandsRun": [
+            "pnpm install",
+            "pnpm typecheck",
+            "pnpm build",
+            "pnpm test",
+            "pnpm lint"
+          ],
+          "filesCreated": [
+            "pnpm-workspace.yaml",
+            "package.json",
+            "turbo.json",
+            "tsconfig.base.json",
+            "tsconfig.json",
+            "vitest.config.ts",
+            ".gitignore",
+            ".eslintrc.cjs",
+            ".prettierrc.json",
+            "docker-compose.yml",
+            "scripts/db-start.sh",
+            "scripts/localstack-start.sh",
+            "packages/db/src/client.ts",
+            "packages/db/supabase/migrations/0001_extensions.sql",
+            "packages/db/supabase/migrations/0002_tenancy_core.sql",
+            "packages/db/supabase/migrations/0003_identity.sql",
+            "packages/db/supabase/migrations/0004_segments.sql",
+            "packages/db/supabase/migrations/0005_messaging.sql",
+            "packages/db/supabase/migrations/0006_rls.sql",
+            "packages/shared/src/index.ts",
+            "packages/segments/src/index.ts",
+            "packages/email/src/index.ts",
+            "packages/tenancy/src/index.ts",
+            "services/authorizer/src/handler.ts",
+            "services/ingest/src/handler.ts",
+            "services/processor/src/handler.ts",
+            "infra/bin/infra.ts",
+            "infra/lib/cdp-stack.ts"
+          ],
+          "installOk": true,
+          "notes": "pnpm@9.15.9 installed. §19 layout created. Entire §6 schema encoded as 6 ordered Supabase migrations with RLS ENABLED+FORCED on every tenant-scoped table (policy workspace_id = app_current_workspace_id() OR app_is_platform_admin()), workspace_id-leading indexes, runner sweep index, outbox index. Pooled pg client (connection only). LocalStack via docker-compose (sqs,s3,sns,apigateway). authorizer/ingest/processor have thin handler shells (no logic); other services placeholders. Test deps: vitest, aws-sdk-client-mock, pg. install/typecheck/build/test/lint all exit 0.",
+          "scripts": {
+            "build": "turbo run build",
+            "db:migrate": "supabase db reset --workdir packages/db",
+            "db:start": "supabase start --workdir packages/db",
+            "lint": "turbo run lint",
+            "localstack:start": "docker compose -f docker-compose.yml up -d",
+            "test": "turbo run test",
+            "typecheck": "turbo run typecheck"
+          },
+          "typecheckOk": true
+        },
+        "invariants": [
+          "Tenant isolation is the top property: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id.",
+          "Service-role Lambda code bypasses RLS — it MUST scope by workspace_id in code; RLS is only the backstop for user-context (admin app) reads.",
+          "workspace_id is NEVER taken from a client payload — derive it from the API key (ingest) or the authorizer-injected claim (admin API).",
+          "Per-profile ordering via MessageGroupId=profile_id; code must be idempotent and order-convergent (progress-before-profile_created still converges).",
+          "Idempotency: events.event_id is the dedupe key (INSERT ... ON CONFLICT DO NOTHING).",
+          "Segment rule-AST -> SQL is compiled with a field/operator whitelist, parameterized SQL only, and ALWAYS prepends workspace_id = $ws. Never interpolate raw input.",
+          "Local-only: verify against LocalStack + Supabase CLI/Testcontainers. Do NOT mock Postgres in the integration tier. Mock SES (never send real mail).",
+          "Scope discipline: implement exactly what the cited spec sections require — no extra features, no gold-plating."
+        ],
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Independently RUN: pnpm install, pnpm typecheck (and pnpm -w build if present). Do not trust the implementer's self-report — verify.",
+        "Open packages/db migrations and confirm EVERY §6 tenant-scoped table exists with workspace_id NOT NULL, RLS enabled, the correct policy + narrow is_platform_admin exception, and workspace_id-leading indexes.",
+        "Confirm the §19 directory layout and that pnpm-workspace.yaml + turbo.json + vitest are wired. Confirm Supabase CLI + LocalStack local-dev scripts exist.",
+        "Confirm NO business/feature logic was written yet (scaffolding + schema only).",
+        "Score 0-100. List concrete, prioritized recommendations for anything missing or wrong."
+      ],
+      "outputFormat": "JSON: { score: number, installOk: boolean, typecheckOk: boolean, layoutOk: boolean, schemaOk: boolean, recommendations: string[], criticalIssues: string[] }",
+      "role": "principal engineer reviewing project scaffolding for correctness and spec-fidelity",
+      "task": "Independently verify the scaffold: install works, typecheck passes, layout matches §19, db schema matches §6 with RLS, no premature feature code."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTEX807AWEPNP2F75T1R43QC/input.json",
+    "outputJsonPath": "tasks/01KTEX807AWEPNP2F75T1R43QC/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "iteration-1",
+    "quality-gate",
+    "scaffold"
+  ],
+  "title": "Scaffold quality gate (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTEX807AWEPNP2F75T1R43QC",
+  "taskId": "scaffold-gate",
+  "invocationKey": "cdp/foundation:S000002:scaffold-gate",
+  "stepId": "S000002",
+  "inputs": {
+    "impl": {
+      "commandsRun": [
+        "pnpm install",
+        "pnpm typecheck",
+        "pnpm build",
+        "pnpm test",
+        "pnpm lint"
+      ],
+      "filesCreated": [
+        "pnpm-workspace.yaml",
+        "package.json",
+        "turbo.json",
+        "tsconfig.base.json",
+        "tsconfig.json",
+        "vitest.config.ts",
+        ".gitignore",
+        ".eslintrc.cjs",
+        ".prettierrc.json",
+        "docker-compose.yml",
+        "scripts/db-start.sh",
+        "scripts/localstack-start.sh",
+        "packages/db/src/client.ts",
+        "packages/db/supabase/migrations/0001_extensions.sql",
+        "packages/db/supabase/migrations/0002_tenancy_core.sql",
+        "packages/db/supabase/migrations/0003_identity.sql",
+        "packages/db/supabase/migrations/0004_segments.sql",
+        "packages/db/supabase/migrations/0005_messaging.sql",
+        "packages/db/supabase/migrations/0006_rls.sql",
+        "packages/shared/src/index.ts",
+        "packages/segments/src/index.ts",
+        "packages/email/src/index.ts",
+        "packages/tenancy/src/index.ts",
+        "services/authorizer/src/handler.ts",
+        "services/ingest/src/handler.ts",
+        "services/processor/src/handler.ts",
+        "infra/bin/infra.ts",
+        "infra/lib/cdp-stack.ts"
+      ],
+      "installOk": true,
+      "notes": "pnpm@9.15.9 installed. §19 layout created. Entire §6 schema encoded as 6 ordered Supabase migrations with RLS ENABLED+FORCED on every tenant-scoped table (policy workspace_id = app_current_workspace_id() OR app_is_platform_admin()), workspace_id-leading indexes, runner sweep index, outbox index. Pooled pg client (connection only). LocalStack via docker-compose (sqs,s3,sns,apigateway). authorizer/ingest/processor have thin handler shells (no logic); other services placeholders. Test deps: vitest, aws-sdk-client-mock, pg. install/typecheck/build/test/lint all exit 0.",
+      "scripts": {
+        "build": "turbo run build",
+        "db:migrate": "supabase db reset --workdir packages/db",
+        "db:start": "supabase start --workdir packages/db",
+        "lint": "turbo run lint",
+        "localstack:start": "docker compose -f docker-compose.yml up -d",
+        "test": "turbo run test",
+        "typecheck": "turbo run typecheck"
+      },
+      "typecheckOk": true
+    },
+    "iteration": 1
+  }
+}

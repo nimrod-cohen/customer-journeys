@@ -1,0 +1,29 @@
+{
+  "name": "@cdp/service-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit false",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint src --no-error-on-unmatched-pattern"
+  },
+  "dependencies": {
+    "@cdp/db": "workspace:*",
+    "@cdp/shared": "workspace:*",
+    "@cdp/tenancy": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.6",
+    "pg": "^8.12.0"
+  }
+}

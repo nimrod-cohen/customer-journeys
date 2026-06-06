@@ -1,0 +1,10 @@
+{
+  "filesCreated": [],
+  "filesModified": ["turbo.json","packages/db/src/testutil.ts"],
+  "testsPass": true,
+  "testSummary": "Iteration 2 (determinism fix). 4 consecutive COLD-cache runs all green (0 cached, 27/27 tasks each). Integration tier ran every time (not skipped): rls-isolation(5), workspace-switch-rescope(1), per-workspace-uniqueness(2), admin-audit(3), service-role-scoping(3); 67 unit. Original 'tuple concurrently updated' failure reproduced first, then fixed.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "commandsRun": ["rm -rf .turbo/cache node_modules/.cache/turbo","DATABASE_URL=... pnpm test (x4 cold)","pnpm typecheck","pnpm lint"],
+  "notes": "Race fix: ensureTestAppRole() now wraps role DDL in a txn serialized by pg_advisory_xact_lock + idempotent CREATE-IF-NOT-EXISTS/GRANT/ALTER, so parallel callers no longer race pg_authid tuples. Role stays NOLOGIN NOBYPASSRLS. turbo.json test task set cache:false (DB-integration depends on live external state turbo can't key on; stale cache was masking the failure). RLS guard asserting pg_roles.rolbypassrls=false still passing. No RLS weakening, no DB mocking. Rebuilt @cdp/db so authorizer picks up fixed helper."
+}

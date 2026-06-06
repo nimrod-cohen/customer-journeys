@@ -1,0 +1,13 @@
+{
+  "score": 97,
+  "installOk": true,
+  "typecheckOk": true,
+  "layoutOk": true,
+  "schemaOk": true,
+  "recommendations": [
+    "scripts/ contains only db-start.sh and localstack-start.sh; §19 also calls for seed-multi-workspace, ordering/isolation, and DLQ-replay scripts — add stubs.",
+    "tests/ holds only a README; add minimal vitest integration/E2E scaffolding (Supabase CLI / LocalStack wiring).",
+    "Consider per-package vitest config so 'No test files found' won't mask a misconfigured package once tests are added."
+  ],
+  "criticalIssues": []
+}

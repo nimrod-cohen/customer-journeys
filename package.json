@@ -1,0 +1,32 @@
+{
+  "name": "customer-journeys",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Serverless multi-tenant marketing CDP (monorepo)",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "format": "prettier --write .",
+    "db:start": "supabase start --workdir packages/db",
+    "db:migrate": "supabase db reset --workdir packages/db",
+    "localstack:start": "docker compose -f docker-compose.yml up -d"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^7.13.0",
+    "@typescript-eslint/parser": "^7.13.0",
+    "aws-sdk-client-mock": "^4.0.1",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.2",
+    "turbo": "^2.0.4",
+    "typescript": "^5.5.2",
+    "vitest": "^1.6.0"
+  }
+}

@@ -1,0 +1,483 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "criteriaAllMet": {
+          "type": "boolean"
+        },
+        "criteriaCoverage": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "criticalIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "isolationOk": {
+          "type": "boolean"
+        },
+        "recommendations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scopeCreep": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "testsPass": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "score",
+        "testsPass",
+        "criteriaAllMet",
+        "recommendations"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "implReport": {
+          "commandsRun": [
+            "rm -rf .turbo/cache node_modules/.cache/turbo",
+            "DATABASE_URL=... pnpm test (x4 cold)",
+            "pnpm typecheck",
+            "pnpm lint"
+          ],
+          "filesCreated": [],
+          "filesModified": [
+            "turbo.json",
+            "packages/db/src/testutil.ts"
+          ],
+          "lintOk": true,
+          "notes": "Race fix: ensureTestAppRole() now wraps role DDL in a txn serialized by pg_advisory_xact_lock + idempotent CREATE-IF-NOT-EXISTS/GRANT/ALTER, so parallel callers no longer race pg_authid tuples. Role stays NOLOGIN NOBYPASSRLS. turbo.json test task set cache:false (DB-integration depends on live external state turbo can't key on; stale cache was masking the failure). RLS guard asserting pg_roles.rolbypassrls=false still passing. No RLS weakening, no DB mocking. Rebuilt @cdp/db so authorizer picks up fixed helper.",
+          "testsPass": true,
+          "testSummary": "Iteration 2 (determinism fix). 4 consecutive COLD-cache runs all green (0 cached, 27/27 tasks each). Integration tier ran every time (not skipped): rls-isolation(5), workspace-switch-rescope(1), per-workspace-uniqueness(2), admin-audit(3), service-role-scoping(3); 67 unit. Original 'tuple concurrently updated' failure reproduced first, then fixed.",
+          "typecheckOk": true
+        },
+        "invariants": [
+          "Tenant isolation is the top property: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id.",
+          "Service-role Lambda code bypasses RLS — it MUST scope by workspace_id in code; RLS is only the backstop for user-context (admin app) reads.",
+          "workspace_id is NEVER taken from a client payload — derive it from the API key (ingest) or the authorizer-injected claim (admin API).",
+          "Per-profile ordering via MessageGroupId=profile_id; code must be idempotent and order-convergent (progress-before-profile_created still converges).",
+          "Idempotency: events.event_id is the dedupe key (INSERT ... ON CONFLICT DO NOTHING).",
+          "Segment rule-AST -> SQL is compiled with a field/operator whitelist, parameterized SQL only, and ALWAYS prepends workspace_id = $ws. Never interpolate raw input.",
+          "Local-only: verify against LocalStack + Supabase CLI/Testcontainers. Do NOT mock Postgres in the integration tier. Mock SES (never send real mail).",
+          "Scope discipline: implement exactly what the cited spec sections require — no extra features, no gold-plating."
+        ],
+        "phase": {
+          "criteria": [
+            "A Workspace-A JWT cannot read/modify Workspace-B rows under RLS; service-role code paths still scope by workspace_id in code.",
+            "Two workspaces with the same external_id/email keep fully separate profiles (UNIQUE(workspace_id, external_id)).",
+            "Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/campaigns; owner can do both within the workspace.",
+            "system-admin can view across companies and every cross-tenant access is recorded in admin_audit_log.",
+            "Multi-workspace switching: a user in two workspaces sees only the active workspace; switching changes the workspace_id claim and re-scopes; no cross-bleed."
+          ],
+          "id": "phase2-auth",
+          "scope": [
+            "packages/db: workspaces, workspace_users, platform_admins, admin_audit_log, workspace_api_keys tables + RLS policies (workspace_id = auth.jwt()->>workspace_id) with the narrow system-admin (is_platform_admin) exception.",
+            "packages/tenancy: workspace-context + role-check helpers (owner/marketer/accounting capability matrix from §3A).",
+            "services/authorizer: Lambda authorizer that validates a Supabase JWT (JWKS), resolves workspace membership + role (or is_platform_admin), and injects workspace_id + role into request context. Logic in a pure injected function.",
+            "Multi-workspace membership + active-workspace switching (claim re-issue)."
+          ],
+          "specSections": "§3 (multi-tenancy + RLS caveat), §3A (4-role model), §6 (workspaces, workspace_users, platform_admins, admin_audit_log, workspace_api_keys), §12 (role-aware API), §13 (security)",
+          "title": "Auth + authorizer + roles"
+        },
+        "plan": {
+          "implUnits": [
+            "1. packages/db: verify 0002+0006 apply; add test-only non-BYPASSRLS app role + session-claim helper",
+            "2. packages/shared: Capability/ClaimSet/Membership/AuthResult types",
+            "3. packages/tenancy: can()+resolveRole+requireCapability",
+            "4. packages/tenancy: switchActiveWorkspace+buildJwtClaims+isCrossTenantAccess+recordCrossTenantAccess",
+            "5. packages/db: scopedQuery/workspace-scoped repo helper",
+            "6. services/authorizer: authorize() core + buildAuthorizerPolicy",
+            "7. services/authorizer: thin handler with jose JWKS + lookups",
+            "8. services/api: route role-enforcement + audit-write",
+            "9. tests/e2e: thin LocalStack wiring"
+          ],
+          "notes": "§6 tenancy tables (0002) + RLS (0006) ALREADY EXIST with FORCE RLS, uniform tenant_isolation policy, narrow OR app_is_platform_admin() exception, platform_only policies, workspace_users self-membership carve-out for switcher. profiles UNIQUE(workspace_id,external_id) in 0003. RLS helpers read current_setting('request.jwt.claims',true)::jsonb -> integration tests set claim via set_config, not real JWT. CRITICAL: run RLS integration tests as non-superuser WITHOUT BYPASSRLS or they pass vacuously; use separate service-role connection to seed and to prove bypass. Mock JWKS/jose + AWS SDK; never mock Postgres. Add jose dep to authorizer, pg/testcontainers to db tests.",
+          "pureFunctions": [
+            "can(role,capability)",
+            "requireCapability(ctx,capability)",
+            "resolveRole(memberships,activeWorkspaceId)",
+            "switchActiveWorkspace(memberships,target,isPlatformAdmin)",
+            "buildJwtClaims(ctx)",
+            "authorize(decodedJwt,membership,isPlatformAdmin)",
+            "buildAuthorizerPolicy(authResult)",
+            "recordCrossTenantAccess(userId,workspaceId,action,detail)",
+            "isCrossTenantAccess(ctx,targetWorkspaceId)",
+            "scopedQuery(workspaceId,fragment,params)"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "connect as non-superuser non-BYPASSRLS app role so FORCE RLS applies",
+                "seed wsA/wsB rows via service-role",
+                "set request.jwt.claims via set_config and assert app_current_workspace_id()",
+                "SELECT returns only wsA rows",
+                "UPDATE WHERE workspace_id=wsB affects 0 rows",
+                "INSERT with wsB under wsA claim rejected by WITH CHECK",
+                "repeat across all tenant tables",
+                "switch claim to wsB, symmetric result"
+              ],
+              "criterion": "AC1 RLS read/write isolation",
+              "path": "packages/db/test/rls-isolation.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "service-role connection bypasses RLS (sees both workspaces)",
+                "scopedQuery helper always emits workspace_id=$n bound to wsA",
+                "returns only wsA rows despite bypass-capable connection",
+                "throws if no workspaceId"
+              ],
+              "criterion": "AC1 service-role in-code scoping",
+              "path": "services/api/test/service-role-scoping.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "same external_id in wsA and wsB both succeed",
+                "second same external_id in wsA fails 23505",
+                "distinct profile.id",
+                "wsA claim sees exactly one"
+              ],
+              "criterion": "AC2 per-workspace uniqueness",
+              "path": "packages/db/test/per-workspace-uniqueness.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "can() pure, table-driven over §3A",
+                "marketer denied users/domain/billing",
+                "accounting billing_view only",
+                "owner all within workspace not view_all_workspaces",
+                "system-admin all incl view_all_workspaces",
+                "unknown => deny no throw"
+              ],
+              "criterion": "AC3 capability matrix",
+              "path": "packages/tenancy/test/role-capability-matrix.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "requireCapability denies marketer on manage_users/domain/billing",
+                "accounting denied segment/campaign edit, allowed billing read",
+                "owner allowed users+billing",
+                "deny carries reason no data"
+              ],
+              "criterion": "AC3 route gate",
+              "path": "services/api/test/route-role-enforcement.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "authorize() pure, JWKS injected",
+                "valid JWT wsA+marketer injects context",
+                "platform_admins lookup sets isPlatformAdmin",
+                "active workspace not in memberships and not admin => Deny",
+                "expired/invalid/missing-sub => Deny",
+                "never uses body workspace_id"
+              ],
+              "criterion": "AC3/4/5 authorizer core",
+              "path": "services/authorizer/test/authorize.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "allow -> APIGatewayAuthorizerResult context",
+                "deny -> Deny policy/Unauthorized",
+                "delegates to injected authorize"
+              ],
+              "criterion": "AC3/5 thin handler",
+              "path": "services/authorizer/test/handler.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "is_platform_admin claim reads wsB tenant table",
+                "same query without admin returns 0",
+                "recordCrossTenantAccess writes one audit row",
+                "admin path writes one row, normal read writes none",
+                "admin_audit_log readable only under is_platform_admin"
+              ],
+              "criterion": "AC4 cross-tenant audit",
+              "path": "services/authorizer/test/admin-audit.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "switchActiveWorkspace only if member",
+                "role re-resolved per workspace",
+                "non-member rejected unless admin",
+                "single active workspace_id"
+              ],
+              "criterion": "AC5 claim re-issue",
+              "path": "packages/tenancy/test/active-workspace-switch.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "claim wsA returns only wsA",
+                "re-issue claim wsB on same connection returns only wsB",
+                "never both visible",
+                "user sees own membership rows for both"
+              ],
+              "criterion": "AC5 re-scope on switch",
+              "path": "packages/db/test/workspace-switch-rescope.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "authorizer -> requestContext workspace_id=wsA -> scoped data",
+                "body workspace_id=wsB ignored",
+                "minimal: one allow + one deny"
+              ],
+              "criterion": "AC1/3/5 wiring",
+              "path": "tests/e2e/authorizer-api.e2e.test.ts",
+              "tier": "e2e"
+            }
+          ]
+        },
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Independently RUN the tests (pnpm test for the phase scope), pnpm typecheck, pnpm lint. Record real pass/fail.",
+        "Verify EACH acceptance criterion is actually covered by a passing test: [\"A Workspace-A JWT cannot read/modify Workspace-B rows under RLS; service-role code paths still scope by workspace_id in code.\",\"Two workspaces with the same external_id/email keep fully separate profiles (UNIQUE(workspace_id, external_id)).\",\"Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/campaigns; owner can do both within the workspace.\",\"system-admin can view across companies and every cross-tenant access is recorded in admin_audit_log.\",\"Multi-workspace switching: a user in two workspaces sees only the active workspace; switching changes the workspace_id claim and re-scopes; no cross-bleed.\"].",
+        "Tenant-isolation review (highest priority): confirm workspace_id scoping in code on every query, that RLS policies are correct, that service-role paths still scope in code, and that workspace_id is never read from client input. For phase5, verify the SQL compiler whitelists fields/operators, parameterizes, and ALWAYS injects workspace_id.",
+        "Scope check: flag any feature implemented beyond the cited spec sections.",
+        "If integration tests mock Postgres, that is a FAIL (must use real local Postgres per §16A).",
+        "Score 0-100. Set testsPass and criteriaAllMet honestly. Give concrete prioritized recommendations."
+      ],
+      "outputFormat": "JSON: { score: number, testsPass: boolean, criteriaAllMet: boolean, criteriaCoverage: [{criterion, met:boolean, evidence}], isolationOk: boolean, scopeCreep: string[], recommendations: string[], criticalIssues: string[] }",
+      "role": "adversarial principal reviewer + QA engineer verifying spec-fidelity and tenant isolation",
+      "task": "Independently verify \"Auth + authorizer + roles\" against its §18 criteria. Re-run the tests yourself; do not trust the self-report."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTEZ07NNCX25FP8QFMM7ASVZ/input.json",
+    "outputJsonPath": "tasks/01KTEZ07NNCX25FP8QFMM7ASVZ/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "iteration-2",
+    "phase2-auth",
+    "quality-gate"
+  ],
+  "title": "Quality gate: Auth + authorizer + roles (iteration 2)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTEZ07NNCX25FP8QFMM7ASVZ",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/foundation:S000007:quality-gate",
+  "stepId": "S000007",
+  "inputs": {
+    "impl": {
+      "commandsRun": [
+        "rm -rf .turbo/cache node_modules/.cache/turbo",
+        "DATABASE_URL=... pnpm test (x4 cold)",
+        "pnpm typecheck",
+        "pnpm lint"
+      ],
+      "filesCreated": [],
+      "filesModified": [
+        "turbo.json",
+        "packages/db/src/testutil.ts"
+      ],
+      "lintOk": true,
+      "notes": "Race fix: ensureTestAppRole() now wraps role DDL in a txn serialized by pg_advisory_xact_lock + idempotent CREATE-IF-NOT-EXISTS/GRANT/ALTER, so parallel callers no longer race pg_authid tuples. Role stays NOLOGIN NOBYPASSRLS. turbo.json test task set cache:false (DB-integration depends on live external state turbo can't key on; stale cache was masking the failure). RLS guard asserting pg_roles.rolbypassrls=false still passing. No RLS weakening, no DB mocking. Rebuilt @cdp/db so authorizer picks up fixed helper.",
+      "testsPass": true,
+      "testSummary": "Iteration 2 (determinism fix). 4 consecutive COLD-cache runs all green (0 cached, 27/27 tasks each). Integration tier ran every time (not skipped): rls-isolation(5), workspace-switch-rescope(1), per-workspace-uniqueness(2), admin-audit(3), service-role-scoping(3); 67 unit. Original 'tuple concurrently updated' failure reproduced first, then fixed.",
+      "typecheckOk": true
+    },
+    "iteration": 2,
+    "phase": {
+      "criteria": [
+        "A Workspace-A JWT cannot read/modify Workspace-B rows under RLS; service-role code paths still scope by workspace_id in code.",
+        "Two workspaces with the same external_id/email keep fully separate profiles (UNIQUE(workspace_id, external_id)).",
+        "Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/campaigns; owner can do both within the workspace.",
+        "system-admin can view across companies and every cross-tenant access is recorded in admin_audit_log.",
+        "Multi-workspace switching: a user in two workspaces sees only the active workspace; switching changes the workspace_id claim and re-scopes; no cross-bleed."
+      ],
+      "id": "phase2-auth",
+      "scope": [
+        "packages/db: workspaces, workspace_users, platform_admins, admin_audit_log, workspace_api_keys tables + RLS policies (workspace_id = auth.jwt()->>workspace_id) with the narrow system-admin (is_platform_admin) exception.",
+        "packages/tenancy: workspace-context + role-check helpers (owner/marketer/accounting capability matrix from §3A).",
+        "services/authorizer: Lambda authorizer that validates a Supabase JWT (JWKS), resolves workspace membership + role (or is_platform_admin), and injects workspace_id + role into request context. Logic in a pure injected function.",
+        "Multi-workspace membership + active-workspace switching (claim re-issue)."
+      ],
+      "specSections": "§3 (multi-tenancy + RLS caveat), §3A (4-role model), §6 (workspaces, workspace_users, platform_admins, admin_audit_log, workspace_api_keys), §12 (role-aware API), §13 (security)",
+      "title": "Auth + authorizer + roles"
+    },
+    "plan": {
+      "implUnits": [
+        "1. packages/db: verify 0002+0006 apply; add test-only non-BYPASSRLS app role + session-claim helper",
+        "2. packages/shared: Capability/ClaimSet/Membership/AuthResult types",
+        "3. packages/tenancy: can()+resolveRole+requireCapability",
+        "4. packages/tenancy: switchActiveWorkspace+buildJwtClaims+isCrossTenantAccess+recordCrossTenantAccess",
+        "5. packages/db: scopedQuery/workspace-scoped repo helper",
+        "6. services/authorizer: authorize() core + buildAuthorizerPolicy",
+        "7. services/authorizer: thin handler with jose JWKS + lookups",
+        "8. services/api: route role-enforcement + audit-write",
+        "9. tests/e2e: thin LocalStack wiring"
+      ],
+      "notes": "§6 tenancy tables (0002) + RLS (0006) ALREADY EXIST with FORCE RLS, uniform tenant_isolation policy, narrow OR app_is_platform_admin() exception, platform_only policies, workspace_users self-membership carve-out for switcher. profiles UNIQUE(workspace_id,external_id) in 0003. RLS helpers read current_setting('request.jwt.claims',true)::jsonb -> integration tests set claim via set_config, not real JWT. CRITICAL: run RLS integration tests as non-superuser WITHOUT BYPASSRLS or they pass vacuously; use separate service-role connection to seed and to prove bypass. Mock JWKS/jose + AWS SDK; never mock Postgres. Add jose dep to authorizer, pg/testcontainers to db tests.",
+      "pureFunctions": [
+        "can(role,capability)",
+        "requireCapability(ctx,capability)",
+        "resolveRole(memberships,activeWorkspaceId)",
+        "switchActiveWorkspace(memberships,target,isPlatformAdmin)",
+        "buildJwtClaims(ctx)",
+        "authorize(decodedJwt,membership,isPlatformAdmin)",
+        "buildAuthorizerPolicy(authResult)",
+        "recordCrossTenantAccess(userId,workspaceId,action,detail)",
+        "isCrossTenantAccess(ctx,targetWorkspaceId)",
+        "scopedQuery(workspaceId,fragment,params)"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "connect as non-superuser non-BYPASSRLS app role so FORCE RLS applies",
+            "seed wsA/wsB rows via service-role",
+            "set request.jwt.claims via set_config and assert app_current_workspace_id()",
+            "SELECT returns only wsA rows",
+            "UPDATE WHERE workspace_id=wsB affects 0 rows",
+            "INSERT with wsB under wsA claim rejected by WITH CHECK",
+            "repeat across all tenant tables",
+            "switch claim to wsB, symmetric result"
+          ],
+          "criterion": "AC1 RLS read/write isolation",
+          "path": "packages/db/test/rls-isolation.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "service-role connection bypasses RLS (sees both workspaces)",
+            "scopedQuery helper always emits workspace_id=$n bound to wsA",
+            "returns only wsA rows despite bypass-capable connection",
+            "throws if no workspaceId"
+          ],
+          "criterion": "AC1 service-role in-code scoping",
+          "path": "services/api/test/service-role-scoping.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "same external_id in wsA and wsB both succeed",
+            "second same external_id in wsA fails 23505",
+            "distinct profile.id",
+            "wsA claim sees exactly one"
+          ],
+          "criterion": "AC2 per-workspace uniqueness",
+          "path": "packages/db/test/per-workspace-uniqueness.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "can() pure, table-driven over §3A",
+            "marketer denied users/domain/billing",
+            "accounting billing_view only",
+            "owner all within workspace not view_all_workspaces",
+            "system-admin all incl view_all_workspaces",
+            "unknown => deny no throw"
+          ],
+          "criterion": "AC3 capability matrix",
+          "path": "packages/tenancy/test/role-capability-matrix.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "requireCapability denies marketer on manage_users/domain/billing",
+            "accounting denied segment/campaign edit, allowed billing read",
+            "owner allowed users+billing",
+            "deny carries reason no data"
+          ],
+          "criterion": "AC3 route gate",
+          "path": "services/api/test/route-role-enforcement.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "authorize() pure, JWKS injected",
+            "valid JWT wsA+marketer injects context",
+            "platform_admins lookup sets isPlatformAdmin",
+            "active workspace not in memberships and not admin => Deny",
+            "expired/invalid/missing-sub => Deny",
+            "never uses body workspace_id"
+          ],
+          "criterion": "AC3/4/5 authorizer core",
+          "path": "services/authorizer/test/authorize.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "allow -> APIGatewayAuthorizerResult context",
+            "deny -> Deny policy/Unauthorized",
+            "delegates to injected authorize"
+          ],
+          "criterion": "AC3/5 thin handler",
+          "path": "services/authorizer/test/handler.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "is_platform_admin claim reads wsB tenant table",
+            "same query without admin returns 0",
+            "recordCrossTenantAccess writes one audit row",
+            "admin path writes one row, normal read writes none",
+            "admin_audit_log readable only under is_platform_admin"
+          ],
+          "criterion": "AC4 cross-tenant audit",
+          "path": "services/authorizer/test/admin-audit.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "switchActiveWorkspace only if member",
+            "role re-resolved per workspace",
+            "non-member rejected unless admin",
+            "single active workspace_id"
+          ],
+          "criterion": "AC5 claim re-issue",
+          "path": "packages/tenancy/test/active-workspace-switch.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "claim wsA returns only wsA",
+            "re-issue claim wsB on same connection returns only wsB",
+            "never both visible",
+            "user sees own membership rows for both"
+          ],
+          "criterion": "AC5 re-scope on switch",
+          "path": "packages/db/test/workspace-switch-rescope.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "authorizer -> requestContext workspace_id=wsA -> scoped data",
+            "body workspace_id=wsB ignored",
+            "minimal: one allow + one deny"
+          ],
+          "criterion": "AC1/3/5 wiring",
+          "path": "tests/e2e/authorizer-api.e2e.test.ts",
+          "tier": "e2e"
+        }
+      ]
+    }
+  }
+}

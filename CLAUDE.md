@@ -94,4 +94,20 @@ Creating AWS/Supabase accounts, approving SES production access, and adding DNS 
 
 ## Commands
 
-No build/test/lint commands exist yet — there is no `package.json`. **When scaffolding the project, add the chosen commands (build, test, single-test, lint, CDK deploy, local dev) to this section** so future instances don't have to rediscover them.
+Tooling: **pnpm workspaces + Turborepo + Vitest + TypeScript (strict)**. Node 20+. Run from repo root.
+
+- **Install:** `pnpm install`
+- **Build:** `pnpm build` (turbo → `tsc -b` per package)
+- **Typecheck:** `pnpm typecheck`
+- **Test (all):** `pnpm test` (Vitest)
+- **Single test file:** `pnpm --filter <pkg> exec vitest run path/to/file.test.ts` (e.g. `--filter @cdp/segments`)
+- **Lint / format:** `pnpm lint` · `pnpm format` (Prettier)
+- **Local Postgres (Supabase CLI):** `pnpm db:start` then `pnpm db:migrate` (reset + re-apply migrations in `packages/db/supabase/migrations`)
+- **LocalStack (SQS/S3/SNS/API GW):** `pnpm localstack:start` (docker compose; see `docker-compose.yml`)
+- **CDK:** `pnpm --filter @cdp/infra synth` / `... deploy`
+
+Workspace layout: packages are `@cdp/<name>` (shared, db, segments, email, tenancy); services are `@cdp/service-<name>`; infra is `@cdp/infra`; web is `@cdp/web`. Strict TS base in `tsconfig.base.json`; each package extends it and uses project references (`tsc -b`).
+
+### Status of scaffolding
+
+Phase-1 scaffolding only — no business/feature logic yet. The full §6 schema (all tables, RLS enabled with the `workspace_id` policy + narrow `is_platform_admin` exception, `workspace_id`-leading indexes) is encoded in `packages/db/supabase/migrations/0001..0006`. Foundation services (authorizer/ingest/processor) have thin handler shells; later-phase services are placeholders. `packages/db/src/client.ts` is a pooled `pg` connection helper (no queries).

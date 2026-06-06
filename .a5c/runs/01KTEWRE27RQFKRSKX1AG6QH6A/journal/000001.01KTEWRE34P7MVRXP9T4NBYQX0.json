@@ -1,0 +1,14 @@
+{
+  "type": "RUN_CREATED",
+  "recordedAt": "2026-06-06T16:37:47.236Z",
+  "data": {
+    "runId": "01KTEWRE27RQFKRSKX1AG6QH6A",
+    "processId": "cdp/foundation",
+    "entrypoint": {
+      "importPath": "../../processes/cdp-foundation.js",
+      "exportName": "process"
+    },
+    "inputsRef": "inputs.json"
+  },
+  "checksum": "1db62e0c8ea337ec0f87ed0da46b089dc8c9b5bb097c27d3bbf62ae4182195f9"
+}

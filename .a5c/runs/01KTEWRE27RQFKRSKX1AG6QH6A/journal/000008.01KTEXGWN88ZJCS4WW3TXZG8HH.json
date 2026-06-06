@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T16:51:08.584Z",
+  "data": {
+    "effectId": "01KTEXGWMRFCETXT2NKKJKVZ3V",
+    "invocationKey": "cdp/foundation:S000004:implement-phase",
+    "invocationHash": "d5cd14ea5f99c45928de36725b04aedf4456292d05c72a20576e9df841883d01",
+    "stepId": "S000004",
+    "taskId": "implement-phase",
+    "kind": "agent",
+    "label": "implement",
+    "taskDefRef": "tasks/01KTEXGWMRFCETXT2NKKJKVZ3V/task.json",
+    "labels": [
+      "implement",
+      "phase2-auth",
+      "iteration-1"
+    ]
+  },
+  "checksum": "e65e8b3ff2a9b52d67a9b1049b7e1046a8a9595aaf4b31da9f7a9b0059551621"
+}

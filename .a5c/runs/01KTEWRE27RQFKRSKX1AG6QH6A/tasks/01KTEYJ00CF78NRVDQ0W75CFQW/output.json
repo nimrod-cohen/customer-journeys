@@ -1,0 +1,24 @@
+{
+  "score": 72,
+  "testsPass": false,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {"criterion":"AC1","met":true,"evidence":"rls-isolation.integration.test.ts SET LOCAL ROLE cdp_app_test (verified rolsuper=false rolbypassrls=false) + set_config jwt.claims; reads only WS-A, cannot read/update/insert WS-B (WITH CHECK). service-role-scoping proves scopedQuery isolates in-code on bypass conn. BUT AC1 suite fails intermittently on cold cache (DDL race, not isolation defect)."},
+    {"criterion":"AC2","met":true,"evidence":"per-workspace-uniqueness: same external_id in two ws OK; duplicate within ws rejected. UNIQUE(workspace_id,external_id) in 0003."},
+    {"criterion":"AC3","met":true,"evidence":"role-capability-matrix drives full §3A matrix; route-role-enforcement maps failures to 403 per role."},
+    {"criterion":"AC4","met":true,"evidence":"admin-audit.integration: real audit row; platform_only RLS (non-admin 0 rows, admin sees row); handleAdminAccess writes on cross-tenant, no-op otherwise."},
+    {"criterion":"AC5","met":true,"evidence":"workspace-switch-rescope: flipping jwt claim re-scopes a-only->b-only no bleed; authorize denies forged non-membership workspace."}
+  ],
+  "isolationOk": true,
+  "scopeCreep": [],
+  "recommendations": [
+    "Disable turbo caching for DB-integration tests: add cache:false to the test task (or proper inputs incl live DB). Initial green run was a cache replay masking a hard failure.",
+    "Make ensureTestAppRole() concurrency-safe OR run db integration files serially (vitest fileParallelism:false / singleThread), OR do the ALTER ROLE/GRANT DDL once in global setup under pg_advisory_xact_lock. Root cause of 'tuple concurrently updated' is parallel ALTER ROLE/GRANT on shared catalog tuples.",
+    "Give each integration file a unique fixture namespace; avoid broad DELETE FROM workspaces in beforeAll that races other files.",
+    "Add CI step running pnpm test with cleared cache (turbo --force) so the merge gate can't pass on stale cache."
+  ],
+  "criticalIssues": [
+    "DATABASE_URL=... pnpm test is NON-DETERMINISTIC and FAILS on cold turbo cache: @cdp/db#test 'tuple concurrently updated' (8/13), failing AC1 RLS suite (sometimes AC5). Reproduced 4x. First green run was turbo replaying 21/27 cached results. Per §16A/§17 a phase is done only when tests are green in CI -> currently red on fresh checkout.",
+    "Turbo caches DB-integration outcomes on file hashes, unsound for tests depending on live Postgres state/concurrency; hid the failure during self-verification."
+  ]
+}

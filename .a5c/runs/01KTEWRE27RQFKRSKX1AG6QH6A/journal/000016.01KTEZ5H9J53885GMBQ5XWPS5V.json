@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T17:19:53.651Z",
+  "data": {
+    "effectId": "01KTEZ5H91C3RB93H9ZM5XDQTH",
+    "invocationKey": "cdp/foundation:S000008:commit-phase",
+    "invocationHash": "9d52d4cbcf6fd1346a9cee3ec38b3a20954008b0711733742aaaccd2e9359be6",
+    "stepId": "S000008",
+    "taskId": "commit-phase",
+    "kind": "agent",
+    "label": "commit",
+    "taskDefRef": "tasks/01KTEZ5H91C3RB93H9ZM5XDQTH/task.json",
+    "labels": [
+      "commit",
+      "phase2-auth"
+    ]
+  },
+  "checksum": "270af366490f6051941e95cf33b6f4f26e923eb20db1fbc8e5ced6113266a0fe"
+}

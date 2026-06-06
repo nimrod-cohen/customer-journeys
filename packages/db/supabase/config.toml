@@ -1,0 +1,39 @@
+# Supabase local config for the CDP database (LOCAL DEV ONLY).
+# Run from packages/db: `supabase start` then `supabase db reset`.
+project_id = "cdp-local"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = true
+port = 54329
+pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+# Local JWT secret used to mint test tokens carrying the workspace_id claim.
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.jwt]
+# The CDP RLS policies read `auth.jwt() ->> 'workspace_id'`; seed/test tokens
+# must include this custom claim. See CDP-BUILD-SPEC.md §3, §6.
+
+[inbucket]
+enabled = false

@@ -1,0 +1,96 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commandsRun": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesCreated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "installOk": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "scripts": {
+          "type": "object"
+        },
+        "typecheckOk": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "filesCreated",
+        "installOk",
+        "typecheckOk"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "environment": "LOCAL ONLY — Supabase CLI for Postgres + migrations + RLS; LocalStack for SQS/S3/SNS/API GW. Docker-based.",
+        "invariants": [
+          "Tenant isolation is the top property: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id.",
+          "Service-role Lambda code bypasses RLS — it MUST scope by workspace_id in code; RLS is only the backstop for user-context (admin app) reads.",
+          "workspace_id is NEVER taken from a client payload — derive it from the API key (ingest) or the authorizer-injected claim (admin API).",
+          "Per-profile ordering via MessageGroupId=profile_id; code must be idempotent and order-convergent (progress-before-profile_created still converges).",
+          "Idempotency: events.event_id is the dedupe key (INSERT ... ON CONFLICT DO NOTHING).",
+          "Segment rule-AST -> SQL is compiled with a field/operator whitelist, parameterized SQL only, and ALWAYS prepends workspace_id = $ws. Never interpolate raw input.",
+          "Local-only: verify against LocalStack + Supabase CLI/Testcontainers. Do NOT mock Postgres in the integration tier. Mock SES (never send real mail).",
+          "Scope discipline: implement exactly what the cited spec sections require — no extra features, no gold-plating."
+        ],
+        "previousGateFeedback": null,
+        "readSections": [
+          "§4 (stack)",
+          "§6 (full SQL data model + RLS)",
+          "§14 (CDK)",
+          "§15 (local dev)",
+          "§19 (repo structure)"
+        ],
+        "spec": "CDP-BUILD-SPEC.md",
+        "tooling": "pnpm workspaces + Turborepo + Vitest + TypeScript (strict). AWS CDK (TypeScript) for /infra."
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections §4, §6, §14, §15, §19 before doing anything.",
+        "Create the §19 layout: /infra, /services/{ingest,processor,dispatcher,broadcast,campaign-runner,feedback,unsubscribe,image,onboarding,batch-eval,metering,api,authorizer}, /packages/{shared,db,segments,email,tenancy}, /web, /scripts, /tests. Service/package dirs that belong to later phases may be created empty with a placeholder package.json.",
+        "Root: pnpm-workspace.yaml, turbo.json (build/test/typecheck/lint pipelines), root package.json with scripts (build, test, typecheck, lint), strict tsconfig base, vitest config, .gitignore (node_modules, .env*, dist, coverage, .a5c/runs/*/state, supabase/.temp, cdk.out).",
+        "packages/db: encode the ENTIRE §6 SQL schema as ordered migration files (UUID PKs, timestamptz, citext, RLS ENABLED on every tenant-scoped table with policy workspace_id = (auth.jwt()->>workspace_id)::uuid plus the narrow is_platform_admin exception, workspace_id as the leading index column). Provide a pooled pg client helper. Wire Supabase CLI config (supabase/config.toml) and a script to start local Postgres + apply migrations.",
+        "Add a docker-compose or scripts for LocalStack (SQS/S3/SNS). Add aws-sdk-client-mock and supabase/testcontainers dev deps for the test tiers (§16A).",
+        "Run `pnpm install` and `pnpm typecheck` (and `pnpm -w build` if defined). Fix issues until both succeed. Do NOT write feature/business logic yet — only scaffolding + the db schema/migrations.",
+        "If addressing previousGateFeedback, fix exactly those items.",
+        "Return ONLY the JSON result described in outputFormat — concise, no prose."
+      ],
+      "outputFormat": "JSON: { filesCreated: string[], scripts: object, installOk: boolean, typecheckOk: boolean, notes: string, commandsRun: string[] }",
+      "role": "senior platform engineer setting up a TypeScript serverless monorepo",
+      "task": "Scaffold the CDP monorepo and the database package so all later phases build cleanly."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTEWRK5V6059PSH8T5SSG94K/input.json",
+    "outputJsonPath": "tasks/01KTEWRK5V6059PSH8T5SSG94K/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "iteration-1",
+    "scaffold"
+  ],
+  "title": "Scaffold monorepo (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTEWRK5V6059PSH8T5SSG94K",
+  "taskId": "scaffold-monorepo",
+  "invocationKey": "cdp/foundation:S000001:scaffold-monorepo",
+  "stepId": "S000001",
+  "inputs": {
+    "iteration": 1,
+    "prevFeedback": null
+  }
+}

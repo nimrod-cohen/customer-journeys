@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T16:46:17.341Z",
+  "data": {
+    "effectId": "01KTEX807AWEPNP2F75T1R43QC",
+    "invocationKey": "cdp/foundation:S000002:scaffold-gate",
+    "invocationHash": "f005f9cca2b7ac92af17d9e8d0ee5f84731888b5d0586a946af0051f338dfb51",
+    "stepId": "S000002",
+    "taskId": "scaffold-gate",
+    "kind": "agent",
+    "label": "scaffold",
+    "taskDefRef": "tasks/01KTEX807AWEPNP2F75T1R43QC/task.json",
+    "labels": [
+      "scaffold",
+      "quality-gate",
+      "iteration-1"
+    ]
+  },
+  "checksum": "26230b368709258ae93aef9a0c82cc447281daf1a68f0c7dfd58e371c1514229"
+}

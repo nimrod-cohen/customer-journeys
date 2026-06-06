@@ -1,0 +1,26 @@
+node_modules/
+dist/
+coverage/
+cdk.out/
+.turbo/
+*.tsbuildinfo
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Supabase local
+supabase/.temp/
+**/supabase/.temp/
+
+# LocalStack
+.localstack/
+volume/
+
+# a5c run state
+.a5c/runs/*/state
+
+# OS / editor
+.DS_Store
+*.log

@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTEZ07NNCX25FP8QFMM7ASVZ",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/foundation:S000007:quality-gate",
+  "status": "ok",
+  "result": {
+    "coldRunsGreen": 3,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "rls-isolation (5 tests, real PG, non-BYPASSRLS): reads only WS-A, UPDATE WS-B rowCount=0, WITH CHECK blocks WS-B write, guard asserts rolbypassrls=false. service-role-scoping proves scopedQuery isolates in-code on bypass conn; scopedQuery mandatorily prepends workspace_id=$1, throws on falsy.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "per-workspace-uniqueness (real PG): same external_id across 2 ws OK; duplicate within 1 ws rejected. UNIQUE(workspace_id,external_id).",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "role-capability-matrix exhaustive §3A 4 roles x 5 caps; route-role-enforcement uses authorizer-injected context (not body), 403 on denial.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "admin-audit (real PG): cross-tenant entry persisted; admin_audit_log platform-only (workspace user count=0, platform-admin count=1). FORCE RLS + platform_only policy.",
+        "met": true
+      },
+      {
+        "criterion": "AC5",
+        "evidence": "workspace-switch-rescope (real PG): flipping claim yields a-only/b-only no bleed; authorize denies non-membership workspace claim.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "ensureTestAppRole interpolates a hardcoded role constant into DDL; safe today, format(%I) would harden.",
+      "Assert SQLSTATE 23505 in AC2 rather than message regex for locale/version resilience.",
+      "Add CI guard running DB-integration tier with >=3 cold turbo runs to catch any reintroduction of caching."
+    ],
+    "scopeCreep": [],
+    "score": 94,
+    "testsPass": true
+  },
+  "startedAt": "2026-06-06T17:19:53.267Z",
+  "finishedAt": "2026-06-06T17:19:53.267Z",
+  "value": {
+    "coldRunsGreen": 3,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "rls-isolation (5 tests, real PG, non-BYPASSRLS): reads only WS-A, UPDATE WS-B rowCount=0, WITH CHECK blocks WS-B write, guard asserts rolbypassrls=false. service-role-scoping proves scopedQuery isolates in-code on bypass conn; scopedQuery mandatorily prepends workspace_id=$1, throws on falsy.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "per-workspace-uniqueness (real PG): same external_id across 2 ws OK; duplicate within 1 ws rejected. UNIQUE(workspace_id,external_id).",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "role-capability-matrix exhaustive §3A 4 roles x 5 caps; route-role-enforcement uses authorizer-injected context (not body), 403 on denial.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "admin-audit (real PG): cross-tenant entry persisted; admin_audit_log platform-only (workspace user count=0, platform-admin count=1). FORCE RLS + platform_only policy.",
+        "met": true
+      },
+      {
+        "criterion": "AC5",
+        "evidence": "workspace-switch-rescope (real PG): flipping claim yields a-only/b-only no bleed; authorize denies non-membership workspace claim.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "ensureTestAppRole interpolates a hardcoded role constant into DDL; safe today, format(%I) would harden.",
+      "Assert SQLSTATE 23505 in AC2 rather than message regex for locale/version resilience.",
+      "Add CI guard running DB-integration tier with >=3 cold turbo runs to catch any reintroduction of caching."
+    ],
+    "scopeCreep": [],
+    "score": 94,
+    "testsPass": true
+  }
+}

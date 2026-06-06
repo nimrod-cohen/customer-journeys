@@ -1,0 +1,16 @@
+# LocalStack for local SQS (FIFO) / S3 / SNS / API Gateway emulation.
+# Supabase Postgres is managed separately via the Supabase CLI (see packages/db).
+services:
+  localstack:
+    image: localstack/localstack:3
+    container_name: cdp-localstack
+    ports:
+      - '4566:4566' # edge / single entrypoint for all services
+    environment:
+      - SERVICES=sqs,s3,sns,apigateway
+      - DEBUG=0
+      - PERSISTENCE=0
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - './volume:/var/lib/localstack'
+      - '/var/run/docker.sock:/var/run/docker.sock'

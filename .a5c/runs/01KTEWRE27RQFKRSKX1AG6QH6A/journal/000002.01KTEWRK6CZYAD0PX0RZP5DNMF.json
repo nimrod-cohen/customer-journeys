@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T16:37:52.460Z",
+  "data": {
+    "effectId": "01KTEWRK5V6059PSH8T5SSG94K",
+    "invocationKey": "cdp/foundation:S000001:scaffold-monorepo",
+    "invocationHash": "ffbab913425c6dd372755aec048415c79e9a2e25705d0c2143c1b7465f8d1f18",
+    "stepId": "S000001",
+    "taskId": "scaffold-monorepo",
+    "kind": "agent",
+    "label": "scaffold",
+    "taskDefRef": "tasks/01KTEWRK5V6059PSH8T5SSG94K/task.json",
+    "labels": [
+      "scaffold",
+      "iteration-1"
+    ]
+  },
+  "checksum": "7fc0c4f4418f1c106bfe3ea3bdb82010fff9a42ad9646db2fe7071790c0e28c9"
+}

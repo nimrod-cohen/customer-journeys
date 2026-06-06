@@ -1,0 +1,10 @@
+{
+  "name": "cdp-babysitter-orchestration",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Babysitter orchestration processes for the CDP build",
+  "dependencies": {
+    "@a5c-ai/babysitter-sdk": "latest"
+  }
+}

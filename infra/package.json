@@ -1,0 +1,25 @@
+{
+  "name": "@cdp/infra",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "infra": "bin/infra.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit false",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint bin lib",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.147.0",
+    "constructs": "^10.3.0"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.147.0"
+  }
+}

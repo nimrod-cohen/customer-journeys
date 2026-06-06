@@ -1,0 +1,21 @@
+{
+  "score": 94,
+  "testsPass": true,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {"criterion":"AC1","met":true,"evidence":"rls-isolation (5 tests, real PG, non-BYPASSRLS): reads only WS-A, UPDATE WS-B rowCount=0, WITH CHECK blocks WS-B write, guard asserts rolbypassrls=false. service-role-scoping proves scopedQuery isolates in-code on bypass conn; scopedQuery mandatorily prepends workspace_id=$1, throws on falsy."},
+    {"criterion":"AC2","met":true,"evidence":"per-workspace-uniqueness (real PG): same external_id across 2 ws OK; duplicate within 1 ws rejected. UNIQUE(workspace_id,external_id)."},
+    {"criterion":"AC3","met":true,"evidence":"role-capability-matrix exhaustive §3A 4 roles x 5 caps; route-role-enforcement uses authorizer-injected context (not body), 403 on denial."},
+    {"criterion":"AC4","met":true,"evidence":"admin-audit (real PG): cross-tenant entry persisted; admin_audit_log platform-only (workspace user count=0, platform-admin count=1). FORCE RLS + platform_only policy."},
+    {"criterion":"AC5","met":true,"evidence":"workspace-switch-rescope (real PG): flipping claim yields a-only/b-only no bleed; authorize denies non-membership workspace claim."}
+  ],
+  "isolationOk": true,
+  "coldRunsGreen": 3,
+  "scopeCreep": [],
+  "recommendations": [
+    "ensureTestAppRole interpolates a hardcoded role constant into DDL; safe today, format(%I) would harden.",
+    "Assert SQLSTATE 23505 in AC2 rather than message regex for locale/version resilience.",
+    "Add CI guard running DB-integration tier with >=3 cold turbo runs to catch any reintroduction of caching."
+  ],
+  "criticalIssues": []
+}

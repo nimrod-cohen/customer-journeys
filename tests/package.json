@@ -1,0 +1,22 @@
+{
+  "name": "@cdp/tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b --noEmit false || true",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint . --no-error-on-unmatched-pattern"
+  },
+  "dependencies": {
+    "@cdp/db": "workspace:*",
+    "@cdp/service-api": "workspace:*",
+    "@cdp/service-authorizer": "workspace:*",
+    "@cdp/shared": "workspace:*",
+    "@cdp/tenancy": "workspace:*"
+  },
+  "devDependencies": {
+    "aws-sdk-client-mock": "^4.0.1"
+  }
+}
