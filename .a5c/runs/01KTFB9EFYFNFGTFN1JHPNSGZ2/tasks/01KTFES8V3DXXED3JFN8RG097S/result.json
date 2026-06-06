@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTFES8V3DXXED3JFN8RG097S",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/email-dispatch:S000012:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "8c7bcc1917471ab8b84d27a48677f24579a09a48",
+    "committed": true,
+    "message": "feat(phase8): feedback, compliance & per-workspace reputation policing"
+  },
+  "startedAt": "2026-06-06T21:52:49.184Z",
+  "finishedAt": "2026-06-06T21:52:49.184Z",
+  "value": {
+    "commitHash": "8c7bcc1917471ab8b84d27a48677f24579a09a48",
+    "committed": true,
+    "message": "feat(phase8): feedback, compliance & per-workspace reputation policing"
+  }
+}

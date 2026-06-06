@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T21:52:59.538Z",
+  "data": {
+    "effectId": "01KTFESK3YVF45EGVS7KCF4JAQ",
+    "invocationKey": "cdp/email-dispatch:S000013:integration",
+    "invocationHash": "155e0ecdd62b09cf484f61d9847628318e2e2a5389542118cf08815db610f2fd",
+    "stepId": "S000013",
+    "taskId": "integration",
+    "kind": "agent",
+    "label": "integration",
+    "taskDefRef": "tasks/01KTFESK3YVF45EGVS7KCF4JAQ/task.json",
+    "labels": [
+      "integration",
+      "iteration-1"
+    ]
+  },
+  "checksum": "5ef8348033f71be79b727b49af880ccec6f2e631f8c777c983a0068356e39759"
+}

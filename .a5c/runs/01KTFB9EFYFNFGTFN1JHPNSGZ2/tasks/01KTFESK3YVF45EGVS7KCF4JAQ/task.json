@@ -1,0 +1,172 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "allPass": {
+          "type": "boolean"
+        },
+        "commandsRun": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "entrypoint": {
+          "type": "string"
+        },
+        "filesCreated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesModified": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "testSummary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "filesCreated",
+        "allPass"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "env": "Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp. Extend the existing /tests integration suite.",
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or the trusted message body set by an earlier server step.",
+          "LOCAL-only: SES (SendEmail), SNS, and the onboarding DNS/SES-status checks are MOCKED (aws-sdk-client-mock + injected resolvers). NEVER send real mail or hit real DNS/SES. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433.",
+          "Sending is gated on verification: the Dispatcher refuses to send for any workspace whose status is not active/verified (§10). Every send passes suppression -> frequency-cap -> quiet-hours, in that order.",
+          "Suppression is per-workspace: keyed (workspace_id, email); an unsubscribe/bounce in workspace A must NOT suppress the same email in workspace B. Hard bounces are ALSO recorded in the cross-workspace global_hard_bounces.",
+          "Idempotency: outbox.dedupe_key prevents double-sends; feedback handlers are idempotent on the SES message id / event.",
+          "Logic in pure injected functions; Lambda handlers stay thin and are unit-tested via the pure function. Reuse the Phase 2-5 harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text, values} shape.",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id is a GLOBAL PK). No cross-file races.",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), campaigns (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
+        ],
+        "phaseCriteria": [
+          {
+            "criteria": [
+              "A workspace whose domain is not verified (status != active) cannot send; once DKIM verifies via the (mocked) SES status, activate flips status to active and enables sending from its own domain with aligned DKIM/SPF/DMARC records returned.",
+              "start-domain returns the correct set of DNS records to publish (DKIM CNAMEs, SPF, MAIL FROM, DMARC); check-domain reports per-record state from mocked DNS + SES status and is the source of truth gate (SES status), not the registrar.",
+              "MJML templates compile to cross-client HTML at save time; both mjml and compiled_html are stored, workspace-scoped.",
+              "All onboarding state is workspace-scoped; one workspace activating never affects another."
+            ],
+            "id": "phase6-email-onboarding"
+          },
+          {
+            "criteria": [
+              "The Dispatcher refuses to send for a workspace whose status != active/verified.",
+              "A recipient on the workspace suppression list (or in global_hard_bounces) is skipped; suppression is checked before sending.",
+              "Per-workspace frequency cap holds (a recipient over the cap within the window is not sent again); quiet-hours defer/re-queue rather than send.",
+              "A successful send is recorded once in messages_log (+ usage_counters emails_sent); the dedupe_key prevents double-sends on retry; SES is called with the workspace Configuration Set only after suppression/cap/quiet-hours pass."
+            ],
+            "id": "phase7-dispatch"
+          },
+          {
+            "criteria": [
+              "A hard bounce suppresses the email in-workspace (and is recorded in global_hard_bounces); a complaint suppresses in-workspace and sets email_status=complained.",
+              "Suppression scoping: an unsubscribe in workspace A does NOT suppress the same email in workspace B.",
+              "Reputation policing: a workspace exceeding bounce/complaint thresholds is auto-suspended (status=suspended) WITHOUT pausing other workspaces.",
+              "The feedback handler is idempotent (re-delivered SES notifications do not double-write suppressions/email_events); soft bounces suppress only after N."
+            ],
+            "id": "phase8-feedback-reputation"
+          }
+        ],
+        "previousGateFeedback": null,
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md §9, §10, §10A, §16A, §18.",
+        "Extend /tests with an end-to-end email/dispatch flow driving the REAL service cores: onboard a workspace (start-domain -> check-domain with mocked DNS/SES -> activate to status=active) -> enqueue an outbox send -> Dispatcher (SES mocked) applies suppression/cap/quiet-hours and writes messages_log -> a (mocked) SNS bounce/complaint flows through the Feedback Lambda to per-workspace suppressions + email_events + (hard bounce) global_hard_bounces -> a subsequent send to that recipient is skipped.",
+        "Prove end-to-end: a workspace not yet active cannot send; suppression is per-workspace (A bounce/unsubscribe does not suppress B); a workspace breaching reputation thresholds is auto-suspended without pausing others; feedback handling is idempotent.",
+        "DB is REAL; SES/SNS/DNS are mocked at the boundary. Provide/extend a single `pnpm test:integration` entrypoint. Run until green (cold); report real output. Address previousGateFeedback if present.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { filesCreated: string[], filesModified: string[], allPass: boolean, testSummary: string, entrypoint: string, commandsRun: string[], notes: string }",
+      "role": "senior engineer writing end-to-end integration tests for the email/dispatch pipeline",
+      "task": "Write/repair cross-phase integration tests proving onboarding -> dispatch -> feedback work together against real local Postgres (SES/SNS mocked)."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFESK3YVF45EGVS7KCF4JAQ/input.json",
+    "outputJsonPath": "tasks/01KTFESK3YVF45EGVS7KCF4JAQ/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "integration",
+    "iteration-1"
+  ],
+  "title": "Cross-phase email/dispatch integration (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFESK3YVF45EGVS7KCF4JAQ",
+  "taskId": "integration",
+  "invocationKey": "cdp/email-dispatch:S000013:integration",
+  "stepId": "S000013",
+  "inputs": {
+    "iteration": 1,
+    "phases": [
+      {
+        "criteria": [
+          "A workspace whose domain is not verified (status != active) cannot send; once DKIM verifies via the (mocked) SES status, activate flips status to active and enables sending from its own domain with aligned DKIM/SPF/DMARC records returned.",
+          "start-domain returns the correct set of DNS records to publish (DKIM CNAMEs, SPF, MAIL FROM, DMARC); check-domain reports per-record state from mocked DNS + SES status and is the source of truth gate (SES status), not the registrar.",
+          "MJML templates compile to cross-client HTML at save time; both mjml and compiled_html are stored, workspace-scoped.",
+          "All onboarding state is workspace-scoped; one workspace activating never affects another."
+        ],
+        "id": "phase6-email-onboarding",
+        "scope": [
+          "packages/email: an injectable SES client wrapper (createDomainIdentity/getIdentityVerificationAttributes/createConfigurationSet — all mockable), MJML->HTML compile (mjml npm) used at template save, and List-Unsubscribe / List-Unsubscribe-Post header builders.",
+          "services/onboarding: Onboarding Lambda with three pure-cored entrypoints — start-domain (create SES domain identity + Easy DKIM + MAIL FROM subdomain, return the DNS records to publish: 3 DKIM CNAME, SPF TXT, MAIL FROM MX+SPF, recommended DMARC TXT), check-domain (run DNS lookups + read SES verification status — both injected/mocked — and return per-record pending/found/mismatch state), activate (gate: SES reports DKIM verified + required records resolve -> create the workspace Configuration Set on the SHARED IP pool -> set workspaces.status=active, sending_identity.verified=true).",
+          "A Template Lambda path: compile MJML->HTML at save time and store both mjml + compiled_html in email_templates (workspace-scoped).",
+          "Extend workspaces.sending_identity jsonb per §10A (from_domain, ses_identity, dkim_tokens, mail_from, dmarc_status, record_checks, verified, config_set, ip_mode=shared)."
+        ],
+        "specSections": "§10 (SES sending identity, gated onboarding, config set, IP strategy), §10A (onboarding wizard start/check/activate, DNS+SES validation), §11 (MJML compile at template save), §6 (workspaces.sending_identity jsonb, email_templates)",
+        "title": "Email infrastructure + guided domain onboarding"
+      },
+      {
+        "criteria": [
+          "The Dispatcher refuses to send for a workspace whose status != active/verified.",
+          "A recipient on the workspace suppression list (or in global_hard_bounces) is skipped; suppression is checked before sending.",
+          "Per-workspace frequency cap holds (a recipient over the cap within the window is not sent again); quiet-hours defer/re-queue rather than send.",
+          "A successful send is recorded once in messages_log (+ usage_counters emails_sent); the dedupe_key prevents double-sends on retry; SES is called with the workspace Configuration Set only after suppression/cap/quiet-hours pass."
+        ],
+        "id": "phase7-dispatch",
+        "scope": [
+          "services/dispatcher: SQS-triggered Lambda. For each outbox row id: load profile + template (workspace-scoped); REFUSE if the workspace is not active/verified; check suppressions for (workspace_id, email) AND global_hard_bounces (skip if suppressed); enforce per-workspace frequency cap via messages_log; enforce quiet-hours (defer/re-queue); render template + inject List-Unsubscribe headers; SES SendEmail (MOCKED) with the workspace Configuration Set / sending identity; on success write messages_log (+ usage_counters emails_sent); on failure bounded retries -> DLQ.",
+          "The outbox -> second SQS queue -> Dispatcher wiring (enqueue an outbox id; Dispatcher consumes). Idempotent dedupe_key prevents double-sends.",
+          "Pure functions for the decision pipeline (suppression decision, frequency-cap, quiet-hours defer) so they are unit-tested without AWS; SES mocked with aws-sdk-client-mock."
+        ],
+        "specSections": "§9 (outbox -> second SQS queue -> Dispatcher: suppression -> frequency-cap -> quiet-hours -> SES send -> messages_log), §6 (outbox, messages_log, suppressions, email_templates), §10 (send gated on active/verified)",
+        "title": "Dispatch core"
+      },
+      {
+        "criteria": [
+          "A hard bounce suppresses the email in-workspace (and is recorded in global_hard_bounces); a complaint suppresses in-workspace and sets email_status=complained.",
+          "Suppression scoping: an unsubscribe in workspace A does NOT suppress the same email in workspace B.",
+          "Reputation policing: a workspace exceeding bounce/complaint thresholds is auto-suspended (status=suspended) WITHOUT pausing other workspaces.",
+          "The feedback handler is idempotent (re-delivered SES notifications do not double-write suppressions/email_events); soft bounces suppress only after N."
+        ],
+        "id": "phase8-feedback-reputation",
+        "scope": [
+          "services/feedback: SNS-triggered Feedback Lambda (resolve workspace from the message/identity). Hard bounce -> suppressions (workspace_id, email, hard_bounce) + profiles.email_status=bounced + add to global_hard_bounces. Complaint -> suppressions (complaint) + email_status=complained. Soft bounce -> count; suppress after N. Record every event in email_events (workspace-scoped). Idempotent on the SES message id.",
+          "Per-workspace reputation policing: compute per-workspace bounce/complaint rates from email_events and AUTO-SUSPEND a single workspace (workspaces.status=suspended) on threshold breach, WITHOUT affecting other workspaces.",
+          "services/unsubscribe: one-click Unsubscribe Lambda writes suppressions (workspace_id, email, unsubscribe) — workspace-scoped, so unsubscribing from A does not affect B. Honor List-Unsubscribe-Post.",
+          "Pure functions for bounce/complaint classification, soft-bounce-after-N, and the reputation threshold decision."
+        ],
+        "specSections": "§10 (feedback pipeline SNS->Feedback Lambda, suppression on bounce/complaint, reputation alarms + auto-suspend, one-click unsubscribe), §6 (suppressions, global_hard_bounces, email_events, messages_log, usage_counters)",
+        "title": "Feedback + compliance + reputation policing"
+      }
+    ],
+    "prevFeedback": null
+  }
+}

@@ -352,6 +352,9 @@ importers:
       '@cdp/db':
         specifier: workspace:*
         version: link:../packages/db
+      '@cdp/email':
+        specifier: workspace:*
+        version: link:../packages/email
       '@cdp/segments':
         specifier: workspace:*
         version: link:../packages/segments
@@ -361,12 +364,24 @@ importers:
       '@cdp/service-authorizer':
         specifier: workspace:*
         version: link:../services/authorizer
+      '@cdp/service-dispatcher':
+        specifier: workspace:*
+        version: link:../services/dispatcher
+      '@cdp/service-feedback':
+        specifier: workspace:*
+        version: link:../services/feedback
       '@cdp/service-ingest':
         specifier: workspace:*
         version: link:../services/ingest
+      '@cdp/service-onboarding':
+        specifier: workspace:*
+        version: link:../services/onboarding
       '@cdp/service-processor':
         specifier: workspace:*
         version: link:../services/processor
+      '@cdp/service-unsubscribe':
+        specifier: workspace:*
+        version: link:../services/unsubscribe
       '@cdp/shared':
         specifier: workspace:*
         version: link:../packages/shared

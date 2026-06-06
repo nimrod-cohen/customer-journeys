@@ -13,11 +13,16 @@
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.620.0",
     "@cdp/db": "workspace:*",
+    "@cdp/email": "workspace:*",
     "@cdp/segments": "workspace:*",
     "@cdp/service-api": "workspace:*",
     "@cdp/service-authorizer": "workspace:*",
+    "@cdp/service-dispatcher": "workspace:*",
+    "@cdp/service-feedback": "workspace:*",
     "@cdp/service-ingest": "workspace:*",
+    "@cdp/service-onboarding": "workspace:*",
     "@cdp/service-processor": "workspace:*",
+    "@cdp/service-unsubscribe": "workspace:*",
     "@cdp/shared": "workspace:*",
     "@cdp/tenancy": "workspace:*"
   },

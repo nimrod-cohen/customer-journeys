@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTFF26S9FB9HJKZESJVS393W",
+  "taskId": "integration-gate",
+  "invocationKey": "cdp/email-dispatch:S000014:integration-gate",
+  "status": "ok",
+  "result": {
+    "allCriteriaVerified": true,
+    "coverage": [
+      {
+        "criterion": "Drives actual production cores",
+        "evidence": "imports startDomain/activate, dispatchOutbox, handleNotification, unsubscribe core; dispatchOutbox is same fn prod SQS handler calls; handleNotification is prod SNS path; uses real makeProdDeps tx runners which enforce workspace-scoping.",
+        "verified": true
+      },
+      {
+        "criterion": "Real DB, SES/SNS mocked at boundary",
+        "evidence": "adminPool on localhost:5433; only SES faked (CountingSes), SNS payloads hand-built; integration ran (95-250ms durations) not skipped.",
+        "verified": true
+      },
+      {
+        "criterion": "Onboarding gate + send",
+        "evidence": "startDomain PENDING keeps onboarding; activate SUCCESS flips active+verified; dispatchOutbox 'send', ses.sends 1 with workspace config set, messages_log n=1, usage emails_sent=1. Non-active -> 'refuse', ses.sends 0.",
+        "verified": true
+      },
+      {
+        "criterion": "Feedback closes loop",
+        "evidence": "hard bounce via handleNotification -> suppression hard_bounce + global_hard_bounces + profiles bounced + email_events; subsequent send to recipient -> 'skip', ses.sends 0 via real buildIsSuppressedQuery.",
+        "verified": true
+      },
+      {
+        "criterion": "Per-workspace isolation",
+        "evidence": "same email in A+B; unsubscribe suppresses A only; isSuppressed(A) true, (B) false; B dispatchOutbox 'send' ses.sends 1.",
+        "verified": true
+      },
+      {
+        "criterion": "Reputation isolation",
+        "evidence": "60 sends + 4 hard bounces (6.7%>5%, MIN_SENT_FOR_RATE 50 met) via real core -> WS_REP suspended, WS_A active; suspended offender then 'refuse'. Rate from messages_log sent + email_events bounces, not rigged.",
+        "verified": true
+      },
+      {
+        "criterion": "No scope creep",
+        "evidence": "no broadcast/campaign/image/metering/frontend imports.",
+        "verified": true
+      }
+    ],
+    "criticalIssues": [],
+    "mocksOk": true,
+    "recommendations": [
+      "Add CI assert-not-skipped guard (gate is DATABASE_URL presence only).",
+      "Test 6b seeds messages_log denominator via raw INSERT; fuller e2e could route the 60 sends through dispatchOutbox too.",
+      "Consider asserting email_events idempotency (replayed SNS=one row) within this composed file (covered in feedback unit/integration already)."
+    ],
+    "score": 96,
+    "usesRealPostgres": true
+  },
+  "startedAt": "2026-06-06T22:00:56.776Z",
+  "finishedAt": "2026-06-06T22:00:56.776Z",
+  "value": {
+    "allCriteriaVerified": true,
+    "coverage": [
+      {
+        "criterion": "Drives actual production cores",
+        "evidence": "imports startDomain/activate, dispatchOutbox, handleNotification, unsubscribe core; dispatchOutbox is same fn prod SQS handler calls; handleNotification is prod SNS path; uses real makeProdDeps tx runners which enforce workspace-scoping.",
+        "verified": true
+      },
+      {
+        "criterion": "Real DB, SES/SNS mocked at boundary",
+        "evidence": "adminPool on localhost:5433; only SES faked (CountingSes), SNS payloads hand-built; integration ran (95-250ms durations) not skipped.",
+        "verified": true
+      },
+      {
+        "criterion": "Onboarding gate + send",
+        "evidence": "startDomain PENDING keeps onboarding; activate SUCCESS flips active+verified; dispatchOutbox 'send', ses.sends 1 with workspace config set, messages_log n=1, usage emails_sent=1. Non-active -> 'refuse', ses.sends 0.",
+        "verified": true
+      },
+      {
+        "criterion": "Feedback closes loop",
+        "evidence": "hard bounce via handleNotification -> suppression hard_bounce + global_hard_bounces + profiles bounced + email_events; subsequent send to recipient -> 'skip', ses.sends 0 via real buildIsSuppressedQuery.",
+        "verified": true
+      },
+      {
+        "criterion": "Per-workspace isolation",
+        "evidence": "same email in A+B; unsubscribe suppresses A only; isSuppressed(A) true, (B) false; B dispatchOutbox 'send' ses.sends 1.",
+        "verified": true
+      },
+      {
+        "criterion": "Reputation isolation",
+        "evidence": "60 sends + 4 hard bounces (6.7%>5%, MIN_SENT_FOR_RATE 50 met) via real core -> WS_REP suspended, WS_A active; suspended offender then 'refuse'. Rate from messages_log sent + email_events bounces, not rigged.",
+        "verified": true
+      },
+      {
+        "criterion": "No scope creep",
+        "evidence": "no broadcast/campaign/image/metering/frontend imports.",
+        "verified": true
+      }
+    ],
+    "criticalIssues": [],
+    "mocksOk": true,
+    "recommendations": [
+      "Add CI assert-not-skipped guard (gate is DATABASE_URL presence only).",
+      "Test 6b seeds messages_log denominator via raw INSERT; fuller e2e could route the 60 sends through dispatchOutbox too.",
+      "Consider asserting email_events idempotency (replayed SNS=one row) within this composed file (covered in feedback unit/integration already)."
+    ],
+    "score": 96,
+    "usesRealPostgres": true
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "score": 96,
+  "allCriteriaVerified": true,
+  "usesRealPostgres": true,
+  "mocksOk": true,
+  "coverage": [
+    {"criterion":"Drives actual production cores","verified":true,"evidence":"imports startDomain/activate, dispatchOutbox, handleNotification, unsubscribe core; dispatchOutbox is same fn prod SQS handler calls; handleNotification is prod SNS path; uses real makeProdDeps tx runners which enforce workspace-scoping."},
+    {"criterion":"Real DB, SES/SNS mocked at boundary","verified":true,"evidence":"adminPool on localhost:5433; only SES faked (CountingSes), SNS payloads hand-built; integration ran (95-250ms durations) not skipped."},
+    {"criterion":"Onboarding gate + send","verified":true,"evidence":"startDomain PENDING keeps onboarding; activate SUCCESS flips active+verified; dispatchOutbox 'send', ses.sends 1 with workspace config set, messages_log n=1, usage emails_sent=1. Non-active -> 'refuse', ses.sends 0."},
+    {"criterion":"Feedback closes loop","verified":true,"evidence":"hard bounce via handleNotification -> suppression hard_bounce + global_hard_bounces + profiles bounced + email_events; subsequent send to recipient -> 'skip', ses.sends 0 via real buildIsSuppressedQuery."},
+    {"criterion":"Per-workspace isolation","verified":true,"evidence":"same email in A+B; unsubscribe suppresses A only; isSuppressed(A) true, (B) false; B dispatchOutbox 'send' ses.sends 1."},
+    {"criterion":"Reputation isolation","verified":true,"evidence":"60 sends + 4 hard bounces (6.7%>5%, MIN_SENT_FOR_RATE 50 met) via real core -> WS_REP suspended, WS_A active; suspended offender then 'refuse'. Rate from messages_log sent + email_events bounces, not rigged."},
+    {"criterion":"No scope creep","verified":true,"evidence":"no broadcast/campaign/image/metering/frontend imports."}
+  ],
+  "recommendations": [
+    "Add CI assert-not-skipped guard (gate is DATABASE_URL presence only).",
+    "Test 6b seeds messages_log denominator via raw INSERT; fuller e2e could route the 60 sends through dispatchOutbox too.",
+    "Consider asserting email_events idempotency (replayed SNS=one row) within this composed file (covered in feedback unit/integration already)."
+  ],
+  "criticalIssues": []
+}

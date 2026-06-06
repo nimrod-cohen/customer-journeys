@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T21:57:41.820Z",
+  "data": {
+    "effectId": "01KTFF26S9FB9HJKZESJVS393W",
+    "invocationKey": "cdp/email-dispatch:S000014:integration-gate",
+    "invocationHash": "50c9adbb9939d856825bb360fcfe8e2d51b8d2a5a023c4a4411652e779e532c6",
+    "stepId": "S000014",
+    "taskId": "integration-gate",
+    "kind": "agent",
+    "label": "integration",
+    "taskDefRef": "tasks/01KTFF26S9FB9HJKZESJVS393W/task.json",
+    "labels": [
+      "integration",
+      "quality-gate",
+      "iteration-1"
+    ]
+  },
+  "checksum": "f7d54605028e39050a579ff361eb819b0ea432f07152ad3c280a51b8f012655f"
+}
