@@ -61,6 +61,46 @@ export interface WorkspaceContext {
 }
 
 /**
+ * The event envelope a producer sends to ingest (§7).
+ *
+ * CRITICAL (tenancy invariant, §7/§13): there is NO workspace_id field. The
+ * workspace is derived from the API key at ingest, never from the client
+ * payload — a company must not be able to spoof another's workspace.
+ */
+export interface EventEnvelope {
+  /** Producer-supplied idempotency / dedupe key (§7). */
+  readonly event_id: string;
+  /** The company's own customer id; unique per workspace (§6). */
+  readonly external_id: string;
+  /** Event type, e.g. `profile_created | progress | purchase`. */
+  readonly type: string;
+  /** ISO-8601 timestamp the event occurred. */
+  readonly occurred_at: string;
+  /** Arbitrary event attributes (merged into the profile on profile_created). */
+  readonly attributes?: Record<string, unknown>;
+}
+
+/**
+ * The message body ingest writes onto SQS FIFO and the processor consumes (§7).
+ *
+ * `workspace_id` here is TRUSTED: it was set by ingest from the API key lookup,
+ * not by the client. `profile_id` is the resolved internal id (used as the FIFO
+ * MessageGroupId). The original envelope rides along for the processor.
+ */
+export interface ProcessorMessage {
+  readonly workspace_id: string;
+  readonly profile_id: string;
+  readonly envelope: EventEnvelope;
+}
+
+/** A row of the `workspace_api_keys` map (§6) — API Gateway key id → workspace. */
+export interface WorkspaceApiKeyRow {
+  readonly api_key_id: string;
+  readonly workspace_id: string;
+  readonly label?: string | null;
+}
+
+/**
  * The result of authorizing a decoded JWT against the caller's membership and
  * platform-admin status (§12). Produced by the authorizer's pure core and then
  * turned into an API Gateway policy.

@@ -3,18 +3,31 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit false",
     "test": "vitest run --passWithNoTests",
-    "lint": "eslint src"
+    "lint": "eslint src --no-error-on-unmatched-pattern"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.620.0",
     "@cdp/db": "workspace:*",
     "@cdp/segments": "workspace:*",
-    "@cdp/shared": "workspace:*"
+    "@cdp/service-ingest": "workspace:*",
+    "@cdp/shared": "workspace:*",
+    "pg": "^8.12.0"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.140"
+    "@types/aws-lambda": "^8.10.140",
+    "@types/pg": "^8.11.6",
+    "aws-sdk-client-mock": "^4.0.1"
   }
 }

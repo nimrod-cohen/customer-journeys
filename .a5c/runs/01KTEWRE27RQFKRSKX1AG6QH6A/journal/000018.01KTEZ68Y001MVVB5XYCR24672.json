@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T17:20:17.856Z",
+  "data": {
+    "effectId": "01KTEZ68X3F0MFB7MCQ112PN0H",
+    "invocationKey": "cdp/foundation:S000009:plan-phase",
+    "invocationHash": "8f6bc56c6a75406412930886f34aeeee899d0b73a0b057e983868b2fb346723d",
+    "stepId": "S000009",
+    "taskId": "plan-phase",
+    "kind": "agent",
+    "label": "plan",
+    "taskDefRef": "tasks/01KTEZ68X3F0MFB7MCQ112PN0H/task.json",
+    "labels": [
+      "plan",
+      "phase3-ingest"
+    ]
+  },
+  "checksum": "73957f4a2aec045bfaa6f25fb89f4166d6e06621c46292801c047bd4be05f2a9"
+}

@@ -1,0 +1,114 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "implUnits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "pureFunctions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "testFiles": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "testFiles",
+        "implUnits"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "invariants": [
+          "Tenant isolation is the top property: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id.",
+          "Service-role Lambda code bypasses RLS — it MUST scope by workspace_id in code; RLS is only the backstop for user-context (admin app) reads.",
+          "workspace_id is NEVER taken from a client payload — derive it from the API key (ingest) or the authorizer-injected claim (admin API).",
+          "Per-profile ordering via MessageGroupId=profile_id; code must be idempotent and order-convergent (progress-before-profile_created still converges).",
+          "Idempotency: events.event_id is the dedupe key (INSERT ... ON CONFLICT DO NOTHING).",
+          "Segment rule-AST -> SQL is compiled with a field/operator whitelist, parameterized SQL only, and ALWAYS prepends workspace_id = $ws. Never interpolate raw input.",
+          "Local-only: verify against LocalStack + Supabase CLI/Testcontainers. Do NOT mock Postgres in the integration tier. Mock SES (never send real mail).",
+          "Scope discipline: implement exactly what the cited spec sections require — no extra features, no gold-plating."
+        ],
+        "phase": {
+          "criteria": [
+            "profile_created then immediately progress (same external_id+workspace) -> profile exists, progress applied, in order.",
+            "progress-first -> idempotent upsert still correct (stub profile created, converges).",
+            "No loss: forced Processor failures retried then processed or sent to DLQ; none vanish.",
+            "Idempotency: repeated event_id applied once.",
+            "An API key for Workspace A can only create events in Workspace A."
+          ],
+          "id": "phase3-ingest",
+          "scope": [
+            "API Gateway REST request model + per-workspace API key resolution (workspace_api_keys).",
+            "services/ingest: resolve workspace_id from API key (never payload), upsert profile by (workspace_id, external_id), enqueue SQS FIFO (MessageGroupId=profile_id, MessageDeduplicationId=event_id, workspace_id in body), return 200 only after SQS accepts.",
+            "services/processor: FIFO consumer — INSERT events ON CONFLICT(event_id) DO NOTHING, upsert profile (stub if progress arrives first), workspace-scoped throughout, DLQ on repeated failure.",
+            "Logic in pure injected functions; mock SQS/AWS with aws-sdk-client-mock; integration against local Postgres."
+          ],
+          "specSections": "§7 (event envelope, ingest, processor, ordering), §6 (events, profiles)",
+          "title": "Ingestion + tenancy + ordering"
+        },
+        "spec": "CDP-BUILD-SPEC.md",
+        "testingStrategy": "§16A serverless pyramid: many pure unit tests; DB-integration tests against REAL local Postgres (no mocking the DB); thin LocalStack E2E. Mock SES."
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §7 (event envelope, ingest, processor, ordering), §6 (events, profiles), plus §16A and §18.",
+        "For each acceptance criterion, define the test file(s), tier (unit | integration | e2e), and the exact assertions — especially the tenant-isolation and ordering/idempotency assertions.",
+        "Identify the pure functions that should hold the logic (so handlers stay thin and unit-testable).",
+        "List the implementation units required and their dependency order.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { testFiles: [{path, tier, criterion, assertions:[...]}], pureFunctions: string[], implUnits: string[], notes: string }",
+      "role": "senior test architect practicing TDD on a serverless multi-tenant system",
+      "task": "Turn the §18 acceptance criteria for \"Ingestion + tenancy + ordering\" into a concrete, test-first plan."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTEZ68X3F0MFB7MCQ112PN0H/input.json",
+    "outputJsonPath": "tasks/01KTEZ68X3F0MFB7MCQ112PN0H/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "phase3-ingest",
+    "plan"
+  ],
+  "title": "Plan tests: Ingestion + tenancy + ordering",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTEZ68X3F0MFB7MCQ112PN0H",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/foundation:S000009:plan-phase",
+  "stepId": "S000009",
+  "inputs": {
+    "phase": {
+      "criteria": [
+        "profile_created then immediately progress (same external_id+workspace) -> profile exists, progress applied, in order.",
+        "progress-first -> idempotent upsert still correct (stub profile created, converges).",
+        "No loss: forced Processor failures retried then processed or sent to DLQ; none vanish.",
+        "Idempotency: repeated event_id applied once.",
+        "An API key for Workspace A can only create events in Workspace A."
+      ],
+      "id": "phase3-ingest",
+      "scope": [
+        "API Gateway REST request model + per-workspace API key resolution (workspace_api_keys).",
+        "services/ingest: resolve workspace_id from API key (never payload), upsert profile by (workspace_id, external_id), enqueue SQS FIFO (MessageGroupId=profile_id, MessageDeduplicationId=event_id, workspace_id in body), return 200 only after SQS accepts.",
+        "services/processor: FIFO consumer — INSERT events ON CONFLICT(event_id) DO NOTHING, upsert profile (stub if progress arrives first), workspace-scoped throughout, DLQ on repeated failure.",
+        "Logic in pure injected functions; mock SQS/AWS with aws-sdk-client-mock; integration against local Postgres."
+      ],
+      "specSections": "§7 (event envelope, ingest, processor, ordering), §6 (events, profiles)",
+      "title": "Ingestion + tenancy + ordering"
+    }
+  }
+}

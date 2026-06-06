@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTEZWDM2QXWT7HEWEV5Q49GQ",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/foundation:S000011:quality-gate",
+  "status": "ok",
+  "result": {
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "ordering-convergence.integration (real PG, ran): created->progress asserts count profiles=1 + 2 events; planProcessing upserts profile before event insert. Reproduced independently.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "same file: progress-first stub then created -> profiles=1, attrs merged; ON CONFLICT(workspace_id,external_id) merge; order-independent.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "processor-failure-dlq: failing record in batchItemFailures (no ack->redrive->DLQ), no throw. durable-boundary: deferred SQS mock proves 200 only after send resolves; reject->503; bad/unknown-key never send.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "idempotency-dedup.integration (real PG): same event_id twice -> 1 events row (PK + ON CONFLICT DO NOTHING), 1 profile; duplicate no-throw so not redriven to DLQ.",
+        "met": true
+      },
+      {
+        "criterion": "AC5",
+        "evidence": "ingest api-key-isolation + processor workspace-isolation (real PG): key->own workspace, unknown throws, key A only creates in ws A even with shared external_id; workspace_id solely from resolveWorkspaceId; body workspace_id dropped by validateEnvelope.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "Wire the LocalStack FIFO E2E into CI (set LOCALSTACK_URL) so the SQS round-trip is exercised.",
+      "Document/test the intentional orphan-stub-on-SQS-reject case (profile upserted before send; benign due to idempotent upsert)."
+    ],
+    "scopeCreep": [],
+    "score": 95,
+    "testsPass": true
+  },
+  "startedAt": "2026-06-06T17:35:40.565Z",
+  "finishedAt": "2026-06-06T17:35:40.565Z",
+  "value": {
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "ordering-convergence.integration (real PG, ran): created->progress asserts count profiles=1 + 2 events; planProcessing upserts profile before event insert. Reproduced independently.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "same file: progress-first stub then created -> profiles=1, attrs merged; ON CONFLICT(workspace_id,external_id) merge; order-independent.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "processor-failure-dlq: failing record in batchItemFailures (no ack->redrive->DLQ), no throw. durable-boundary: deferred SQS mock proves 200 only after send resolves; reject->503; bad/unknown-key never send.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "idempotency-dedup.integration (real PG): same event_id twice -> 1 events row (PK + ON CONFLICT DO NOTHING), 1 profile; duplicate no-throw so not redriven to DLQ.",
+        "met": true
+      },
+      {
+        "criterion": "AC5",
+        "evidence": "ingest api-key-isolation + processor workspace-isolation (real PG): key->own workspace, unknown throws, key A only creates in ws A even with shared external_id; workspace_id solely from resolveWorkspaceId; body workspace_id dropped by validateEnvelope.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "Wire the LocalStack FIFO E2E into CI (set LOCALSTACK_URL) so the SQS round-trip is exercised.",
+      "Document/test the intentional orphan-stub-on-SQS-reject case (profile upserted before send; benign due to idempotent upsert)."
+    ],
+    "scopeCreep": [],
+    "score": 95,
+    "testsPass": true
+  }
+}

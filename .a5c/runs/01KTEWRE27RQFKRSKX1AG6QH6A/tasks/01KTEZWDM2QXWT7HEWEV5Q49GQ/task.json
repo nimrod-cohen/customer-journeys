@@ -1,0 +1,487 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "criteriaAllMet": {
+          "type": "boolean"
+        },
+        "criteriaCoverage": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "criticalIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "isolationOk": {
+          "type": "boolean"
+        },
+        "recommendations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scopeCreep": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "testsPass": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "score",
+        "testsPass",
+        "criteriaAllMet",
+        "recommendations"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "implReport": {
+          "commandsRun": [
+            "pnpm install",
+            "pnpm build",
+            "rm -rf .turbo node_modules/.cache/turbo",
+            "DATABASE_URL=... pnpm test (x2 cold)",
+            "pnpm typecheck",
+            "pnpm lint"
+          ],
+          "filesCreated": [
+            "services/ingest/src/core.ts",
+            "services/ingest/src/deps.ts",
+            "services/ingest/src/index.ts",
+            "services/ingest/test/resolve-workspace.test.ts",
+            "services/ingest/test/ingest-core.test.ts",
+            "services/ingest/test/handler-durable-boundary.test.ts",
+            "services/ingest/test/api-key-workspace-isolation.integration.test.ts",
+            "services/processor/src/core.ts",
+            "services/processor/src/deps.ts",
+            "services/processor/src/index.ts",
+            "services/processor/test/processor-core.test.ts",
+            "services/processor/test/processor-failure-dlq.test.ts",
+            "services/processor/test/idempotency-dedup.integration.test.ts",
+            "services/processor/test/ordering-convergence.integration.test.ts",
+            "services/processor/test/workspace-isolation.integration.test.ts",
+            "services/processor/test/fifo-localstack.e2e.test.ts"
+          ],
+          "filesModified": [
+            "packages/shared/src/index.ts",
+            "services/ingest/src/handler.ts",
+            "services/ingest/package.json",
+            "services/processor/src/handler.ts",
+            "services/processor/package.json"
+          ],
+          "lintOk": true,
+          "notes": "TDD. validateEnvelope reconstructs only trusted fields so client workspace_id can never flow through; workspace_id solely from workspace_api_keys. Ingest returns 200 ONLY after SQS resolves (deferred-mock ordering), 503 on SQS reject, 400 bad payload (no send), 403 unknown key (no send). FIFO MessageGroupId=profile_id, MessageDeduplicationId=event_id. planProcessing orders profile-upsert BEFORE event-insert (FK ok for progress-first stub); events ON CONFLICT(event_id) DO NOTHING; profiles ON CONFLICT(workspace_id,external_id) merge attrs only on profile_created; buildEventInsert resolves profile_id via (workspace_id,external_id) subquery so event always links same profile (never client value). Handler reports partial batchItemFailures (no ack->redrive->DLQ); unparseable body reported as failure not throw. Processor isolation proven on admin/service-role pool (rolbypassrls=true) via in-code scoping + (workspace_id,external_id) key (NOT SET ROLE to non-BYPASSRLS). Scope discipline: profile_features + segment re-eval are documented no-logic extension points (Phase 4/5). turbo.json unchanged (cache:false). Unique workspace UUID namespaces per integration file.",
+          "testsPass": true,
+          "testSummary": "All 28 turbo test tasks green on TWO consecutive COLD runs. Phase-3: ingest 22 (resolve-workspace, ingest-core, durable-boundary unit + api-key-isolation integration), processor 20 + 1 skipped (core, failure-dlq unit; idempotency, ordering-convergence, workspace-isolation integration RAN on real PG; fifo-localstack e2e skipped no LocalStack). Repo total 114 passed + 1 skipped / 21 files. Integration tier confirmed running on real PG localhost:5433.",
+          "typecheckOk": true
+        },
+        "invariants": [
+          "Tenant isolation is the top property: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id.",
+          "Service-role Lambda code bypasses RLS — it MUST scope by workspace_id in code; RLS is only the backstop for user-context (admin app) reads.",
+          "workspace_id is NEVER taken from a client payload — derive it from the API key (ingest) or the authorizer-injected claim (admin API).",
+          "Per-profile ordering via MessageGroupId=profile_id; code must be idempotent and order-convergent (progress-before-profile_created still converges).",
+          "Idempotency: events.event_id is the dedupe key (INSERT ... ON CONFLICT DO NOTHING).",
+          "Segment rule-AST -> SQL is compiled with a field/operator whitelist, parameterized SQL only, and ALWAYS prepends workspace_id = $ws. Never interpolate raw input.",
+          "Local-only: verify against LocalStack + Supabase CLI/Testcontainers. Do NOT mock Postgres in the integration tier. Mock SES (never send real mail).",
+          "Scope discipline: implement exactly what the cited spec sections require — no extra features, no gold-plating."
+        ],
+        "phase": {
+          "criteria": [
+            "profile_created then immediately progress (same external_id+workspace) -> profile exists, progress applied, in order.",
+            "progress-first -> idempotent upsert still correct (stub profile created, converges).",
+            "No loss: forced Processor failures retried then processed or sent to DLQ; none vanish.",
+            "Idempotency: repeated event_id applied once.",
+            "An API key for Workspace A can only create events in Workspace A."
+          ],
+          "id": "phase3-ingest",
+          "scope": [
+            "API Gateway REST request model + per-workspace API key resolution (workspace_api_keys).",
+            "services/ingest: resolve workspace_id from API key (never payload), upsert profile by (workspace_id, external_id), enqueue SQS FIFO (MessageGroupId=profile_id, MessageDeduplicationId=event_id, workspace_id in body), return 200 only after SQS accepts.",
+            "services/processor: FIFO consumer — INSERT events ON CONFLICT(event_id) DO NOTHING, upsert profile (stub if progress arrives first), workspace-scoped throughout, DLQ on repeated failure.",
+            "Logic in pure injected functions; mock SQS/AWS with aws-sdk-client-mock; integration against local Postgres."
+          ],
+          "specSections": "§7 (event envelope, ingest, processor, ordering), §6 (events, profiles)",
+          "title": "Ingestion + tenancy + ordering"
+        },
+        "plan": {
+          "implUnits": [
+            "1. services/ingest/src/core.ts (pure)",
+            "2. services/ingest/src/handler.ts thin (SQSClient+pool injected, 200 only after SQS)",
+            "3. services/processor/src/core.ts (pure)",
+            "4. services/processor/src/handler.ts thin (batch item failure on error, no ack)",
+            "5. packages/shared types EventEnvelope/ProcessorMessage/WorkspaceApiKeyRow",
+            "6. ingest+processor package.json: @aws-sdk/client-sqs, aws-sdk-client-mock, pg/@cdp/db, vitest"
+          ],
+          "notes": "Reuse Phase-2 harness (hasDatabaseUrl+skipIf, adminPool seeds via service-role, applyMigrations). KEY: Processor runs as SERVICE ROLE bypassing RLS, so workspace-isolation integration test runs on admin pool and proves isolation from in-code scopedQuery + (workspace_id,external_id) key, NOT RLS (mirror api service-role-scoping test; do NOT SET ROLE to non-BYPASSRLS for processor). Don't test 'SQS delivered in order' (§16A); test idempotency/convergence + mock SQS for durable-boundary + group/dedup ids. Durable-boundary is load-bearing: 200 strictly after SQS resolves; rejected send -> non-2xx so producer retries same event_id. Ingest and processor profile upserts share the SAME (workspace_id,external_id) ON CONFLICT key so they converge. LocalStack E2E guard-skipped.",
+          "pureFunctions": [
+            "validateEnvelope(body)",
+            "resolveWorkspaceId(apiKeyId,lookupRow)",
+            "buildProfileUpsert(workspaceId,externalId,attributes)",
+            "buildSqsMessage(workspaceId,profileId,envelope,queueUrl)",
+            "parseProcessorMessage(sqsBody)",
+            "buildEventInsert(msg)",
+            "buildProcessorProfileUpsert(msg)",
+            "planProcessing(msg)"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "resolveWorkspaceId maps request-context api_key_id->workspace_id, never payload",
+                "body workspace_id ignored",
+                "unknown key rejected",
+                "missing key rejected",
+                "no param accepts client workspace_id"
+              ],
+              "criterion": "5",
+              "path": "services/ingest/test/resolve-workspace.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "validateEnvelope rejects bad event_id/external_id/type/occurred_at",
+                "buildSqsMessage MessageGroupId=profile_id",
+                "MessageDeduplicationId=event_id",
+                "body carries server-resolved workspace_id",
+                "profile upsert keyed (workspace_id,external_id)"
+              ],
+              "criterion": "1,4,5",
+              "path": "services/ingest/test/ingest-core.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "SQS mock; SendMessage once",
+                "200 ONLY after SQS resolves",
+                "SQS reject -> non-2xx not 200",
+                "order: resolve->upsert->send->200",
+                "QueueUrl .fifo"
+              ],
+              "criterion": "3",
+              "path": "services/ingest/test/handler-durable-boundary.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "INSERT events ON CONFLICT(event_id) DO NOTHING",
+                "profile upsert (workspace_id,external_id) workspace-scoped",
+                "stub on progress-first",
+                "created+later progress converge to same profile_id",
+                "workspace_id from body"
+              ],
+              "criterion": "1,2,4",
+              "path": "services/processor/test/processor-core.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "DB throw -> reportBatchItemFailures (no ack), redelivered",
+                "failed msg not deleted",
+                "retry success processed once",
+                "every record success-or-failure, none dropped"
+              ],
+              "criterion": "3",
+              "path": "services/processor/test/processor-failure-dlq.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "real PG: same event_id twice -> 1 events row",
+                "features reflect once",
+                "duplicate reports success (no DLQ)"
+              ],
+              "criterion": "4",
+              "path": "services/processor/test/idempotency-dedup.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "created->progress: 1 profile, both events, attached",
+                "progress-first: stub then created upserts same profile_id",
+                "count profiles=1",
+                "events share profile_id",
+                "wrong workspace_id 0 rows"
+              ],
+              "criterion": "1,2",
+              "path": "services/processor/test/ordering-convergence.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "service-role pool: ws-A and ws-B both have external_id cust-1; event for ws-A lands only ws-A",
+                "ws-B untouched",
+                "admin conn sees both (bypasses RLS) yet processor scopes to ws-A in code",
+                "ws-A event never modifies ws-B"
+              ],
+              "criterion": "5",
+              "path": "services/processor/test/workspace-isolation.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "real PG: key-A->ws-A, key-B->ws-B; key-A upserts only ws-A",
+                "key-A + external_id existing in ws-B touches only ws-A",
+                "unknown key rejected, no profile",
+                "workspace_id strictly from workspace_api_keys lookup"
+              ],
+              "criterion": "5",
+              "path": "services/ingest/test/api-key-workspace-isolation.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "skipIf no LocalStack; create FIFO+DLQ",
+                "created then progress through FIFO -> converged in real PG",
+                "forced failure redelivered then DLQ"
+              ],
+              "criterion": "1,3",
+              "path": "services/processor/test/fifo-localstack.e2e.test.ts",
+              "tier": "e2e"
+            }
+          ]
+        },
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Independently RUN the tests (pnpm test for the phase scope), pnpm typecheck, pnpm lint. Record real pass/fail.",
+        "Verify EACH acceptance criterion is actually covered by a passing test: [\"profile_created then immediately progress (same external_id+workspace) -> profile exists, progress applied, in order.\",\"progress-first -> idempotent upsert still correct (stub profile created, converges).\",\"No loss: forced Processor failures retried then processed or sent to DLQ; none vanish.\",\"Idempotency: repeated event_id applied once.\",\"An API key for Workspace A can only create events in Workspace A.\"].",
+        "Tenant-isolation review (highest priority): confirm workspace_id scoping in code on every query, that RLS policies are correct, that service-role paths still scope in code, and that workspace_id is never read from client input. For phase5, verify the SQL compiler whitelists fields/operators, parameterizes, and ALWAYS injects workspace_id.",
+        "Scope check: flag any feature implemented beyond the cited spec sections.",
+        "If integration tests mock Postgres, that is a FAIL (must use real local Postgres per §16A).",
+        "Score 0-100. Set testsPass and criteriaAllMet honestly. Give concrete prioritized recommendations."
+      ],
+      "outputFormat": "JSON: { score: number, testsPass: boolean, criteriaAllMet: boolean, criteriaCoverage: [{criterion, met:boolean, evidence}], isolationOk: boolean, scopeCreep: string[], recommendations: string[], criticalIssues: string[] }",
+      "role": "adversarial principal reviewer + QA engineer verifying spec-fidelity and tenant isolation",
+      "task": "Independently verify \"Ingestion + tenancy + ordering\" against its §18 criteria. Re-run the tests yourself; do not trust the self-report."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTEZWDM2QXWT7HEWEV5Q49GQ/input.json",
+    "outputJsonPath": "tasks/01KTEZWDM2QXWT7HEWEV5Q49GQ/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "iteration-1",
+    "phase3-ingest",
+    "quality-gate"
+  ],
+  "title": "Quality gate: Ingestion + tenancy + ordering (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTEZWDM2QXWT7HEWEV5Q49GQ",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/foundation:S000011:quality-gate",
+  "stepId": "S000011",
+  "inputs": {
+    "impl": {
+      "commandsRun": [
+        "pnpm install",
+        "pnpm build",
+        "rm -rf .turbo node_modules/.cache/turbo",
+        "DATABASE_URL=... pnpm test (x2 cold)",
+        "pnpm typecheck",
+        "pnpm lint"
+      ],
+      "filesCreated": [
+        "services/ingest/src/core.ts",
+        "services/ingest/src/deps.ts",
+        "services/ingest/src/index.ts",
+        "services/ingest/test/resolve-workspace.test.ts",
+        "services/ingest/test/ingest-core.test.ts",
+        "services/ingest/test/handler-durable-boundary.test.ts",
+        "services/ingest/test/api-key-workspace-isolation.integration.test.ts",
+        "services/processor/src/core.ts",
+        "services/processor/src/deps.ts",
+        "services/processor/src/index.ts",
+        "services/processor/test/processor-core.test.ts",
+        "services/processor/test/processor-failure-dlq.test.ts",
+        "services/processor/test/idempotency-dedup.integration.test.ts",
+        "services/processor/test/ordering-convergence.integration.test.ts",
+        "services/processor/test/workspace-isolation.integration.test.ts",
+        "services/processor/test/fifo-localstack.e2e.test.ts"
+      ],
+      "filesModified": [
+        "packages/shared/src/index.ts",
+        "services/ingest/src/handler.ts",
+        "services/ingest/package.json",
+        "services/processor/src/handler.ts",
+        "services/processor/package.json"
+      ],
+      "lintOk": true,
+      "notes": "TDD. validateEnvelope reconstructs only trusted fields so client workspace_id can never flow through; workspace_id solely from workspace_api_keys. Ingest returns 200 ONLY after SQS resolves (deferred-mock ordering), 503 on SQS reject, 400 bad payload (no send), 403 unknown key (no send). FIFO MessageGroupId=profile_id, MessageDeduplicationId=event_id. planProcessing orders profile-upsert BEFORE event-insert (FK ok for progress-first stub); events ON CONFLICT(event_id) DO NOTHING; profiles ON CONFLICT(workspace_id,external_id) merge attrs only on profile_created; buildEventInsert resolves profile_id via (workspace_id,external_id) subquery so event always links same profile (never client value). Handler reports partial batchItemFailures (no ack->redrive->DLQ); unparseable body reported as failure not throw. Processor isolation proven on admin/service-role pool (rolbypassrls=true) via in-code scoping + (workspace_id,external_id) key (NOT SET ROLE to non-BYPASSRLS). Scope discipline: profile_features + segment re-eval are documented no-logic extension points (Phase 4/5). turbo.json unchanged (cache:false). Unique workspace UUID namespaces per integration file.",
+      "testsPass": true,
+      "testSummary": "All 28 turbo test tasks green on TWO consecutive COLD runs. Phase-3: ingest 22 (resolve-workspace, ingest-core, durable-boundary unit + api-key-isolation integration), processor 20 + 1 skipped (core, failure-dlq unit; idempotency, ordering-convergence, workspace-isolation integration RAN on real PG; fifo-localstack e2e skipped no LocalStack). Repo total 114 passed + 1 skipped / 21 files. Integration tier confirmed running on real PG localhost:5433.",
+      "typecheckOk": true
+    },
+    "iteration": 1,
+    "phase": {
+      "criteria": [
+        "profile_created then immediately progress (same external_id+workspace) -> profile exists, progress applied, in order.",
+        "progress-first -> idempotent upsert still correct (stub profile created, converges).",
+        "No loss: forced Processor failures retried then processed or sent to DLQ; none vanish.",
+        "Idempotency: repeated event_id applied once.",
+        "An API key for Workspace A can only create events in Workspace A."
+      ],
+      "id": "phase3-ingest",
+      "scope": [
+        "API Gateway REST request model + per-workspace API key resolution (workspace_api_keys).",
+        "services/ingest: resolve workspace_id from API key (never payload), upsert profile by (workspace_id, external_id), enqueue SQS FIFO (MessageGroupId=profile_id, MessageDeduplicationId=event_id, workspace_id in body), return 200 only after SQS accepts.",
+        "services/processor: FIFO consumer — INSERT events ON CONFLICT(event_id) DO NOTHING, upsert profile (stub if progress arrives first), workspace-scoped throughout, DLQ on repeated failure.",
+        "Logic in pure injected functions; mock SQS/AWS with aws-sdk-client-mock; integration against local Postgres."
+      ],
+      "specSections": "§7 (event envelope, ingest, processor, ordering), §6 (events, profiles)",
+      "title": "Ingestion + tenancy + ordering"
+    },
+    "plan": {
+      "implUnits": [
+        "1. services/ingest/src/core.ts (pure)",
+        "2. services/ingest/src/handler.ts thin (SQSClient+pool injected, 200 only after SQS)",
+        "3. services/processor/src/core.ts (pure)",
+        "4. services/processor/src/handler.ts thin (batch item failure on error, no ack)",
+        "5. packages/shared types EventEnvelope/ProcessorMessage/WorkspaceApiKeyRow",
+        "6. ingest+processor package.json: @aws-sdk/client-sqs, aws-sdk-client-mock, pg/@cdp/db, vitest"
+      ],
+      "notes": "Reuse Phase-2 harness (hasDatabaseUrl+skipIf, adminPool seeds via service-role, applyMigrations). KEY: Processor runs as SERVICE ROLE bypassing RLS, so workspace-isolation integration test runs on admin pool and proves isolation from in-code scopedQuery + (workspace_id,external_id) key, NOT RLS (mirror api service-role-scoping test; do NOT SET ROLE to non-BYPASSRLS for processor). Don't test 'SQS delivered in order' (§16A); test idempotency/convergence + mock SQS for durable-boundary + group/dedup ids. Durable-boundary is load-bearing: 200 strictly after SQS resolves; rejected send -> non-2xx so producer retries same event_id. Ingest and processor profile upserts share the SAME (workspace_id,external_id) ON CONFLICT key so they converge. LocalStack E2E guard-skipped.",
+      "pureFunctions": [
+        "validateEnvelope(body)",
+        "resolveWorkspaceId(apiKeyId,lookupRow)",
+        "buildProfileUpsert(workspaceId,externalId,attributes)",
+        "buildSqsMessage(workspaceId,profileId,envelope,queueUrl)",
+        "parseProcessorMessage(sqsBody)",
+        "buildEventInsert(msg)",
+        "buildProcessorProfileUpsert(msg)",
+        "planProcessing(msg)"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "resolveWorkspaceId maps request-context api_key_id->workspace_id, never payload",
+            "body workspace_id ignored",
+            "unknown key rejected",
+            "missing key rejected",
+            "no param accepts client workspace_id"
+          ],
+          "criterion": "5",
+          "path": "services/ingest/test/resolve-workspace.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "validateEnvelope rejects bad event_id/external_id/type/occurred_at",
+            "buildSqsMessage MessageGroupId=profile_id",
+            "MessageDeduplicationId=event_id",
+            "body carries server-resolved workspace_id",
+            "profile upsert keyed (workspace_id,external_id)"
+          ],
+          "criterion": "1,4,5",
+          "path": "services/ingest/test/ingest-core.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "SQS mock; SendMessage once",
+            "200 ONLY after SQS resolves",
+            "SQS reject -> non-2xx not 200",
+            "order: resolve->upsert->send->200",
+            "QueueUrl .fifo"
+          ],
+          "criterion": "3",
+          "path": "services/ingest/test/handler-durable-boundary.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "INSERT events ON CONFLICT(event_id) DO NOTHING",
+            "profile upsert (workspace_id,external_id) workspace-scoped",
+            "stub on progress-first",
+            "created+later progress converge to same profile_id",
+            "workspace_id from body"
+          ],
+          "criterion": "1,2,4",
+          "path": "services/processor/test/processor-core.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "DB throw -> reportBatchItemFailures (no ack), redelivered",
+            "failed msg not deleted",
+            "retry success processed once",
+            "every record success-or-failure, none dropped"
+          ],
+          "criterion": "3",
+          "path": "services/processor/test/processor-failure-dlq.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "real PG: same event_id twice -> 1 events row",
+            "features reflect once",
+            "duplicate reports success (no DLQ)"
+          ],
+          "criterion": "4",
+          "path": "services/processor/test/idempotency-dedup.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "created->progress: 1 profile, both events, attached",
+            "progress-first: stub then created upserts same profile_id",
+            "count profiles=1",
+            "events share profile_id",
+            "wrong workspace_id 0 rows"
+          ],
+          "criterion": "1,2",
+          "path": "services/processor/test/ordering-convergence.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "service-role pool: ws-A and ws-B both have external_id cust-1; event for ws-A lands only ws-A",
+            "ws-B untouched",
+            "admin conn sees both (bypasses RLS) yet processor scopes to ws-A in code",
+            "ws-A event never modifies ws-B"
+          ],
+          "criterion": "5",
+          "path": "services/processor/test/workspace-isolation.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "real PG: key-A->ws-A, key-B->ws-B; key-A upserts only ws-A",
+            "key-A + external_id existing in ws-B touches only ws-A",
+            "unknown key rejected, no profile",
+            "workspace_id strictly from workspace_api_keys lookup"
+          ],
+          "criterion": "5",
+          "path": "services/ingest/test/api-key-workspace-isolation.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "skipIf no LocalStack; create FIFO+DLQ",
+            "created then progress through FIFO -> converged in real PG",
+            "forced failure redelivered then DLQ"
+          ],
+          "criterion": "1,3",
+          "path": "services/processor/test/fifo-localstack.e2e.test.ts",
+          "tier": "e2e"
+        }
+      ]
+    }
+  }
+}
