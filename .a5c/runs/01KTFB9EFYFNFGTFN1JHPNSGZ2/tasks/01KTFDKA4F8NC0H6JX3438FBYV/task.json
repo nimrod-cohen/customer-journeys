@@ -1,0 +1,89 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "criteria": [
+            "The Dispatcher refuses to send for a workspace whose status != active/verified.",
+            "A recipient on the workspace suppression list (or in global_hard_bounces) is skipped; suppression is checked before sending.",
+            "Per-workspace frequency cap holds (a recipient over the cap within the window is not sent again); quiet-hours defer/re-queue rather than send.",
+            "A successful send is recorded once in messages_log (+ usage_counters emails_sent); the dedupe_key prevents double-sends on retry; SES is called with the workspace Configuration Set only after suppression/cap/quiet-hours pass."
+          ],
+          "id": "phase7-dispatch",
+          "scope": [
+            "services/dispatcher: SQS-triggered Lambda. For each outbox row id: load profile + template (workspace-scoped); REFUSE if the workspace is not active/verified; check suppressions for (workspace_id, email) AND global_hard_bounces (skip if suppressed); enforce per-workspace frequency cap via messages_log; enforce quiet-hours (defer/re-queue); render template + inject List-Unsubscribe headers; SES SendEmail (MOCKED) with the workspace Configuration Set / sending identity; on success write messages_log (+ usage_counters emails_sent); on failure bounded retries -> DLQ.",
+            "The outbox -> second SQS queue -> Dispatcher wiring (enqueue an outbox id; Dispatcher consumes). Idempotent dedupe_key prevents double-sends.",
+            "Pure functions for the decision pipeline (suppression decision, frequency-cap, quiet-hours defer) so they are unit-tested without AWS; SES mocked with aws-sdk-client-mock."
+          ],
+          "specSections": "§9 (outbox -> second SQS queue -> Dispatcher: suppression -> frequency-cap -> quiet-hours -> SES send -> messages_log), §6 (outbox, messages_log, suppressions, email_templates), §10 (send gated on active/verified)",
+          "title": "Dispatch core"
+        },
+        "score": 96
+      },
+      "instructions": [
+        "Run `git add -A`.",
+        "Commit with a clear conventional message describing the phase (Dispatch core), noting the gate score (96) and whether it fully converged (true).",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the resulting commit hash.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Dispatch core\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFDKA4F8NC0H6JX3438FBYV/input.json",
+    "outputJsonPath": "tasks/01KTFDKA4F8NC0H6JX3438FBYV/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "phase7-dispatch"
+  ],
+  "title": "Commit: Dispatch core",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFDKA4F8NC0H6JX3438FBYV",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/email-dispatch:S000008:commit-phase",
+  "stepId": "S000008",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "criteria": [
+        "The Dispatcher refuses to send for a workspace whose status != active/verified.",
+        "A recipient on the workspace suppression list (or in global_hard_bounces) is skipped; suppression is checked before sending.",
+        "Per-workspace frequency cap holds (a recipient over the cap within the window is not sent again); quiet-hours defer/re-queue rather than send.",
+        "A successful send is recorded once in messages_log (+ usage_counters emails_sent); the dedupe_key prevents double-sends on retry; SES is called with the workspace Configuration Set only after suppression/cap/quiet-hours pass."
+      ],
+      "id": "phase7-dispatch",
+      "scope": [
+        "services/dispatcher: SQS-triggered Lambda. For each outbox row id: load profile + template (workspace-scoped); REFUSE if the workspace is not active/verified; check suppressions for (workspace_id, email) AND global_hard_bounces (skip if suppressed); enforce per-workspace frequency cap via messages_log; enforce quiet-hours (defer/re-queue); render template + inject List-Unsubscribe headers; SES SendEmail (MOCKED) with the workspace Configuration Set / sending identity; on success write messages_log (+ usage_counters emails_sent); on failure bounded retries -> DLQ.",
+        "The outbox -> second SQS queue -> Dispatcher wiring (enqueue an outbox id; Dispatcher consumes). Idempotent dedupe_key prevents double-sends.",
+        "Pure functions for the decision pipeline (suppression decision, frequency-cap, quiet-hours defer) so they are unit-tested without AWS; SES mocked with aws-sdk-client-mock."
+      ],
+      "specSections": "§9 (outbox -> second SQS queue -> Dispatcher: suppression -> frequency-cap -> quiet-hours -> SES send -> messages_log), §6 (outbox, messages_log, suppressions, email_templates), §10 (send gated on active/verified)",
+      "title": "Dispatch core"
+    },
+    "score": 96
+  }
+}

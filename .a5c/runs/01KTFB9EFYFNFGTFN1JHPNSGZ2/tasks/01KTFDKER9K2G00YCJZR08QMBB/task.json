@@ -1,0 +1,120 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "implUnits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mocks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "pureFunctions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "testFiles": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "testFiles",
+        "implUnits"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or the trusted message body set by an earlier server step.",
+          "LOCAL-only: SES (SendEmail), SNS, and the onboarding DNS/SES-status checks are MOCKED (aws-sdk-client-mock + injected resolvers). NEVER send real mail or hit real DNS/SES. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433.",
+          "Sending is gated on verification: the Dispatcher refuses to send for any workspace whose status is not active/verified (§10). Every send passes suppression -> frequency-cap -> quiet-hours, in that order.",
+          "Suppression is per-workspace: keyed (workspace_id, email); an unsubscribe/bounce in workspace A must NOT suppress the same email in workspace B. Hard bounces are ALSO recorded in the cross-workspace global_hard_bounces.",
+          "Idempotency: outbox.dedupe_key prevents double-sends; feedback handlers are idempotent on the SES message id / event.",
+          "Logic in pure injected functions; Lambda handlers stay thin and are unit-tested via the pure function. Reuse the Phase 2-5 harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text, values} shape.",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id is a GLOBAL PK). No cross-file races.",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), campaigns (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
+        ],
+        "phase": {
+          "criteria": [
+            "A hard bounce suppresses the email in-workspace (and is recorded in global_hard_bounces); a complaint suppresses in-workspace and sets email_status=complained.",
+            "Suppression scoping: an unsubscribe in workspace A does NOT suppress the same email in workspace B.",
+            "Reputation policing: a workspace exceeding bounce/complaint thresholds is auto-suspended (status=suspended) WITHOUT pausing other workspaces.",
+            "The feedback handler is idempotent (re-delivered SES notifications do not double-write suppressions/email_events); soft bounces suppress only after N."
+          ],
+          "id": "phase8-feedback-reputation",
+          "scope": [
+            "services/feedback: SNS-triggered Feedback Lambda (resolve workspace from the message/identity). Hard bounce -> suppressions (workspace_id, email, hard_bounce) + profiles.email_status=bounced + add to global_hard_bounces. Complaint -> suppressions (complaint) + email_status=complained. Soft bounce -> count; suppress after N. Record every event in email_events (workspace-scoped). Idempotent on the SES message id.",
+            "Per-workspace reputation policing: compute per-workspace bounce/complaint rates from email_events and AUTO-SUSPEND a single workspace (workspaces.status=suspended) on threshold breach, WITHOUT affecting other workspaces.",
+            "services/unsubscribe: one-click Unsubscribe Lambda writes suppressions (workspace_id, email, unsubscribe) — workspace-scoped, so unsubscribing from A does not affect B. Honor List-Unsubscribe-Post.",
+            "Pure functions for bounce/complaint classification, soft-bounce-after-N, and the reputation threshold decision."
+          ],
+          "specSections": "§10 (feedback pipeline SNS->Feedback Lambda, suppression on bounce/complaint, reputation alarms + auto-suspend, one-click unsubscribe), §6 (suppressions, global_hard_bounces, email_events, messages_log, usage_counters)",
+          "title": "Feedback + compliance + reputation policing"
+        },
+        "prior": "Phases 2-5 are done. Reuse packages/db testutil harness (adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text,values} shape. packages/email, services/{onboarding,dispatcher,feedback,unsubscribe} are placeholder scaffolds to fill in.",
+        "spec": "CDP-BUILD-SPEC.md",
+        "testingStrategy": "§16A serverless pyramid: many pure unit tests; DB-integration against REAL local Postgres (localhost:5433, no mocking the DB); thin LocalStack E2E. Mock SES/SNS and DNS/SES-status checks."
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §10 (feedback pipeline SNS->Feedback Lambda, suppression on bounce/complaint, reputation alarms + auto-suspend, one-click unsubscribe), §6 (suppressions, global_hard_bounces, email_events, messages_log, usage_counters), plus §16A and §18.",
+        "For each acceptance criterion, define the test file(s), tier (unit | integration | e2e), and the exact assertions — especially tenant-isolation/suppression-scoping, the verification gate, and idempotency assertions.",
+        "Identify the pure functions that hold the logic (so handlers stay thin) and exactly what is mocked (SES/SNS/DNS) vs real (Postgres).",
+        "List the implementation units and their dependency order.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { testFiles: [{path, tier, criterion, assertions:[...]}], pureFunctions: string[], mocks: string[], implUnits: string[], notes: string }",
+      "role": "senior test architect practicing TDD on a serverless multi-tenant CDP",
+      "task": "Turn the §18 acceptance criteria for \"Feedback + compliance + reputation policing\" into a concrete, test-first plan."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFDKER9K2G00YCJZR08QMBB/input.json",
+    "outputJsonPath": "tasks/01KTFDKER9K2G00YCJZR08QMBB/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "phase8-feedback-reputation",
+    "plan"
+  ],
+  "title": "Plan tests: Feedback + compliance + reputation policing",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFDKER9K2G00YCJZR08QMBB",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/email-dispatch:S000009:plan-phase",
+  "stepId": "S000009",
+  "inputs": {
+    "phase": {
+      "criteria": [
+        "A hard bounce suppresses the email in-workspace (and is recorded in global_hard_bounces); a complaint suppresses in-workspace and sets email_status=complained.",
+        "Suppression scoping: an unsubscribe in workspace A does NOT suppress the same email in workspace B.",
+        "Reputation policing: a workspace exceeding bounce/complaint thresholds is auto-suspended (status=suspended) WITHOUT pausing other workspaces.",
+        "The feedback handler is idempotent (re-delivered SES notifications do not double-write suppressions/email_events); soft bounces suppress only after N."
+      ],
+      "id": "phase8-feedback-reputation",
+      "scope": [
+        "services/feedback: SNS-triggered Feedback Lambda (resolve workspace from the message/identity). Hard bounce -> suppressions (workspace_id, email, hard_bounce) + profiles.email_status=bounced + add to global_hard_bounces. Complaint -> suppressions (complaint) + email_status=complained. Soft bounce -> count; suppress after N. Record every event in email_events (workspace-scoped). Idempotent on the SES message id.",
+        "Per-workspace reputation policing: compute per-workspace bounce/complaint rates from email_events and AUTO-SUSPEND a single workspace (workspaces.status=suspended) on threshold breach, WITHOUT affecting other workspaces.",
+        "services/unsubscribe: one-click Unsubscribe Lambda writes suppressions (workspace_id, email, unsubscribe) — workspace-scoped, so unsubscribing from A does not affect B. Honor List-Unsubscribe-Post.",
+        "Pure functions for bounce/complaint classification, soft-bounce-after-N, and the reputation threshold decision."
+      ],
+      "specSections": "§10 (feedback pipeline SNS->Feedback Lambda, suppression on bounce/complaint, reputation alarms + auto-suspend, one-click unsubscribe), §6 (suppressions, global_hard_bounces, email_events, messages_log, usage_counters)",
+      "title": "Feedback + compliance + reputation policing"
+    }
+  }
+}

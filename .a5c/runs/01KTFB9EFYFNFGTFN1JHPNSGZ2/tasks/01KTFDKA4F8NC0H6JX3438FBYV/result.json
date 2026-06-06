@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTFDKA4F8NC0H6JX3438FBYV",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/email-dispatch:S000008:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "2c210c7a65011ce170ba1c2ea667034feb2cbe6d",
+    "committed": true,
+    "message": "feat(phase7): dispatch core (suppression, freq-cap, quiet-hours)"
+  },
+  "startedAt": "2026-06-06T21:32:05.323Z",
+  "finishedAt": "2026-06-06T21:32:05.323Z",
+  "value": {
+    "commitHash": "2c210c7a65011ce170ba1c2ea667034feb2cbe6d",
+    "committed": true,
+    "message": "feat(phase7): dispatch core (suppression, freq-cap, quiet-hours)"
+  }
+}

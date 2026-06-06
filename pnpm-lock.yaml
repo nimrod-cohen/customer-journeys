@@ -206,7 +206,33 @@ importers:
         specifier: ^4.0.1
         version: 4.1.0
 
-  services/feedback: {}
+  services/feedback:
+    dependencies:
+      '@cdp/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cdp/email':
+        specifier: workspace:*
+        version: link:../../packages/email
+      '@cdp/service-dispatcher':
+        specifier: workspace:*
+        version: link:../dispatcher
+      '@cdp/service-processor':
+        specifier: workspace:*
+        version: link:../processor
+      '@cdp/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      pg:
+        specifier: ^8.12.0
+        version: 8.21.0
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.140
+        version: 8.10.162
+      '@types/pg':
+        specifier: ^8.11.6
+        version: 8.20.0
 
   services/image: {}
 
@@ -296,7 +322,27 @@ importers:
         specifier: ^4.0.1
         version: 4.1.0
 
-  services/unsubscribe: {}
+  services/unsubscribe:
+    dependencies:
+      '@cdp/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cdp/email':
+        specifier: workspace:*
+        version: link:../../packages/email
+      '@cdp/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      pg:
+        specifier: ^8.12.0
+        version: 8.21.0
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.140
+        version: 8.10.162
+      '@types/pg':
+        specifier: ^8.11.6
+        version: 8.20.0
 
   tests:
     dependencies:

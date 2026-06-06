@@ -1,0 +1,654 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "criteriaAllMet": {
+          "type": "boolean"
+        },
+        "criteriaCoverage": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "criticalIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "isolationOk": {
+          "type": "boolean"
+        },
+        "mocksOk": {
+          "type": "boolean"
+        },
+        "recommendations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scopeCreep": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "testsPass": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "score",
+        "testsPass",
+        "criteriaAllMet",
+        "recommendations"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "env": "Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp.",
+        "implReport": {
+          "commandsRun": [
+            "pnpm install",
+            "apply migration 0007",
+            "per-file vitest feedback+unsubscribe",
+            "rm -rf .turbo && DATABASE_URL=... pnpm test (x2 cold)",
+            "pnpm typecheck",
+            "pnpm lint"
+          ],
+          "filesCreated": [
+            "packages/db/supabase/migrations/0007_email_event_idempotency.sql",
+            "services/feedback/src/core.ts",
+            "services/feedback/src/feedback.ts",
+            "services/feedback/src/handler.ts",
+            "services/feedback/src/deps.ts",
+            "services/feedback/src/index.ts",
+            "services/feedback/test/classify-ses-event.test.ts",
+            "services/feedback/test/resolve-workspace.test.ts",
+            "services/feedback/test/soft-bounce-after-n.test.ts",
+            "services/feedback/test/reputation-decision.test.ts",
+            "services/feedback/test/sql-builders.test.ts",
+            "services/feedback/test/handle-feedback-plan.test.ts",
+            "services/feedback/test/sns-handler.test.ts",
+            "services/feedback/test/hard-bounce-complaint.integration.test.ts",
+            "services/feedback/test/suppression-scoping.integration.test.ts",
+            "services/feedback/test/auto-suspend-isolation.integration.test.ts",
+            "services/feedback/test/idempotency.integration.test.ts",
+            "services/feedback/test/soft-bounce-after-n.integration.test.ts",
+            "services/unsubscribe/src/core.ts",
+            "services/unsubscribe/src/handler.ts",
+            "services/unsubscribe/src/deps.ts",
+            "services/unsubscribe/src/index.ts",
+            "services/unsubscribe/test/one-click-unsubscribe.test.ts",
+            "services/unsubscribe/test/unsubscribe-scoping.integration.test.ts"
+          ],
+          "filesModified": [
+            "services/feedback/package.json",
+            "services/feedback/tsconfig.json",
+            "services/unsubscribe/package.json",
+            "services/unsubscribe/tsconfig.json"
+          ],
+          "lintOk": true,
+          "notes": "Migration 0007 UNIQUE index email_events(workspace_id,ses_message_id,type) (IF NOT EXISTS, applied); suppressions PK (workspace_id,email) + global_hard_bounces PK (email) confirmed. Workspace resolution SENDER-SIDE ONLY (mail.tags.workspace_id->config_set->from_domain via reader); unresolved->status unresolved->SNS handler batch item failure (never guessed/default, never recipient-derived). Soft-bounce count = count(DISTINCT ses_message_id) over email_events scoped (workspace_id, recipient, type=bounce, sub_type=Transient). Feedback tx runner asserts each statement workspace-scoped $1 EXCEPT deliberate cross-workspace global_hard_bounces write. Reused dispatcher buildIsSuppressedQuery (added @cdp/service-dispatcher dep to feedback) for Phase-7 cross-check. Scope: §10 only, no broadcasts/campaigns/metering/frontend.",
+          "testsPass": true,
+          "testSummary": "Feedback 61 (47 unit + 14 integration/12 files), unsubscribe 11 (8 unit + 3 integration). Full monorepo 31/31 turbo tasks on TWO cold runs (cache:false, 0 cached). Integration ran on real PG localhost:5433. No Phase 2-7 regression (dispatcher 52, onboarding 38, /tests 7 still pass). Verified: hard bounce->per-workspace suppression+global_hard_bounces+profile bounced+email_events, cross-checked via dispatcher buildIsSuppressedQuery (per-workspace AND global arms); complaint->no global; soft suppresses only after N distinct ses_message_ids, replay doesn't advance; SNS replay->one row each (ON CONFLICT on new (workspace_id,ses_message_id,type) index+PKs); auto-suspend isolates offender (per-workspace rate + MIN_SENT_FOR_RATE) healthy stays active; unsubscribe scoped (A doesn't suppress B).",
+          "typecheckOk": true
+        },
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or the trusted message body set by an earlier server step.",
+          "LOCAL-only: SES (SendEmail), SNS, and the onboarding DNS/SES-status checks are MOCKED (aws-sdk-client-mock + injected resolvers). NEVER send real mail or hit real DNS/SES. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433.",
+          "Sending is gated on verification: the Dispatcher refuses to send for any workspace whose status is not active/verified (§10). Every send passes suppression -> frequency-cap -> quiet-hours, in that order.",
+          "Suppression is per-workspace: keyed (workspace_id, email); an unsubscribe/bounce in workspace A must NOT suppress the same email in workspace B. Hard bounces are ALSO recorded in the cross-workspace global_hard_bounces.",
+          "Idempotency: outbox.dedupe_key prevents double-sends; feedback handlers are idempotent on the SES message id / event.",
+          "Logic in pure injected functions; Lambda handlers stay thin and are unit-tested via the pure function. Reuse the Phase 2-5 harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text, values} shape.",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id is a GLOBAL PK). No cross-file races.",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), campaigns (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
+        ],
+        "phase": {
+          "criteria": [
+            "A hard bounce suppresses the email in-workspace (and is recorded in global_hard_bounces); a complaint suppresses in-workspace and sets email_status=complained.",
+            "Suppression scoping: an unsubscribe in workspace A does NOT suppress the same email in workspace B.",
+            "Reputation policing: a workspace exceeding bounce/complaint thresholds is auto-suspended (status=suspended) WITHOUT pausing other workspaces.",
+            "The feedback handler is idempotent (re-delivered SES notifications do not double-write suppressions/email_events); soft bounces suppress only after N."
+          ],
+          "id": "phase8-feedback-reputation",
+          "scope": [
+            "services/feedback: SNS-triggered Feedback Lambda (resolve workspace from the message/identity). Hard bounce -> suppressions (workspace_id, email, hard_bounce) + profiles.email_status=bounced + add to global_hard_bounces. Complaint -> suppressions (complaint) + email_status=complained. Soft bounce -> count; suppress after N. Record every event in email_events (workspace-scoped). Idempotent on the SES message id.",
+            "Per-workspace reputation policing: compute per-workspace bounce/complaint rates from email_events and AUTO-SUSPEND a single workspace (workspaces.status=suspended) on threshold breach, WITHOUT affecting other workspaces.",
+            "services/unsubscribe: one-click Unsubscribe Lambda writes suppressions (workspace_id, email, unsubscribe) — workspace-scoped, so unsubscribing from A does not affect B. Honor List-Unsubscribe-Post.",
+            "Pure functions for bounce/complaint classification, soft-bounce-after-N, and the reputation threshold decision."
+          ],
+          "specSections": "§10 (feedback pipeline SNS->Feedback Lambda, suppression on bounce/complaint, reputation alarms + auto-suspend, one-click unsubscribe), §6 (suppressions, global_hard_bounces, email_events, messages_log, usage_counters)",
+          "title": "Feedback + compliance + reputation policing"
+        },
+        "plan": {
+          "implUnits": [
+            "1. migration 0007: UNIQUE index email_events(workspace_id,ses_message_id,type) for idempotency; confirm suppressions PK (workspace_id,email) + global_hard_bounces PK (email) exist",
+            "2. services/feedback/src/core.ts pure (classifySesEvent,extractRecipients,resolveWorkspaceRef,shouldSuppressSoftBounce,decideReputation+constants, all SqlStatement builders, throw on falsy workspaceId)",
+            "3. services/feedback/src/feedback.ts orchestrator buildFeedbackPlan + handleNotification (resolve workspace tag->config_set->identity via reader, resolve profile by (workspace,email), commit plan via runInWorkspaceTx, then reputation policing for that workspace)",
+            "4. services/feedback/src/handler.ts thin SNS handler (parse Records[].Sns.Message, per-record try/catch->batch failure, never throw)",
+            "5. services/feedback/src/deps.ts makeProdDeps (pooled reader + runStatementsInWorkspaceTx + now); replace placeholder",
+            "6. services/unsubscribe/src/core.ts parseUnsubscribeRequest + buildUnsubscribeSuppression (reason=unsubscribe ON CONFLICT DO NOTHING), honor List-Unsubscribe-Post",
+            "7. services/unsubscribe/src/handler.ts+deps.ts thin handler scoping by workspace_id from link; replace placeholder",
+            "8. wire @cdp/db,@cdp/service-processor,@cdp/email deps into both services"
+          ],
+          "mocks": [
+            "Synthetic SNS notification payloads (Bounce Permanent/Transient, Complaint, Delivery/Open/Click) as Records[].Sns.Message JSON strings",
+            "Injected reader + runInWorkspaceTx + now() clock deps; integration injects adminPool-backed reader + runStatementsInWorkspaceTx",
+            "Injected reputation-policing reader dep",
+            "NOT mocked: Postgres in integration tier (real localhost:5433)"
+          ],
+          "notes": "Order: migration first (idempotency meaningful), then pure core (unblocks unit red->green), orchestrator, handlers, deps. Workspace resolution: NO workspace_id in SES payload -> resolve sender-side ONLY in priority: (a) mail.tags.workspace_id set at send time, (b) per-workspace Configuration Set name (sending_identity->>config_set) DB lookup, (c) sending identity/from-domain (sending_identity->>from_domain). Unresolved -> batch failure, never guessed/default (invariant 2). Idempotency key = mail.messageId in email_events.ses_message_id; UNIQUE (workspace_id,ses_message_id,type) + ON CONFLICT DO NOTHING -> re-delivered SNS no-op; suppressions PK (workspace_id,email), global_hard_bounces PK (email) natural idempotency. Suppression scoping: per-workspace isolated A-vs-B; global_hard_bounces documented cross-workspace exception (hard bounce blocks everywhere via buildIsSuppressedQuery global arm); AC2 asserts both. Auto-suspend: rates per-workspace from email_events numerator + messages_log denominator + MIN_SENT_FOR_RATE guard; suspend ONLY offender; healthy unchanged. Reuse SqlStatement, runStatementsInWorkspaceTx/runPlanInWorkspaceTx, adminPool/hasDatabaseUrl skipIf, buildIsSuppressedQuery from dispatcher for Phase-7 cross-check. Service-role paths scope by workspace_id in code, tests on adminPool. Mock SES/SNS at synthetic-payload boundary only; never mock Postgres. Thresholds named constants: bounce ~5% critical, complaint ~0.1%; soft N default 3 asserted.",
+          "pureFunctions": [
+            "classifySesEvent(notification)",
+            "extractRecipients(notification)",
+            "resolveWorkspaceRef(notification) sender-side only",
+            "shouldSuppressSoftBounce(priorCount,N)+SOFT_BOUNCE_THRESHOLD_N",
+            "decideReputation({sent,bounces,complaints}) BOUNCE_RATE_CRITICAL~0.05 COMPLAINT~0.001 MIN_SENT_FOR_RATE",
+            "buildFeedbackPlan(classification,workspaceId,profileId)",
+            "buildEmailEventInsert (ON CONFLICT (workspace_id,ses_message_id,type))",
+            "buildSuppressionUpsert (ON CONFLICT (workspace_id,email))",
+            "buildGlobalHardBounceUpsert(email)",
+            "buildProfileEmailStatusUpdate",
+            "buildSoftBounceCountQuery",
+            "buildReputationRateQuery",
+            "buildWorkspaceSuspend",
+            "parseSnsNotification",
+            "parseUnsubscribeRequest + buildUnsubscribeSuppression"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "Bounce Permanent->hard_bounce; Transient->soft_bounce",
+                "Complaint->complaint",
+                "Delivery/Open/Click->other recordType",
+                "reads both notificationType AND Configuration-Set eventType shapes",
+                "extracts recipients from bouncedRecipients/complainedRecipients lowercased",
+                "extracts sesMessageId from mail.messageId + resolver fields",
+                "malformed -> unknown -> handler failure not silent drop"
+              ],
+              "criterion": "AC4-classification",
+              "path": "services/feedback/test/classify-ses-event.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "false when count+1<N",
+                "true exactly when reaching N (boundary)",
+                "deterministic no hidden state",
+                "N named constant asserted"
+              ],
+              "criterion": "AC4",
+              "path": "services/feedback/test/soft-bounce-after-n.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "below thresholds suspend:false",
+                "bounce>=5% suspend reason=bounce-rate",
+                "complaint>=0.1% suspend reason=complaint-rate",
+                "boundary >= semantics",
+                "MIN_SENT_FOR_RATE guard (don't suspend on tiny sample)",
+                "zero sent no div-by-zero",
+                "named threshold constants"
+              ],
+              "criterion": "AC3-decision",
+              "path": "services/feedback/test/reputation-decision.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "prefers mail.tags workspace_id -> by:tag",
+                "falls back configurationSetName -> by:config_set DB lookup",
+                "falls back identity/from-domain -> by:identity",
+                "none when no field -> handler fails not guess",
+                "NEVER trusts recipient/client-supplied id; sender-side only"
+              ],
+              "criterion": "AC1/AC3 resolution",
+              "path": "services/feedback/test/resolve-workspace.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildEmailEventInsert binds workspace_id $1, ON CONFLICT (workspace_id,ses_message_id,type) DO NOTHING",
+                "buildSuppressionUpsert binds $1 ON CONFLICT (workspace_id,email) DO NOTHING",
+                "buildGlobalHardBounceUpsert ON CONFLICT (email) DO NOTHING cross-workspace",
+                "buildProfileEmailStatusUpdate scoped (workspace_id,email)",
+                "rate/count queries bind workspace_id $1 read email_events+messages_log",
+                "buildWorkspaceSuspend UPDATE workspaces status=suspended WHERE id=$1",
+                "throws on falsy workspaceId"
+              ],
+              "criterion": "AC1/AC4",
+              "path": "services/feedback/test/sql-builders.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "hard bounce plan: email_events + suppression hard_bounce + profile bounced + global_hard_bounces",
+                "complaint plan: email_events + suppression complaint + profile complained, NO global",
+                "soft below N: email_events only NO suppression",
+                "soft reaching N: email_events + suppression",
+                "delivery/open/click: email_events only",
+                "all statements carry workspace_id $1",
+                "unresolved workspace -> empty plan + unresolved signal"
+              ],
+              "criterion": "AC1/AC4",
+              "path": "services/feedback/test/handle-feedback-plan.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "parses synthetic SNS Records[].Sns.Message JSON",
+                "success runs runInWorkspaceTx once, ack",
+                "same ses_message_id twice -> no net new writes (ON CONFLICT)",
+                "unresolved/malformed -> batch item failure not silent drop, others processed",
+                "reputation policing invoked per affected workspace not globally",
+                "never throws out"
+              ],
+              "criterion": "AC4",
+              "path": "services/feedback/test/sns-handler.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "hard bounce -> one suppressions hard_bounce + profiles bounced + global_hard_bounces row + email_events",
+                "complaint -> suppression complaint + profiles complained, NO global, email_events",
+                "citext case-insensitive match",
+                "all rows resolved workspace_id, nothing under other workspace"
+              ],
+              "criterion": "AC1",
+              "path": "services/feedback/test/hard-bounce-complaint.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "A and B both have profile for shared email",
+                "action for A -> suppressions row (A,email)",
+                "NO row (B,email)",
+                "buildIsSuppressedQuery A true, B false",
+                "hard bounce: global_hard_bounces makes query true in BOTH, but per-workspace suppressions only in A"
+              ],
+              "criterion": "AC2",
+              "path": "services/feedback/test/suppression-scoping.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "OFFENDER + HEALTHY workspaces with messages_log denominator + email_events",
+                "reputation policing reads rate from email_events+messages_log per workspace",
+                "OFFENDER status=suspended",
+                "HEALTHY status unchanged active",
+                "rate per-workspace not rolled up",
+                "re-run on suspended OFFENDER idempotent"
+              ],
+              "criterion": "AC3",
+              "path": "services/feedback/test/auto-suspend-isolation.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "same hard-bounce ses_message_id twice -> one suppressions, one global, one email_events row",
+                "profiles email_status stays bounced",
+                "different ses_message_id same email -> second email_events but still one suppressions (PK workspace_id,email)",
+                "requires UNIQUE index email_events(workspace_id,ses_message_id,type) - needed migration"
+              ],
+              "criterion": "AC4",
+              "path": "services/feedback/test/idempotency.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "N-1 distinct soft bounces -> N-1 email_events, NO suppression",
+                "Nth distinct -> suppression appears",
+                "count per-workspace (other workspace's soft bounce doesn't advance)",
+                "replay duplicate ses_message_id doesn't advance count"
+              ],
+              "criterion": "AC4",
+              "path": "services/feedback/test/soft-bounce-after-n.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "parseUnsubscribeRequest extracts workspace_id+email from URL",
+                "POST RFC 8058 body List-Unsubscribe=One-Click -> honor:true",
+                "missing workspace_id rejected",
+                "suppression stmt binds workspace_id $1 reason=unsubscribe source one-click",
+                "GET/non-one-click per policy, never writes other workspace"
+              ],
+              "criterion": "AC2",
+              "path": "services/unsubscribe/test/one-click-unsubscribe.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "POST one-click for (A,email) -> suppressions (A,email,unsubscribe), NO (B,email)",
+                "later B unsubscribe -> independent second row",
+                "replay idempotent ON CONFLICT DO NOTHING single A row",
+                "cross-check Phase-7 buildIsSuppressedQuery A true B false"
+              ],
+              "criterion": "AC2",
+              "path": "services/unsubscribe/test/unsubscribe-scoping.integration.test.ts",
+              "tier": "integration"
+            }
+          ]
+        },
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Clear the turbo cache and RUN the tests yourself (DATABASE_URL set) twice from cold, plus pnpm typecheck and pnpm lint. Record real pass/fail. Confirm the integration tier RUNS (not skipped) and there is no regression in phases 2-5.",
+        "Verify EACH acceptance criterion is actually covered by a passing, non-vacuous test: [\"A hard bounce suppresses the email in-workspace (and is recorded in global_hard_bounces); a complaint suppresses in-workspace and sets email_status=complained.\",\"Suppression scoping: an unsubscribe in workspace A does NOT suppress the same email in workspace B.\",\"Reputation policing: a workspace exceeding bounce/complaint thresholds is auto-suspended (status=suspended) WITHOUT pausing other workspaces.\",\"The feedback handler is idempotent (re-delivered SES notifications do not double-write suppressions/email_events); soft bounces suppress only after N.\"].",
+        "Highest-priority checks: (a) tenant isolation + suppression is per-(workspace_id,email) and never cross-workspace; (b) the verification/active gate genuinely blocks sends; (c) SES/SNS/DNS are MOCKED (no real mail/calls) yet asserted (e.g. SES SendEmail called with the right Configuration Set only AFTER suppression/cap/quiet-hours); (d) idempotency (re-delivered feedback / outbox retry does not double-write).",
+        "If any integration test mocks Postgres, that is a FAIL (must use real local Postgres per §16A).",
+        "Scope check: flag any feature beyond the cited sections (broadcasts/campaigns/image/frontend/metering).",
+        "Score 0-100. Set testsPass and criteriaAllMet honestly. Give concrete prioritized recommendations."
+      ],
+      "outputFormat": "JSON: { score: number, testsPass: boolean, criteriaAllMet: boolean, criteriaCoverage: [{criterion, met, evidence}], isolationOk: boolean, mocksOk: boolean, scopeCreep: string[], recommendations: string[], criticalIssues: string[] }",
+      "role": "adversarial principal reviewer + QA engineer verifying spec-fidelity, tenant isolation, and compliance",
+      "task": "Independently verify \"Feedback + compliance + reputation policing\" against its §18 criteria. Re-run the tests yourself (cold cache); do not trust the self-report."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFEJVGNVM042ENASY31WTNK/input.json",
+    "outputJsonPath": "tasks/01KTFEJVGNVM042ENASY31WTNK/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "iteration-1",
+    "phase8-feedback-reputation",
+    "quality-gate"
+  ],
+  "title": "Quality gate: Feedback + compliance + reputation policing (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFEJVGNVM042ENASY31WTNK",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/email-dispatch:S000011:quality-gate",
+  "stepId": "S000011",
+  "inputs": {
+    "impl": {
+      "commandsRun": [
+        "pnpm install",
+        "apply migration 0007",
+        "per-file vitest feedback+unsubscribe",
+        "rm -rf .turbo && DATABASE_URL=... pnpm test (x2 cold)",
+        "pnpm typecheck",
+        "pnpm lint"
+      ],
+      "filesCreated": [
+        "packages/db/supabase/migrations/0007_email_event_idempotency.sql",
+        "services/feedback/src/core.ts",
+        "services/feedback/src/feedback.ts",
+        "services/feedback/src/handler.ts",
+        "services/feedback/src/deps.ts",
+        "services/feedback/src/index.ts",
+        "services/feedback/test/classify-ses-event.test.ts",
+        "services/feedback/test/resolve-workspace.test.ts",
+        "services/feedback/test/soft-bounce-after-n.test.ts",
+        "services/feedback/test/reputation-decision.test.ts",
+        "services/feedback/test/sql-builders.test.ts",
+        "services/feedback/test/handle-feedback-plan.test.ts",
+        "services/feedback/test/sns-handler.test.ts",
+        "services/feedback/test/hard-bounce-complaint.integration.test.ts",
+        "services/feedback/test/suppression-scoping.integration.test.ts",
+        "services/feedback/test/auto-suspend-isolation.integration.test.ts",
+        "services/feedback/test/idempotency.integration.test.ts",
+        "services/feedback/test/soft-bounce-after-n.integration.test.ts",
+        "services/unsubscribe/src/core.ts",
+        "services/unsubscribe/src/handler.ts",
+        "services/unsubscribe/src/deps.ts",
+        "services/unsubscribe/src/index.ts",
+        "services/unsubscribe/test/one-click-unsubscribe.test.ts",
+        "services/unsubscribe/test/unsubscribe-scoping.integration.test.ts"
+      ],
+      "filesModified": [
+        "services/feedback/package.json",
+        "services/feedback/tsconfig.json",
+        "services/unsubscribe/package.json",
+        "services/unsubscribe/tsconfig.json"
+      ],
+      "lintOk": true,
+      "notes": "Migration 0007 UNIQUE index email_events(workspace_id,ses_message_id,type) (IF NOT EXISTS, applied); suppressions PK (workspace_id,email) + global_hard_bounces PK (email) confirmed. Workspace resolution SENDER-SIDE ONLY (mail.tags.workspace_id->config_set->from_domain via reader); unresolved->status unresolved->SNS handler batch item failure (never guessed/default, never recipient-derived). Soft-bounce count = count(DISTINCT ses_message_id) over email_events scoped (workspace_id, recipient, type=bounce, sub_type=Transient). Feedback tx runner asserts each statement workspace-scoped $1 EXCEPT deliberate cross-workspace global_hard_bounces write. Reused dispatcher buildIsSuppressedQuery (added @cdp/service-dispatcher dep to feedback) for Phase-7 cross-check. Scope: §10 only, no broadcasts/campaigns/metering/frontend.",
+      "testsPass": true,
+      "testSummary": "Feedback 61 (47 unit + 14 integration/12 files), unsubscribe 11 (8 unit + 3 integration). Full monorepo 31/31 turbo tasks on TWO cold runs (cache:false, 0 cached). Integration ran on real PG localhost:5433. No Phase 2-7 regression (dispatcher 52, onboarding 38, /tests 7 still pass). Verified: hard bounce->per-workspace suppression+global_hard_bounces+profile bounced+email_events, cross-checked via dispatcher buildIsSuppressedQuery (per-workspace AND global arms); complaint->no global; soft suppresses only after N distinct ses_message_ids, replay doesn't advance; SNS replay->one row each (ON CONFLICT on new (workspace_id,ses_message_id,type) index+PKs); auto-suspend isolates offender (per-workspace rate + MIN_SENT_FOR_RATE) healthy stays active; unsubscribe scoped (A doesn't suppress B).",
+      "typecheckOk": true
+    },
+    "iteration": 1,
+    "phase": {
+      "criteria": [
+        "A hard bounce suppresses the email in-workspace (and is recorded in global_hard_bounces); a complaint suppresses in-workspace and sets email_status=complained.",
+        "Suppression scoping: an unsubscribe in workspace A does NOT suppress the same email in workspace B.",
+        "Reputation policing: a workspace exceeding bounce/complaint thresholds is auto-suspended (status=suspended) WITHOUT pausing other workspaces.",
+        "The feedback handler is idempotent (re-delivered SES notifications do not double-write suppressions/email_events); soft bounces suppress only after N."
+      ],
+      "id": "phase8-feedback-reputation",
+      "scope": [
+        "services/feedback: SNS-triggered Feedback Lambda (resolve workspace from the message/identity). Hard bounce -> suppressions (workspace_id, email, hard_bounce) + profiles.email_status=bounced + add to global_hard_bounces. Complaint -> suppressions (complaint) + email_status=complained. Soft bounce -> count; suppress after N. Record every event in email_events (workspace-scoped). Idempotent on the SES message id.",
+        "Per-workspace reputation policing: compute per-workspace bounce/complaint rates from email_events and AUTO-SUSPEND a single workspace (workspaces.status=suspended) on threshold breach, WITHOUT affecting other workspaces.",
+        "services/unsubscribe: one-click Unsubscribe Lambda writes suppressions (workspace_id, email, unsubscribe) — workspace-scoped, so unsubscribing from A does not affect B. Honor List-Unsubscribe-Post.",
+        "Pure functions for bounce/complaint classification, soft-bounce-after-N, and the reputation threshold decision."
+      ],
+      "specSections": "§10 (feedback pipeline SNS->Feedback Lambda, suppression on bounce/complaint, reputation alarms + auto-suspend, one-click unsubscribe), §6 (suppressions, global_hard_bounces, email_events, messages_log, usage_counters)",
+      "title": "Feedback + compliance + reputation policing"
+    },
+    "plan": {
+      "implUnits": [
+        "1. migration 0007: UNIQUE index email_events(workspace_id,ses_message_id,type) for idempotency; confirm suppressions PK (workspace_id,email) + global_hard_bounces PK (email) exist",
+        "2. services/feedback/src/core.ts pure (classifySesEvent,extractRecipients,resolveWorkspaceRef,shouldSuppressSoftBounce,decideReputation+constants, all SqlStatement builders, throw on falsy workspaceId)",
+        "3. services/feedback/src/feedback.ts orchestrator buildFeedbackPlan + handleNotification (resolve workspace tag->config_set->identity via reader, resolve profile by (workspace,email), commit plan via runInWorkspaceTx, then reputation policing for that workspace)",
+        "4. services/feedback/src/handler.ts thin SNS handler (parse Records[].Sns.Message, per-record try/catch->batch failure, never throw)",
+        "5. services/feedback/src/deps.ts makeProdDeps (pooled reader + runStatementsInWorkspaceTx + now); replace placeholder",
+        "6. services/unsubscribe/src/core.ts parseUnsubscribeRequest + buildUnsubscribeSuppression (reason=unsubscribe ON CONFLICT DO NOTHING), honor List-Unsubscribe-Post",
+        "7. services/unsubscribe/src/handler.ts+deps.ts thin handler scoping by workspace_id from link; replace placeholder",
+        "8. wire @cdp/db,@cdp/service-processor,@cdp/email deps into both services"
+      ],
+      "mocks": [
+        "Synthetic SNS notification payloads (Bounce Permanent/Transient, Complaint, Delivery/Open/Click) as Records[].Sns.Message JSON strings",
+        "Injected reader + runInWorkspaceTx + now() clock deps; integration injects adminPool-backed reader + runStatementsInWorkspaceTx",
+        "Injected reputation-policing reader dep",
+        "NOT mocked: Postgres in integration tier (real localhost:5433)"
+      ],
+      "notes": "Order: migration first (idempotency meaningful), then pure core (unblocks unit red->green), orchestrator, handlers, deps. Workspace resolution: NO workspace_id in SES payload -> resolve sender-side ONLY in priority: (a) mail.tags.workspace_id set at send time, (b) per-workspace Configuration Set name (sending_identity->>config_set) DB lookup, (c) sending identity/from-domain (sending_identity->>from_domain). Unresolved -> batch failure, never guessed/default (invariant 2). Idempotency key = mail.messageId in email_events.ses_message_id; UNIQUE (workspace_id,ses_message_id,type) + ON CONFLICT DO NOTHING -> re-delivered SNS no-op; suppressions PK (workspace_id,email), global_hard_bounces PK (email) natural idempotency. Suppression scoping: per-workspace isolated A-vs-B; global_hard_bounces documented cross-workspace exception (hard bounce blocks everywhere via buildIsSuppressedQuery global arm); AC2 asserts both. Auto-suspend: rates per-workspace from email_events numerator + messages_log denominator + MIN_SENT_FOR_RATE guard; suspend ONLY offender; healthy unchanged. Reuse SqlStatement, runStatementsInWorkspaceTx/runPlanInWorkspaceTx, adminPool/hasDatabaseUrl skipIf, buildIsSuppressedQuery from dispatcher for Phase-7 cross-check. Service-role paths scope by workspace_id in code, tests on adminPool. Mock SES/SNS at synthetic-payload boundary only; never mock Postgres. Thresholds named constants: bounce ~5% critical, complaint ~0.1%; soft N default 3 asserted.",
+      "pureFunctions": [
+        "classifySesEvent(notification)",
+        "extractRecipients(notification)",
+        "resolveWorkspaceRef(notification) sender-side only",
+        "shouldSuppressSoftBounce(priorCount,N)+SOFT_BOUNCE_THRESHOLD_N",
+        "decideReputation({sent,bounces,complaints}) BOUNCE_RATE_CRITICAL~0.05 COMPLAINT~0.001 MIN_SENT_FOR_RATE",
+        "buildFeedbackPlan(classification,workspaceId,profileId)",
+        "buildEmailEventInsert (ON CONFLICT (workspace_id,ses_message_id,type))",
+        "buildSuppressionUpsert (ON CONFLICT (workspace_id,email))",
+        "buildGlobalHardBounceUpsert(email)",
+        "buildProfileEmailStatusUpdate",
+        "buildSoftBounceCountQuery",
+        "buildReputationRateQuery",
+        "buildWorkspaceSuspend",
+        "parseSnsNotification",
+        "parseUnsubscribeRequest + buildUnsubscribeSuppression"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "Bounce Permanent->hard_bounce; Transient->soft_bounce",
+            "Complaint->complaint",
+            "Delivery/Open/Click->other recordType",
+            "reads both notificationType AND Configuration-Set eventType shapes",
+            "extracts recipients from bouncedRecipients/complainedRecipients lowercased",
+            "extracts sesMessageId from mail.messageId + resolver fields",
+            "malformed -> unknown -> handler failure not silent drop"
+          ],
+          "criterion": "AC4-classification",
+          "path": "services/feedback/test/classify-ses-event.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "false when count+1<N",
+            "true exactly when reaching N (boundary)",
+            "deterministic no hidden state",
+            "N named constant asserted"
+          ],
+          "criterion": "AC4",
+          "path": "services/feedback/test/soft-bounce-after-n.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "below thresholds suspend:false",
+            "bounce>=5% suspend reason=bounce-rate",
+            "complaint>=0.1% suspend reason=complaint-rate",
+            "boundary >= semantics",
+            "MIN_SENT_FOR_RATE guard (don't suspend on tiny sample)",
+            "zero sent no div-by-zero",
+            "named threshold constants"
+          ],
+          "criterion": "AC3-decision",
+          "path": "services/feedback/test/reputation-decision.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "prefers mail.tags workspace_id -> by:tag",
+            "falls back configurationSetName -> by:config_set DB lookup",
+            "falls back identity/from-domain -> by:identity",
+            "none when no field -> handler fails not guess",
+            "NEVER trusts recipient/client-supplied id; sender-side only"
+          ],
+          "criterion": "AC1/AC3 resolution",
+          "path": "services/feedback/test/resolve-workspace.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildEmailEventInsert binds workspace_id $1, ON CONFLICT (workspace_id,ses_message_id,type) DO NOTHING",
+            "buildSuppressionUpsert binds $1 ON CONFLICT (workspace_id,email) DO NOTHING",
+            "buildGlobalHardBounceUpsert ON CONFLICT (email) DO NOTHING cross-workspace",
+            "buildProfileEmailStatusUpdate scoped (workspace_id,email)",
+            "rate/count queries bind workspace_id $1 read email_events+messages_log",
+            "buildWorkspaceSuspend UPDATE workspaces status=suspended WHERE id=$1",
+            "throws on falsy workspaceId"
+          ],
+          "criterion": "AC1/AC4",
+          "path": "services/feedback/test/sql-builders.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "hard bounce plan: email_events + suppression hard_bounce + profile bounced + global_hard_bounces",
+            "complaint plan: email_events + suppression complaint + profile complained, NO global",
+            "soft below N: email_events only NO suppression",
+            "soft reaching N: email_events + suppression",
+            "delivery/open/click: email_events only",
+            "all statements carry workspace_id $1",
+            "unresolved workspace -> empty plan + unresolved signal"
+          ],
+          "criterion": "AC1/AC4",
+          "path": "services/feedback/test/handle-feedback-plan.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "parses synthetic SNS Records[].Sns.Message JSON",
+            "success runs runInWorkspaceTx once, ack",
+            "same ses_message_id twice -> no net new writes (ON CONFLICT)",
+            "unresolved/malformed -> batch item failure not silent drop, others processed",
+            "reputation policing invoked per affected workspace not globally",
+            "never throws out"
+          ],
+          "criterion": "AC4",
+          "path": "services/feedback/test/sns-handler.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "hard bounce -> one suppressions hard_bounce + profiles bounced + global_hard_bounces row + email_events",
+            "complaint -> suppression complaint + profiles complained, NO global, email_events",
+            "citext case-insensitive match",
+            "all rows resolved workspace_id, nothing under other workspace"
+          ],
+          "criterion": "AC1",
+          "path": "services/feedback/test/hard-bounce-complaint.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "A and B both have profile for shared email",
+            "action for A -> suppressions row (A,email)",
+            "NO row (B,email)",
+            "buildIsSuppressedQuery A true, B false",
+            "hard bounce: global_hard_bounces makes query true in BOTH, but per-workspace suppressions only in A"
+          ],
+          "criterion": "AC2",
+          "path": "services/feedback/test/suppression-scoping.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "OFFENDER + HEALTHY workspaces with messages_log denominator + email_events",
+            "reputation policing reads rate from email_events+messages_log per workspace",
+            "OFFENDER status=suspended",
+            "HEALTHY status unchanged active",
+            "rate per-workspace not rolled up",
+            "re-run on suspended OFFENDER idempotent"
+          ],
+          "criterion": "AC3",
+          "path": "services/feedback/test/auto-suspend-isolation.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "same hard-bounce ses_message_id twice -> one suppressions, one global, one email_events row",
+            "profiles email_status stays bounced",
+            "different ses_message_id same email -> second email_events but still one suppressions (PK workspace_id,email)",
+            "requires UNIQUE index email_events(workspace_id,ses_message_id,type) - needed migration"
+          ],
+          "criterion": "AC4",
+          "path": "services/feedback/test/idempotency.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "N-1 distinct soft bounces -> N-1 email_events, NO suppression",
+            "Nth distinct -> suppression appears",
+            "count per-workspace (other workspace's soft bounce doesn't advance)",
+            "replay duplicate ses_message_id doesn't advance count"
+          ],
+          "criterion": "AC4",
+          "path": "services/feedback/test/soft-bounce-after-n.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "parseUnsubscribeRequest extracts workspace_id+email from URL",
+            "POST RFC 8058 body List-Unsubscribe=One-Click -> honor:true",
+            "missing workspace_id rejected",
+            "suppression stmt binds workspace_id $1 reason=unsubscribe source one-click",
+            "GET/non-one-click per policy, never writes other workspace"
+          ],
+          "criterion": "AC2",
+          "path": "services/unsubscribe/test/one-click-unsubscribe.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "POST one-click for (A,email) -> suppressions (A,email,unsubscribe), NO (B,email)",
+            "later B unsubscribe -> independent second row",
+            "replay idempotent ON CONFLICT DO NOTHING single A row",
+            "cross-check Phase-7 buildIsSuppressedQuery A true B false"
+          ],
+          "criterion": "AC2",
+          "path": "services/unsubscribe/test/unsubscribe-scoping.integration.test.ts",
+          "tier": "integration"
+        }
+      ]
+    }
+  }
+}

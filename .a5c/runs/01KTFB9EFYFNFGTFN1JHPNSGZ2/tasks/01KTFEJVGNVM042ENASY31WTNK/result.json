@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTFEJVGNVM042ENASY31WTNK",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/email-dispatch:S000011:quality-gate",
+  "status": "ok",
+  "result": {
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "hard-bounce-complaint.integration (real PG): Permanent bounce -> suppressions hard_bounce + global_hard_bounces + profiles bounced + email_events; dispatcher buildIsSuppressedQuery true. Complaint -> suppression complaint + email_status complained + NO global row.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "suppression-scoping.integration (wsA/wsB same email): A's complaint -> no (B,email) row, query(B)=false. Hard bounce in A -> per-workspace row only in A but query TRUE in BOTH via global_hard_bounces arm; B still no per-workspace row. Both halves asserted.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "auto-suspend-isolation.integration: offender 200 sends/~20 bounces (10%) -> suspended; healthy 200/1 stays active. Rate per-workspace (buildReputationRateQuery scopes numerator+denominator by workspace_id $1). MIN_SENT_FOR_RATE=50 guard unit-verified. Suspend WHERE id=$1.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "idempotency.integration: same ses_message_id 3x -> 1 email_events, 1 suppression, 1 global row via UNIQUE index (workspace_id,ses_message_id,type); raw dup raises 23505. soft-bounce-after-n: suppress only at Nth DISTINCT (count DISTINCT ses_message_id); replay doesn't advance.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "mocksOk": true,
+    "recommendations": [
+      "Idempotency UNIQUE index includes nullable ses_message_id (NULLs distinct in PG); not a practical gap since SES bounce/complaint always carry mail.messageId, but consider NOT NULL/partial key if non-feedback paths insert NULL ids.",
+      "Add a comment that tag workspace_id is sender-set never client-influenced inbound (audit hardening).",
+      "Add an integration test seeding a tiny denominator + high bounce ratio asserting no suspend against real PG (MIN_SENT_FOR_RATE end-to-end)."
+    ],
+    "scopeCreep": [],
+    "score": 96,
+    "testsPass": true
+  },
+  "startedAt": "2026-06-06T21:52:48.482Z",
+  "finishedAt": "2026-06-06T21:52:48.482Z",
+  "value": {
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "hard-bounce-complaint.integration (real PG): Permanent bounce -> suppressions hard_bounce + global_hard_bounces + profiles bounced + email_events; dispatcher buildIsSuppressedQuery true. Complaint -> suppression complaint + email_status complained + NO global row.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "suppression-scoping.integration (wsA/wsB same email): A's complaint -> no (B,email) row, query(B)=false. Hard bounce in A -> per-workspace row only in A but query TRUE in BOTH via global_hard_bounces arm; B still no per-workspace row. Both halves asserted.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "auto-suspend-isolation.integration: offender 200 sends/~20 bounces (10%) -> suspended; healthy 200/1 stays active. Rate per-workspace (buildReputationRateQuery scopes numerator+denominator by workspace_id $1). MIN_SENT_FOR_RATE=50 guard unit-verified. Suspend WHERE id=$1.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "idempotency.integration: same ses_message_id 3x -> 1 email_events, 1 suppression, 1 global row via UNIQUE index (workspace_id,ses_message_id,type); raw dup raises 23505. soft-bounce-after-n: suppress only at Nth DISTINCT (count DISTINCT ses_message_id); replay doesn't advance.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "mocksOk": true,
+    "recommendations": [
+      "Idempotency UNIQUE index includes nullable ses_message_id (NULLs distinct in PG); not a practical gap since SES bounce/complaint always carry mail.messageId, but consider NOT NULL/partial key if non-feedback paths insert NULL ids.",
+      "Add a comment that tag workspace_id is sender-set never client-influenced inbound (audit hardening).",
+      "Add an integration test seeding a tiny denominator + high bounce ratio asserting no suspend against real PG (MIN_SENT_FOR_RATE end-to-end)."
+    ],
+    "scopeCreep": [],
+    "score": 96,
+    "testsPass": true
+  }
+}

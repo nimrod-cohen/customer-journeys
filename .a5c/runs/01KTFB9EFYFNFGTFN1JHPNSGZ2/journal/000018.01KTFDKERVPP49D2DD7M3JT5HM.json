@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T21:32:09.883Z",
+  "data": {
+    "effectId": "01KTFDKER9K2G00YCJZR08QMBB",
+    "invocationKey": "cdp/email-dispatch:S000009:plan-phase",
+    "invocationHash": "b251f3c859b0442fabf46308189ddc866137695f0b996e936ac13c580ddbbf82",
+    "stepId": "S000009",
+    "taskId": "plan-phase",
+    "kind": "agent",
+    "label": "plan",
+    "taskDefRef": "tasks/01KTFDKER9K2G00YCJZR08QMBB/task.json",
+    "labels": [
+      "plan",
+      "phase8-feedback-reputation"
+    ]
+  },
+  "checksum": "8c02c736463afc6f6a82581812dee54c47887240eba7def115c17a04e4795d55"
+}
