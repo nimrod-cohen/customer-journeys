@@ -4,6 +4,7 @@
     "rootDir": "src",
     "outDir": "dist"
   },
+  "files": ["src/mjml.d.ts"],
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../shared" }]
+  "references": [{ "path": "../shared" }, { "path": "../db" }]
 }

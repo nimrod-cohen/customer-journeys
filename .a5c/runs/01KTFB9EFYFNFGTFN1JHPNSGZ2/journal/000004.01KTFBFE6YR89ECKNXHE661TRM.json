@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T20:55:01.086Z",
+  "data": {
+    "effectId": "01KTFBFE6CRK4KP0ZCZH7MXC8E",
+    "invocationKey": "cdp/email-dispatch:S000002:implement-phase",
+    "invocationHash": "ccc42edffc78b737bc04d05c008b12f28f3f5196bfce518e92d9d32415e04e07",
+    "stepId": "S000002",
+    "taskId": "implement-phase",
+    "kind": "agent",
+    "label": "implement",
+    "taskDefRef": "tasks/01KTFBFE6CRK4KP0ZCZH7MXC8E/task.json",
+    "labels": [
+      "implement",
+      "phase6-email-onboarding",
+      "iteration-1"
+    ]
+  },
+  "checksum": "769d50b478767a413dcce7a254fb51ea00d7b214f15685123c4c6193983b64af"
+}

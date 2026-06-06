@@ -15,9 +15,15 @@
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit false",
     "test": "vitest run --passWithNoTests",
-    "lint": "eslint src"
+    "lint": "eslint src --no-error-on-unmatched-pattern"
   },
   "dependencies": {
-    "@cdp/shared": "workspace:*"
+    "@aws-sdk/client-sesv2": "^3.620.0",
+    "@cdp/db": "workspace:*",
+    "@cdp/shared": "workspace:*",
+    "mjml": "^4.15.3"
+  },
+  "devDependencies": {
+    "aws-sdk-client-mock": "^4.0.1"
   }
 }

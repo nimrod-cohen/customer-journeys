@@ -1,0 +1,588 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "criteriaAllMet": {
+          "type": "boolean"
+        },
+        "criteriaCoverage": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "criticalIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "isolationOk": {
+          "type": "boolean"
+        },
+        "mocksOk": {
+          "type": "boolean"
+        },
+        "recommendations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scopeCreep": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "testsPass": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "score",
+        "testsPass",
+        "criteriaAllMet",
+        "recommendations"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "env": "Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp.",
+        "implReport": {
+          "commandsRun": [
+            "pnpm install",
+            "DATABASE_URL=... per-package vitest",
+            "pnpm typecheck",
+            "pnpm lint",
+            "rm -rf .turbo && DATABASE_URL=... pnpm test (x2 cold)",
+            "pnpm build"
+          ],
+          "filesCreated": [
+            "packages/email/src/mjml.ts",
+            "packages/email/src/unsubscribe.ts",
+            "packages/email/src/template.ts",
+            "packages/email/src/can-send.ts",
+            "packages/email/src/ses-client.ts",
+            "packages/email/test/mjml-compile.test.ts",
+            "packages/email/test/unsubscribe-headers.test.ts",
+            "packages/email/test/template-save-plan.test.ts",
+            "packages/email/test/ses-client.test.ts",
+            "packages/email/test/template-storage.integration.test.ts",
+            "services/onboarding/src/core.ts",
+            "services/onboarding/src/start-domain.ts",
+            "services/onboarding/src/check-domain.ts",
+            "services/onboarding/src/activate.ts",
+            "services/onboarding/src/deps.ts",
+            "services/onboarding/src/index.ts",
+            "services/onboarding/test/start-domain-records.test.ts",
+            "services/onboarding/test/start-domain-core.test.ts",
+            "services/onboarding/test/check-domain-diff.test.ts",
+            "services/onboarding/test/activate-gate.test.ts",
+            "services/onboarding/test/activate-core-ses.test.ts",
+            "services/onboarding/test/onboarding-transitions.integration.test.ts",
+            "services/onboarding/test/onboarding-workspace-scoping.integration.test.ts",
+            "services/onboarding/test/check-domain-mocked.integration.test.ts"
+          ],
+          "filesModified": [
+            "packages/email/package.json",
+            "packages/email/src/index.ts",
+            "services/onboarding/package.json",
+            "services/onboarding/tsconfig.json"
+          ],
+          "lintOk": true,
+          "notes": "TDD. Activate gate = SES DKIM status NOT DNS, proven by decoupled mocks: DNS-all-found+SES-PENDING DENIES; SES-SUCCESS+required DNS pending DENIES; only SES-SUCCESS+required (SPF+MAIL FROM) resolved ALLOWS; DMARC recommended never required; dkimVerified derives from SES status. canSend false until status=active && sending_identity.verified=true. Every onboarding write binds workspace_id $1; activate UPDATE touches exactly one row (wsA activate never affects wsB). SES/DNS mocked everywhere (aws-sdk-client-mock + injected DnsResolver + SES-status reader); mjml real in compile tests; DB never mocked. Commits via reused runPlanInWorkspaceTx. email_templates no UNIQUE(workspace_id,name) in §6 so buildTemplateUpsert is idempotent UPDATE-then-INSERT-if-absent, workspace-scoped. mjml v4 ambient decl in tsconfig files. turbo cache:false. No source changes to phases 2-5.",
+          "testsPass": true,
+          "testSummary": "Two cold-cache full runs (0 cached) both green: 30/30 turbo test tasks. New: @cdp/email 24 tests (incl. template-storage integration on real PG), @cdp/service-onboarding 38 tests (incl. 3 integration files on real PG). Phases 2-5 unchanged: segments 61, processor 50+1 skipped, ingest 22, authorizer 18, tenancy 41, api 17, batch-eval 11, db 13, tests 7. Integration tier RAN on localhost:5433.",
+          "typecheckOk": true
+        },
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or the trusted message body set by an earlier server step.",
+          "LOCAL-only: SES (SendEmail), SNS, and the onboarding DNS/SES-status checks are MOCKED (aws-sdk-client-mock + injected resolvers). NEVER send real mail or hit real DNS/SES. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433.",
+          "Sending is gated on verification: the Dispatcher refuses to send for any workspace whose status is not active/verified (§10). Every send passes suppression -> frequency-cap -> quiet-hours, in that order.",
+          "Suppression is per-workspace: keyed (workspace_id, email); an unsubscribe/bounce in workspace A must NOT suppress the same email in workspace B. Hard bounces are ALSO recorded in the cross-workspace global_hard_bounces.",
+          "Idempotency: outbox.dedupe_key prevents double-sends; feedback handlers are idempotent on the SES message id / event.",
+          "Logic in pure injected functions; Lambda handlers stay thin and are unit-tested via the pure function. Reuse the Phase 2-5 harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text, values} shape.",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id is a GLOBAL PK). No cross-file races.",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), campaigns (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
+        ],
+        "phase": {
+          "criteria": [
+            "A workspace whose domain is not verified (status != active) cannot send; once DKIM verifies via the (mocked) SES status, activate flips status to active and enables sending from its own domain with aligned DKIM/SPF/DMARC records returned.",
+            "start-domain returns the correct set of DNS records to publish (DKIM CNAMEs, SPF, MAIL FROM, DMARC); check-domain reports per-record state from mocked DNS + SES status and is the source of truth gate (SES status), not the registrar.",
+            "MJML templates compile to cross-client HTML at save time; both mjml and compiled_html are stored, workspace-scoped.",
+            "All onboarding state is workspace-scoped; one workspace activating never affects another."
+          ],
+          "id": "phase6-email-onboarding",
+          "scope": [
+            "packages/email: an injectable SES client wrapper (createDomainIdentity/getIdentityVerificationAttributes/createConfigurationSet — all mockable), MJML->HTML compile (mjml npm) used at template save, and List-Unsubscribe / List-Unsubscribe-Post header builders.",
+            "services/onboarding: Onboarding Lambda with three pure-cored entrypoints — start-domain (create SES domain identity + Easy DKIM + MAIL FROM subdomain, return the DNS records to publish: 3 DKIM CNAME, SPF TXT, MAIL FROM MX+SPF, recommended DMARC TXT), check-domain (run DNS lookups + read SES verification status — both injected/mocked — and return per-record pending/found/mismatch state), activate (gate: SES reports DKIM verified + required records resolve -> create the workspace Configuration Set on the SHARED IP pool -> set workspaces.status=active, sending_identity.verified=true).",
+            "A Template Lambda path: compile MJML->HTML at save time and store both mjml + compiled_html in email_templates (workspace-scoped).",
+            "Extend workspaces.sending_identity jsonb per §10A (from_domain, ses_identity, dkim_tokens, mail_from, dmarc_status, record_checks, verified, config_set, ip_mode=shared)."
+          ],
+          "specSections": "§10 (SES sending identity, gated onboarding, config set, IP strategy), §10A (onboarding wizard start/check/activate, DNS+SES validation), §11 (MJML compile at template save), §6 (workspaces.sending_identity jsonb, email_templates)",
+          "title": "Email infrastructure + guided domain onboarding"
+        },
+        "plan": {
+          "implUnits": [
+            "packages/email: injectable SesEmailClient interface + prod impl over @aws-sdk/client-sesv2 (+aws-sdk-client-mock dev)",
+            "packages/email: compileMjml (add mjml dep)",
+            "packages/email: List-Unsubscribe header builders",
+            "packages/email: buildTemplateUpsert + canSend predicate",
+            "services/onboarding/src/core.ts pure cores (buildDnsRecordSet,diffRecord,checkDomainCore,activateDecision,status/identity SqlStatement builders)",
+            "services/onboarding/src/{start-domain,check-domain,activate}.ts entrypoints wiring injected SES+DNS+status reader",
+            "services/onboarding/src/deps.ts makeProdDeps + reuse runPlanInWorkspaceTx",
+            "onboarding package.json add @aws-sdk/client-sesv2,aws-sdk-client-mock,@cdp/db,@cdp/email,@cdp/shared",
+            "no DDL: sending_identity jsonb already exists; document new keys",
+            "order: email builders+compile+SES iface -> onboarding cores -> entrypoints+deps -> template save -> integration"
+          ],
+          "mocks": [
+            "SES wrapper via aws-sdk-client-mock (@aws-sdk/client-sesv2): createDomainIdentity Easy DKIM, getIdentity DKIM-attrs reader, createConfigurationSet — injectable, assert args (shared pool, config-set name), never real SES",
+            "Injected DNS resolver (TXT/CNAME/MX) canned answers, never real DNS",
+            "Injected SES verification-status reader (DKIM Pending/Success) decoupled from DNS so SES-is-the-gate is provable",
+            "mjml: real (not mocked) in compile tests",
+            "NOT mocked: Postgres (real localhost:5433)"
+          ],
+          "notes": "Highest-value: (a) canSend false until status=active && verified=true; (b) SES status (not DNS, not registrar) is the activate gate, proven by decoupled mocks (DNS-all-found+SES-pending denies; SES-success+DNS-required-pending denies); (c) DMARC recommended not gate-required; (d) workspace-scoping: activate UPDATE binds workspace_id $1, touches exactly one row. SES SDK is @aws-sdk/client-sesv2 (CreateEmailIdentity Easy DKIM, PutEmailIdentityMailFromAttributes, GetEmailIdentity, CreateConfigurationSet) — confirm exact command names when adding dep. mjml real in compile tests. sending_identity jsonb already in §6 schema, no DDL. Reuse runPlanInWorkspaceTx/scopedQuery/adminPool/hasDatabaseUrl + unique namespace + cleanup.",
+          "pureFunctions": [
+            "buildDnsRecordSet(fromDomain,dkimTokens,mailFromSubdomain,region)",
+            "diffRecord(expected,observed)",
+            "checkDomainCore(records,dnsAnswers,sesStatus)",
+            "activateDecision(sesStatus,recordChecks,configSetName)",
+            "compileMjml(mjml)",
+            "buildListUnsubscribeHeaders({unsubscribeUrl,mailto?})",
+            "buildTemplateUpsert(workspaceId,name,mjml,compiledHtml)",
+            "buildSendingIdentityPatchStatement/buildActivateStatement(workspaceId)",
+            "canSend(workspace)"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "buildDnsRecordSet returns exactly 6 records: 3 DKIM CNAME, SPF TXT, MAIL FROM MX+SPF, DMARC TXT",
+                "DKIM CNAME name <token>._domainkey.<domain> value <token>.dkim.amazonses.com",
+                "SPF v=spf1 include:amazonses.com ~all",
+                "MAIL FROM MX feedback-smtp.<region>.amazonses.com prio 10 + SPF TXT",
+                "DMARC _dmarc.<domain> v=DMARC1; p=none; rua=",
+                "stable record key for diff",
+                "pure"
+              ],
+              "criterion": "2",
+              "path": "services/onboarding/test/start-domain-records.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "calls injected SES createDomainIdentity (Easy DKIM)+MAIL FROM (mocked), no real SES",
+                "returns dkim_tokens + record set",
+                "sending_identity patch {from_domain,ses_identity,dkim_tokens,mail_from,dmarc_status:pending,record_checks pending,verified:false,ip_mode:shared}",
+                "from_domain from input not client workspace_id",
+                "throws on missing from_domain/workspaceId"
+              ],
+              "criterion": "2",
+              "path": "services/onboarding/test/start-domain-core.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "checkDomainCore(records,dnsAnswers,sesStatus) -> per-record pending|found|mismatch",
+                "match->found, absent->pending, wrong value->mismatch+hint",
+                "DKIM gate from SES status NOT DNS: SES Success->dkim_verified true even if DNS pending; SES Pending->false even if all DNS found",
+                "SPF/DMARC/MAILFROM from DNS only",
+                "record_checks shape persisted",
+                "pure given injected resolver+reader"
+              ],
+              "criterion": "2",
+              "path": "services/onboarding/test/check-domain-diff.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "allowed=false when SES DKIM not verified even if all DNS found (SES is gate)",
+                "allowed=false when DKIM verified but required DNS record pending/mismatch",
+                "allowed=true only when SES verified AND required records resolve",
+                "DMARC recommended not required",
+                "when allowed -> patch {verified:true,config_set,ip_mode:shared} + status='active' intent",
+                "pure"
+              ],
+              "criterion": "1,2",
+              "path": "services/onboarding/test/activate-gate.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "gate allows -> createConfigurationSet once with workspace config-set name + shared IP pool (aws-sdk-client-mock)",
+                "gate denies -> no createConfigurationSet, no status flip",
+                "never dedicated IP pool",
+                "no real SES"
+              ],
+              "criterion": "1",
+              "path": "services/onboarding/test/activate-core-ses.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "compileMjml(valid)->{html} with rendered content",
+                "throws on invalid MJML (never save uncompilable)",
+                "uses mjml npm, deterministic",
+                "html != input"
+              ],
+              "criterion": "3",
+              "path": "packages/email/test/mjml-compile.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "List-Unsubscribe wraps URL (+optional mailto) in angle brackets",
+                "List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+                "URL workspace-scoped (token), not global",
+                "pure"
+              ],
+              "criterion": "3-adjacent",
+              "path": "packages/email/test/unsubscribe-headers.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildTemplateUpsert INSERT email_templates with mjml AND compiled_html",
+                "workspace_id bound values[0], required, throws on empty",
+                "both raw mjml + compiled_html in values",
+                "SqlStatement shape"
+              ],
+              "criterion": "3",
+              "path": "packages/email/test/template-save-plan.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "real PG, skipIf no DB, unique namespace + cleanup",
+                "fresh workspace status=onboarding, canSend false",
+                "after start-domain persisted sending_identity has from_domain/dkim_tokens/record_checks pending/verified:false/ip_mode:shared, status still onboarding canSend false",
+                "SES DKIM Pending -> activate rejected, status stays onboarding, no config_set, createConfigurationSet not called",
+                "SES DKIM Success + records resolved -> activate via runPlanInWorkspaceTx flips status=active, verified=true, config_set set; canSend true",
+                "activate UPDATE binds workspace_id $1, touches only target"
+              ],
+              "criterion": "1,4",
+              "path": "services/onboarding/test/onboarding-transitions.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "real PG, two workspaces A+B status=onboarding same from_domain",
+                "activate A (SES verified) -> A.status=active verified=true",
+                "B untouched: status onboarding, verified false, no config_set",
+                "A record_checks don't appear on B",
+                "activate UPDATE rowCount=1 and row is A"
+              ],
+              "criterion": "4",
+              "path": "services/onboarding/test/onboarding-workspace-scoping.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "real PG, save via buildTemplateUpsert -> email_templates row with workspace_id,name,mjml,non-empty compiled_html",
+                "stored compiled_html == compileMjml(mjml)",
+                "template under A not visible scoped to B",
+                "invalid MJML fails before insert"
+              ],
+              "criterion": "3",
+              "path": "packages/email/test/template-storage.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "real PG, check-domain with mocked DNS+SES persists record_checks",
+                "found/pending/mismatch reflected",
+                "SES Success+records updates dkim signal but does NOT flip status (activate's job)",
+                "record_checks only on target workspace"
+              ],
+              "criterion": "2",
+              "path": "services/onboarding/test/check-domain-mocked.integration.test.ts",
+              "tier": "integration"
+            }
+          ]
+        },
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Clear the turbo cache and RUN the tests yourself (DATABASE_URL set) twice from cold, plus pnpm typecheck and pnpm lint. Record real pass/fail. Confirm the integration tier RUNS (not skipped) and there is no regression in phases 2-5.",
+        "Verify EACH acceptance criterion is actually covered by a passing, non-vacuous test: [\"A workspace whose domain is not verified (status != active) cannot send; once DKIM verifies via the (mocked) SES status, activate flips status to active and enables sending from its own domain with aligned DKIM/SPF/DMARC records returned.\",\"start-domain returns the correct set of DNS records to publish (DKIM CNAMEs, SPF, MAIL FROM, DMARC); check-domain reports per-record state from mocked DNS + SES status and is the source of truth gate (SES status), not the registrar.\",\"MJML templates compile to cross-client HTML at save time; both mjml and compiled_html are stored, workspace-scoped.\",\"All onboarding state is workspace-scoped; one workspace activating never affects another.\"].",
+        "Highest-priority checks: (a) tenant isolation + suppression is per-(workspace_id,email) and never cross-workspace; (b) the verification/active gate genuinely blocks sends; (c) SES/SNS/DNS are MOCKED (no real mail/calls) yet asserted (e.g. SES SendEmail called with the right Configuration Set only AFTER suppression/cap/quiet-hours); (d) idempotency (re-delivered feedback / outbox retry does not double-write).",
+        "If any integration test mocks Postgres, that is a FAIL (must use real local Postgres per §16A).",
+        "Scope check: flag any feature beyond the cited sections (broadcasts/campaigns/image/frontend/metering).",
+        "Score 0-100. Set testsPass and criteriaAllMet honestly. Give concrete prioritized recommendations."
+      ],
+      "outputFormat": "JSON: { score: number, testsPass: boolean, criteriaAllMet: boolean, criteriaCoverage: [{criterion, met, evidence}], isolationOk: boolean, mocksOk: boolean, scopeCreep: string[], recommendations: string[], criticalIssues: string[] }",
+      "role": "adversarial principal reviewer + QA engineer verifying spec-fidelity, tenant isolation, and compliance",
+      "task": "Independently verify \"Email infrastructure + guided domain onboarding\" against its §18 criteria. Re-run the tests yourself (cold cache); do not trust the self-report."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFC9H47YWPW49SEVDZ56QQT/input.json",
+    "outputJsonPath": "tasks/01KTFC9H47YWPW49SEVDZ56QQT/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "iteration-1",
+    "phase6-email-onboarding",
+    "quality-gate"
+  ],
+  "title": "Quality gate: Email infrastructure + guided domain onboarding (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFC9H47YWPW49SEVDZ56QQT",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/email-dispatch:S000003:quality-gate",
+  "stepId": "S000003",
+  "inputs": {
+    "impl": {
+      "commandsRun": [
+        "pnpm install",
+        "DATABASE_URL=... per-package vitest",
+        "pnpm typecheck",
+        "pnpm lint",
+        "rm -rf .turbo && DATABASE_URL=... pnpm test (x2 cold)",
+        "pnpm build"
+      ],
+      "filesCreated": [
+        "packages/email/src/mjml.ts",
+        "packages/email/src/unsubscribe.ts",
+        "packages/email/src/template.ts",
+        "packages/email/src/can-send.ts",
+        "packages/email/src/ses-client.ts",
+        "packages/email/test/mjml-compile.test.ts",
+        "packages/email/test/unsubscribe-headers.test.ts",
+        "packages/email/test/template-save-plan.test.ts",
+        "packages/email/test/ses-client.test.ts",
+        "packages/email/test/template-storage.integration.test.ts",
+        "services/onboarding/src/core.ts",
+        "services/onboarding/src/start-domain.ts",
+        "services/onboarding/src/check-domain.ts",
+        "services/onboarding/src/activate.ts",
+        "services/onboarding/src/deps.ts",
+        "services/onboarding/src/index.ts",
+        "services/onboarding/test/start-domain-records.test.ts",
+        "services/onboarding/test/start-domain-core.test.ts",
+        "services/onboarding/test/check-domain-diff.test.ts",
+        "services/onboarding/test/activate-gate.test.ts",
+        "services/onboarding/test/activate-core-ses.test.ts",
+        "services/onboarding/test/onboarding-transitions.integration.test.ts",
+        "services/onboarding/test/onboarding-workspace-scoping.integration.test.ts",
+        "services/onboarding/test/check-domain-mocked.integration.test.ts"
+      ],
+      "filesModified": [
+        "packages/email/package.json",
+        "packages/email/src/index.ts",
+        "services/onboarding/package.json",
+        "services/onboarding/tsconfig.json"
+      ],
+      "lintOk": true,
+      "notes": "TDD. Activate gate = SES DKIM status NOT DNS, proven by decoupled mocks: DNS-all-found+SES-PENDING DENIES; SES-SUCCESS+required DNS pending DENIES; only SES-SUCCESS+required (SPF+MAIL FROM) resolved ALLOWS; DMARC recommended never required; dkimVerified derives from SES status. canSend false until status=active && sending_identity.verified=true. Every onboarding write binds workspace_id $1; activate UPDATE touches exactly one row (wsA activate never affects wsB). SES/DNS mocked everywhere (aws-sdk-client-mock + injected DnsResolver + SES-status reader); mjml real in compile tests; DB never mocked. Commits via reused runPlanInWorkspaceTx. email_templates no UNIQUE(workspace_id,name) in §6 so buildTemplateUpsert is idempotent UPDATE-then-INSERT-if-absent, workspace-scoped. mjml v4 ambient decl in tsconfig files. turbo cache:false. No source changes to phases 2-5.",
+      "testsPass": true,
+      "testSummary": "Two cold-cache full runs (0 cached) both green: 30/30 turbo test tasks. New: @cdp/email 24 tests (incl. template-storage integration on real PG), @cdp/service-onboarding 38 tests (incl. 3 integration files on real PG). Phases 2-5 unchanged: segments 61, processor 50+1 skipped, ingest 22, authorizer 18, tenancy 41, api 17, batch-eval 11, db 13, tests 7. Integration tier RAN on localhost:5433.",
+      "typecheckOk": true
+    },
+    "iteration": 1,
+    "phase": {
+      "criteria": [
+        "A workspace whose domain is not verified (status != active) cannot send; once DKIM verifies via the (mocked) SES status, activate flips status to active and enables sending from its own domain with aligned DKIM/SPF/DMARC records returned.",
+        "start-domain returns the correct set of DNS records to publish (DKIM CNAMEs, SPF, MAIL FROM, DMARC); check-domain reports per-record state from mocked DNS + SES status and is the source of truth gate (SES status), not the registrar.",
+        "MJML templates compile to cross-client HTML at save time; both mjml and compiled_html are stored, workspace-scoped.",
+        "All onboarding state is workspace-scoped; one workspace activating never affects another."
+      ],
+      "id": "phase6-email-onboarding",
+      "scope": [
+        "packages/email: an injectable SES client wrapper (createDomainIdentity/getIdentityVerificationAttributes/createConfigurationSet — all mockable), MJML->HTML compile (mjml npm) used at template save, and List-Unsubscribe / List-Unsubscribe-Post header builders.",
+        "services/onboarding: Onboarding Lambda with three pure-cored entrypoints — start-domain (create SES domain identity + Easy DKIM + MAIL FROM subdomain, return the DNS records to publish: 3 DKIM CNAME, SPF TXT, MAIL FROM MX+SPF, recommended DMARC TXT), check-domain (run DNS lookups + read SES verification status — both injected/mocked — and return per-record pending/found/mismatch state), activate (gate: SES reports DKIM verified + required records resolve -> create the workspace Configuration Set on the SHARED IP pool -> set workspaces.status=active, sending_identity.verified=true).",
+        "A Template Lambda path: compile MJML->HTML at save time and store both mjml + compiled_html in email_templates (workspace-scoped).",
+        "Extend workspaces.sending_identity jsonb per §10A (from_domain, ses_identity, dkim_tokens, mail_from, dmarc_status, record_checks, verified, config_set, ip_mode=shared)."
+      ],
+      "specSections": "§10 (SES sending identity, gated onboarding, config set, IP strategy), §10A (onboarding wizard start/check/activate, DNS+SES validation), §11 (MJML compile at template save), §6 (workspaces.sending_identity jsonb, email_templates)",
+      "title": "Email infrastructure + guided domain onboarding"
+    },
+    "plan": {
+      "implUnits": [
+        "packages/email: injectable SesEmailClient interface + prod impl over @aws-sdk/client-sesv2 (+aws-sdk-client-mock dev)",
+        "packages/email: compileMjml (add mjml dep)",
+        "packages/email: List-Unsubscribe header builders",
+        "packages/email: buildTemplateUpsert + canSend predicate",
+        "services/onboarding/src/core.ts pure cores (buildDnsRecordSet,diffRecord,checkDomainCore,activateDecision,status/identity SqlStatement builders)",
+        "services/onboarding/src/{start-domain,check-domain,activate}.ts entrypoints wiring injected SES+DNS+status reader",
+        "services/onboarding/src/deps.ts makeProdDeps + reuse runPlanInWorkspaceTx",
+        "onboarding package.json add @aws-sdk/client-sesv2,aws-sdk-client-mock,@cdp/db,@cdp/email,@cdp/shared",
+        "no DDL: sending_identity jsonb already exists; document new keys",
+        "order: email builders+compile+SES iface -> onboarding cores -> entrypoints+deps -> template save -> integration"
+      ],
+      "mocks": [
+        "SES wrapper via aws-sdk-client-mock (@aws-sdk/client-sesv2): createDomainIdentity Easy DKIM, getIdentity DKIM-attrs reader, createConfigurationSet — injectable, assert args (shared pool, config-set name), never real SES",
+        "Injected DNS resolver (TXT/CNAME/MX) canned answers, never real DNS",
+        "Injected SES verification-status reader (DKIM Pending/Success) decoupled from DNS so SES-is-the-gate is provable",
+        "mjml: real (not mocked) in compile tests",
+        "NOT mocked: Postgres (real localhost:5433)"
+      ],
+      "notes": "Highest-value: (a) canSend false until status=active && verified=true; (b) SES status (not DNS, not registrar) is the activate gate, proven by decoupled mocks (DNS-all-found+SES-pending denies; SES-success+DNS-required-pending denies); (c) DMARC recommended not gate-required; (d) workspace-scoping: activate UPDATE binds workspace_id $1, touches exactly one row. SES SDK is @aws-sdk/client-sesv2 (CreateEmailIdentity Easy DKIM, PutEmailIdentityMailFromAttributes, GetEmailIdentity, CreateConfigurationSet) — confirm exact command names when adding dep. mjml real in compile tests. sending_identity jsonb already in §6 schema, no DDL. Reuse runPlanInWorkspaceTx/scopedQuery/adminPool/hasDatabaseUrl + unique namespace + cleanup.",
+      "pureFunctions": [
+        "buildDnsRecordSet(fromDomain,dkimTokens,mailFromSubdomain,region)",
+        "diffRecord(expected,observed)",
+        "checkDomainCore(records,dnsAnswers,sesStatus)",
+        "activateDecision(sesStatus,recordChecks,configSetName)",
+        "compileMjml(mjml)",
+        "buildListUnsubscribeHeaders({unsubscribeUrl,mailto?})",
+        "buildTemplateUpsert(workspaceId,name,mjml,compiledHtml)",
+        "buildSendingIdentityPatchStatement/buildActivateStatement(workspaceId)",
+        "canSend(workspace)"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "buildDnsRecordSet returns exactly 6 records: 3 DKIM CNAME, SPF TXT, MAIL FROM MX+SPF, DMARC TXT",
+            "DKIM CNAME name <token>._domainkey.<domain> value <token>.dkim.amazonses.com",
+            "SPF v=spf1 include:amazonses.com ~all",
+            "MAIL FROM MX feedback-smtp.<region>.amazonses.com prio 10 + SPF TXT",
+            "DMARC _dmarc.<domain> v=DMARC1; p=none; rua=",
+            "stable record key for diff",
+            "pure"
+          ],
+          "criterion": "2",
+          "path": "services/onboarding/test/start-domain-records.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "calls injected SES createDomainIdentity (Easy DKIM)+MAIL FROM (mocked), no real SES",
+            "returns dkim_tokens + record set",
+            "sending_identity patch {from_domain,ses_identity,dkim_tokens,mail_from,dmarc_status:pending,record_checks pending,verified:false,ip_mode:shared}",
+            "from_domain from input not client workspace_id",
+            "throws on missing from_domain/workspaceId"
+          ],
+          "criterion": "2",
+          "path": "services/onboarding/test/start-domain-core.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "checkDomainCore(records,dnsAnswers,sesStatus) -> per-record pending|found|mismatch",
+            "match->found, absent->pending, wrong value->mismatch+hint",
+            "DKIM gate from SES status NOT DNS: SES Success->dkim_verified true even if DNS pending; SES Pending->false even if all DNS found",
+            "SPF/DMARC/MAILFROM from DNS only",
+            "record_checks shape persisted",
+            "pure given injected resolver+reader"
+          ],
+          "criterion": "2",
+          "path": "services/onboarding/test/check-domain-diff.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "allowed=false when SES DKIM not verified even if all DNS found (SES is gate)",
+            "allowed=false when DKIM verified but required DNS record pending/mismatch",
+            "allowed=true only when SES verified AND required records resolve",
+            "DMARC recommended not required",
+            "when allowed -> patch {verified:true,config_set,ip_mode:shared} + status='active' intent",
+            "pure"
+          ],
+          "criterion": "1,2",
+          "path": "services/onboarding/test/activate-gate.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "gate allows -> createConfigurationSet once with workspace config-set name + shared IP pool (aws-sdk-client-mock)",
+            "gate denies -> no createConfigurationSet, no status flip",
+            "never dedicated IP pool",
+            "no real SES"
+          ],
+          "criterion": "1",
+          "path": "services/onboarding/test/activate-core-ses.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "compileMjml(valid)->{html} with rendered content",
+            "throws on invalid MJML (never save uncompilable)",
+            "uses mjml npm, deterministic",
+            "html != input"
+          ],
+          "criterion": "3",
+          "path": "packages/email/test/mjml-compile.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "List-Unsubscribe wraps URL (+optional mailto) in angle brackets",
+            "List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+            "URL workspace-scoped (token), not global",
+            "pure"
+          ],
+          "criterion": "3-adjacent",
+          "path": "packages/email/test/unsubscribe-headers.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildTemplateUpsert INSERT email_templates with mjml AND compiled_html",
+            "workspace_id bound values[0], required, throws on empty",
+            "both raw mjml + compiled_html in values",
+            "SqlStatement shape"
+          ],
+          "criterion": "3",
+          "path": "packages/email/test/template-save-plan.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "real PG, skipIf no DB, unique namespace + cleanup",
+            "fresh workspace status=onboarding, canSend false",
+            "after start-domain persisted sending_identity has from_domain/dkim_tokens/record_checks pending/verified:false/ip_mode:shared, status still onboarding canSend false",
+            "SES DKIM Pending -> activate rejected, status stays onboarding, no config_set, createConfigurationSet not called",
+            "SES DKIM Success + records resolved -> activate via runPlanInWorkspaceTx flips status=active, verified=true, config_set set; canSend true",
+            "activate UPDATE binds workspace_id $1, touches only target"
+          ],
+          "criterion": "1,4",
+          "path": "services/onboarding/test/onboarding-transitions.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "real PG, two workspaces A+B status=onboarding same from_domain",
+            "activate A (SES verified) -> A.status=active verified=true",
+            "B untouched: status onboarding, verified false, no config_set",
+            "A record_checks don't appear on B",
+            "activate UPDATE rowCount=1 and row is A"
+          ],
+          "criterion": "4",
+          "path": "services/onboarding/test/onboarding-workspace-scoping.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "real PG, save via buildTemplateUpsert -> email_templates row with workspace_id,name,mjml,non-empty compiled_html",
+            "stored compiled_html == compileMjml(mjml)",
+            "template under A not visible scoped to B",
+            "invalid MJML fails before insert"
+          ],
+          "criterion": "3",
+          "path": "packages/email/test/template-storage.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "real PG, check-domain with mocked DNS+SES persists record_checks",
+            "found/pending/mismatch reflected",
+            "SES Success+records updates dkim signal but does NOT flip status (activate's job)",
+            "record_checks only on target workspace"
+          ],
+          "criterion": "2",
+          "path": "services/onboarding/test/check-domain-mocked.integration.test.ts",
+          "tier": "integration"
+        }
+      ]
+    }
+  }
+}

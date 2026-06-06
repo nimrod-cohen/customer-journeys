@@ -1,0 +1,20 @@
+{
+  "score": 96,
+  "testsPass": true,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {"criterion":"AC1","met":true,"evidence":"canSend true only when status=active && verified=true (unit covers all-false cases). onboarding-transitions.integration (real PG): SES PENDING->activate denied status stays onboarding; SES SUCCESS+required DNS->status active, verified=true, config_set set; canSend flips true only after SES-gated activation."},
+    {"criterion":"AC2","met":true,"evidence":"buildDnsRecordSet emits 3 DKIM CNAME + SPF TXT + MAIL FROM MX (feedback-smtp.<region>.amazonses.com prio10) + MAIL FROM SPF + recommended DMARC; start-domain-records asserts each+count+region. check-domain reports found/pending/mismatch from injected DNS+mocked SES."},
+    {"criterion":"AC3","met":true,"evidence":"compileMjml runs REAL mjml (throws on bad). buildTemplateUpsert stores both mjml+compiled_html bound workspace_id $1; template-storage.integration (real PG) stores both, idempotent on (workspace_id,name), no cross-workspace collision."},
+    {"criterion":"AC4","met":true,"evidence":"onboarding writes UPDATE WHERE id=$1 via workspace-tx runner; onboarding-workspace-scoping.integration activates wsA, wsB untouched (onboarding, verified false, config_set null), active count=1."}
+  ],
+  "isolationOk": true,
+  "mocksOk": true,
+  "scopeCreep": [],
+  "recommendations": [
+    "Capture UPDATE rowCount===1 in the workspace-tx runner for a tighter scoping guarantee.",
+    "txtMatches accepts any v=DMARC1 as found regardless of policy (harmless, DMARC recommended-only).",
+    "Optional explicit real-PG test that deny path issues no UPDATE (already proven via mock capture + status-stays-onboarding)."
+  ],
+  "criticalIssues": []
+}

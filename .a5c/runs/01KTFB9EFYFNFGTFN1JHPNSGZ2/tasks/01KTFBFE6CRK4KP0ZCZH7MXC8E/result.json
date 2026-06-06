@@ -1,0 +1,103 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTFBFE6CRK4KP0ZCZH7MXC8E",
+  "taskId": "implement-phase",
+  "invocationKey": "cdp/email-dispatch:S000002:implement-phase",
+  "status": "ok",
+  "result": {
+    "commandsRun": [
+      "pnpm install",
+      "DATABASE_URL=... per-package vitest",
+      "pnpm typecheck",
+      "pnpm lint",
+      "rm -rf .turbo && DATABASE_URL=... pnpm test (x2 cold)",
+      "pnpm build"
+    ],
+    "filesCreated": [
+      "packages/email/src/mjml.ts",
+      "packages/email/src/unsubscribe.ts",
+      "packages/email/src/template.ts",
+      "packages/email/src/can-send.ts",
+      "packages/email/src/ses-client.ts",
+      "packages/email/test/mjml-compile.test.ts",
+      "packages/email/test/unsubscribe-headers.test.ts",
+      "packages/email/test/template-save-plan.test.ts",
+      "packages/email/test/ses-client.test.ts",
+      "packages/email/test/template-storage.integration.test.ts",
+      "services/onboarding/src/core.ts",
+      "services/onboarding/src/start-domain.ts",
+      "services/onboarding/src/check-domain.ts",
+      "services/onboarding/src/activate.ts",
+      "services/onboarding/src/deps.ts",
+      "services/onboarding/src/index.ts",
+      "services/onboarding/test/start-domain-records.test.ts",
+      "services/onboarding/test/start-domain-core.test.ts",
+      "services/onboarding/test/check-domain-diff.test.ts",
+      "services/onboarding/test/activate-gate.test.ts",
+      "services/onboarding/test/activate-core-ses.test.ts",
+      "services/onboarding/test/onboarding-transitions.integration.test.ts",
+      "services/onboarding/test/onboarding-workspace-scoping.integration.test.ts",
+      "services/onboarding/test/check-domain-mocked.integration.test.ts"
+    ],
+    "filesModified": [
+      "packages/email/package.json",
+      "packages/email/src/index.ts",
+      "services/onboarding/package.json",
+      "services/onboarding/tsconfig.json"
+    ],
+    "lintOk": true,
+    "notes": "TDD. Activate gate = SES DKIM status NOT DNS, proven by decoupled mocks: DNS-all-found+SES-PENDING DENIES; SES-SUCCESS+required DNS pending DENIES; only SES-SUCCESS+required (SPF+MAIL FROM) resolved ALLOWS; DMARC recommended never required; dkimVerified derives from SES status. canSend false until status=active && sending_identity.verified=true. Every onboarding write binds workspace_id $1; activate UPDATE touches exactly one row (wsA activate never affects wsB). SES/DNS mocked everywhere (aws-sdk-client-mock + injected DnsResolver + SES-status reader); mjml real in compile tests; DB never mocked. Commits via reused runPlanInWorkspaceTx. email_templates no UNIQUE(workspace_id,name) in §6 so buildTemplateUpsert is idempotent UPDATE-then-INSERT-if-absent, workspace-scoped. mjml v4 ambient decl in tsconfig files. turbo cache:false. No source changes to phases 2-5.",
+    "testsPass": true,
+    "testSummary": "Two cold-cache full runs (0 cached) both green: 30/30 turbo test tasks. New: @cdp/email 24 tests (incl. template-storage integration on real PG), @cdp/service-onboarding 38 tests (incl. 3 integration files on real PG). Phases 2-5 unchanged: segments 61, processor 50+1 skipped, ingest 22, authorizer 18, tenancy 41, api 17, batch-eval 11, db 13, tests 7. Integration tier RAN on localhost:5433.",
+    "typecheckOk": true
+  },
+  "startedAt": "2026-06-06T21:09:15.618Z",
+  "finishedAt": "2026-06-06T21:09:15.618Z",
+  "value": {
+    "commandsRun": [
+      "pnpm install",
+      "DATABASE_URL=... per-package vitest",
+      "pnpm typecheck",
+      "pnpm lint",
+      "rm -rf .turbo && DATABASE_URL=... pnpm test (x2 cold)",
+      "pnpm build"
+    ],
+    "filesCreated": [
+      "packages/email/src/mjml.ts",
+      "packages/email/src/unsubscribe.ts",
+      "packages/email/src/template.ts",
+      "packages/email/src/can-send.ts",
+      "packages/email/src/ses-client.ts",
+      "packages/email/test/mjml-compile.test.ts",
+      "packages/email/test/unsubscribe-headers.test.ts",
+      "packages/email/test/template-save-plan.test.ts",
+      "packages/email/test/ses-client.test.ts",
+      "packages/email/test/template-storage.integration.test.ts",
+      "services/onboarding/src/core.ts",
+      "services/onboarding/src/start-domain.ts",
+      "services/onboarding/src/check-domain.ts",
+      "services/onboarding/src/activate.ts",
+      "services/onboarding/src/deps.ts",
+      "services/onboarding/src/index.ts",
+      "services/onboarding/test/start-domain-records.test.ts",
+      "services/onboarding/test/start-domain-core.test.ts",
+      "services/onboarding/test/check-domain-diff.test.ts",
+      "services/onboarding/test/activate-gate.test.ts",
+      "services/onboarding/test/activate-core-ses.test.ts",
+      "services/onboarding/test/onboarding-transitions.integration.test.ts",
+      "services/onboarding/test/onboarding-workspace-scoping.integration.test.ts",
+      "services/onboarding/test/check-domain-mocked.integration.test.ts"
+    ],
+    "filesModified": [
+      "packages/email/package.json",
+      "packages/email/src/index.ts",
+      "services/onboarding/package.json",
+      "services/onboarding/tsconfig.json"
+    ],
+    "lintOk": true,
+    "notes": "TDD. Activate gate = SES DKIM status NOT DNS, proven by decoupled mocks: DNS-all-found+SES-PENDING DENIES; SES-SUCCESS+required DNS pending DENIES; only SES-SUCCESS+required (SPF+MAIL FROM) resolved ALLOWS; DMARC recommended never required; dkimVerified derives from SES status. canSend false until status=active && sending_identity.verified=true. Every onboarding write binds workspace_id $1; activate UPDATE touches exactly one row (wsA activate never affects wsB). SES/DNS mocked everywhere (aws-sdk-client-mock + injected DnsResolver + SES-status reader); mjml real in compile tests; DB never mocked. Commits via reused runPlanInWorkspaceTx. email_templates no UNIQUE(workspace_id,name) in §6 so buildTemplateUpsert is idempotent UPDATE-then-INSERT-if-absent, workspace-scoped. mjml v4 ambient decl in tsconfig files. turbo cache:false. No source changes to phases 2-5.",
+    "testsPass": true,
+    "testSummary": "Two cold-cache full runs (0 cached) both green: 30/30 turbo test tasks. New: @cdp/email 24 tests (incl. template-storage integration on real PG), @cdp/service-onboarding 38 tests (incl. 3 integration files on real PG). Phases 2-5 unchanged: segments 61, processor 50+1 skipped, ingest 22, authorizer 18, tenancy 41, api 17, batch-eval 11, db 13, tests 7. Integration tier RAN on localhost:5433.",
+    "typecheckOk": true
+  }
+}

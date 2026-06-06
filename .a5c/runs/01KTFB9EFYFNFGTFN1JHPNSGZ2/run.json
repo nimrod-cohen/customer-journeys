@@ -1,0 +1,13 @@
+{
+  "runId": "01KTFB9EFYFNFGTFN1JHPNSGZ2",
+  "request": "cdp/email-dispatch",
+  "processId": "cdp/email-dispatch",
+  "entrypoint": {
+    "importPath": "../../processes/cdp-email-dispatch.js",
+    "exportName": "process"
+  },
+  "processPath": "../../processes/cdp-email-dispatch.js",
+  "layoutVersion": "2026.01-storage-preview",
+  "createdAt": "2026-06-06T20:51:44.781Z",
+  "completionProof": "6d71a43c671879b2f05512643aa98b3b"
+}

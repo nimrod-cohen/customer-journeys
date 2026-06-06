@@ -1,0 +1,14 @@
+{
+  "type": "RUN_CREATED",
+  "recordedAt": "2026-06-06T20:51:44.806Z",
+  "data": {
+    "runId": "01KTFB9EFYFNFGTFN1JHPNSGZ2",
+    "processId": "cdp/email-dispatch",
+    "entrypoint": {
+      "importPath": "../../processes/cdp-email-dispatch.js",
+      "exportName": "process"
+    },
+    "inputsRef": "inputs.json"
+  },
+  "checksum": "675e66456f080e529bd3e32cfb2a8dc036ed061467850f00406c3494b1b12601"
+}

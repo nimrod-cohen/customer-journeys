@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTF9WK7Y2XXGQK5TVTM45J3M",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/foundation:S000023:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "fe16096fdeb5dc5e44bc692d050ec52a5f4af9e9",
+    "committed": true,
+    "message": "test(integration): cross-phase foundation pipeline (real Postgres)"
+  },
+  "startedAt": "2026-06-06T20:27:15.264Z",
+  "finishedAt": "2026-06-06T20:27:15.264Z",
+  "value": {
+    "commitHash": "fe16096fdeb5dc5e44bc692d050ec52a5f4af9e9",
+    "committed": true,
+    "message": "test(integration): cross-phase foundation pipeline (real Postgres)"
+  }
+}

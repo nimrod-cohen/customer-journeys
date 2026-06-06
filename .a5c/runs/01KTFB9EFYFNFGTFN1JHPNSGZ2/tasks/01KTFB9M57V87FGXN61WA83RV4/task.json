@@ -1,0 +1,120 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "implUnits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mocks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "pureFunctions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "testFiles": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "testFiles",
+        "implUnits"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or the trusted message body set by an earlier server step.",
+          "LOCAL-only: SES (SendEmail), SNS, and the onboarding DNS/SES-status checks are MOCKED (aws-sdk-client-mock + injected resolvers). NEVER send real mail or hit real DNS/SES. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433.",
+          "Sending is gated on verification: the Dispatcher refuses to send for any workspace whose status is not active/verified (§10). Every send passes suppression -> frequency-cap -> quiet-hours, in that order.",
+          "Suppression is per-workspace: keyed (workspace_id, email); an unsubscribe/bounce in workspace A must NOT suppress the same email in workspace B. Hard bounces are ALSO recorded in the cross-workspace global_hard_bounces.",
+          "Idempotency: outbox.dedupe_key prevents double-sends; feedback handlers are idempotent on the SES message id / event.",
+          "Logic in pure injected functions; Lambda handlers stay thin and are unit-tested via the pure function. Reuse the Phase 2-5 harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text, values} shape.",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id is a GLOBAL PK). No cross-file races.",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), campaigns (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
+        ],
+        "phase": {
+          "criteria": [
+            "A workspace whose domain is not verified (status != active) cannot send; once DKIM verifies via the (mocked) SES status, activate flips status to active and enables sending from its own domain with aligned DKIM/SPF/DMARC records returned.",
+            "start-domain returns the correct set of DNS records to publish (DKIM CNAMEs, SPF, MAIL FROM, DMARC); check-domain reports per-record state from mocked DNS + SES status and is the source of truth gate (SES status), not the registrar.",
+            "MJML templates compile to cross-client HTML at save time; both mjml and compiled_html are stored, workspace-scoped.",
+            "All onboarding state is workspace-scoped; one workspace activating never affects another."
+          ],
+          "id": "phase6-email-onboarding",
+          "scope": [
+            "packages/email: an injectable SES client wrapper (createDomainIdentity/getIdentityVerificationAttributes/createConfigurationSet — all mockable), MJML->HTML compile (mjml npm) used at template save, and List-Unsubscribe / List-Unsubscribe-Post header builders.",
+            "services/onboarding: Onboarding Lambda with three pure-cored entrypoints — start-domain (create SES domain identity + Easy DKIM + MAIL FROM subdomain, return the DNS records to publish: 3 DKIM CNAME, SPF TXT, MAIL FROM MX+SPF, recommended DMARC TXT), check-domain (run DNS lookups + read SES verification status — both injected/mocked — and return per-record pending/found/mismatch state), activate (gate: SES reports DKIM verified + required records resolve -> create the workspace Configuration Set on the SHARED IP pool -> set workspaces.status=active, sending_identity.verified=true).",
+            "A Template Lambda path: compile MJML->HTML at save time and store both mjml + compiled_html in email_templates (workspace-scoped).",
+            "Extend workspaces.sending_identity jsonb per §10A (from_domain, ses_identity, dkim_tokens, mail_from, dmarc_status, record_checks, verified, config_set, ip_mode=shared)."
+          ],
+          "specSections": "§10 (SES sending identity, gated onboarding, config set, IP strategy), §10A (onboarding wizard start/check/activate, DNS+SES validation), §11 (MJML compile at template save), §6 (workspaces.sending_identity jsonb, email_templates)",
+          "title": "Email infrastructure + guided domain onboarding"
+        },
+        "prior": "Phases 2-5 are done. Reuse packages/db testutil harness (adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text,values} shape. packages/email, services/{onboarding,dispatcher,feedback,unsubscribe} are placeholder scaffolds to fill in.",
+        "spec": "CDP-BUILD-SPEC.md",
+        "testingStrategy": "§16A serverless pyramid: many pure unit tests; DB-integration against REAL local Postgres (localhost:5433, no mocking the DB); thin LocalStack E2E. Mock SES/SNS and DNS/SES-status checks."
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §10 (SES sending identity, gated onboarding, config set, IP strategy), §10A (onboarding wizard start/check/activate, DNS+SES validation), §11 (MJML compile at template save), §6 (workspaces.sending_identity jsonb, email_templates), plus §16A and §18.",
+        "For each acceptance criterion, define the test file(s), tier (unit | integration | e2e), and the exact assertions — especially tenant-isolation/suppression-scoping, the verification gate, and idempotency assertions.",
+        "Identify the pure functions that hold the logic (so handlers stay thin) and exactly what is mocked (SES/SNS/DNS) vs real (Postgres).",
+        "List the implementation units and their dependency order.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { testFiles: [{path, tier, criterion, assertions:[...]}], pureFunctions: string[], mocks: string[], implUnits: string[], notes: string }",
+      "role": "senior test architect practicing TDD on a serverless multi-tenant CDP",
+      "task": "Turn the §18 acceptance criteria for \"Email infrastructure + guided domain onboarding\" into a concrete, test-first plan."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFB9M57V87FGXN61WA83RV4/input.json",
+    "outputJsonPath": "tasks/01KTFB9M57V87FGXN61WA83RV4/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "phase6-email-onboarding",
+    "plan"
+  ],
+  "title": "Plan tests: Email infrastructure + guided domain onboarding",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFB9M57V87FGXN61WA83RV4",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/email-dispatch:S000001:plan-phase",
+  "stepId": "S000001",
+  "inputs": {
+    "phase": {
+      "criteria": [
+        "A workspace whose domain is not verified (status != active) cannot send; once DKIM verifies via the (mocked) SES status, activate flips status to active and enables sending from its own domain with aligned DKIM/SPF/DMARC records returned.",
+        "start-domain returns the correct set of DNS records to publish (DKIM CNAMEs, SPF, MAIL FROM, DMARC); check-domain reports per-record state from mocked DNS + SES status and is the source of truth gate (SES status), not the registrar.",
+        "MJML templates compile to cross-client HTML at save time; both mjml and compiled_html are stored, workspace-scoped.",
+        "All onboarding state is workspace-scoped; one workspace activating never affects another."
+      ],
+      "id": "phase6-email-onboarding",
+      "scope": [
+        "packages/email: an injectable SES client wrapper (createDomainIdentity/getIdentityVerificationAttributes/createConfigurationSet — all mockable), MJML->HTML compile (mjml npm) used at template save, and List-Unsubscribe / List-Unsubscribe-Post header builders.",
+        "services/onboarding: Onboarding Lambda with three pure-cored entrypoints — start-domain (create SES domain identity + Easy DKIM + MAIL FROM subdomain, return the DNS records to publish: 3 DKIM CNAME, SPF TXT, MAIL FROM MX+SPF, recommended DMARC TXT), check-domain (run DNS lookups + read SES verification status — both injected/mocked — and return per-record pending/found/mismatch state), activate (gate: SES reports DKIM verified + required records resolve -> create the workspace Configuration Set on the SHARED IP pool -> set workspaces.status=active, sending_identity.verified=true).",
+        "A Template Lambda path: compile MJML->HTML at save time and store both mjml + compiled_html in email_templates (workspace-scoped).",
+        "Extend workspaces.sending_identity jsonb per §10A (from_domain, ses_identity, dkim_tokens, mail_from, dmarc_status, record_checks, verified, config_set, ip_mode=shared)."
+      ],
+      "specSections": "§10 (SES sending identity, gated onboarding, config set, IP strategy), §10A (onboarding wizard start/check/activate, DNS+SES validation), §11 (MJML compile at template save), §6 (workspaces.sending_identity jsonb, email_templates)",
+      "title": "Email infrastructure + guided domain onboarding"
+    }
+  }
+}
