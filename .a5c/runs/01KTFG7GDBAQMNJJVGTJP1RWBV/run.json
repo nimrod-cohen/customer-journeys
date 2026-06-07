@@ -1,0 +1,13 @@
+{
+  "runId": "01KTFG7GDBAQMNJJVGTJP1RWBV",
+  "request": "cdp/app-completion",
+  "processId": "cdp/app-completion",
+  "entrypoint": {
+    "importPath": "../../processes/cdp-app-completion.js",
+    "exportName": "process"
+  },
+  "processPath": "../../processes/cdp-app-completion.js",
+  "layoutVersion": "2026.01-storage-preview",
+  "createdAt": "2026-06-06T22:18:04.089Z",
+  "completionProof": "7e7ac7bbecfec0cf7a6f3a8bd39b5c4e"
+}

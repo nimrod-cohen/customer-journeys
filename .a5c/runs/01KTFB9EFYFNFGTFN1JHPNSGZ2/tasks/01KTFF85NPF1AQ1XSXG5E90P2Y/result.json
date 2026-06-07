@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTFF85NPF1AQ1XSXG5E90P2Y",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/email-dispatch:S000015:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "8713a4b0025f6a39bbc96ac3c40b3fcb2b2cd456",
+    "committed": true,
+    "message": "test(integration): cross-phase email/dispatch pipeline (real Postgres)"
+  },
+  "startedAt": "2026-06-06T22:00:57.458Z",
+  "finishedAt": "2026-06-06T22:00:57.458Z",
+  "value": {
+    "commitHash": "8713a4b0025f6a39bbc96ac3c40b3fcb2b2cd456",
+    "committed": true,
+    "message": "test(integration): cross-phase email/dispatch pipeline (real Postgres)"
+  }
+}

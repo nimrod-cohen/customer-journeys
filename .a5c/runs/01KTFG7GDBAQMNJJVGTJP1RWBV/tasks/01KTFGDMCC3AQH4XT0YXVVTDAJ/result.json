@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTFGDMCC3AQH4XT0YXVVTDAJ",
+  "taskId": "implement-phase",
+  "invocationKey": "cdp/app-completion:S000002:implement-phase",
+  "status": "ok",
+  "result": {
+    "commandsRun": [
+      "pnpm install",
+      "DATABASE_URL=... pnpm --filter @cdp/service-broadcast vitest run",
+      "pnpm typecheck",
+      "pnpm lint",
+      "rm -rf .turbo && DATABASE_URL=... pnpm test (cold)"
+    ],
+    "e2eSummary": "n/a (backend phase)",
+    "filesCreated": [
+      "services/broadcast/src/core.ts",
+      "services/broadcast/src/send.ts",
+      "services/broadcast/src/deps.ts",
+      "services/broadcast/src/handler.ts",
+      "services/broadcast/src/index.ts",
+      "services/broadcast/test/outbox-row-builder.test.ts",
+      "services/broadcast/test/audience-batching.test.ts",
+      "services/broadcast/test/status-transitions.test.ts",
+      "services/broadcast/test/schedule-due.test.ts",
+      "services/broadcast/test/sqs-payload-and-handler.test.ts",
+      "services/broadcast/test/resolve-audience.integration.test.ts",
+      "services/broadcast/test/batched-outbox-insert.integration.test.ts",
+      "services/broadcast/test/dedupe-idempotency.integration.test.ts",
+      "services/broadcast/test/status-transitions.integration.test.ts",
+      "services/broadcast/test/workspace-scoping.integration.test.ts",
+      "services/broadcast/test/broadcast-to-dispatcher-chain.integration.test.ts"
+    ],
+    "filesModified": [
+      "services/broadcast/package.json",
+      "services/broadcast/tsconfig.json",
+      "pnpm-lock.yaml"
+    ],
+    "lintOk": true,
+    "notes": "core.ts pure: buildBroadcastDedupeKey (broadcast:{broadcast_id}:{profile_id}), buildBroadcastOutboxInsert (ON CONFLICT (dedupe_key) DO NOTHING, workspace_id $1), chunk, isValidBroadcastTransition, buildBroadcastStatusUpdate (compare-and-set), isScheduleDue, buildDueScheduledBroadcastsQuery, buildDispatchEnqueueMessage ({outbox_id}, no workspace_id). send.ts runBroadcast: workspace_id from broadcast row, resolveAudience at send time, chunk batches, per-batch outbox insert in runInWorkspaceTx + enqueue, status sending->sent. Two-layered idempotency proven: broadcast UNIQUE dedupe_key (retry/concurrent -> one outbox row per recipient) + dispatcher atomic claim. Audience resolved at send time (mutation-after-creation test). Chain test reuses real dispatchOutbox: suppressed recipient skipped, SES not called, messages_log only for sent. Reused @cdp/segments resolveAudience + @cdp/service-dispatcher (no re-implementation). SQS/EventBridge mocked at boundary; counting fake SES in chain; DB never mocked. Scope: §9A only.",
+    "testsPass": true,
+    "testSummary": "broadcast 37 tests (24 unit + 13 integration on real PG localhost:5433) all green. Full cold suite 34/34 turbo tasks, 0 cached. No regression in phases 2-8. NOTE: the implement agent dropped on a transient socket error after writing all files; orchestrator fixed a test-teardown FK-ordering bug in 2 integration files (delete broadcasts before email_templates, broadcasts.template_id FK) and verified.",
+    "typecheckOk": true
+  },
+  "startedAt": "2026-06-07T00:31:49.901Z",
+  "finishedAt": "2026-06-07T00:31:49.901Z",
+  "value": {
+    "commandsRun": [
+      "pnpm install",
+      "DATABASE_URL=... pnpm --filter @cdp/service-broadcast vitest run",
+      "pnpm typecheck",
+      "pnpm lint",
+      "rm -rf .turbo && DATABASE_URL=... pnpm test (cold)"
+    ],
+    "e2eSummary": "n/a (backend phase)",
+    "filesCreated": [
+      "services/broadcast/src/core.ts",
+      "services/broadcast/src/send.ts",
+      "services/broadcast/src/deps.ts",
+      "services/broadcast/src/handler.ts",
+      "services/broadcast/src/index.ts",
+      "services/broadcast/test/outbox-row-builder.test.ts",
+      "services/broadcast/test/audience-batching.test.ts",
+      "services/broadcast/test/status-transitions.test.ts",
+      "services/broadcast/test/schedule-due.test.ts",
+      "services/broadcast/test/sqs-payload-and-handler.test.ts",
+      "services/broadcast/test/resolve-audience.integration.test.ts",
+      "services/broadcast/test/batched-outbox-insert.integration.test.ts",
+      "services/broadcast/test/dedupe-idempotency.integration.test.ts",
+      "services/broadcast/test/status-transitions.integration.test.ts",
+      "services/broadcast/test/workspace-scoping.integration.test.ts",
+      "services/broadcast/test/broadcast-to-dispatcher-chain.integration.test.ts"
+    ],
+    "filesModified": [
+      "services/broadcast/package.json",
+      "services/broadcast/tsconfig.json",
+      "pnpm-lock.yaml"
+    ],
+    "lintOk": true,
+    "notes": "core.ts pure: buildBroadcastDedupeKey (broadcast:{broadcast_id}:{profile_id}), buildBroadcastOutboxInsert (ON CONFLICT (dedupe_key) DO NOTHING, workspace_id $1), chunk, isValidBroadcastTransition, buildBroadcastStatusUpdate (compare-and-set), isScheduleDue, buildDueScheduledBroadcastsQuery, buildDispatchEnqueueMessage ({outbox_id}, no workspace_id). send.ts runBroadcast: workspace_id from broadcast row, resolveAudience at send time, chunk batches, per-batch outbox insert in runInWorkspaceTx + enqueue, status sending->sent. Two-layered idempotency proven: broadcast UNIQUE dedupe_key (retry/concurrent -> one outbox row per recipient) + dispatcher atomic claim. Audience resolved at send time (mutation-after-creation test). Chain test reuses real dispatchOutbox: suppressed recipient skipped, SES not called, messages_log only for sent. Reused @cdp/segments resolveAudience + @cdp/service-dispatcher (no re-implementation). SQS/EventBridge mocked at boundary; counting fake SES in chain; DB never mocked. Scope: §9A only.",
+    "testsPass": true,
+    "testSummary": "broadcast 37 tests (24 unit + 13 integration on real PG localhost:5433) all green. Full cold suite 34/34 turbo tasks, 0 cached. No regression in phases 2-8. NOTE: the implement agent dropped on a transient socket error after writing all files; orchestrator fixed a test-teardown FK-ordering bug in 2 integration files (delete broadcasts before email_templates, broadcasts.template_id FK) and verified.",
+    "typecheckOk": true
+  }
+}

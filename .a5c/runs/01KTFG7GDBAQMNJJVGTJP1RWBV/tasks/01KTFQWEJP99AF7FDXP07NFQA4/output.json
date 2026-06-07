@@ -1,0 +1,20 @@
+{
+  "score": 95,
+  "testsPass": true,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {"criterion":"AC1","met":true,"evidence":"chain.integration reuses REAL dispatchOutbox: suppressed recipient skipped (SES never called), only non-suppressed gets messages_log row. No suppression/cap/quiet re-implemented in broadcast (send.ts only enqueues)."},
+    {"criterion":"AC2","met":true,"evidence":"Layer1 buildBroadcastOutboxInsert ON CONFLICT (dedupe_key) DO NOTHING, key broadcast:{bid}:{pid}; dedupe-idempotency.integration retry+concurrent triple-run -> 3 rows for 3 recipients (UNIQUE). Layer2 dispatcher atomic claim noop (Phase 7 test). No double-send."},
+    {"criterion":"AC3","met":true,"evidence":"resolve-audience.integration mutates segment_memberships AFTER creation BEFORE send -> outbox has all 3 (send-time resolution). batched-outbox-insert: 5 members batchSize=2 -> 3 batches, 5 rows + 5 enqueues no miss/dupe. resolveAudience returns all sources."},
+    {"criterion":"AC4","met":true,"evidence":"status-transitions.integration: draft->sending CAS claimed once under concurrent triple-run; sending->sent stamps sent_at, stale transition affects 0 rows (idempotent). schedule-due honors scheduled_at. workspace-scoping: broadcast in A resolves only A members, 0 outbox in B; workspace_id from row bound $1."}
+  ],
+  "isolationOk": true,
+  "browserVerified": false,
+  "scopeCreep": [],
+  "recommendations": [
+    "Add explicit dispatcher-level noop assertion inside the chain test (re-dispatch same outbox id) rather than relying transitively on Phase 7.",
+    "Handle crash-resume: a broadcast that flips to 'sending' then crashes mid-enumeration is not resumed (status guard skips it); no double-send but stranded recipients. Consider re-entry from 'sending' (outbox ON CONFLICT + dispatcher claim make it safe).",
+    "Consider linting test/ dirs (repo convention lints src only)."
+  ],
+  "criticalIssues": []
+}

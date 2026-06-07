@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T22:18:04.458Z",
+  "data": {
+    "effectId": "01KTFG7GRRMBV1KX9J5WH1MKHG",
+    "invocationKey": "cdp/app-completion:S000001:plan-phase",
+    "invocationHash": "2e1d17d9b1bce32c4bd4def11b33ecfa5ca4e346daafcec2b74e785e5bd25add",
+    "stepId": "S000001",
+    "taskId": "plan-phase",
+    "kind": "agent",
+    "label": "plan",
+    "taskDefRef": "tasks/01KTFG7GRRMBV1KX9J5WH1MKHG/task.json",
+    "labels": [
+      "plan",
+      "phase9-broadcasts"
+    ]
+  },
+  "checksum": "153177955f4e91aa5e9f6d7894fa739b6ad8e8f1baaa9d4127c57c82acf3974f"
+}

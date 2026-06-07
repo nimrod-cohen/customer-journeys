@@ -1,0 +1,14 @@
+{
+  "type": "RUN_CREATED",
+  "recordedAt": "2026-06-06T22:18:04.111Z",
+  "data": {
+    "runId": "01KTFG7GDBAQMNJJVGTJP1RWBV",
+    "processId": "cdp/app-completion",
+    "entrypoint": {
+      "importPath": "../../processes/cdp-app-completion.js",
+      "exportName": "process"
+    },
+    "inputsRef": "inputs.json"
+  },
+  "checksum": "c66456fcf2eaf21b84c59d8926f59404e381cebd8450703cd12405d55b8b0d3d"
+}

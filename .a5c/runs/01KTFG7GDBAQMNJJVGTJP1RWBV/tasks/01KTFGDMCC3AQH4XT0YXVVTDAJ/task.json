@@ -1,0 +1,445 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commandsRun": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "e2eSummary": {
+          "type": "string"
+        },
+        "filesCreated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesModified": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "lintOk": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "testsPass": {
+          "type": "boolean"
+        },
+        "testSummary": {
+          "type": "string"
+        },
+        "typecheckOk": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "filesCreated",
+        "filesModified",
+        "testsPass"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "env": "Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp (migrations applied). turbo test task is cache:false. Docker is available for LocalStack. For UI: build a runnable local app + local API adapter so Playwright can drive it.",
+        "firstIteration": true,
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
+          "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
+          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
+          "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no features beyond the spec. Keep the cost model EXACTLY as §20 (direct usage + even split of fixed costs)."
+        ],
+        "iteration": 1,
+        "loop": "Backend phase: pure unit tests + DB-integration against REAL local Postgres (localhost:5433); mock AWS (aws-sdk-client-mock) / LocalStack. No frontend.",
+        "phase": {
+          "criteria": [
+            "A broadcast to a segment or manual group sends once to the resolved audience; each recipient passes suppression/cap/quiet-hours (via the Dispatcher).",
+            "Retries do not double-send (dedupe per (broadcast_id, profile_id)).",
+            "Audience is resolved at send time from segment_memberships (works for both dynamic and manual segments); large audiences are enumerated in batches.",
+            "broadcasts.status transitions correctly (sending -> sent); scheduling at scheduled_at is honored; everything workspace-scoped."
+          ],
+          "frontend": false,
+          "id": "phase9-broadcasts",
+          "scope": [
+            "services/broadcast: a Broadcast Lambda (triggered on send / at scheduled_at via EventBridge) that RESOLVES the audience at send time from segment_memberships (dynamic OR manual segment) via @cdp/segments resolveAudience; snapshots the member set.",
+            "Enumerate in BATCHES (paginate; large audiences enqueued in chunks) -> insert outbox rows -> the existing Dispatcher (§9) handles per-recipient suppression/cap/quiet-hours and the actual send.",
+            "Update broadcasts.status (draft->scheduled->sending->sent / cancelled); record per-recipient sends in messages_log.",
+            "Idempotent dedupe_key per (broadcast_id, profile_id) prevents double-sends on retry."
+          ],
+          "specSections": "§9A (broadcast: resolve audience at send time, batched enumeration -> outbox, scheduling, status), §9 (Dispatcher), §6 (broadcasts, outbox, messages_log, segment_memberships)",
+          "title": "Broadcasts (one-off send)"
+        },
+        "plan": {
+          "e2eFlows": [],
+          "implUnits": [
+            "services/broadcast/src/core.ts pure (dedupe key, outbox insert builder, chunk, paginate, status state machine, schedule-due, sweep query, SQS payload)",
+            "services/broadcast/src/send.ts orchestrator runBroadcast: load broadcast scoped by workspace_id from row, guard schedule-due+transition, status->sending, resolveAudience at send time, chunk, per-batch insert in runInWorkspaceTx + enqueue {outbox_id}, status->sent",
+            "services/broadcast/src/deps.ts pooled service-role reader + runStatementsInWorkspaceTx (assert values[0]=workspaceId) + injected SQS sender + now + dispatchQueueUrl",
+            "services/broadcast/src/handler.ts thin onSendNow + onScheduledSweep (EventBridge) never throws",
+            "services/broadcast/src/index.ts barrel",
+            "package.json add @cdp/db,@cdp/segments,@cdp/email,@cdp/shared,@cdp/service-dispatcher,@aws-sdk/client-sqs,pg; dev aws-sdk-client-mock"
+          ],
+          "mocks": [
+            "aws-sdk-client-mock SQSClient (assert {outbox_id} enqueue per row)",
+            "aws-sdk-client-mock EventBridge/Scheduler at trigger boundary",
+            "counting fake SesEmailClient in chain test",
+            "fake page-reader / spy tx-runner in unit tests",
+            "NOT mocked: Postgres (real localhost:5433); NOT mocked: Dispatcher (reuse dispatchOutbox)"
+          ],
+          "notes": "Order: core pure -> deps -> send orchestrator -> handler. Reuse don't re-implement: @cdp/segments resolveAudience (both dynamic+manual live in segment_memberships, both sources), @cdp/service-dispatcher dispatchOutbox + buildIsSuppressedQuery + parseOutboxIdFromSqsRecord ({outbox_id} contract), dispatcher runStatementsInWorkspaceTx pattern, @cdp/db testutil. Two-layered idempotency both tested: broadcast UNIQUE outbox.dedupe_key per (broadcast_id,profile_id) prevents re-enumeration double-insert on retry; dispatcher atomic claim prevents per-row double-send -> end-to-end exactly-once. 'Resolved at send time' = mutate segment_memberships after broadcast creation before send. Integration skipIf hasDatabaseUrl on real PG; SES only mocked piece in chain test; SQS/EventBridge mocked at boundary. broadcasts.audience_ref is segment_id for both segment and manual_group (manual is still a segment row) so resolveAudience covers both no branching. workspace_id loaded FROM broadcast row never client.",
+          "pureFunctions": [
+            "buildBroadcastDedupeKey(broadcastId,profileId)",
+            "buildBroadcastOutboxInsert(workspaceId,broadcastId,templateId,payload,profileIds)",
+            "chunk(items,batchSize)",
+            "buildResolveAudiencePage(workspaceId,segmentId,limit,offset)",
+            "isValidBroadcastTransition(from,to)",
+            "buildBroadcastStatusUpdate(workspaceId,broadcastId,from,to)",
+            "isScheduleDue(scheduledAt,now)",
+            "buildDueScheduledBroadcastsQuery(now)",
+            "buildDispatchEnqueueMessage(outboxId,queueUrl)"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "buildBroadcastDedupeKey deterministic broadcast:{broadcast_id}:{profile_id}",
+                "distinct per profile and per broadcast",
+                "buildBroadcastOutboxInsert INSERT outbox ON CONFLICT (dedupe_key) DO NOTHING",
+                "binds workspace_id $1",
+                "row carries dedupe_key+template_id+payload",
+                "throws on falsy workspaceId"
+              ],
+              "criterion": "2",
+              "path": "services/broadcast/test/outbox-row-builder.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "chunk splits into <=batchSize preserving order no loss",
+                "[] for empty",
+                "buildResolveAudiencePage binds workspace_id $1 segment_id $2 ORDER BY+LIMIT/OFFSET",
+                "pagination enumerates each member once no dupes across boundaries"
+              ],
+              "criterion": "3",
+              "path": "services/broadcast/test/audience-batching.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "isValidBroadcastTransition allows draft->scheduled/sending, scheduled->sending/cancelled, sending->sent/cancelled",
+                "rejects sent->*, cancelled->*, unknown",
+                "buildBroadcastStatusUpdate compare-and-set WHERE workspace_id=$1 AND status=fromStatus",
+                "sending->sent sets sent_at; values[0]=workspaceId"
+              ],
+              "criterion": "4",
+              "path": "services/broadcast/test/status-transitions.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "isScheduleDue(null,now)=true (send now)",
+                "scheduledAt<=now true, >now false (boundary due)",
+                "buildDueScheduledBroadcastsQuery status=scheduled AND scheduled_at<=now"
+              ],
+              "criterion": "4",
+              "path": "services/broadcast/test/schedule-due.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildDispatchEnqueueMessage body={outbox_id} matching parseOutboxIdFromSqsRecord contract",
+                "no workspace_id in SQS body",
+                "2-member audience -> runInWorkspaceTx insert then 2 SendMessageCommands, status sending->sent",
+                "handler never throws on malformed id; SQS/EventBridge mocked"
+              ],
+              "criterion": "1",
+              "path": "services/broadcast/test/sqs-payload-and-handler.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "dynamic (source=evaluator) and manual (source=manual) segments both fully resolved",
+                "resolved at SEND TIME: add membership then resolve includes it; remove then excludes",
+                "mixed-source returns all",
+                "real PG no mock"
+              ],
+              "criterion": "3",
+              "path": "services/broadcast/test/resolve-audience.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "audience>batchSize (50/120) -> outbox count=audience in ceil(120/50)=3 batched tx (spy)",
+                "each row workspace_id+template_id+status=pending+dedupe_key",
+                "no member missed/duplicated"
+              ],
+              "criterion": "3",
+              "path": "services/broadcast/test/batched-outbox-insert.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "send twice same broadcast_id same audience -> outbox unchanged (ON CONFLICT (dedupe_key) DO NOTHING)",
+                "concurrent double-invocation -> one row per profile (UNIQUE dedupe_key)",
+                "dedupe_key = broadcast:{broadcast_id}:{profile_id}",
+                "same profile different broadcast_id -> new row"
+              ],
+              "criterion": "2",
+              "path": "services/broadcast/test/dedupe-idempotency.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "send-now draft->sending->sent sets sent_at",
+                "scheduled stays until due then sweep flips scheduled->sending->sent",
+                "sending->sent twice idempotent (2nd affects 0 rows)",
+                "cancelled skipped by sweep no outbox rows"
+              ],
+              "criterion": "4",
+              "path": "services/broadcast/test/status-transitions.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "A and B same-shape segment overlapping emails; broadcast A resolves only A memberships, outbox only A profiles",
+                "binds workspace_id $1 so B never touched (service role bypass)",
+                "outbox count with workspace_id=B stays 0"
+              ],
+              "criterion": "1",
+              "path": "services/broadcast/test/workspace-scoping.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "reuse dispatchOutbox (NOT re-implement): 3 members, #2 suppressed; drive dispatchOutbox over each with counting fake SES",
+                "#2 skip stoppedAt=suppression SES not called; #1,#3 send",
+                "messages_log 2 rows, suppressed none",
+                "re-dispatch same outbox ids = noop (atomic claim) -> exactly-once"
+              ],
+              "criterion": "1",
+              "path": "services/broadcast/test/broadcast-to-dispatcher-chain.integration.test.ts",
+              "tier": "integration"
+            }
+          ]
+        },
+        "previousGateFeedback": null,
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §9A (broadcast: resolve audience at send time, batched enumeration -> outbox, scheduling, status), §9 (Dispatcher), §6 (broadcasts, outbox, messages_log, segment_memberships).",
+        "FIRST write the failing tests from the plan (red), then implement to green. Logic in pure injected functions; handlers/components thin.",
+        "Honor every invariant — tenant isolation, role enforcement, idempotency, and \"all sends go through the Dispatcher guards\" are pass/fail.",
+        "Mock AWS (aws-sdk-client-mock) or use LocalStack; integration tier uses the REAL local Postgres (never mock the DB). For UI phases, verify with Playwright in a real browser against the locally-running app + local API; seed deterministic data.",
+        "Run the relevant `pnpm test` (with DATABASE_URL), plus Playwright e2e for UI phases, `pnpm typecheck`, `pnpm lint`. Iterate until GREEN including a COLD turbo run. Confirm no regression in earlier phases. Report actual command output.",
+        "Implement ONLY what the cited sections require. Keep the §20 cost model exact. The editor must emit MJML, not hand-rolled HTML.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { filesCreated: string[], filesModified: string[], testsPass: boolean, testSummary: string, e2eSummary: string, typecheckOk: boolean, lintOk: boolean, commandsRun: string[], notes: string }",
+      "role": "senior full-stack TypeScript engineer building a serverless multi-tenant CDP + Preact SPA, test-first",
+      "task": "Implement \"Broadcasts (one-off send)\" to satisfy its test plan and §18 criteria. Red -> green -> refactor."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFGDMCC3AQH4XT0YXVVTDAJ/input.json",
+    "outputJsonPath": "tasks/01KTFGDMCC3AQH4XT0YXVVTDAJ/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "implement",
+    "iteration-1",
+    "phase9-broadcasts"
+  ],
+  "title": "Implement: Broadcasts (one-off send) (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFGDMCC3AQH4XT0YXVVTDAJ",
+  "taskId": "implement-phase",
+  "invocationKey": "cdp/app-completion:S000002:implement-phase",
+  "stepId": "S000002",
+  "inputs": {
+    "firstIteration": true,
+    "iteration": 1,
+    "phase": {
+      "criteria": [
+        "A broadcast to a segment or manual group sends once to the resolved audience; each recipient passes suppression/cap/quiet-hours (via the Dispatcher).",
+        "Retries do not double-send (dedupe per (broadcast_id, profile_id)).",
+        "Audience is resolved at send time from segment_memberships (works for both dynamic and manual segments); large audiences are enumerated in batches.",
+        "broadcasts.status transitions correctly (sending -> sent); scheduling at scheduled_at is honored; everything workspace-scoped."
+      ],
+      "frontend": false,
+      "id": "phase9-broadcasts",
+      "scope": [
+        "services/broadcast: a Broadcast Lambda (triggered on send / at scheduled_at via EventBridge) that RESOLVES the audience at send time from segment_memberships (dynamic OR manual segment) via @cdp/segments resolveAudience; snapshots the member set.",
+        "Enumerate in BATCHES (paginate; large audiences enqueued in chunks) -> insert outbox rows -> the existing Dispatcher (§9) handles per-recipient suppression/cap/quiet-hours and the actual send.",
+        "Update broadcasts.status (draft->scheduled->sending->sent / cancelled); record per-recipient sends in messages_log.",
+        "Idempotent dedupe_key per (broadcast_id, profile_id) prevents double-sends on retry."
+      ],
+      "specSections": "§9A (broadcast: resolve audience at send time, batched enumeration -> outbox, scheduling, status), §9 (Dispatcher), §6 (broadcasts, outbox, messages_log, segment_memberships)",
+      "title": "Broadcasts (one-off send)"
+    },
+    "plan": {
+      "e2eFlows": [],
+      "implUnits": [
+        "services/broadcast/src/core.ts pure (dedupe key, outbox insert builder, chunk, paginate, status state machine, schedule-due, sweep query, SQS payload)",
+        "services/broadcast/src/send.ts orchestrator runBroadcast: load broadcast scoped by workspace_id from row, guard schedule-due+transition, status->sending, resolveAudience at send time, chunk, per-batch insert in runInWorkspaceTx + enqueue {outbox_id}, status->sent",
+        "services/broadcast/src/deps.ts pooled service-role reader + runStatementsInWorkspaceTx (assert values[0]=workspaceId) + injected SQS sender + now + dispatchQueueUrl",
+        "services/broadcast/src/handler.ts thin onSendNow + onScheduledSweep (EventBridge) never throws",
+        "services/broadcast/src/index.ts barrel",
+        "package.json add @cdp/db,@cdp/segments,@cdp/email,@cdp/shared,@cdp/service-dispatcher,@aws-sdk/client-sqs,pg; dev aws-sdk-client-mock"
+      ],
+      "mocks": [
+        "aws-sdk-client-mock SQSClient (assert {outbox_id} enqueue per row)",
+        "aws-sdk-client-mock EventBridge/Scheduler at trigger boundary",
+        "counting fake SesEmailClient in chain test",
+        "fake page-reader / spy tx-runner in unit tests",
+        "NOT mocked: Postgres (real localhost:5433); NOT mocked: Dispatcher (reuse dispatchOutbox)"
+      ],
+      "notes": "Order: core pure -> deps -> send orchestrator -> handler. Reuse don't re-implement: @cdp/segments resolveAudience (both dynamic+manual live in segment_memberships, both sources), @cdp/service-dispatcher dispatchOutbox + buildIsSuppressedQuery + parseOutboxIdFromSqsRecord ({outbox_id} contract), dispatcher runStatementsInWorkspaceTx pattern, @cdp/db testutil. Two-layered idempotency both tested: broadcast UNIQUE outbox.dedupe_key per (broadcast_id,profile_id) prevents re-enumeration double-insert on retry; dispatcher atomic claim prevents per-row double-send -> end-to-end exactly-once. 'Resolved at send time' = mutate segment_memberships after broadcast creation before send. Integration skipIf hasDatabaseUrl on real PG; SES only mocked piece in chain test; SQS/EventBridge mocked at boundary. broadcasts.audience_ref is segment_id for both segment and manual_group (manual is still a segment row) so resolveAudience covers both no branching. workspace_id loaded FROM broadcast row never client.",
+      "pureFunctions": [
+        "buildBroadcastDedupeKey(broadcastId,profileId)",
+        "buildBroadcastOutboxInsert(workspaceId,broadcastId,templateId,payload,profileIds)",
+        "chunk(items,batchSize)",
+        "buildResolveAudiencePage(workspaceId,segmentId,limit,offset)",
+        "isValidBroadcastTransition(from,to)",
+        "buildBroadcastStatusUpdate(workspaceId,broadcastId,from,to)",
+        "isScheduleDue(scheduledAt,now)",
+        "buildDueScheduledBroadcastsQuery(now)",
+        "buildDispatchEnqueueMessage(outboxId,queueUrl)"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "buildBroadcastDedupeKey deterministic broadcast:{broadcast_id}:{profile_id}",
+            "distinct per profile and per broadcast",
+            "buildBroadcastOutboxInsert INSERT outbox ON CONFLICT (dedupe_key) DO NOTHING",
+            "binds workspace_id $1",
+            "row carries dedupe_key+template_id+payload",
+            "throws on falsy workspaceId"
+          ],
+          "criterion": "2",
+          "path": "services/broadcast/test/outbox-row-builder.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "chunk splits into <=batchSize preserving order no loss",
+            "[] for empty",
+            "buildResolveAudiencePage binds workspace_id $1 segment_id $2 ORDER BY+LIMIT/OFFSET",
+            "pagination enumerates each member once no dupes across boundaries"
+          ],
+          "criterion": "3",
+          "path": "services/broadcast/test/audience-batching.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "isValidBroadcastTransition allows draft->scheduled/sending, scheduled->sending/cancelled, sending->sent/cancelled",
+            "rejects sent->*, cancelled->*, unknown",
+            "buildBroadcastStatusUpdate compare-and-set WHERE workspace_id=$1 AND status=fromStatus",
+            "sending->sent sets sent_at; values[0]=workspaceId"
+          ],
+          "criterion": "4",
+          "path": "services/broadcast/test/status-transitions.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "isScheduleDue(null,now)=true (send now)",
+            "scheduledAt<=now true, >now false (boundary due)",
+            "buildDueScheduledBroadcastsQuery status=scheduled AND scheduled_at<=now"
+          ],
+          "criterion": "4",
+          "path": "services/broadcast/test/schedule-due.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildDispatchEnqueueMessage body={outbox_id} matching parseOutboxIdFromSqsRecord contract",
+            "no workspace_id in SQS body",
+            "2-member audience -> runInWorkspaceTx insert then 2 SendMessageCommands, status sending->sent",
+            "handler never throws on malformed id; SQS/EventBridge mocked"
+          ],
+          "criterion": "1",
+          "path": "services/broadcast/test/sqs-payload-and-handler.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "dynamic (source=evaluator) and manual (source=manual) segments both fully resolved",
+            "resolved at SEND TIME: add membership then resolve includes it; remove then excludes",
+            "mixed-source returns all",
+            "real PG no mock"
+          ],
+          "criterion": "3",
+          "path": "services/broadcast/test/resolve-audience.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "audience>batchSize (50/120) -> outbox count=audience in ceil(120/50)=3 batched tx (spy)",
+            "each row workspace_id+template_id+status=pending+dedupe_key",
+            "no member missed/duplicated"
+          ],
+          "criterion": "3",
+          "path": "services/broadcast/test/batched-outbox-insert.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "send twice same broadcast_id same audience -> outbox unchanged (ON CONFLICT (dedupe_key) DO NOTHING)",
+            "concurrent double-invocation -> one row per profile (UNIQUE dedupe_key)",
+            "dedupe_key = broadcast:{broadcast_id}:{profile_id}",
+            "same profile different broadcast_id -> new row"
+          ],
+          "criterion": "2",
+          "path": "services/broadcast/test/dedupe-idempotency.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "send-now draft->sending->sent sets sent_at",
+            "scheduled stays until due then sweep flips scheduled->sending->sent",
+            "sending->sent twice idempotent (2nd affects 0 rows)",
+            "cancelled skipped by sweep no outbox rows"
+          ],
+          "criterion": "4",
+          "path": "services/broadcast/test/status-transitions.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "A and B same-shape segment overlapping emails; broadcast A resolves only A memberships, outbox only A profiles",
+            "binds workspace_id $1 so B never touched (service role bypass)",
+            "outbox count with workspace_id=B stays 0"
+          ],
+          "criterion": "1",
+          "path": "services/broadcast/test/workspace-scoping.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "reuse dispatchOutbox (NOT re-implement): 3 members, #2 suppressed; drive dispatchOutbox over each with counting fake SES",
+            "#2 skip stoppedAt=suppression SES not called; #1,#3 send",
+            "messages_log 2 rows, suppressed none",
+            "re-dispatch same outbox ids = noop (atomic claim) -> exactly-once"
+          ],
+          "criterion": "1",
+          "path": "services/broadcast/test/broadcast-to-dispatcher-chain.integration.test.ts",
+          "tier": "integration"
+        }
+      ]
+    },
+    "prevFeedback": null
+  }
+}

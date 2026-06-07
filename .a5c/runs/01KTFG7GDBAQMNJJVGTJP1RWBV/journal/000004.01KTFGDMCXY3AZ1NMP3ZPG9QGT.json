@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-06T22:21:24.765Z",
+  "data": {
+    "effectId": "01KTFGDMCC3AQH4XT0YXVVTDAJ",
+    "invocationKey": "cdp/app-completion:S000002:implement-phase",
+    "invocationHash": "a708cf705ce886ed8e7a6488f608bff5b7dfb59d677f1dd2796e2368e7114402",
+    "stepId": "S000002",
+    "taskId": "implement-phase",
+    "kind": "agent",
+    "label": "implement",
+    "taskDefRef": "tasks/01KTFGDMCC3AQH4XT0YXVVTDAJ/task.json",
+    "labels": [
+      "implement",
+      "phase9-broadcasts",
+      "iteration-1"
+    ]
+  },
+  "checksum": "732f6d41851bf9683e052826c46cc54c45f29dc20e88d9d6d1febe60c02ad3f2"
+}

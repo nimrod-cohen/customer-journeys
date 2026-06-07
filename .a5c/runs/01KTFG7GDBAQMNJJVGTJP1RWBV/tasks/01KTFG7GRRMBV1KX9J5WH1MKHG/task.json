@@ -1,0 +1,128 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "e2eFlows": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "implUnits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mocks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "pureFunctions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "testFiles": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "testFiles",
+        "implUnits"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
+          "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
+          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
+          "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no features beyond the spec. Keep the cost model EXACTLY as §20 (direct usage + even split of fixed costs)."
+        ],
+        "loop": "Backend phase: pure unit tests + DB-integration against REAL local Postgres (localhost:5433); mock AWS (aws-sdk-client-mock) / LocalStack. No frontend.",
+        "phase": {
+          "criteria": [
+            "A broadcast to a segment or manual group sends once to the resolved audience; each recipient passes suppression/cap/quiet-hours (via the Dispatcher).",
+            "Retries do not double-send (dedupe per (broadcast_id, profile_id)).",
+            "Audience is resolved at send time from segment_memberships (works for both dynamic and manual segments); large audiences are enumerated in batches.",
+            "broadcasts.status transitions correctly (sending -> sent); scheduling at scheduled_at is honored; everything workspace-scoped."
+          ],
+          "frontend": false,
+          "id": "phase9-broadcasts",
+          "scope": [
+            "services/broadcast: a Broadcast Lambda (triggered on send / at scheduled_at via EventBridge) that RESOLVES the audience at send time from segment_memberships (dynamic OR manual segment) via @cdp/segments resolveAudience; snapshots the member set.",
+            "Enumerate in BATCHES (paginate; large audiences enqueued in chunks) -> insert outbox rows -> the existing Dispatcher (§9) handles per-recipient suppression/cap/quiet-hours and the actual send.",
+            "Update broadcasts.status (draft->scheduled->sending->sent / cancelled); record per-recipient sends in messages_log.",
+            "Idempotent dedupe_key per (broadcast_id, profile_id) prevents double-sends on retry."
+          ],
+          "specSections": "§9A (broadcast: resolve audience at send time, batched enumeration -> outbox, scheduling, status), §9 (Dispatcher), §6 (broadcasts, outbox, messages_log, segment_memberships)",
+          "title": "Broadcasts (one-off send)"
+        },
+        "prior": "Phases 2-8 done (tenancy/auth, ingest, profiles, segments, email/onboarding, dispatch, feedback). Reuse the packages/db testutil harness, runPlanInWorkspaceTx, scopedQuery, SqlStatement, @cdp/segments resolveAudience, @cdp/email, the dispatcher core + outbox->Dispatcher pipeline, and the per-workspace suppression query.",
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §9A (broadcast: resolve audience at send time, batched enumeration -> outbox, scheduling, status), §9 (Dispatcher), §6 (broadcasts, outbox, messages_log, segment_memberships), plus §16A and §18.",
+        "For each acceptance criterion, define the test file(s), tier (unit | integration | e2e/browser), and the exact assertions — especially tenant-isolation/role, idempotency, and (for sends) that everything routes through the Dispatcher guards.",
+        "Identify the pure functions and what is mocked (AWS/LocalStack) vs real (Postgres; real browser for UI).",
+        "List implementation units + dependency order. For UI phases, specify the Playwright e2e flows and how the local API is stood up.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { testFiles: [{path, tier, criterion, assertions:[...]}], pureFunctions: string[], mocks: string[], e2eFlows: string[], implUnits: string[], notes: string }",
+      "role": "senior test architect practicing TDD on a serverless multi-tenant CDP (with a Preact SPA for UI phases)",
+      "task": "Turn the §18 acceptance criteria for \"Broadcasts (one-off send)\" into a concrete, test-first plan."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFG7GRRMBV1KX9J5WH1MKHG/input.json",
+    "outputJsonPath": "tasks/01KTFG7GRRMBV1KX9J5WH1MKHG/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "phase9-broadcasts",
+    "plan"
+  ],
+  "title": "Plan: Broadcasts (one-off send)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFG7GRRMBV1KX9J5WH1MKHG",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/app-completion:S000001:plan-phase",
+  "stepId": "S000001",
+  "inputs": {
+    "phase": {
+      "criteria": [
+        "A broadcast to a segment or manual group sends once to the resolved audience; each recipient passes suppression/cap/quiet-hours (via the Dispatcher).",
+        "Retries do not double-send (dedupe per (broadcast_id, profile_id)).",
+        "Audience is resolved at send time from segment_memberships (works for both dynamic and manual segments); large audiences are enumerated in batches.",
+        "broadcasts.status transitions correctly (sending -> sent); scheduling at scheduled_at is honored; everything workspace-scoped."
+      ],
+      "frontend": false,
+      "id": "phase9-broadcasts",
+      "scope": [
+        "services/broadcast: a Broadcast Lambda (triggered on send / at scheduled_at via EventBridge) that RESOLVES the audience at send time from segment_memberships (dynamic OR manual segment) via @cdp/segments resolveAudience; snapshots the member set.",
+        "Enumerate in BATCHES (paginate; large audiences enqueued in chunks) -> insert outbox rows -> the existing Dispatcher (§9) handles per-recipient suppression/cap/quiet-hours and the actual send.",
+        "Update broadcasts.status (draft->scheduled->sending->sent / cancelled); record per-recipient sends in messages_log.",
+        "Idempotent dedupe_key per (broadcast_id, profile_id) prevents double-sends on retry."
+      ],
+      "specSections": "§9A (broadcast: resolve audience at send time, batched enumeration -> outbox, scheduling, status), §9 (Dispatcher), §6 (broadcasts, outbox, messages_log, segment_memberships)",
+      "title": "Broadcasts (one-off send)"
+    }
+  }
+}

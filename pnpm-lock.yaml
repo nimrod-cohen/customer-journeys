@@ -171,7 +171,39 @@ importers:
         specifier: ^8.11.6
         version: 8.20.0
 
-  services/broadcast: {}
+  services/broadcast:
+    dependencies:
+      '@aws-sdk/client-sqs':
+        specifier: ^3.620.0
+        version: 3.1063.0
+      '@cdp/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cdp/email':
+        specifier: workspace:*
+        version: link:../../packages/email
+      '@cdp/segments':
+        specifier: workspace:*
+        version: link:../../packages/segments
+      '@cdp/service-dispatcher':
+        specifier: workspace:*
+        version: link:../dispatcher
+      '@cdp/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      pg:
+        specifier: ^8.12.0
+        version: 8.21.0
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.140
+        version: 8.10.162
+      '@types/pg':
+        specifier: ^8.11.6
+        version: 8.20.0
+      aws-sdk-client-mock:
+        specifier: ^4.0.1
+        version: 4.1.0
 
   services/campaign-runner: {}
 

@@ -1,0 +1,65 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "id": "integration-email-dispatch",
+          "title": "Cross-phase email/dispatch integration"
+        },
+        "score": 96
+      },
+      "instructions": [
+        "Run `git add -A`.",
+        "Commit with a clear conventional message describing the phase (Cross-phase email/dispatch integration), noting the gate score (96) and whether it fully converged (true).",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the resulting commit hash.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Cross-phase email/dispatch integration\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTFF85NPF1AQ1XSXG5E90P2Y/input.json",
+    "outputJsonPath": "tasks/01KTFF85NPF1AQ1XSXG5E90P2Y/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "integration-email-dispatch"
+  ],
+  "title": "Commit: Cross-phase email/dispatch integration",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTFF85NPF1AQ1XSXG5E90P2Y",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/email-dispatch:S000015:commit-phase",
+  "stepId": "S000015",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "id": "integration-email-dispatch",
+      "title": "Cross-phase email/dispatch integration"
+    },
+    "score": 96
+  }
+}
