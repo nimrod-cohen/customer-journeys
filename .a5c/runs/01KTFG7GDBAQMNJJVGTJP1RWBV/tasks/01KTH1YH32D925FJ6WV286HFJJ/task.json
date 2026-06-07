@@ -1,0 +1,64 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "id": "final-acceptance",
+          "title": "Full-system integration + §18 acceptance"
+        },
+        "score": 96
+      },
+      "instructions": [
+        "Run `git add -A`.",
+        "Commit with a clear conventional message describing the phase (Full-system integration + §18 acceptance), gate score (96), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Full-system integration + §18 acceptance\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTH1YH32D925FJ6WV286HFJJ/input.json",
+    "outputJsonPath": "tasks/01KTH1YH32D925FJ6WV286HFJJ/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "final-acceptance"
+  ],
+  "title": "Commit: Full-system integration + §18 acceptance",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTH1YH32D925FJ6WV286HFJJ",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/app-completion:S000031:commit-phase",
+  "stepId": "S000031",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "id": "final-acceptance",
+      "title": "Full-system integration + §18 acceptance"
+    },
+    "score": 96
+  }
+}

@@ -11,6 +11,7 @@ import grapesjs, { type Editor } from 'grapesjs';
 import grapesjsMjml from 'grapesjs-mjml';
 import 'grapesjs/dist/css/grapes.min.css';
 import { serializeEditorToMjml, type SaveTemplatePayload } from './serialize.js';
+import { Button, Card, PageHeader } from './ui/kit.js';
 
 /** A starter MJML doc so the editor renders something deterministic on load. */
 const INITIAL_MJML = serializeEditorToMjml({
@@ -66,19 +67,45 @@ export function EmailEditor() {
 
   return (
     <section>
-      <header>
-        <h1>Email editor</h1>
-        <button data-testid="insert-image" type="button" onClick={insertImage}>
-          Insert image
-        </button>
-        <button data-testid="refresh-mjml" type="button" onClick={refreshMjml}>
-          Refresh MJML
-        </button>
-      </header>
-      <div data-testid="gjs-host" ref={hostRef} />
-      {/* The live MJML, surfaced for the save path + the browser e2e. */}
-      <textarea data-testid="mjml-output" readOnly value={mjml} rows={8} cols={80} />
-      <pre data-testid="payload-preview">{JSON.stringify(payload)}</pre>
+      <PageHeader
+        title="Email editor"
+        subtitle="Design with MJML blocks — output compiles to cross-client HTML on save."
+        actions={
+          <>
+            <Button data-testid="insert-image" variant="secondary" onClick={insertImage}>
+              Insert image
+            </Button>
+            <Button data-testid="refresh-mjml" variant="secondary" onClick={refreshMjml}>
+              Refresh MJML
+            </Button>
+          </>
+        }
+      />
+      <Card class="overflow-hidden">
+        <div data-testid="gjs-host" ref={hostRef} />
+      </Card>
+
+      <div class="mt-5 grid gap-4 lg:grid-cols-2">
+        <div>
+          <span class="label">Emitted MJML</span>
+          <textarea
+            data-testid="mjml-output"
+            readOnly
+            value={mjml}
+            rows={8}
+            class="textarea w-full font-mono text-xs"
+          />
+        </div>
+        <div>
+          <span class="label">Save payload</span>
+          <pre
+            data-testid="payload-preview"
+            class="h-full overflow-auto rounded-lg bg-stone-900 p-3 font-mono text-xs text-brand-200"
+          >
+            {JSON.stringify(payload, null, 2)}
+          </pre>
+        </div>
+      </div>
     </section>
   );
 }

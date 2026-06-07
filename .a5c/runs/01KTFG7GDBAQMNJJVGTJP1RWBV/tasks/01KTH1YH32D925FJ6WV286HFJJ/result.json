@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTH1YH32D925FJ6WV286HFJJ",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/app-completion:S000031:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "75457b5ff12a19caf41ddd6e864937491de95117",
+    "committed": true,
+    "message": "test(acceptance): §18 gate covers all 16 bullets inline (full-system pass)"
+  },
+  "startedAt": "2026-06-07T12:46:58.855Z",
+  "finishedAt": "2026-06-07T12:46:58.855Z",
+  "value": {
+    "commitHash": "75457b5ff12a19caf41ddd6e864937491de95117",
+    "committed": true,
+    "message": "test(acceptance): §18 gate covers all 16 bullets inline (full-system pass)"
+  }
+}

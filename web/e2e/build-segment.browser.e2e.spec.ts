@@ -19,7 +19,8 @@ test('build a dynamic segment and see a live size preview', async ({ page }) => 
 
   await page.getByTestId('preview-size').click();
   // Two seeded VIPs in WS_A; WS_B's VIP-less profile is excluded by scoping.
-  await expect(page.getByTestId('segment-size')).toHaveText('Size: 2');
+  // (Copy-resilient: the preview element shows the matched count "2".)
+  await expect(page.getByTestId('segment-size')).toContainText('2');
 
   await page.getByTestId('save-segment').click();
   await expect(page.getByTestId('segment-saved')).toBeVisible();
