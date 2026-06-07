@@ -94,7 +94,7 @@ export const getMe: Handler = async (ctx, pool) => {
   );
   return ok({
     sub: ctx.userId,
-    workspace_id: ctx.workspaceId,
+    workspace_id: ctx.workspaceId || null,
     role: ctx.role ?? null,
     is_platform_admin: ctx.isPlatformAdmin,
     memberships: rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role })),

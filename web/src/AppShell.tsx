@@ -3,6 +3,7 @@
 // the routed screen body. The Nav shows only what the active role permits; the
 // switcher re-scopes the whole app by swapping the token. (Visual redesign:
 // Tailwind, dark "ink" sidebar; all data-testid attributes preserved.)
+import { useEffect } from 'preact/hooks';
 import { useStore } from './store/store.js';
 import { sessionStore, switchWorkspace, logout } from './store/session.js';
 import { routeStore, navigate } from './router.js';
@@ -55,6 +56,15 @@ export function AppShell(): JSX.Element {
   const session = useStore(sessionStore);
   const route = useStore(routeStore);
   const nav = buildNav(session.role);
+
+  // Land on a permitted screen: if the current route isn't in the role's nav
+  // (e.g. a system-admin with no active workspace can't open /dashboards),
+  // fall back to the first permitted item (the System Admin console for them).
+  const permitted = nav.some((n) => n.path === route);
+  const effectiveRoute = permitted ? route : (nav[0]?.path ?? route);
+  useEffect(() => {
+    if (!permitted && nav[0] && route !== nav[0].path) navigate(nav[0].path);
+  }, [permitted, route, nav]);
 
   return (
     <div class="flex min-h-screen">
@@ -123,8 +133,8 @@ export function AppShell(): JSX.Element {
       </aside>
 
       <main data-testid="app-body" class="flex-1 overflow-x-hidden px-8 py-8">
-        <div key={route} class="mx-auto max-w-6xl animate-fade-up">
-          {screenFor(route)}
+        <div key={effectiveRoute} class="mx-auto max-w-6xl animate-fade-up">
+          {screenFor(effectiveRoute)}
         </div>
       </main>
     </div>

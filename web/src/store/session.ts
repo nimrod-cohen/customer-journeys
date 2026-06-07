@@ -32,13 +32,55 @@ const EMPTY: Session = {
   memberships: [],
 };
 
-/** The global session store. */
-export const sessionStore: Store<Session> = createStore<Session>(EMPTY);
+// Persist the session across page reloads. The bearer token carries the active
+// workspace_id + role and is the single scope source; we cache the resolved
+// identity too so the app rehydrates without a flash, then revalidate via /me.
+const STORAGE_KEY = 'cdp.session';
+
+function loadPersisted(): Session | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw) as Session;
+    return s && typeof s.token === 'string' && s.token ? { ...EMPTY, ...s } : null;
+  } catch {
+    return null;
+  }
+}
+
+function persist(s: Session): void {
+  try {
+    if (s.token) globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(s));
+    else globalThis.localStorage?.removeItem(STORAGE_KEY);
+  } catch {
+    /* storage unavailable (e.g. tests / private mode) — in-memory only */
+  }
+}
+
+/** The global session store (rehydrated from localStorage on first load). */
+export const sessionStore: Store<Session> = createStore<Session>(loadPersisted() ?? EMPTY);
+
+// Mirror every session change to localStorage (login/switch/refresh/logout).
+sessionStore.subscribe(persist);
 
 /** An apiClient bound to the session store's current token. */
 export const api: ApiClient = createApiClient({
   getToken: () => sessionStore.get().token,
 });
+
+/**
+ * Re-validate a rehydrated session on boot: if a persisted token exists, refresh
+ * the identity from /me; if the token is no longer valid (401), clear it so the
+ * user lands on Login rather than a broken session.
+ */
+export async function restoreSession(): Promise<void> {
+  if (!sessionStore.get().token) return;
+  try {
+    await refreshMe();
+  } catch {
+    logout();
+  }
+}
 
 /** Compute the effective role from a workspace role + platform-admin flag. */
 export function effectiveRole(role: WorkspaceRole | null, isPlatformAdmin: boolean): Role | null {

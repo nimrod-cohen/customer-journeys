@@ -64,7 +64,17 @@ export async function dispatch(req: ApiRequest, env: DispatchEnv): Promise<Handl
   // 3. Build the TRUSTED context from the authorizer-injected string context and
   //    enforce the route's capability SERVER-SIDE.
   const authorizerCtx: Record<string, string | undefined> = { ...auth.context };
-  const ctx = contextFromAuthorizer({ requestContext: { authorizer: authorizerCtx } });
+  // A platform admin may have NO active workspace (no membership) — they operate
+  // cross-tenant (System Admin console) until they switch into one. The strict
+  // contextFromAuthorizer requires a workspace_id (the right guard for normal
+  // data routes / regular users); for a workspace-less platform admin we build an
+  // identity-only context so /me and /admin/* work. Regular users (and admins WITH
+  // an active workspace) still take the strict path unchanged.
+  const isPlatformAdmin = authorizerCtx.is_platform_admin === 'true';
+  const ctx =
+    !authorizerCtx.workspace_id && isPlatformAdmin
+      ? { workspaceId: '', userId: authorizerCtx.sub ?? '', isPlatformAdmin: true }
+      : contextFromAuthorizer({ requestContext: { authorizer: authorizerCtx } });
   if (capability !== null) {
     try {
       enforceRoute(ctx, capability);
@@ -74,6 +84,14 @@ export async function dispatch(req: ApiRequest, env: DispatchEnv): Promise<Handl
       }
       throw e;
     }
+  }
+
+  // A workspace-less platform admin can use identity (/me) + cross-tenant
+  // (view_all_workspaces) routes, but a workspace-scoped data route would have
+  // nothing to scope to — return a clean 403 ("switch into a workspace first")
+  // rather than letting scopedQuery throw a 500.
+  if (ctx.workspaceId === '' && capability !== null && capability !== 'view_all_workspaces') {
+    return jsonError(403, 'no active workspace — switch into a workspace first');
   }
 
   // 4. Invoke the handler (scopes all DB ops to ctx.workspaceId).
