@@ -41,10 +41,10 @@ test('segment by a profile field (unsubscribers) and by an event', async ({ page
   await page.getByTestId('segment-builder').waitFor();
   await page.getByTestId('segment-name').fill('Audience tests');
 
-  // (1) Profile field: email_status = unsubscribed → the one seeded unsubscriber.
-  await page.getByTestId('rule-field').first().fill('email_status');
+  // (1) Boolean attribute: attributes.unsubscribed = true → the one unsubscriber.
+  await page.getByTestId('rule-field').first().fill('attributes.unsubscribed');
   await page.getByTestId('rule-operator').first().selectOption('=');
-  await page.getByTestId('rule-value').first().fill('unsubscribed');
+  await page.getByTestId('rule-value').first().fill('true');
   await page.getByTestId('preview-size').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 

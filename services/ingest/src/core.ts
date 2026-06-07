@@ -107,11 +107,15 @@ export function buildProfileUpsert(
   attributes: Record<string, unknown>,
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildProfileUpsert: workspaceId is required');
+  // New profiles seed `unsubscribed = false` (so "unsubscribed = false" segments
+  // match the subscribed); any provided attribute of the same name overrides it.
+  // On UPDATE we merge ONLY the provided attrs ($3) — NOT the default — so an
+  // existing `unsubscribed = true` (set by the unsubscribe flow) is never reset.
   return {
     text: `INSERT INTO profiles (workspace_id, external_id, attributes)
-           VALUES ($1, $2, $3::jsonb)
+           VALUES ($1, $2, '{"unsubscribed": false}'::jsonb || $3::jsonb)
            ON CONFLICT (workspace_id, external_id)
-           DO UPDATE SET attributes = profiles.attributes || EXCLUDED.attributes,
+           DO UPDATE SET attributes = profiles.attributes || $3::jsonb,
                          updated_at = now()
            RETURNING id`,
     values: [workspaceId, externalId, JSON.stringify(attributes ?? {})],

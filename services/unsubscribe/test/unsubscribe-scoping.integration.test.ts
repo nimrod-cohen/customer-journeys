@@ -23,9 +23,18 @@ async function suppressed(admin: Pool, ws: string): Promise<boolean> {
   return (r.rowCount ?? 0) > 0;
 }
 
+async function unsubAttr(admin: Pool, ws: string): Promise<string | null> {
+  const r = await admin.query(
+    "SELECT attributes->>'unsubscribed' AS u FROM profiles WHERE workspace_id = $1 AND email = $2",
+    [ws, email],
+  );
+  return (r.rows[0]?.u as string | undefined) ?? null;
+}
+
 async function cleanup(admin: Pool): Promise<void> {
   for (const ws of [wsA, wsB]) {
     await admin.query('DELETE FROM suppressions WHERE workspace_id = $1', [ws]);
+    await admin.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);
   }
 }
@@ -39,6 +48,15 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
     handler = makeUnsubscribeHandler(makeDeps(admin));
     await cleanup(admin);
     await admin.query("INSERT INTO workspaces (id, name) VALUES ($1,'A'),($2,'B')", [wsA, wsB]);
+    // A profile with this email in EACH workspace (same email, different tenants).
+    await admin.query(
+      "INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,'p-a',$2,'{}'::jsonb)",
+      [wsA, email],
+    );
+    await admin.query(
+      "INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,'p-b',$2,'{}'::jsonb)",
+      [wsB, email],
+    );
   });
 
   afterAll(async () => {
@@ -62,6 +80,13 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
 
     expect(await suppressed(admin, wsA)).toBe(true);
     expect(await suppressed(admin, wsB)).toBe(false);
+  });
+
+  it('flags the profile attribute unsubscribed=true in A only (not B)', async () => {
+    // The first test already ran the one-click unsubscribe in workspace A.
+    expect(await unsubAttr(admin, wsA)).toBe('true');
+    // Workspace B's same-email profile is untouched (tenant isolation).
+    expect(await unsubAttr(admin, wsB)).toBe(null);
   });
 
   it('a replayed unsubscribe is idempotent (ON CONFLICT DO NOTHING → one row)', async () => {

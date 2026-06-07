@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { parseUnsubscribeRequest, buildUnsubscribeSuppression } from '../src/core.js';
+import {
+  parseUnsubscribeRequest,
+  buildUnsubscribeSuppression,
+  buildUnsubscribedAttribute,
+} from '../src/core.js';
 
 // §10 one-click unsubscribe. parseUnsubscribeRequest extracts workspace_id +
 // email from the WORKSPACE-SCOPED link (query string) and honors RFC 8058:
@@ -65,5 +69,21 @@ describe('buildUnsubscribeSuppression', () => {
 
   it('throws on a falsy workspaceId (tenant-isolation guard)', () => {
     expect(() => buildUnsubscribeSuppression('', 'a@b.com')).toThrow(/workspace/i);
+  });
+});
+
+describe('buildUnsubscribedAttribute', () => {
+  it('sets the profile attribute unsubscribed=true, workspace-scoped', () => {
+    const s = buildUnsubscribedAttribute('ws-1', 'a@b.com');
+    expect(s.text).toMatch(/UPDATE profiles/i);
+    expect(s.text).toContain('"unsubscribed": true');
+    expect(s.text).toMatch(/WHERE workspace_id = \$1 AND email = \$2/i);
+    expect(s.values).toEqual(['ws-1', 'a@b.com']);
+    // workspace id is a bound param, never interpolated.
+    expect(s.text).not.toContain('ws-1');
+  });
+
+  it('throws on a falsy workspaceId (tenant-isolation guard)', () => {
+    expect(() => buildUnsubscribedAttribute('', 'a@b.com')).toThrow(/workspace/i);
   });
 });

@@ -91,3 +91,23 @@ export function buildUnsubscribeSuppression(
     values: [workspaceId, email, 'unsubscribe', source],
   };
 }
+
+/**
+ * Flag the unsubscribed profile(s) so segments can target it: set the boolean
+ * attribute `unsubscribed = true` on every profile with this email in the
+ * workspace. The suppression list remains the authoritative SEND gate (§10); this
+ * attribute exists purely so marketers can build "unsubscribed = true/false"
+ * audiences. Workspace-scoped (workspace_id at $1); idempotent (jsonb merge);
+ * throws on a falsy workspaceId (the central tenancy guard).
+ */
+export function buildUnsubscribedAttribute(workspaceId: string, email: string): SqlStatement {
+  if (!workspaceId) {
+    throw new Error('buildUnsubscribedAttribute: workspaceId is required (tenant-isolation guard)');
+  }
+  return {
+    text: `UPDATE profiles
+           SET attributes = attributes || '{"unsubscribed": true}'::jsonb, updated_at = now()
+           WHERE workspace_id = $1 AND email = $2`,
+    values: [workspaceId, email],
+  };
+}

@@ -6,6 +6,7 @@
 import {
   parseUnsubscribeRequest,
   buildUnsubscribeSuppression,
+  buildUnsubscribedAttribute,
   type SqlStatement,
 } from './core.js';
 
@@ -57,9 +58,12 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
       if (!parsed.valid) {
         return { statusCode: 400, body: JSON.stringify({ ok: false, reason: parsed.reason }) };
       }
-      // Workspace-scoped write — never touches another workspace.
+      // Workspace-scoped writes in ONE tx — never touches another workspace:
+      //   1. the suppression (authoritative SEND gate, §10),
+      //   2. the profile `unsubscribed = true` attribute (so it's segmentable).
       await deps.runInWorkspaceTx(parsed.workspaceId, [
         buildUnsubscribeSuppression(parsed.workspaceId, parsed.email),
+        buildUnsubscribedAttribute(parsed.workspaceId, parsed.email),
       ]);
       return { statusCode: 200, body: JSON.stringify({ ok: true }) };
     } catch {

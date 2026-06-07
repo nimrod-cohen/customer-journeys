@@ -99,9 +99,11 @@ export async function seed(): Promise<void> {
         [pr[0]!.id, WS_A],
       );
     }
-    // a3 is unsubscribed — so "email_status = unsubscribed" matches exactly one.
+    // a3 is unsubscribed — flag the boolean attribute so "attributes.unsubscribed
+    // = true" matches exactly one profile (mirrors the real unsubscribe flow).
     await pool.query(
-      "UPDATE profiles SET email_status = 'unsubscribed' WHERE workspace_id = $1 AND external_id = 'a3'",
+      `UPDATE profiles SET attributes = attributes || '{"unsubscribed": true}'::jsonb
+        WHERE workspace_id = $1 AND external_id = 'a3'`,
       [WS_A],
     );
     // Give the first profile (a1) past events + a manual segment membership so the

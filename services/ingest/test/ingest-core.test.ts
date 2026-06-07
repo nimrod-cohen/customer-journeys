@@ -85,6 +85,15 @@ describe('buildProfileUpsert (AC5)', () => {
     // no string interpolation of the workspace id
     expect(q.text).not.toContain('ws-1');
   });
+
+  it('seeds unsubscribed=false on INSERT, and merges only provided attrs on UPDATE', () => {
+    const q = buildProfileUpsert('ws-1', 'cust-1', { plan: 'pro' });
+    // New profile starts subscribed (default merged UNDER provided attrs).
+    expect(q.text).toContain(`'{"unsubscribed": false}'::jsonb || $3::jsonb`);
+    // On conflict we merge ONLY $3 (not the default) so an existing
+    // unsubscribed=true is never reset by a later profile event.
+    expect(q.text).toMatch(/DO UPDATE SET attributes = profiles\.attributes \|\| \$3::jsonb/i);
+  });
 });
 
 describe('buildSqsMessage', () => {
