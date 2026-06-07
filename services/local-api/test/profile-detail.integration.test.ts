@@ -13,7 +13,8 @@ const USER = '0d1e2f03-0000-4000-8000-0000000000b1'; // owner of A only
 const P_A = '0d1e2f03-0000-4000-8000-0000000000c1';
 const P_A2 = '0d1e2f03-0000-4000-8000-0000000000c3'; // in A, NOT in the segment
 const P_B = '0d1e2f03-0000-4000-8000-0000000000c2';
-const SEG_A = '0d1e2f03-0000-4000-8000-0000000000d1';
+const SEG_A = '0d1e2f03-0000-4000-8000-0000000000d1'; // manual, P_A is a member
+const SEG_DYN = '0d1e2f03-0000-4000-8000-0000000000d2'; // dynamic: attributes.tier = std
 const EV_1 = '0d1e2f03-0000-4000-8000-0000000000e1';
 const EV_2 = '0d1e2f03-0000-4000-8000-0000000000e2';
 
@@ -42,9 +43,10 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
       'INSERT INTO profile_features (profile_id, workspace_id, total_events) VALUES ($1,$2,2)',
       [P_A, WS_A],
     );
-    // A second A profile that is NOT in the segment (proves the filter excludes).
+    // A second A profile that is NOT in the manual segment (proves exclusion) and
+    // carries attributes.tier=std so it matches the DYNAMIC segment by rule alone.
     await world.pool.query(
-      "INSERT INTO profiles (id, workspace_id, external_id, email) VALUES ($1,$2,'a2','a2@acme.com')",
+      "INSERT INTO profiles (id, workspace_id, external_id, email, attributes) VALUES ($1,$2,'a2','a2@acme.com','{\"tier\":\"std\"}'::jsonb)",
       [P_A2, WS_A],
     );
     await world.pool.query(
@@ -68,6 +70,13 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     await world.pool.query(
       "INSERT INTO segment_memberships (segment_id, profile_id, workspace_id, source) VALUES ($1,$2,$3,'manual')",
       [SEG_A, P_A, WS_A],
+    );
+    // A DYNAMIC segment (rule attributes.tier = std) with NO materialized rows.
+    await world.pool.query(
+      `INSERT INTO segments (id, workspace_id, name, kind, definition)
+       VALUES ($1,$2,'Standard tier','dynamic_realtime',
+               '{"field":"attributes.tier","operator":"=","value":"std"}'::jsonb)`,
+      [SEG_DYN, WS_A],
     );
   });
 
@@ -153,6 +162,20 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     const ids = (r.body as { profiles: { id: string }[] }).profiles.map((p) => p.id);
     expect(ids).toContain(P_A); // a member
     expect(ids).not.toContain(P_A2); // same workspace, NOT a member
+  });
+
+  it('GET /profiles?segment_id=… LIVE-evaluates a DYNAMIC segment (no materialized rows)', async () => {
+    // SEG_DYN has a rule but zero segment_memberships rows. The filter must still
+    // return the profile that matches the rule right now (live compile), proving
+    // it does not depend on the evaluator having materialized memberships.
+    const r = await call(world.env, 'GET', '/profiles', {
+      token: tokA(),
+      query: { segment_id: SEG_DYN },
+    });
+    expect(r.status).toBe(200);
+    const ids = (r.body as { profiles: { id: string }[] }).profiles.map((p) => p.id);
+    expect(ids).toContain(P_A2); // tier=std matches the rule, despite no membership row
+    expect(ids).not.toContain(P_B); // never another tenant's profile
   });
 
   it('GET /profiles with no filter returns all workspace profiles', async () => {

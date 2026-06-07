@@ -451,6 +451,37 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
   // so a cross-workspace segment id can never surface another tenant's profiles.
   const segmentId = req.query.segment_id;
   if (segmentId) {
+    // Resolve the segment first (scoped) — its kind decides the source of truth.
+    // A dynamic (rule-based) segment is evaluated LIVE via the §8 compiler (the
+    // same source the size preview uses), so the filter reflects who matches the
+    // rule right now — not whatever the evaluator last materialized. A manual
+    // segment uses its membership rows. A cross-workspace id resolves to nothing.
+    const segQ = scopedQuery(
+      ctx.workspaceId,
+      'SELECT definition FROM segments WHERE id = $1',
+      [segmentId],
+    );
+    const seg = await pool.query(segQ.text, segQ.values);
+    if (!seg.rows[0]) return ok({ profiles: [] });
+    const definition = (seg.rows[0].definition ?? null) as AstNode | null;
+
+    if (definition) {
+      // Dynamic: profiles currently matching the rule (workspace_id is $1, bound
+      // structurally by the compiler — can never match another tenant).
+      const where = compileWhere(ctx.workspaceId, definition);
+      const { rows } = await pool.query(
+        `SELECT p.id, p.external_id, p.email, p.email_status
+           FROM profiles p
+           LEFT JOIN profile_features pf ON pf.profile_id = p.id
+          WHERE ${where.text}
+          ORDER BY p.created_at DESC
+          LIMIT 200`,
+        where.values,
+      );
+      return ok({ profiles: rows });
+    }
+
+    // Manual (no rule): the materialized membership rows.
     const { rows } = await pool.query(
       `SELECT p.id, p.external_id, p.email, p.email_status
          FROM profiles p

@@ -22,10 +22,13 @@ export const DEV_ADMIN = DEV_USERS.find((u) => u.userId === USER_ADMIN)!;
 export const TPL_A = '0e2efe00-0000-4000-8000-0000000000c1';
 export const SEG_A = '0e2efe00-0000-4000-8000-0000000000c2';
 export const SEG_B = '0e2efe00-0000-4000-8000-0000000000c3';
+export const SEG_DYN_A = '0e2efe00-0000-4000-8000-0000000000c4'; // dynamic: attributes.tier = vip
 
 /** A-only and B-only segment names — asserted present/absent after switching. */
 export const SEG_A_NAME = 'Manual VIPs';
 export const SEG_B_NAME = 'Beta Loyalty Club';
+/** A dynamic (rule-based) segment in A — has NO materialized memberships. */
+export const SEG_DYN_A_NAME = 'VIP (dynamic)';
 
 export async function seed(): Promise<void> {
   const pool = adminPool();
@@ -72,6 +75,13 @@ export async function seed(): Promise<void> {
     await pool.query(
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
       [SEG_B, WS_B, SEG_B_NAME, 'manual'],
+    );
+    // A DYNAMIC segment in A (rule attributes.tier = vip) with NO materialized
+    // memberships — the Profiles filter must live-evaluate it.
+    await pool.query(
+      `INSERT INTO segments (id, workspace_id, name, kind, definition)
+       VALUES ($1,$2,$3,'dynamic_realtime','{"field":"attributes.tier","operator":"=","value":"vip"}'::jsonb)`,
+      [SEG_DYN_A, WS_A, SEG_DYN_A_NAME],
     );
     let firstProfileId = '';
     for (const [ext, email, tier] of [

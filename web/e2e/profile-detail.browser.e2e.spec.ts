@@ -42,7 +42,7 @@ test('open a profile, edit it, add an attribute, view events and segments', asyn
   await expect(page.getByTestId('profile-segment-row')).toContainText('Manual VIPs');
 });
 
-test('filter the profiles list by segment membership', async ({ page }) => {
+test('filter the profiles list by manual and dynamic segments', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-profiles').click();
   await page.getByTestId('profile-explorer').waitFor();
@@ -50,10 +50,17 @@ test('filter the profiles list by segment membership', async ({ page }) => {
   // All three seeded A profiles are listed unfiltered.
   await expect(page.getByTestId('profile-row')).toHaveCount(3);
 
-  // Filtering by the manual segment a1 belongs to narrows to just a1.
+  // MANUAL segment: uses materialized membership rows — a1 is the only member.
   await page.getByTestId('profile-segment-filter').selectOption({ label: 'Manual VIPs' });
   await expect(page.getByTestId('profile-row')).toHaveCount(1);
   await expect(page.getByTestId('profile-row').first()).toContainText('a1@acme.com');
+
+  // DYNAMIC segment: live-evaluates the rule (attributes.tier = vip) with NO
+  // materialized memberships — the two VIP profiles match.
+  await page.getByTestId('profile-segment-filter').selectOption({ label: 'VIP (dynamic)' });
+  await expect(page.getByTestId('profile-row')).toHaveCount(2);
+  await expect(page.getByTestId('profile-explorer')).toContainText('a1@acme.com');
+  await expect(page.getByTestId('profile-explorer')).toContainText('a2@acme.com');
 
   // Clearing the filter restores the full list.
   await page.getByTestId('profile-segment-filter').selectOption({ label: 'All segments' });
