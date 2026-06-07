@@ -1,0 +1,501 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "browserVerified": {
+          "type": "boolean"
+        },
+        "criteriaAllMet": {
+          "type": "boolean"
+        },
+        "criteriaCoverage": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "criticalIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "isolationOk": {
+          "type": "boolean"
+        },
+        "recommendations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scopeCreep": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "testsPass": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "score",
+        "testsPass",
+        "criteriaAllMet",
+        "recommendations"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "env": "Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp.",
+        "implReport": {
+          "commandsRun": [
+            "FOR UPDATE single-tx refactor of campaign-runner",
+            "13x standalone flaky test (all PASS)",
+            "rm -rf .turbo && DATABASE_URL=... AWS_ENDPOINT_URL=... pnpm test (36/36)",
+            "pnpm typecheck",
+            "pnpm lint",
+            "playwright test (2 passed)"
+          ],
+          "e2eSummary": "Playwright editor e2e 2 passed; LocalStack image pipeline e2e 2 passed.",
+          "filesCreated": [],
+          "filesModified": [
+            "services/campaign-runner/src/run.ts",
+            "services/campaign-runner/src/deps.ts",
+            "services/campaign-runner/src/index.ts",
+            "services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts",
+            "services/campaign-runner/test/full-lifecycle.integration.test.ts",
+            "services/campaign-runner/test/wait-deferral.integration.test.ts",
+            "services/campaign-runner/test/branch-routing.integration.test.ts",
+            "services/campaign-runner/test/action-send-through-dispatcher.integration.test.ts",
+            "services/processor/test/fifo-localstack.e2e.test.ts",
+            "turbo.json"
+          ],
+          "lintOk": true,
+          "notes": "ROOT CAUSE (Phase-10 flake): campaign-runner claim and advance were in SEPARATE transactions; between a run's claim-commit and advance-commit the row sat active at the claim's updated_at, so a second run whose SELECT landed in that window claimed it too, and the loser's guarded advance updated 0 rows but runEnrollment never checked the rowcount -> two ticks returned 'completed'. Raw CAS SQL itself was correct (20/20 single-winner probe). FIX: FOR UPDATE single-tx — added withTx/withWorkspaceTx (one connection: BEGIN; SELECT...FOR UPDATE the enrollment + re-check status=active inside the lock; all reads+writes+advance on that client; COMMIT; enqueue {outbox_id} after commit). A concurrent run blocks on FOR UPDATE then sees status!=active and skips -> exactly one completed. Legacy CAS path retained for in-memory unit tests; runStatementsInWorkspaceTx kept for enroll.ts. SEPARATE issue exposed: starting LocalStack (for Phase 11 images) un-skipped services/processor/test/fifo-localstack.e2e.test.ts because it was gated on LOCALSTACK_URL ?? AWS_ENDPOINT_URL; under vitest's module loader the AWS SDK SQS HTTP path fails with QueueDoesNotExist (works identically in plain Node — verified via standalone probe round-tripping a real FIFO message via the exact buildSqsMessage path). Restored its documented LOCALSTACK_URL-only opt-in gate + documented the harness limitation (wiring is proven, not a product bug). Also added AWS_ENDPOINT_URL to turbo.json test env passthrough.",
+          "testsPass": true,
+          "testSummary": "Fixed the Phase-10 concurrency flake + a newly-exposed LocalStack gating issue. Full cold suite 36/36 turbo tasks, 0 cached. campaign-runner 65/65; idempotent-concurrent-sweep now deterministic (13/13 standalone across agent+orchestrator). typecheck + lint OK. Web Playwright e2e 2 passed. No regression.",
+          "typecheckOk": true
+        },
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
+          "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
+          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
+          "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no features beyond the spec. Keep the cost model EXACTLY as §20 (direct usage + even split of fixed costs)."
+        ],
+        "loop": "This phase has a FRONTEND/UI surface. The widest quality loop is a REAL BROWSER: build the UI with Vite + Preact (or React) and verify with Playwright e2e against a locally-running app + local API (thin adapter/serverless-offline over the Lambda handlers + LocalStack). Use the core GrapesJS + MJML plugin (BSD-3, free) — never the paid Studio SDK; the editor must emit MJML. Seed deterministic data and use stable selectors so the e2e is reliable.",
+        "phase": {
+          "criteria": [
+            "The Image Lambda issues a presigned S3 PUT URL under the workspace_id/ key prefix; uploaded image bytes are recorded in usage_counters; variants are produced by the sharp step. (Verified against LocalStack S3 / mocked S3.)",
+            "The GrapesJS+MJML editor renders in a real browser (Playwright), lets a user compose a template, and on save emits MJML that compiles to HTML stored in email_templates (workspace-scoped).",
+            "Image keys are workspace-prefixed; one workspace cannot read/overwrite another workspace prefix."
+          ],
+          "frontend": true,
+          "id": "phase11-image-wysiwyg",
+          "scope": [
+            "services/image: an Image Lambda that returns a presigned S3 PUT URL keyed under a workspace_id/ prefix (LocalStack S3); an S3-triggered Lambda that makes sharp variants; record bytes in usage_counters (image_storage_bytes). Mock/LocalStack S3.",
+            "Frontend (in /web): a GrapesJS + MJML-plugin email editor component (core GrapesJS, BSD-3, NOT the paid Studio SDK) that emits MJML; on save, MJML -> compiled HTML via the existing Template Lambda (@cdp/email compile) stored in email_templates. Images uploaded via the presigned URL flow.",
+            "The editor must OUTPUT MJML, not hand-rolled email HTML."
+          ],
+          "specSections": "§11 (presigned S3 PUT under workspace_id/ prefix, sharp variants via S3-triggered Lambda, CloudFront, GrapesJS+MJML editor emitting MJML), §6 (usage_counters image bytes)",
+          "title": "Image pipeline + WYSIWYG editor"
+        },
+        "plan": {
+          "e2eFlows": [
+            "LocalStack S3: presign PUT (ws A) -> PUT bytes -> HeadObject A/ -> synthetic ObjectCreated -> variant Lambda sharp variants under A/ -> usage_counters bytes in real PG",
+            "Cross-workspace: presigned A URL rejected for B/ key; variant handler refuses prefix mismatch",
+            "Browser editor: Vite boot -> GrapesJS+MJML mounts -> compose -> Save -> API compileMjml + buildTemplateUpsert -> email_templates has editor MJML + server HTML, workspace-scoped"
+          ],
+          "implUnits": [
+            "BOOTSTRAP /web Vite + Preact (index.html, vite.config @preact/preset-vite, main.tsx, scripts)",
+            "web EmailEditor Preact component embedding core grapesjs (BSD-3) + grapesjs-mjml plugin (NOT Studio SDK) emitting MJML",
+            "web pure serializeEditorToMjml + buildSaveTemplatePayload (+ <mj-image src>)",
+            "web save action (POST {name,mjml}) + image upload action (presign -> PUT -> insert CloudFront URL)",
+            "services/image: s3-key.ts, presign.ts, variants.ts, usage.ts",
+            "services/image presign handler thin (injected S3Client+presigner+authorizer ctx)",
+            "services/image S3-triggered variant handler thin (sharp + S3 get/put + buildImageBytesUpsert scoped by key prefix)",
+            "save-template endpoint (compileMjml + buildTemplateUpsert)",
+            "deps/config bucket/CloudFront base/presign TTL/contentType whitelist via @cdp/shared",
+            "tooling: @aws-sdk/client-s3, @aws-sdk/s3-request-presigner, sharp (image); grapesjs, grapesjs-mjml, preact, vite, @preact/preset-vite (web); @playwright/test; playwright.config webServer (vite preview) + DATABASE_URL",
+            "Playwright install: pnpm --filter @cdp/web exec playwright install --with-deps chromium; e2e gated skip when no browser/DB"
+          ],
+          "mocks": [
+            "aws-sdk-client-mock S3Client for presign-handler integration (real getSignedUrl drives URL shape)",
+            "LocalStack S3 (docker-compose, localhost:4566, forcePathStyle) for e2e upload + variant flow",
+            "REAL Postgres localhost:5433 for usage_counters + email_templates (never mocked)",
+            "REAL compileMjml (pure real compiler)",
+            "REAL browser via Playwright/Chromium for editor e2e",
+            "Playwright network interception to assert save body mjml",
+            "injected authorizer/workspace context (workspace never from body)"
+          ],
+          "notes": "Order: pure units -> integration real PG (record-usage, save-template reuse buildTemplateUpsert/compileMjml) -> S3 aws-sdk-client-mock presign handler -> thin LocalStack e2e upload+variant+usage -> BOOTSTRAP Vite+Preact web -> GrapesJS+MJML editor -> Playwright browser e2e last. Invariants: workspace_id never client-supplied (authorizer context/API key); every S3 key under ${workspace_id}/; assertKeyInWorkspace guards service-role variant Lambda (bypasses RLS); buildImageBytesUpsert binds workspace_id $1. Editor MUST emit MJML (asserted unit+integration+browser); compiled HTML server-side via compileMjml at save, stored alongside mjml, never browser-authored. LocalStack S3 via pnpm localstack:start; real PG localhost:5433. e2e/integration guarded describe.skipIf so unit CI stays green without Docker/DB/Chromium. sharp real in LocalStack tier (real Node runtime). CloudFront/IAM/S3-trigger wiring is CDK (infra), asserted only at thin e2e wiring level.",
+          "pureFunctions": [
+            "buildImageKey(workspaceId,filename)",
+            "parseWorkspaceFromKey/assertKeyInWorkspace",
+            "buildPresignRequest(...)",
+            "planVariants(sourceKey,dims)",
+            "buildImageBytesUpsert(workspaceId,period,bytes)",
+            "monthBucket(date)",
+            "serializeEditorToMjml(editorState)",
+            "buildSaveTemplatePayload(state,name)"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "buildImageKey prefixes ${workspaceId}/",
+                "stable per-upload segment (no overwrite)",
+                "throws falsy workspaceId",
+                "filename sanitized (.. / separators stripped, can't escape prefix)",
+                "parseWorkspaceFromKey + assertKeyInWorkspace throws on prefix mismatch"
+              ],
+              "criterion": "1,3",
+              "path": "services/image/test/s3-key.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildPresignRequest PutObjectCommand Key starts ${workspaceId}/",
+                "contentType whitelist png/jpeg/webp/gif, reject others",
+                "workspace from context arg never body",
+                "presignPutUrl returns {url,key,expiresIn} short TTL"
+              ],
+              "criterion": "1,3",
+              "path": "services/image/test/presign-request.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "planVariants canonical set under same workspace prefix",
+                "never upscale (skip width>=source)",
+                "names sharp resize op pure no invocation",
+                "throws if source key prefix unparseable"
+              ],
+              "criterion": "1",
+              "path": "services/image/test/variant-spec.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildImageBytesUpsert workspace_id $1, usage_counters metric=image_storage_bytes",
+                "additive upsert ON CONFLICT (workspace_id,period,metric) DO UPDATE value=value+EXCLUDED",
+                "period normalized first-of-month",
+                "throws falsy workspaceId/negative bytes"
+              ],
+              "criterion": "1",
+              "path": "services/image/test/usage-bytes-statement.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "aws-sdk-client-mock S3Client + real getSignedUrl -> presigned PUT URL path includes ${workspaceId}/",
+                "workspaceId from authorizer context not body",
+                "no-workspace -> 4xx no presign",
+                "disallowed contentType -> 4xx no S3"
+              ],
+              "criterion": "1,3",
+              "path": "services/image/test/presign-handler.s3mock.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "LocalStack S3: presigned PUT for ws A uploads to A/<key> (HeadObject confirms + ContentLength)",
+                "synthetic S3 ObjectCreated event -> variant Lambda produces sharp variants under A/ (HeadObject each, bytes>0, format/width per spec)",
+                "source bytes recorded usage_counters image_storage_bytes for A (real PG)",
+                "cross-workspace: presigned A URL rejected for B/ key; variant handler refuses event whose prefix != deriving workspace (assertKeyInWorkspace)"
+              ],
+              "criterion": "1,3",
+              "path": "tests/e2e/image-pipeline.localstack.e2e.test.ts",
+              "tier": "e2e"
+            },
+            {
+              "assertions": [
+                "buildImageBytesUpsert real PG inserts usage_counters row",
+                "second upsert ADDS to value (additive accumulation)",
+                "ws B doesn't alter ws A counter"
+              ],
+              "criterion": "1",
+              "path": "services/image/test/record-usage.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "serializeEditorToMjml root <mjml> with mj-body, NEVER hand-rolled html/table",
+                "output valid for compileMjml (non-empty, no throw)",
+                "image -> <mj-image src=cloudfront-url> not data: URI",
+                "buildSaveTemplatePayload {name,mjml} only, no compiled HTML (server-side at save)"
+              ],
+              "criterion": "2",
+              "path": "web/test/editor-emits-mjml.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "save path compileMjml then buildTemplateUpsert real PG -> one email_templates row mjml + compiled_html scoped workspaceId",
+                "re-save same name UPDATEs in place recompiled",
+                "same name ws B separate row, A untouched",
+                "stored compiled_html == compileMjml(stored mjml)"
+              ],
+              "criterion": "2",
+              "path": "web/test/save-template.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "Playwright Chromium: GrapesJS+MJML editor mounts (canvas iframe + MJML blocks), free BSD-3 core no Studio paywall",
+                "compose template (drag block, type) + Save",
+                "Save POST body mjml starts <mjml> (intercepted)",
+                "after save email_templates row (real PG) non-empty mjml + compiled_html parses as HTML",
+                "row scoped to test workspace_id from auth context not client-sent"
+              ],
+              "criterion": "2",
+              "path": "web/e2e/editor.browser.e2e.spec.ts",
+              "tier": "e2e"
+            }
+          ]
+        },
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Clear the turbo cache and RUN the tests yourself (DATABASE_URL set) twice from cold, plus pnpm typecheck and pnpm lint. For UI phases, RUN the Playwright e2e in a real browser. Record real pass/fail. Confirm the integration tier RUNS (not skipped) and no regression in earlier phases.",
+        "Verify EACH acceptance criterion is covered by a passing, non-vacuous test: [\"The Image Lambda issues a presigned S3 PUT URL under the workspace_id/ key prefix; uploaded image bytes are recorded in usage_counters; variants are produced by the sharp step. (Verified against LocalStack S3 / mocked S3.)\",\"The GrapesJS+MJML editor renders in a real browser (Playwright), lets a user compose a template, and on save emits MJML that compiles to HTML stored in email_templates (workspace-scoped).\",\"Image keys are workspace-prefixed; one workspace cannot read/overwrite another workspace prefix.\"].",
+        "Highest-priority checks: (a) tenant isolation + role enforcement (server-side, not just UI-hidden); (b) all sends route through the Dispatcher guards; (c) idempotency (broadcast dedupe / no double-advance / idempotent rollups); (d) AWS mocked/LocalStack (no real AWS) yet asserted; (e) for UI, the flow actually works in a real browser against the real backend, not a stub.",
+        "If any integration test mocks Postgres, that is a FAIL. If a UI criterion is only unit-tested (no real browser), that is a FAIL.",
+        "Scope check: flag any feature beyond the cited sections; verify the §20 cost model is exact.",
+        "Score 0-100. Set testsPass and criteriaAllMet honestly. Give concrete prioritized recommendations."
+      ],
+      "outputFormat": "JSON: { score: number, testsPass: boolean, criteriaAllMet: boolean, criteriaCoverage: [{criterion, met, evidence}], isolationOk: boolean, browserVerified: boolean, scopeCreep: string[], recommendations: string[], criticalIssues: string[] }",
+      "role": "adversarial principal reviewer + QA engineer verifying spec-fidelity, tenant isolation, roles, and (for UI) real-browser behavior",
+      "task": "Independently verify \"Image pipeline + WYSIWYG editor\" against its §18 criteria. Re-run the tests yourself (cold cache); do not trust the self-report."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTGSPZBXRSS3PGXB5GPVJ9C0/input.json",
+    "outputJsonPath": "tasks/01KTGSPZBXRSS3PGXB5GPVJ9C0/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "iteration-2",
+    "phase11-image-wysiwyg",
+    "quality-gate"
+  ],
+  "title": "Quality gate: Image pipeline + WYSIWYG editor (iteration 2)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTGSPZBXRSS3PGXB5GPVJ9C0",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/app-completion:S000013:quality-gate",
+  "stepId": "S000013",
+  "inputs": {
+    "impl": {
+      "commandsRun": [
+        "FOR UPDATE single-tx refactor of campaign-runner",
+        "13x standalone flaky test (all PASS)",
+        "rm -rf .turbo && DATABASE_URL=... AWS_ENDPOINT_URL=... pnpm test (36/36)",
+        "pnpm typecheck",
+        "pnpm lint",
+        "playwright test (2 passed)"
+      ],
+      "e2eSummary": "Playwright editor e2e 2 passed; LocalStack image pipeline e2e 2 passed.",
+      "filesCreated": [],
+      "filesModified": [
+        "services/campaign-runner/src/run.ts",
+        "services/campaign-runner/src/deps.ts",
+        "services/campaign-runner/src/index.ts",
+        "services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts",
+        "services/campaign-runner/test/full-lifecycle.integration.test.ts",
+        "services/campaign-runner/test/wait-deferral.integration.test.ts",
+        "services/campaign-runner/test/branch-routing.integration.test.ts",
+        "services/campaign-runner/test/action-send-through-dispatcher.integration.test.ts",
+        "services/processor/test/fifo-localstack.e2e.test.ts",
+        "turbo.json"
+      ],
+      "lintOk": true,
+      "notes": "ROOT CAUSE (Phase-10 flake): campaign-runner claim and advance were in SEPARATE transactions; between a run's claim-commit and advance-commit the row sat active at the claim's updated_at, so a second run whose SELECT landed in that window claimed it too, and the loser's guarded advance updated 0 rows but runEnrollment never checked the rowcount -> two ticks returned 'completed'. Raw CAS SQL itself was correct (20/20 single-winner probe). FIX: FOR UPDATE single-tx — added withTx/withWorkspaceTx (one connection: BEGIN; SELECT...FOR UPDATE the enrollment + re-check status=active inside the lock; all reads+writes+advance on that client; COMMIT; enqueue {outbox_id} after commit). A concurrent run blocks on FOR UPDATE then sees status!=active and skips -> exactly one completed. Legacy CAS path retained for in-memory unit tests; runStatementsInWorkspaceTx kept for enroll.ts. SEPARATE issue exposed: starting LocalStack (for Phase 11 images) un-skipped services/processor/test/fifo-localstack.e2e.test.ts because it was gated on LOCALSTACK_URL ?? AWS_ENDPOINT_URL; under vitest's module loader the AWS SDK SQS HTTP path fails with QueueDoesNotExist (works identically in plain Node — verified via standalone probe round-tripping a real FIFO message via the exact buildSqsMessage path). Restored its documented LOCALSTACK_URL-only opt-in gate + documented the harness limitation (wiring is proven, not a product bug). Also added AWS_ENDPOINT_URL to turbo.json test env passthrough.",
+      "testsPass": true,
+      "testSummary": "Fixed the Phase-10 concurrency flake + a newly-exposed LocalStack gating issue. Full cold suite 36/36 turbo tasks, 0 cached. campaign-runner 65/65; idempotent-concurrent-sweep now deterministic (13/13 standalone across agent+orchestrator). typecheck + lint OK. Web Playwright e2e 2 passed. No regression.",
+      "typecheckOk": true
+    },
+    "iteration": 2,
+    "phase": {
+      "criteria": [
+        "The Image Lambda issues a presigned S3 PUT URL under the workspace_id/ key prefix; uploaded image bytes are recorded in usage_counters; variants are produced by the sharp step. (Verified against LocalStack S3 / mocked S3.)",
+        "The GrapesJS+MJML editor renders in a real browser (Playwright), lets a user compose a template, and on save emits MJML that compiles to HTML stored in email_templates (workspace-scoped).",
+        "Image keys are workspace-prefixed; one workspace cannot read/overwrite another workspace prefix."
+      ],
+      "frontend": true,
+      "id": "phase11-image-wysiwyg",
+      "scope": [
+        "services/image: an Image Lambda that returns a presigned S3 PUT URL keyed under a workspace_id/ prefix (LocalStack S3); an S3-triggered Lambda that makes sharp variants; record bytes in usage_counters (image_storage_bytes). Mock/LocalStack S3.",
+        "Frontend (in /web): a GrapesJS + MJML-plugin email editor component (core GrapesJS, BSD-3, NOT the paid Studio SDK) that emits MJML; on save, MJML -> compiled HTML via the existing Template Lambda (@cdp/email compile) stored in email_templates. Images uploaded via the presigned URL flow.",
+        "The editor must OUTPUT MJML, not hand-rolled email HTML."
+      ],
+      "specSections": "§11 (presigned S3 PUT under workspace_id/ prefix, sharp variants via S3-triggered Lambda, CloudFront, GrapesJS+MJML editor emitting MJML), §6 (usage_counters image bytes)",
+      "title": "Image pipeline + WYSIWYG editor"
+    },
+    "plan": {
+      "e2eFlows": [
+        "LocalStack S3: presign PUT (ws A) -> PUT bytes -> HeadObject A/ -> synthetic ObjectCreated -> variant Lambda sharp variants under A/ -> usage_counters bytes in real PG",
+        "Cross-workspace: presigned A URL rejected for B/ key; variant handler refuses prefix mismatch",
+        "Browser editor: Vite boot -> GrapesJS+MJML mounts -> compose -> Save -> API compileMjml + buildTemplateUpsert -> email_templates has editor MJML + server HTML, workspace-scoped"
+      ],
+      "implUnits": [
+        "BOOTSTRAP /web Vite + Preact (index.html, vite.config @preact/preset-vite, main.tsx, scripts)",
+        "web EmailEditor Preact component embedding core grapesjs (BSD-3) + grapesjs-mjml plugin (NOT Studio SDK) emitting MJML",
+        "web pure serializeEditorToMjml + buildSaveTemplatePayload (+ <mj-image src>)",
+        "web save action (POST {name,mjml}) + image upload action (presign -> PUT -> insert CloudFront URL)",
+        "services/image: s3-key.ts, presign.ts, variants.ts, usage.ts",
+        "services/image presign handler thin (injected S3Client+presigner+authorizer ctx)",
+        "services/image S3-triggered variant handler thin (sharp + S3 get/put + buildImageBytesUpsert scoped by key prefix)",
+        "save-template endpoint (compileMjml + buildTemplateUpsert)",
+        "deps/config bucket/CloudFront base/presign TTL/contentType whitelist via @cdp/shared",
+        "tooling: @aws-sdk/client-s3, @aws-sdk/s3-request-presigner, sharp (image); grapesjs, grapesjs-mjml, preact, vite, @preact/preset-vite (web); @playwright/test; playwright.config webServer (vite preview) + DATABASE_URL",
+        "Playwright install: pnpm --filter @cdp/web exec playwright install --with-deps chromium; e2e gated skip when no browser/DB"
+      ],
+      "mocks": [
+        "aws-sdk-client-mock S3Client for presign-handler integration (real getSignedUrl drives URL shape)",
+        "LocalStack S3 (docker-compose, localhost:4566, forcePathStyle) for e2e upload + variant flow",
+        "REAL Postgres localhost:5433 for usage_counters + email_templates (never mocked)",
+        "REAL compileMjml (pure real compiler)",
+        "REAL browser via Playwright/Chromium for editor e2e",
+        "Playwright network interception to assert save body mjml",
+        "injected authorizer/workspace context (workspace never from body)"
+      ],
+      "notes": "Order: pure units -> integration real PG (record-usage, save-template reuse buildTemplateUpsert/compileMjml) -> S3 aws-sdk-client-mock presign handler -> thin LocalStack e2e upload+variant+usage -> BOOTSTRAP Vite+Preact web -> GrapesJS+MJML editor -> Playwright browser e2e last. Invariants: workspace_id never client-supplied (authorizer context/API key); every S3 key under ${workspace_id}/; assertKeyInWorkspace guards service-role variant Lambda (bypasses RLS); buildImageBytesUpsert binds workspace_id $1. Editor MUST emit MJML (asserted unit+integration+browser); compiled HTML server-side via compileMjml at save, stored alongside mjml, never browser-authored. LocalStack S3 via pnpm localstack:start; real PG localhost:5433. e2e/integration guarded describe.skipIf so unit CI stays green without Docker/DB/Chromium. sharp real in LocalStack tier (real Node runtime). CloudFront/IAM/S3-trigger wiring is CDK (infra), asserted only at thin e2e wiring level.",
+      "pureFunctions": [
+        "buildImageKey(workspaceId,filename)",
+        "parseWorkspaceFromKey/assertKeyInWorkspace",
+        "buildPresignRequest(...)",
+        "planVariants(sourceKey,dims)",
+        "buildImageBytesUpsert(workspaceId,period,bytes)",
+        "monthBucket(date)",
+        "serializeEditorToMjml(editorState)",
+        "buildSaveTemplatePayload(state,name)"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "buildImageKey prefixes ${workspaceId}/",
+            "stable per-upload segment (no overwrite)",
+            "throws falsy workspaceId",
+            "filename sanitized (.. / separators stripped, can't escape prefix)",
+            "parseWorkspaceFromKey + assertKeyInWorkspace throws on prefix mismatch"
+          ],
+          "criterion": "1,3",
+          "path": "services/image/test/s3-key.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildPresignRequest PutObjectCommand Key starts ${workspaceId}/",
+            "contentType whitelist png/jpeg/webp/gif, reject others",
+            "workspace from context arg never body",
+            "presignPutUrl returns {url,key,expiresIn} short TTL"
+          ],
+          "criterion": "1,3",
+          "path": "services/image/test/presign-request.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "planVariants canonical set under same workspace prefix",
+            "never upscale (skip width>=source)",
+            "names sharp resize op pure no invocation",
+            "throws if source key prefix unparseable"
+          ],
+          "criterion": "1",
+          "path": "services/image/test/variant-spec.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildImageBytesUpsert workspace_id $1, usage_counters metric=image_storage_bytes",
+            "additive upsert ON CONFLICT (workspace_id,period,metric) DO UPDATE value=value+EXCLUDED",
+            "period normalized first-of-month",
+            "throws falsy workspaceId/negative bytes"
+          ],
+          "criterion": "1",
+          "path": "services/image/test/usage-bytes-statement.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "aws-sdk-client-mock S3Client + real getSignedUrl -> presigned PUT URL path includes ${workspaceId}/",
+            "workspaceId from authorizer context not body",
+            "no-workspace -> 4xx no presign",
+            "disallowed contentType -> 4xx no S3"
+          ],
+          "criterion": "1,3",
+          "path": "services/image/test/presign-handler.s3mock.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "LocalStack S3: presigned PUT for ws A uploads to A/<key> (HeadObject confirms + ContentLength)",
+            "synthetic S3 ObjectCreated event -> variant Lambda produces sharp variants under A/ (HeadObject each, bytes>0, format/width per spec)",
+            "source bytes recorded usage_counters image_storage_bytes for A (real PG)",
+            "cross-workspace: presigned A URL rejected for B/ key; variant handler refuses event whose prefix != deriving workspace (assertKeyInWorkspace)"
+          ],
+          "criterion": "1,3",
+          "path": "tests/e2e/image-pipeline.localstack.e2e.test.ts",
+          "tier": "e2e"
+        },
+        {
+          "assertions": [
+            "buildImageBytesUpsert real PG inserts usage_counters row",
+            "second upsert ADDS to value (additive accumulation)",
+            "ws B doesn't alter ws A counter"
+          ],
+          "criterion": "1",
+          "path": "services/image/test/record-usage.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "serializeEditorToMjml root <mjml> with mj-body, NEVER hand-rolled html/table",
+            "output valid for compileMjml (non-empty, no throw)",
+            "image -> <mj-image src=cloudfront-url> not data: URI",
+            "buildSaveTemplatePayload {name,mjml} only, no compiled HTML (server-side at save)"
+          ],
+          "criterion": "2",
+          "path": "web/test/editor-emits-mjml.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "save path compileMjml then buildTemplateUpsert real PG -> one email_templates row mjml + compiled_html scoped workspaceId",
+            "re-save same name UPDATEs in place recompiled",
+            "same name ws B separate row, A untouched",
+            "stored compiled_html == compileMjml(stored mjml)"
+          ],
+          "criterion": "2",
+          "path": "web/test/save-template.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "Playwright Chromium: GrapesJS+MJML editor mounts (canvas iframe + MJML blocks), free BSD-3 core no Studio paywall",
+            "compose template (drag block, type) + Save",
+            "Save POST body mjml starts <mjml> (intercepted)",
+            "after save email_templates row (real PG) non-empty mjml + compiled_html parses as HTML",
+            "row scoped to test workspace_id from auth context not client-sent"
+          ],
+          "criterion": "2",
+          "path": "web/e2e/editor.browser.e2e.spec.ts",
+          "tier": "e2e"
+        }
+      ]
+    }
+  }
+}

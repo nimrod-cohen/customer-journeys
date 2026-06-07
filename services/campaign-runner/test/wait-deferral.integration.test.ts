@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '@cdp/db';
 import { runEnrollment, type RunDeps, type Reader } from '../src/run.js';
 import { buildSweepQuery } from '../src/core.js';
-import { runStatementsInWorkspaceTx } from '../src/deps.js';
+import { runStatementsInWorkspaceTx, withWorkspaceTx } from '../src/deps.js';
 import type { CampaignDefinition } from '../src/dsl.js';
 
 // §9B AC: a wait defers via next_run_at honored by the REAL sweep query (no app
@@ -61,6 +61,7 @@ describe.skipIf(!RUN)('wait deferral via the real sweep (real Postgres)', () => 
     return {
       reader,
       sqs: noopSqs,
+      withTx: (fn) => withWorkspaceTx(admin, fn),
       runInWorkspaceTx: (w, s) => runStatementsInWorkspaceTx(admin, w, s),
       now: () => now,
       dispatchQueueUrl: 'q',

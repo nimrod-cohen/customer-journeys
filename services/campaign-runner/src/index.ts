@@ -59,12 +59,18 @@ export {
   MAX_STEPS_PER_TICK,
   type RunDeps,
   type Reader,
+  type TxClient,
   type SqsSender,
   type RunEnrollmentResult,
 } from './run.js';
 
 export { makeScheduledSweepHandler } from './handler.js';
-export { runStatementsInWorkspaceTx, makeProdDeps, type PoolLike } from './deps.js';
+export {
+  runStatementsInWorkspaceTx,
+  withWorkspaceTx,
+  makeProdDeps,
+  type PoolLike,
+} from './deps.js';
 
 let sweep: ReturnType<typeof makeScheduledSweepHandler> | undefined;
 

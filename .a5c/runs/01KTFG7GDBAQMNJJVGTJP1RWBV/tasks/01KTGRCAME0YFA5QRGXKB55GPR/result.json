@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTGRCAME0YFA5QRGXKB55GPR",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/app-completion:S000011:quality-gate",
+  "status": "ok",
+  "result": {
+    "browserVerified": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "presign under ${workspace_id}/ (workspace from context not body); LocalStack e2e RAN (put.ok true so checksum fix works) -> real sharp 3 variants (1200/800/400 no upscale) -w400 width=400; usage_counters value==bytesRecorded real PG additive. requestChecksumCalculation WHEN_REQUIRED.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "Playwright REAL Chromium (chrome-headless-shell-1223) 2 passed. core grapesjs 0.21 BSD-3 + grapesjs-mjml, NOT Studio SDK. getHtml returns <mjml>; payload {name,mjml} only; server compileMjml then buildTemplateUpsert; save-template.integration real PG: mjml verbatim + server compiled_html, workspace-scoped idempotent.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "buildImageKey throws empty workspace; sanitizeFilename strips ../separators/NUL. isolation test: ../WS_B/pwned under WS_A -> key WS_A/, B prefix 0 objects. body workspace_id ignored. variant handler assertKeyInWorkspace. record-usage: B never touches A. Documents LocalStack doesn't validate presigned SigV4 (asserts app-layer guard).",
+        "met": true
+      }
+    ],
+    "criticalIssues": [
+      "PRE-EXISTING Phase-10 FLAKE: services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts fails ~80% standalone ('2 ticks completed instead of 1', claim race) though both cold full runs reported 36/36. Must root-cause: determine if this is a TEST-harness race or a REAL double-advance (which would break the §9B idempotency guarantee), then fix so it is deterministically green standalone AND in-suite."
+    ],
+    "isolationOk": true,
+    "recommendations": [
+      "Add UNIQUE(workspace_id,name) on email_templates + native ON CONFLICT (buildTemplateUpsert CTE has a theoretical same-name race).",
+      "Add AWS_ENDPOINT_URL to turbo.json test env passthrough (e2e only works via default endpoint now).",
+      "Widen web lint to e2e/ and test/.",
+      "Consider vite build && preview for Playwright in CI to catch build-only regressions."
+    ],
+    "scopeCreep": [],
+    "score": 88,
+    "testsPass": true
+  },
+  "startedAt": "2026-06-07T10:05:33.136Z",
+  "finishedAt": "2026-06-07T10:05:33.136Z",
+  "value": {
+    "browserVerified": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "presign under ${workspace_id}/ (workspace from context not body); LocalStack e2e RAN (put.ok true so checksum fix works) -> real sharp 3 variants (1200/800/400 no upscale) -w400 width=400; usage_counters value==bytesRecorded real PG additive. requestChecksumCalculation WHEN_REQUIRED.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "Playwright REAL Chromium (chrome-headless-shell-1223) 2 passed. core grapesjs 0.21 BSD-3 + grapesjs-mjml, NOT Studio SDK. getHtml returns <mjml>; payload {name,mjml} only; server compileMjml then buildTemplateUpsert; save-template.integration real PG: mjml verbatim + server compiled_html, workspace-scoped idempotent.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "buildImageKey throws empty workspace; sanitizeFilename strips ../separators/NUL. isolation test: ../WS_B/pwned under WS_A -> key WS_A/, B prefix 0 objects. body workspace_id ignored. variant handler assertKeyInWorkspace. record-usage: B never touches A. Documents LocalStack doesn't validate presigned SigV4 (asserts app-layer guard).",
+        "met": true
+      }
+    ],
+    "criticalIssues": [
+      "PRE-EXISTING Phase-10 FLAKE: services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts fails ~80% standalone ('2 ticks completed instead of 1', claim race) though both cold full runs reported 36/36. Must root-cause: determine if this is a TEST-harness race or a REAL double-advance (which would break the §9B idempotency guarantee), then fix so it is deterministically green standalone AND in-suite."
+    ],
+    "isolationOk": true,
+    "recommendations": [
+      "Add UNIQUE(workspace_id,name) on email_templates + native ON CONFLICT (buildTemplateUpsert CTE has a theoretical same-name race).",
+      "Add AWS_ENDPOINT_URL to turbo.json test env passthrough (e2e only works via default endpoint now).",
+      "Widen web lint to e2e/ and test/.",
+      "Consider vite build && preview for Playwright in CI to catch build-only regressions."
+    ],
+    "scopeCreep": [],
+    "score": 88,
+    "testsPass": true
+  }
+}

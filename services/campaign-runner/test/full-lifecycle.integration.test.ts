@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '@cdp/db';
 import { runEnrollment, type RunDeps, type Reader } from '../src/run.js';
 import { buildSweepQuery } from '../src/core.js';
-import { runStatementsInWorkspaceTx } from '../src/deps.js';
+import { runStatementsInWorkspaceTx, withWorkspaceTx } from '../src/deps.js';
 import type { CampaignDefinition } from '../src/dsl.js';
 
 // §9B AC: an enrolled profile advances trigger→wait→condition→action→exit; a
@@ -92,6 +92,7 @@ describe.skipIf(!RUN)('campaign full lifecycle (real Postgres)', () => {
     return {
       reader,
       sqs: sqs as never,
+      withTx: (fn) => withWorkspaceTx(admin, fn),
       runInWorkspaceTx: (w, s) => runStatementsInWorkspaceTx(admin, w, s),
       now: () => now,
       dispatchQueueUrl: 'https://sqs/dispatch',

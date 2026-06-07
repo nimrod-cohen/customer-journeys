@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTGSPZBXRSS3PGXB5GPVJ9C0",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/app-completion:S000013:quality-gate",
+  "status": "ok",
+  "result": {
+    "browserVerified": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "presign keys under ${workspaceId}/ from authorizer context; contentType whitelist; variant-handler no-upscale 1200/800/400 sharp + additive usage_counters. LocalStack image e2e 2 passed: presign->real S3 PUT->3 variants (-w400=400px)->usage value==bytesRecorded.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "core GrapesJS+grapesjs-mjml (not Studio); browser e2e REAL Chromium 2/2: output /^<mjml>/ + mj-body, no DOCTYPE; image->mj-image src. save-template compiles MJML server-side (strict) storing mjml+compiled_html workspace-scoped; payload {name,mjml} only.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "buildImageKey sanitizes hostile filenames; assertKeyInWorkspace re-derives prefix in variant handler; presign workspace from authorizer only (body ignored); e2e ../WS_B/pwned neutralized -> key under WS_A/, nothing under WS_B/.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "Update stale comments in idempotent-concurrent-sweep test (still say 'CAS on updated_at') to describe the FOR UPDATE single-tx mechanism; assertions are correct.",
+      "Consider a plain-Node runner for the FIFO wiring e2e so it stays continuously exercised rather than opt-in only."
+    ],
+    "scopeCreep": [],
+    "score": 95,
+    "testsPass": true
+  },
+  "startedAt": "2026-06-07T10:26:33.921Z",
+  "finishedAt": "2026-06-07T10:26:33.921Z",
+  "value": {
+    "browserVerified": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "presign keys under ${workspaceId}/ from authorizer context; contentType whitelist; variant-handler no-upscale 1200/800/400 sharp + additive usage_counters. LocalStack image e2e 2 passed: presign->real S3 PUT->3 variants (-w400=400px)->usage value==bytesRecorded.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "core GrapesJS+grapesjs-mjml (not Studio); browser e2e REAL Chromium 2/2: output /^<mjml>/ + mj-body, no DOCTYPE; image->mj-image src. save-template compiles MJML server-side (strict) storing mjml+compiled_html workspace-scoped; payload {name,mjml} only.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "buildImageKey sanitizes hostile filenames; assertKeyInWorkspace re-derives prefix in variant handler; presign workspace from authorizer only (body ignored); e2e ../WS_B/pwned neutralized -> key under WS_A/, nothing under WS_B/.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "Update stale comments in idempotent-concurrent-sweep test (still say 'CAS on updated_at') to describe the FOR UPDATE single-tx mechanism; assertions are correct.",
+      "Consider a plain-Node runner for the FIFO wiring e2e so it stays continuously exercised rather than opt-in only."
+    ],
+    "scopeCreep": [],
+    "score": 95,
+    "testsPass": true
+  }
+}

@@ -9,7 +9,7 @@ import {
   type DispatchDeps,
 } from '@cdp/service-dispatcher';
 import { runEnrollment, type RunDeps, type Reader } from '../src/run.js';
-import { runStatementsInWorkspaceTx } from '../src/deps.js';
+import { runStatementsInWorkspaceTx, withWorkspaceTx } from '../src/deps.js';
 import type { CampaignDefinition } from '../src/dsl.js';
 
 // CRITICAL invariant: ALL campaign sends go through the REAL dispatchOutbox
@@ -128,6 +128,7 @@ describe.skipIf(!RUN)('campaign sends flow through the real dispatcher (real Pos
     return {
       reader,
       sqs: sqs as never,
+      withTx: (fn) => withWorkspaceTx(admin, fn),
       runInWorkspaceTx: (w, s) => runStatementsInWorkspaceTx(admin, w, s),
       now: () => NOW,
       dispatchQueueUrl: 'q',

@@ -11,7 +11,7 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "env": ["DATABASE_URL", "DATABASE_POOL_URL"],
+      "env": ["DATABASE_URL", "DATABASE_POOL_URL", "AWS_ENDPOINT_URL"],
       "cache": false
     },
     "lint": {}

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '@cdp/db';
 import { runEnrollment, type RunDeps, type Reader } from '../src/run.js';
-import { runStatementsInWorkspaceTx } from '../src/deps.js';
+import { runStatementsInWorkspaceTx, withWorkspaceTx } from '../src/deps.js';
 import type { CampaignDefinition } from '../src/dsl.js';
 
 // §9B AC: a condition routes via the §8 compiler against REAL profile_features.
@@ -84,6 +84,7 @@ describe.skipIf(!RUN)('branch routing against real profile_features (real Postgr
     return {
       reader,
       sqs: noopSqs,
+      withTx: (fn) => withWorkspaceTx(admin, fn),
       runInWorkspaceTx: (w, s) => runStatementsInWorkspaceTx(admin, w, s),
       now: () => new Date('2026-06-07T12:00:00.000Z'),
       dispatchQueueUrl: 'q',

@@ -10,12 +10,48 @@ import type { Pool, PoolClient } from 'pg';
 import { getPool } from '@cdp/db';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import type { SqlStatement } from './core.js';
-import type { RunDeps, Reader } from './run.js';
+import type { RunDeps, Reader, TxClient } from './run.js';
 
 /** Minimal pool surface so tests can pass an `adminPool()` directly. */
 export interface PoolLike {
   connect(): Promise<PoolClient>;
   query(text: string, values?: readonly unknown[]): Promise<{ rows: unknown[] }>;
+}
+
+/**
+ * Run `fn` inside ONE transaction on a single dedicated connection, giving it a
+ * tx-scoped client used for BOTH reads and writes of the whole tick (so a
+ * `SELECT … FOR UPDATE` row lock taken inside `fn` is held until COMMIT). Commits
+ * when `fn` resolves; rolls back (and rethrows) if it throws. Exported so the
+ * integration tests exercise the EXACT production single-tx tick path against
+ * real Postgres.
+ */
+export async function withWorkspaceTx<T>(
+  pool: PoolLike,
+  fn: (tx: TxClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  const tx: TxClient = {
+    async query<R>(text: string, values?: readonly unknown[]): Promise<{ rows: R[] }> {
+      const res = await client.query(text, values as unknown[]);
+      return { rows: res.rows as R[] };
+    },
+  };
+  try {
+    await client.query('BEGIN');
+    const out = await fn(tx);
+    await client.query('COMMIT');
+    return out;
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      /* ignore rollback errors */
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -76,6 +112,9 @@ export function makeProdDeps(): RunDeps {
   return {
     reader,
     sqs,
+    // Production tick path: the whole tick runs in ONE tx holding the enrollment
+    // row lock (FOR UPDATE), so concurrent runs serialize and only one advances.
+    withTx: (fn) => withWorkspaceTx(pool, fn),
     runInWorkspaceTx: (workspaceId, statements) =>
       runStatementsInWorkspaceTx(pool, workspaceId, statements),
     now: () => new Date(),

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTGG5JFDG2GBHKT7RZ4DF9ET",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/app-completion:S000008:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "97bfda151d4cbaaa69dd7f0f2bbb024eba91902f",
+    "committed": true,
+    "message": "feat(phase10): campaign workflow engine (durable per-profile state machine)"
+  },
+  "startedAt": "2026-06-07T07:36:15.268Z",
+  "finishedAt": "2026-06-07T07:36:15.268Z",
+  "value": {
+    "commitHash": "97bfda151d4cbaaa69dd7f0f2bbb024eba91902f",
+    "committed": true,
+    "message": "feat(phase10): campaign workflow engine (durable per-profile state machine)"
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "e2eFlows": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "implUnits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mocks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "pureFunctions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "testFiles": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "testFiles",
+        "implUnits"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
+          "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
+          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
+          "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no features beyond the spec. Keep the cost model EXACTLY as §20 (direct usage + even split of fixed costs)."
+        ],
+        "loop": "This phase has a FRONTEND/UI surface. The widest quality loop is a REAL BROWSER: build the UI with Vite + Preact (or React) and verify with Playwright e2e against a locally-running app + local API (thin adapter/serverless-offline over the Lambda handlers + LocalStack). Use the core GrapesJS + MJML plugin (BSD-3, free) — never the paid Studio SDK; the editor must emit MJML. Seed deterministic data and use stable selectors so the e2e is reliable.",
+        "phase": {
+          "criteria": [
+            "The Image Lambda issues a presigned S3 PUT URL under the workspace_id/ key prefix; uploaded image bytes are recorded in usage_counters; variants are produced by the sharp step. (Verified against LocalStack S3 / mocked S3.)",
+            "The GrapesJS+MJML editor renders in a real browser (Playwright), lets a user compose a template, and on save emits MJML that compiles to HTML stored in email_templates (workspace-scoped).",
+            "Image keys are workspace-prefixed; one workspace cannot read/overwrite another workspace prefix."
+          ],
+          "frontend": true,
+          "id": "phase11-image-wysiwyg",
+          "scope": [
+            "services/image: an Image Lambda that returns a presigned S3 PUT URL keyed under a workspace_id/ prefix (LocalStack S3); an S3-triggered Lambda that makes sharp variants; record bytes in usage_counters (image_storage_bytes). Mock/LocalStack S3.",
+            "Frontend (in /web): a GrapesJS + MJML-plugin email editor component (core GrapesJS, BSD-3, NOT the paid Studio SDK) that emits MJML; on save, MJML -> compiled HTML via the existing Template Lambda (@cdp/email compile) stored in email_templates. Images uploaded via the presigned URL flow.",
+            "The editor must OUTPUT MJML, not hand-rolled email HTML."
+          ],
+          "specSections": "§11 (presigned S3 PUT under workspace_id/ prefix, sharp variants via S3-triggered Lambda, CloudFront, GrapesJS+MJML editor emitting MJML), §6 (usage_counters image bytes)",
+          "title": "Image pipeline + WYSIWYG editor"
+        },
+        "prior": "Phases 2-8 done (tenancy/auth, ingest, profiles, segments, email/onboarding, dispatch, feedback). Reuse the packages/db testutil harness, runPlanInWorkspaceTx, scopedQuery, SqlStatement, @cdp/segments resolveAudience, @cdp/email, the dispatcher core + outbox->Dispatcher pipeline, and the per-workspace suppression query.",
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §11 (presigned S3 PUT under workspace_id/ prefix, sharp variants via S3-triggered Lambda, CloudFront, GrapesJS+MJML editor emitting MJML), §6 (usage_counters image bytes), plus §16A and §18.",
+        "For each acceptance criterion, define the test file(s), tier (unit | integration | e2e/browser), and the exact assertions — especially tenant-isolation/role, idempotency, and (for sends) that everything routes through the Dispatcher guards.",
+        "Identify the pure functions and what is mocked (AWS/LocalStack) vs real (Postgres; real browser for UI).",
+        "List implementation units + dependency order. For UI phases, specify the Playwright e2e flows and how the local API is stood up.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { testFiles: [{path, tier, criterion, assertions:[...]}], pureFunctions: string[], mocks: string[], e2eFlows: string[], implUnits: string[], notes: string }",
+      "role": "senior test architect practicing TDD on a serverless multi-tenant CDP (with a Preact SPA for UI phases)",
+      "task": "Turn the §18 acceptance criteria for \"Image pipeline + WYSIWYG editor\" into a concrete, test-first plan."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTGG60ZAZW0ZWNSF34TPK8XP/input.json",
+    "outputJsonPath": "tasks/01KTGG60ZAZW0ZWNSF34TPK8XP/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "phase11-image-wysiwyg",
+    "plan"
+  ],
+  "title": "Plan: Image pipeline + WYSIWYG editor",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTGG60ZAZW0ZWNSF34TPK8XP",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/app-completion:S000009:plan-phase",
+  "stepId": "S000009",
+  "inputs": {
+    "phase": {
+      "criteria": [
+        "The Image Lambda issues a presigned S3 PUT URL under the workspace_id/ key prefix; uploaded image bytes are recorded in usage_counters; variants are produced by the sharp step. (Verified against LocalStack S3 / mocked S3.)",
+        "The GrapesJS+MJML editor renders in a real browser (Playwright), lets a user compose a template, and on save emits MJML that compiles to HTML stored in email_templates (workspace-scoped).",
+        "Image keys are workspace-prefixed; one workspace cannot read/overwrite another workspace prefix."
+      ],
+      "frontend": true,
+      "id": "phase11-image-wysiwyg",
+      "scope": [
+        "services/image: an Image Lambda that returns a presigned S3 PUT URL keyed under a workspace_id/ prefix (LocalStack S3); an S3-triggered Lambda that makes sharp variants; record bytes in usage_counters (image_storage_bytes). Mock/LocalStack S3.",
+        "Frontend (in /web): a GrapesJS + MJML-plugin email editor component (core GrapesJS, BSD-3, NOT the paid Studio SDK) that emits MJML; on save, MJML -> compiled HTML via the existing Template Lambda (@cdp/email compile) stored in email_templates. Images uploaded via the presigned URL flow.",
+        "The editor must OUTPUT MJML, not hand-rolled email HTML."
+      ],
+      "specSections": "§11 (presigned S3 PUT under workspace_id/ prefix, sharp variants via S3-triggered Lambda, CloudFront, GrapesJS+MJML editor emitting MJML), §6 (usage_counters image bytes)",
+      "title": "Image pipeline + WYSIWYG editor"
+    }
+  }
+}
