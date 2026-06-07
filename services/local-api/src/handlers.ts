@@ -10,8 +10,21 @@
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import type { Pool } from 'pg';
-import type { WorkspaceContext } from '@cdp/shared';
+import { DEV_USERS, type WorkspaceContext } from '@cdp/shared';
 import { scopedQuery } from '@cdp/db';
+
+// Resolve an app user's email from the dev credential fixture (in production this
+// is the Supabase user's email). userId → email for display; email → userId for
+// add-member. Unknown ids fall back to a short, non-GUID label.
+function emailForUser(userId: string | undefined): string {
+  const u = DEV_USERS.find((d) => d.userId === userId);
+  if (u) return u.email;
+  return userId ? `user-${userId.slice(0, 8)}` : 'unknown';
+}
+function userIdForEmail(email: string): string | null {
+  const e = email.trim().toLowerCase();
+  return DEV_USERS.find((d) => d.email.toLowerCase() === e)?.userId ?? null;
+}
 import { handleAdminAccess, writeAuditEntry } from '@cdp/service-api';
 import { recordCrossTenantAccess } from '@cdp/tenancy';
 import {
@@ -88,16 +101,22 @@ async function ownsResource(
 
 /** GET /me — the resolved identity + the active workspace + capabilities the UI uses. */
 export const getMe: Handler = async (ctx, pool) => {
+  // Memberships carry the workspace NAME (joined) so the UI never shows a raw id.
   const { rows } = await pool.query(
-    'SELECT workspace_id, role FROM workspace_users WHERE user_id = $1',
+    `SELECT wu.workspace_id, wu.role, w.name
+       FROM workspace_users wu
+       JOIN workspaces w ON w.id = wu.workspace_id
+      WHERE wu.user_id = $1
+      ORDER BY w.name`,
     [ctx.userId ?? ''],
   );
   return ok({
     sub: ctx.userId,
+    email: emailForUser(ctx.userId),
     workspace_id: ctx.workspaceId || null,
     role: ctx.role ?? null,
     is_platform_admin: ctx.isPlatformAdmin,
-    memberships: rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role })),
+    memberships: rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role, name: r.name })),
   });
 };
 
@@ -111,21 +130,29 @@ export const listMembers: Handler = async (ctx, pool) => {
     'SELECT user_id, role, created_at FROM workspace_users WHERE workspace_id = $1 ORDER BY created_at',
     [ctx.workspaceId],
   );
-  return ok({ members: rows });
+  // Surface the member's EMAIL (resolved) rather than the internal user id.
+  return ok({
+    members: rows.map((r) => ({ user_id: r.user_id, role: r.role, email: emailForUser(r.user_id) })),
+  });
 };
 
-/** POST /workspace/members — add a member to the active workspace. */
+/** POST /workspace/members — add a member to the active workspace BY EMAIL. */
 export const addMember: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
-  const userId = String(b.user_id ?? '');
   const role = String(b.role ?? 'marketer');
-  if (!userId) return ok({ error: 'user_id required' }, 400);
+  // Resolve the member by email (the user-facing identifier); user_id is internal
+  // and still accepted as a fallback (e.g. direct/e2e callers).
+  const email = typeof b.email === 'string' ? b.email : '';
+  const userId = email ? userIdForEmail(email) : String(b.user_id ?? '');
+  if (!userId) {
+    return ok({ error: email ? `no user with email ${email}` : 'email required' }, 400);
+  }
   await pool.query(
     `INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
     [ctx.workspaceId, userId, role],
   );
-  return ok({ workspaceId: ctx.workspaceId, userId, role }, 201);
+  return ok({ workspaceId: ctx.workspaceId, userId, email: emailForUser(userId), role }, 201);
 };
 
 /** PATCH /workspace/members — change a member's role in the active workspace. */

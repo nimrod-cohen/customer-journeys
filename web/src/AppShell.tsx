@@ -111,12 +111,14 @@ export function AppShell(): JSX.Element {
         {/* Footer: role + logout */}
         <div class="mt-2 border-t border-white/10 px-2 pt-3">
           <div class="mb-2 flex items-center gap-2">
-            <span class="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-xs font-bold uppercase text-brand-300">
-              {(session.role ?? '?').slice(0, 2)}
+            <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/10 text-xs font-bold uppercase text-brand-300">
+              {(session.email ?? session.role ?? '?').slice(0, 2)}
             </span>
-            <div class="leading-tight">
-              <div class="text-[11px] uppercase tracking-wide text-stone-500">Signed in as</div>
-              <div data-testid="active-role" class="text-sm font-semibold capitalize text-white">
+            <div class="min-w-0 leading-tight">
+              <div class="truncate text-sm font-semibold text-white" title={session.email ?? ''}>
+                {session.email ?? 'Signed in'}
+              </div>
+              <div data-testid="active-role" class="text-[11px] capitalize text-stone-400">
                 {session.role ?? '—'}
               </div>
             </div>
@@ -165,7 +167,7 @@ function WorkspaceSwitcher(): JSX.Element {
         >
           {session.memberships.map((m) => (
             <option key={m.workspaceId} value={m.workspaceId} class="text-ink-900">
-              {shortWs(m.workspaceId)} · {m.role}
+              {m.name ?? shortWs(m.workspaceId)} · {m.role}
             </option>
           ))}
           {adminExtra ? (

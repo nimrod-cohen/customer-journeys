@@ -10,14 +10,16 @@ import { Button, Card, Field, Input, PageHeader, Select } from '../ui/kit.js';
 interface Member {
   user_id: string;
   role: string;
+  email: string;
 }
 
 const ROLES = ['owner', 'marketer', 'accounting'];
 
 export function WorkspaceSettings() {
   const [members, setMembers] = useState<Member[]>([]);
-  const [newUser, setNewUser] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState('marketer');
+  const [addError, setAddError] = useState('');
 
   const reload = async () => {
     const r = await api.get<{ members: Member[] }>('/workspace/members');
@@ -28,9 +30,14 @@ export function WorkspaceSettings() {
   }, []);
 
   const add = async () => {
-    await api.post('/workspace/members', { body: { user_id: newUser.trim(), role: newRole } });
-    setNewUser('');
-    await reload();
+    setAddError('');
+    try {
+      await api.post('/workspace/members', { body: { email: newEmail.trim(), role: newRole } });
+      setNewEmail('');
+      await reload();
+    } catch (e) {
+      setAddError((e as { error?: string })?.error ?? 'could not add member');
+    }
   };
 
   const changeRole = async (userId: string, role: string) => {
@@ -49,14 +56,14 @@ export function WorkspaceSettings() {
         <table class="w-full text-sm">
           <thead class="bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
             <tr>
-              <th class="px-5 py-2.5 font-semibold">User</th>
+              <th class="px-5 py-2.5 font-semibold">Member</th>
               <th class="px-5 py-2.5 font-semibold">Role</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-stone-100">
             {members.map((m) => (
               <tr data-testid="member-row" key={m.user_id} class="hover:bg-stone-50/70">
-                <td class="px-5 py-2.5 font-mono text-xs text-stone-600">{m.user_id}</td>
+                <td class="px-5 py-2.5 text-sm text-ink-900">{m.email}</td>
                 <td class="px-5 py-2.5">
                   <Select
                     data-testid="member-role"
@@ -76,13 +83,13 @@ export function WorkspaceSettings() {
           </tbody>
         </table>
         <div class="flex flex-wrap items-end gap-3 border-t border-stone-100 bg-stone-50/50 px-5 py-4">
-          <Field label="Add member (user id)" class="min-w-[16rem] flex-1">
+          <Field label="Add member (email)" class="min-w-[16rem] flex-1">
             <Input
               data-testid="new-member-id"
-              placeholder="user uuid"
-              class="font-mono text-xs"
-              value={newUser}
-              onInput={(e: Event) => setNewUser((e.target as HTMLInputElement).value)}
+              type="email"
+              placeholder="person@company.com"
+              value={newEmail}
+              onInput={(e: Event) => setNewEmail((e.target as HTMLInputElement).value)}
             />
           </Field>
           <Field label="Role">
@@ -103,6 +110,9 @@ export function WorkspaceSettings() {
             Add member
           </Button>
         </div>
+        {addError ? (
+          <p class="border-t border-stone-100 bg-rose-50 px-5 py-2 text-sm text-rose-700">{addError}</p>
+        ) : null}
       </Card>
 
       <Card class="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">

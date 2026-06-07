@@ -11,11 +11,15 @@ import { createApiClient, type ApiClient } from '../api/client.js';
 export interface Membership {
   readonly workspaceId: string;
   readonly role: WorkspaceRole;
+  /** Human-friendly workspace name (the id is internal, never shown). */
+  readonly name?: string;
 }
 
 export interface Session {
   readonly token: string | null;
   readonly sub: string | null;
+  /** The signed-in user's email (shown instead of the internal user id). */
+  readonly email: string | null;
   readonly workspaceId: string | null;
   /** The effective role for capability checks: workspace role or 'system-admin'. */
   readonly role: Role | null;
@@ -26,6 +30,7 @@ export interface Session {
 const EMPTY: Session = {
   token: null,
   sub: null,
+  email: null,
   workspaceId: null,
   role: null,
   isPlatformAdmin: false,
@@ -98,6 +103,7 @@ interface LoginResponse {
 
 interface MeResponse {
   sub: string;
+  email: string;
   workspace_id: string;
   role: WorkspaceRole | null;
   is_platform_admin: boolean;
@@ -129,6 +135,7 @@ export async function refreshMe(): Promise<void> {
   sessionStore.set((s) => ({
     ...s,
     sub: me.sub,
+    email: me.email,
     workspaceId: me.workspace_id,
     role: effectiveRole(me.role, me.is_platform_admin),
     isPlatformAdmin: me.is_platform_admin,
