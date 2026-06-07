@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-07T12:00:43.223Z",
+  "data": {
+    "effectId": "01KTGZ9TP59B4VXKF5W67WSHX5",
+    "invocationKey": "cdp/app-completion:S000026:implement-phase",
+    "invocationHash": "24ac13e67cdfc05058dfaeb6fe9731f4e09ba1857b9dc223cc7cf19dac29f52c",
+    "stepId": "S000026",
+    "taskId": "implement-phase",
+    "kind": "agent",
+    "label": "implement",
+    "taskDefRef": "tasks/01KTGZ9TP59B4VXKF5W67WSHX5/task.json",
+    "labels": [
+      "implement",
+      "phase14-hardening",
+      "iteration-1"
+    ]
+  },
+  "checksum": "0896cb4d1b70424bb93f859e374a5a086af4099785bece9b152f225c8701305e"
+}

@@ -34,3 +34,4 @@ export {
   type LocalApiDeps,
 } from './deps.js';
 export { createApp } from './app.js';
+export { buildHealth, type HealthDeps, type HealthResult, type CheckResult } from './health.js';

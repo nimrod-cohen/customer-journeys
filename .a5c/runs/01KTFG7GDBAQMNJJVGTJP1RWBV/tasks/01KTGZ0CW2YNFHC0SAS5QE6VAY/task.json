@@ -1,0 +1,90 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "criteria": [
+            "Per-workspace emails_sent / events_ingested reconcile with messages_log / events.",
+            "The cost view = direct usage cost + an equal share of fixed costs; per-workspace figures sum to the true total (worked example from §20 holds).",
+            "The IP-advisor recommends a dedicated IP only when sustained-volume + cadence + reputation criteria are all met; one-off spikes do not trigger it.",
+            "The upgrade-ip flow provisions a dedicated IP, warms it gradually (split routing), and tracks ip_mode/warmup_status; the $24.95 lands only on upgraded workspaces."
+          ],
+          "frontend": false,
+          "id": "phase13-metering",
+          "scope": [
+            "services/metering: a scheduled rollup job populating usage_counters (emails_sent from messages_log, events_ingested, image bytes) and a per-workspace monthly cost computation using the EXACT §20 hybrid policy: direct/variable costs attributed to the workspace (emails_sent x $0.0001, dedicated IP $24.95 if upgraded, image bytes) PLUS an EQUAL share of the fixed pool (fixed_total / active_workspace_count). Per-workspace figures must sum to the true total.",
+            "A monthly IP-advisor job that recommends a dedicated IP only when ALL hold: sustained volume (~100k/mo for 2-3 consecutive months), consistent cadence, healthy reputation. Surfaces a recommendation (no auto-upgrade).",
+            "An upgrade-ip flow: provision a dedicated IP/pool, gradual warmup (split routing), track ip_mode/warmup_status per workspace; ~$24.95/mo becomes a direct cost only for upgraded workspaces."
+          ],
+          "specSections": "§20 (metering into usage_counters, hybrid cost model: direct usage + even split of fixed costs; per-workspace cost view), §10 (dedicated-IP recommendation engine + upgrade-ip migration with warmup), §6 (usage_counters, messages_log, email_events)",
+          "title": "Usage metering + cost attribution + IP advisor"
+        },
+        "score": 96
+      },
+      "instructions": [
+        "Run `git add -A`.",
+        "Commit with a clear conventional message describing the phase (Usage metering + cost attribution + IP advisor), gate score (96), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Usage metering + cost attribution + IP advisor\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTGZ0CW2YNFHC0SAS5QE6VAY/input.json",
+    "outputJsonPath": "tasks/01KTGZ0CW2YNFHC0SAS5QE6VAY/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "phase13-metering"
+  ],
+  "title": "Commit: Usage metering + cost attribution + IP advisor",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTGZ0CW2YNFHC0SAS5QE6VAY",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/app-completion:S000024:commit-phase",
+  "stepId": "S000024",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "criteria": [
+        "Per-workspace emails_sent / events_ingested reconcile with messages_log / events.",
+        "The cost view = direct usage cost + an equal share of fixed costs; per-workspace figures sum to the true total (worked example from §20 holds).",
+        "The IP-advisor recommends a dedicated IP only when sustained-volume + cadence + reputation criteria are all met; one-off spikes do not trigger it.",
+        "The upgrade-ip flow provisions a dedicated IP, warms it gradually (split routing), and tracks ip_mode/warmup_status; the $24.95 lands only on upgraded workspaces."
+      ],
+      "frontend": false,
+      "id": "phase13-metering",
+      "scope": [
+        "services/metering: a scheduled rollup job populating usage_counters (emails_sent from messages_log, events_ingested, image bytes) and a per-workspace monthly cost computation using the EXACT §20 hybrid policy: direct/variable costs attributed to the workspace (emails_sent x $0.0001, dedicated IP $24.95 if upgraded, image bytes) PLUS an EQUAL share of the fixed pool (fixed_total / active_workspace_count). Per-workspace figures must sum to the true total.",
+        "A monthly IP-advisor job that recommends a dedicated IP only when ALL hold: sustained volume (~100k/mo for 2-3 consecutive months), consistent cadence, healthy reputation. Surfaces a recommendation (no auto-upgrade).",
+        "An upgrade-ip flow: provision a dedicated IP/pool, gradual warmup (split routing), track ip_mode/warmup_status per workspace; ~$24.95/mo becomes a direct cost only for upgraded workspaces."
+      ],
+      "specSections": "§20 (metering into usage_counters, hybrid cost model: direct usage + even split of fixed costs; per-workspace cost view), §10 (dedicated-IP recommendation engine + upgrade-ip migration with warmup), §6 (usage_counters, messages_log, email_events)",
+      "title": "Usage metering + cost attribution + IP advisor"
+    },
+    "score": 96
+  }
+}

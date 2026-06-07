@@ -12,11 +12,14 @@ import { devLogin, switchWorkspace } from './session.js';
 import { makePgLookups } from './lookups.js';
 import { makeLocalDeps, type LocalApiDeps } from './deps.js';
 import type { AuthorizerLookups } from './auth.js';
+import { buildHealth, type HealthDeps } from './health.js';
 
 export interface CreateAppOptions {
   readonly pool: Pool;
   readonly lookups?: AuthorizerLookups;
   readonly deps?: LocalApiDeps;
+  /** Optional health deps (DB ping + DLQ probe). Defaults to a pool `SELECT 1`. */
+  readonly health?: HealthDeps;
 }
 
 /** Build the Hono app bound to a pool + (optional) injected lookups/deps. */
@@ -28,8 +31,17 @@ export function createApp(opts: CreateAppOptions): Hono {
   const app = new Hono();
   app.use('*', cors());
 
-  // Health check (no auth) — used by the e2e webServer readiness probe.
-  app.get('/health', (c) => c.json({ ok: true }));
+  // Health check (no auth) — real DB ping (§16). Returns 200 healthy / 503
+  // degraded so the e2e readiness probe + ops monitoring reflect real state.
+  const healthDeps: HealthDeps = opts.health ?? {
+    async pingDb() {
+      await opts.pool.query('SELECT 1');
+    },
+  };
+  app.get('/health', async (c) => {
+    const r = await buildHealth(healthDeps);
+    return c.json(r.body, r.status);
+  });
 
   // --- pre-auth / session routes (outside the capability route table) ---
   app.post('/auth/dev-login', async (c) => {

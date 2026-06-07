@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTH140Y89KAYWA7WJV8G71WT",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/app-completion:S000027:quality-gate",
+  "status": "ok",
+  "result": {
+    "cdkSynthOk": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "pnpm test:acceptance 24 pass (15 spec18 + 9 pen) real PG. Each it() composes real cores (resolveWorkspaceId/buildProfileUpsert/runPlanInWorkspaceTx, dispatchOutbox, handleNotification, runBroadcast, runEnrollment, computeAllWorkspaceCosts, contextFromAuthorizer/enforceRoute/handleAdminAccess, RLS via TEST_APP_ROLE/setSessionClaims); Postgres not mocked. Spot-checks non-vacuous: isolation WS_A total=2/gold vs WS_B=1/silver same external_id; broadcasts outbox stays 1 on replay (skipped); cost Σ cents===direct+fixed + IP fee only upgraded. 12/16 bullets inline; IP-strategy/multi-ws-switch/dynamic-vs-manual/freq-cap+quiet-hours covered by dedicated per-service tests.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "fresh tsc + npx cdk synth exit 0 (2126-line template). infra vitest 11. asserts WAFv2 REGIONAL + association, RestApi+validator+Model+UsagePlan+ApiKey+UsagePlanKey+authorizer, NO-wildcard iterating ALL IAM::Policy (fail on '*', >=10 policies), one role per fn (>=13), 4 FIFO + 2 RedrivePolicy + 2 EventSourceMapping, SNS+SES ConfigurationSet, alarms (BounceRate .03/.05, ComplaintRate .001, CDP/Reputation, DLQ depth 0, >=13 Errors, OldestMessageAge), no inline secrets + scoped GetSecretValue. Independent grep: only '*' is S3 enforceSSL Deny principal (resource-scoped); zero Action:*/Resource:* Allow.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "dlq-replay.ts+test (4: receive->resend preserving group/dedup->delete-after-success; dry-run; failure leaves intact; maxMessages). health.ts+test (5: 200/503 db, dlq depth degraded). DLQ-RUNBOOK.md. penetration-isolation proves no cross-WS bleed all paths + system-admin cross-read writes admin_audit_log, non-admin 403 no audit. All green cold.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "Add inline it()s in spec18-acceptance.test.ts for the 4 bullets currently only in per-service tests (IP-strategy, multi-workspace switching, dynamic-vs-manual segments, frequency-cap/quiet-hours/unsubscribe), or update the file header to reference the canonical per-bullet tests.",
+      "Commit Phase 14 working-tree as feat(phase14) to match the per-phase commit convention."
+    ],
+    "scopeCreep": [],
+    "score": 95,
+    "testsPass": true
+  },
+  "startedAt": "2026-06-07T12:36:52.317Z",
+  "finishedAt": "2026-06-07T12:36:52.317Z",
+  "value": {
+    "cdkSynthOk": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "pnpm test:acceptance 24 pass (15 spec18 + 9 pen) real PG. Each it() composes real cores (resolveWorkspaceId/buildProfileUpsert/runPlanInWorkspaceTx, dispatchOutbox, handleNotification, runBroadcast, runEnrollment, computeAllWorkspaceCosts, contextFromAuthorizer/enforceRoute/handleAdminAccess, RLS via TEST_APP_ROLE/setSessionClaims); Postgres not mocked. Spot-checks non-vacuous: isolation WS_A total=2/gold vs WS_B=1/silver same external_id; broadcasts outbox stays 1 on replay (skipped); cost Σ cents===direct+fixed + IP fee only upgraded. 12/16 bullets inline; IP-strategy/multi-ws-switch/dynamic-vs-manual/freq-cap+quiet-hours covered by dedicated per-service tests.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "fresh tsc + npx cdk synth exit 0 (2126-line template). infra vitest 11. asserts WAFv2 REGIONAL + association, RestApi+validator+Model+UsagePlan+ApiKey+UsagePlanKey+authorizer, NO-wildcard iterating ALL IAM::Policy (fail on '*', >=10 policies), one role per fn (>=13), 4 FIFO + 2 RedrivePolicy + 2 EventSourceMapping, SNS+SES ConfigurationSet, alarms (BounceRate .03/.05, ComplaintRate .001, CDP/Reputation, DLQ depth 0, >=13 Errors, OldestMessageAge), no inline secrets + scoped GetSecretValue. Independent grep: only '*' is S3 enforceSSL Deny principal (resource-scoped); zero Action:*/Resource:* Allow.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "dlq-replay.ts+test (4: receive->resend preserving group/dedup->delete-after-success; dry-run; failure leaves intact; maxMessages). health.ts+test (5: 200/503 db, dlq depth degraded). DLQ-RUNBOOK.md. penetration-isolation proves no cross-WS bleed all paths + system-admin cross-read writes admin_audit_log, non-admin 403 no audit. All green cold.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "Add inline it()s in spec18-acceptance.test.ts for the 4 bullets currently only in per-service tests (IP-strategy, multi-workspace switching, dynamic-vs-manual segments, frequency-cap/quiet-hours/unsubscribe), or update the file header to reference the canonical per-bullet tests.",
+      "Commit Phase 14 working-tree as feat(phase14) to match the per-phase commit convention."
+    ],
+    "scopeCreep": [],
+    "score": 95,
+    "testsPass": true
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-07T12:32:30.173Z",
+  "data": {
+    "effectId": "01KTH140Y89KAYWA7WJV8G71WT",
+    "invocationKey": "cdp/app-completion:S000027:quality-gate",
+    "invocationHash": "5ff0bb4a5dc5d1ed283187870d95c288f10529885069eb1d08f0ec4fdfceaa22",
+    "stepId": "S000027",
+    "taskId": "quality-gate",
+    "kind": "agent",
+    "label": "quality-gate",
+    "taskDefRef": "tasks/01KTH140Y89KAYWA7WJV8G71WT/task.json",
+    "labels": [
+      "quality-gate",
+      "phase14-hardening",
+      "iteration-1"
+    ]
+  },
+  "checksum": "57b4d4c3da5cfcc051b755530189313e49ff7ef1c0904d633d9c2d297ccab75b"
+}

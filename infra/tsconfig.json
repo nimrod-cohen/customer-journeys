@@ -5,8 +5,10 @@
     "outDir": "dist",
     "composite": false,
     "declaration": false,
-    "declarationMap": false
+    "declarationMap": false,
+    "exactOptionalPropertyTypes": false,
+    "types": ["node"]
   },
-  "include": ["bin/**/*.ts", "lib/**/*.ts"],
+  "include": ["bin/**/*.ts", "lib/**/*.ts", "test/**/*.ts"],
   "exclude": ["cdk.out", "dist", "node_modules"]
 }

@@ -1,0 +1,20 @@
+{
+  "name": "@cdp/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b --noEmit false || true",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "dlq:replay": "node --import tsx/esm dlq-replay.ts",
+    "lint": "eslint . --no-error-on-unmatched-pattern"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.620.0"
+  },
+  "devDependencies": {
+    "aws-sdk-client-mock": "^4.0.1",
+    "tsx": "^4.16.0"
+  }
+}

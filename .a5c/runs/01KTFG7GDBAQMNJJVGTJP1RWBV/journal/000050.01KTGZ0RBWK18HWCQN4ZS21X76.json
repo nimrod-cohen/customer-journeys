@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-07T11:55:45.916Z",
+  "data": {
+    "effectId": "01KTGZ0RBA03AX0TB7SJWD8VZR",
+    "invocationKey": "cdp/app-completion:S000025:plan-phase",
+    "invocationHash": "11c409589b95e125fc1840af0cb74f07970a55d1f532eda863ebea27233a4efb",
+    "stepId": "S000025",
+    "taskId": "plan-phase",
+    "kind": "agent",
+    "label": "plan",
+    "taskDefRef": "tasks/01KTGZ0RBA03AX0TB7SJWD8VZR/task.json",
+    "labels": [
+      "plan",
+      "phase14-hardening"
+    ]
+  },
+  "checksum": "211410a902ffce452f4ff132466a8d5f39d1ef2c4ae8a3f631f042c2cce1a4f4"
+}

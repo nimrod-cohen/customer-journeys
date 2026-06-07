@@ -1,5 +1,5 @@
 {
-  "app": "node bin/infra.js",
+  "app": "node dist/bin/infra.js",
   "watch": {
     "include": ["**"],
     "exclude": ["README.md", "cdk.out/**", "node_modules/**", "**/*.d.ts"]
