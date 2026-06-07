@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTGFX9EXYNS6WA279RGW2GB0",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/app-completion:S000007:quality-gate",
+  "status": "ok",
+  "result": {
+    "browserVerified": false,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "full-lifecycle.integration (real PG): trigger->wait->sweep deferral->condition->action(send)->exit across ticks; completed terminal, one outbox dedupe_key campaign:<c>:<p>:a. campaign-journey cross-phase repeats via real enrollFromSegmentChange + runEnrollment + real dispatchOutbox + §8 compiler, messages_log written.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "wait-deferral.integration: next_run_at=now+2h, sweep at +1h returns nothing, +2h01s returns row. branch-routing.integration via §8 buildSegmentMatch (workspace_id $1 + AND p.id=$): purchase=3 onTrue gets send, purchase=0 onFalse no send; one outbox for matching profile.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "CAS on updated_at::text (round-trips microsecond precision; ms guard would never re-match). idempotent-concurrent-sweep: 10 concurrent runEnrollment Promise.all shared pool on same due enrollment -> EXACTLY 1 completed + 9 skipped, EXACTLY 1 outbox, status completed (non-vacuous, broken CAS fails it). Double-guarded by outbox dedupe_key UNIQUE.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "action-send-through-dispatcher uses REAL dispatchOutbox: suppressed skipped (SES not called), unverified workspace refused (ses.sends 0). grep run/core/enroll/handler/deps: NO SES usage. enrollment-from-segment-entry: entered enrolls, second entered no-op (once via UNIQUE+ON CONFLICT), exited none. workspace-scoping: WS_A entry no bleed to WS_B, runStatementsInWorkspaceTx refuses cross-workspace stmt. Every write workspace_id $1; sweep loads workspace_id from row.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "Branch test uses purchase>=1 (3 vs 0); add a boundary case at the exact threshold to harden the comparator.",
+      "Add a comment noting the CAS claim is not part of the advance tx (only the guard token links them).",
+      "handler.ts swallows per-row errors silently; add structured logging so a persistently-failing enrollment is observable (only parks 'failed' on MAX_STEPS, not transient errors)."
+    ],
+    "scopeCreep": [],
+    "score": 96,
+    "testsPass": true
+  },
+  "startedAt": "2026-06-07T07:36:14.579Z",
+  "finishedAt": "2026-06-07T07:36:14.579Z",
+  "value": {
+    "browserVerified": false,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "full-lifecycle.integration (real PG): trigger->wait->sweep deferral->condition->action(send)->exit across ticks; completed terminal, one outbox dedupe_key campaign:<c>:<p>:a. campaign-journey cross-phase repeats via real enrollFromSegmentChange + runEnrollment + real dispatchOutbox + §8 compiler, messages_log written.",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "wait-deferral.integration: next_run_at=now+2h, sweep at +1h returns nothing, +2h01s returns row. branch-routing.integration via §8 buildSegmentMatch (workspace_id $1 + AND p.id=$): purchase=3 onTrue gets send, purchase=0 onFalse no send; one outbox for matching profile.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "CAS on updated_at::text (round-trips microsecond precision; ms guard would never re-match). idempotent-concurrent-sweep: 10 concurrent runEnrollment Promise.all shared pool on same due enrollment -> EXACTLY 1 completed + 9 skipped, EXACTLY 1 outbox, status completed (non-vacuous, broken CAS fails it). Double-guarded by outbox dedupe_key UNIQUE.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "action-send-through-dispatcher uses REAL dispatchOutbox: suppressed skipped (SES not called), unverified workspace refused (ses.sends 0). grep run/core/enroll/handler/deps: NO SES usage. enrollment-from-segment-entry: entered enrolls, second entered no-op (once via UNIQUE+ON CONFLICT), exited none. workspace-scoping: WS_A entry no bleed to WS_B, runStatementsInWorkspaceTx refuses cross-workspace stmt. Every write workspace_id $1; sweep loads workspace_id from row.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "isolationOk": true,
+    "recommendations": [
+      "Branch test uses purchase>=1 (3 vs 0); add a boundary case at the exact threshold to harden the comparator.",
+      "Add a comment noting the CAS claim is not part of the advance tx (only the guard token links them).",
+      "handler.ts swallows per-row errors silently; add structured logging so a persistently-failing enrollment is observable (only parks 'failed' on MAX_STEPS, not transient errors)."
+    ],
+    "scopeCreep": [],
+    "score": 96,
+    "testsPass": true
+  }
+}

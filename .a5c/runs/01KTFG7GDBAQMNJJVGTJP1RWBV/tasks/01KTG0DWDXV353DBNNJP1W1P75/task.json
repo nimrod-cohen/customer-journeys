@@ -1,0 +1,128 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "e2eFlows": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "implUnits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mocks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "pureFunctions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "testFiles": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "testFiles",
+        "implUnits"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
+          "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
+          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
+          "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no features beyond the spec. Keep the cost model EXACTLY as §20 (direct usage + even split of fixed costs)."
+        ],
+        "loop": "Backend phase: pure unit tests + DB-integration against REAL local Postgres (localhost:5433); mock AWS (aws-sdk-client-mock) / LocalStack. No frontend.",
+        "phase": {
+          "criteria": [
+            "An enrolled profile advances through trigger -> wait -> condition -> action -> exit.",
+            "A wait defers until next_run_at; a branch (condition) routes correctly using the §8 compiler against profile/features/membership.",
+            "The runner is idempotent (no double-advance on retry / concurrent sweep).",
+            "Campaign action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
+          ],
+          "frontend": false,
+          "id": "phase10-campaigns",
+          "scope": [
+            "A campaign DSL: campaigns.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.",
+            "Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a campaign_enrollments row at the start node (UNIQUE (campaign_id, profile_id)).",
+            "services/campaign-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.",
+            "Idempotent advance (tolerate retries without double-advancing — use updated_at / optimistic checks). Define and implement the re-enrollment policy."
+          ],
+          "specSections": "§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log)",
+          "title": "Campaign workflow engine"
+        },
+        "prior": "Phases 2-8 done (tenancy/auth, ingest, profiles, segments, email/onboarding, dispatch, feedback). Reuse the packages/db testutil harness, runPlanInWorkspaceTx, scopedQuery, SqlStatement, @cdp/segments resolveAudience, @cdp/email, the dispatcher core + outbox->Dispatcher pipeline, and the per-workspace suppression query.",
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log), plus §16A and §18.",
+        "For each acceptance criterion, define the test file(s), tier (unit | integration | e2e/browser), and the exact assertions — especially tenant-isolation/role, idempotency, and (for sends) that everything routes through the Dispatcher guards.",
+        "Identify the pure functions and what is mocked (AWS/LocalStack) vs real (Postgres; real browser for UI).",
+        "List implementation units + dependency order. For UI phases, specify the Playwright e2e flows and how the local API is stood up.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { testFiles: [{path, tier, criterion, assertions:[...]}], pureFunctions: string[], mocks: string[], e2eFlows: string[], implUnits: string[], notes: string }",
+      "role": "senior test architect practicing TDD on a serverless multi-tenant CDP (with a Preact SPA for UI phases)",
+      "task": "Turn the §18 acceptance criteria for \"Campaign workflow engine\" into a concrete, test-first plan."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTG0DWDXV353DBNNJP1W1P75/input.json",
+    "outputJsonPath": "tasks/01KTG0DWDXV353DBNNJP1W1P75/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "phase10-campaigns",
+    "plan"
+  ],
+  "title": "Plan: Campaign workflow engine",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTG0DWDXV353DBNNJP1W1P75",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/app-completion:S000005:plan-phase",
+  "stepId": "S000005",
+  "inputs": {
+    "phase": {
+      "criteria": [
+        "An enrolled profile advances through trigger -> wait -> condition -> action -> exit.",
+        "A wait defers until next_run_at; a branch (condition) routes correctly using the §8 compiler against profile/features/membership.",
+        "The runner is idempotent (no double-advance on retry / concurrent sweep).",
+        "Campaign action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
+      ],
+      "frontend": false,
+      "id": "phase10-campaigns",
+      "scope": [
+        "A campaign DSL: campaigns.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.",
+        "Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a campaign_enrollments row at the start node (UNIQUE (campaign_id, profile_id)).",
+        "services/campaign-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.",
+        "Idempotent advance (tolerate retries without double-advancing — use updated_at / optimistic checks). Define and implement the re-enrollment policy."
+      ],
+      "specSections": "§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log)",
+      "title": "Campaign workflow engine"
+    }
+  }
+}

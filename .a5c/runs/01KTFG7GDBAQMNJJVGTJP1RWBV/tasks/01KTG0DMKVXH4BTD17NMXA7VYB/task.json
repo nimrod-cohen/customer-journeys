@@ -1,0 +1,92 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "criteria": [
+            "A broadcast to a segment or manual group sends once to the resolved audience; each recipient passes suppression/cap/quiet-hours (via the Dispatcher).",
+            "Retries do not double-send (dedupe per (broadcast_id, profile_id)).",
+            "Audience is resolved at send time from segment_memberships (works for both dynamic and manual segments); large audiences are enumerated in batches.",
+            "broadcasts.status transitions correctly (sending -> sent); scheduling at scheduled_at is honored; everything workspace-scoped."
+          ],
+          "frontend": false,
+          "id": "phase9-broadcasts",
+          "scope": [
+            "services/broadcast: a Broadcast Lambda (triggered on send / at scheduled_at via EventBridge) that RESOLVES the audience at send time from segment_memberships (dynamic OR manual segment) via @cdp/segments resolveAudience; snapshots the member set.",
+            "Enumerate in BATCHES (paginate; large audiences enqueued in chunks) -> insert outbox rows -> the existing Dispatcher (§9) handles per-recipient suppression/cap/quiet-hours and the actual send.",
+            "Update broadcasts.status (draft->scheduled->sending->sent / cancelled); record per-recipient sends in messages_log.",
+            "Idempotent dedupe_key per (broadcast_id, profile_id) prevents double-sends on retry."
+          ],
+          "specSections": "§9A (broadcast: resolve audience at send time, batched enumeration -> outbox, scheduling, status), §9 (Dispatcher), §6 (broadcasts, outbox, messages_log, segment_memberships)",
+          "title": "Broadcasts (one-off send)"
+        },
+        "score": 95
+      },
+      "instructions": [
+        "Run `git add -A`.",
+        "Commit with a clear conventional message describing the phase (Broadcasts (one-off send)), gate score (95), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Broadcasts (one-off send)\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTG0DMKVXH4BTD17NMXA7VYB/input.json",
+    "outputJsonPath": "tasks/01KTG0DMKVXH4BTD17NMXA7VYB/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "phase9-broadcasts"
+  ],
+  "title": "Commit: Broadcasts (one-off send)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTG0DMKVXH4BTD17NMXA7VYB",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/app-completion:S000004:commit-phase",
+  "stepId": "S000004",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "criteria": [
+        "A broadcast to a segment or manual group sends once to the resolved audience; each recipient passes suppression/cap/quiet-hours (via the Dispatcher).",
+        "Retries do not double-send (dedupe per (broadcast_id, profile_id)).",
+        "Audience is resolved at send time from segment_memberships (works for both dynamic and manual segments); large audiences are enumerated in batches.",
+        "broadcasts.status transitions correctly (sending -> sent); scheduling at scheduled_at is honored; everything workspace-scoped."
+      ],
+      "frontend": false,
+      "id": "phase9-broadcasts",
+      "scope": [
+        "services/broadcast: a Broadcast Lambda (triggered on send / at scheduled_at via EventBridge) that RESOLVES the audience at send time from segment_memberships (dynamic OR manual segment) via @cdp/segments resolveAudience; snapshots the member set.",
+        "Enumerate in BATCHES (paginate; large audiences enqueued in chunks) -> insert outbox rows -> the existing Dispatcher (§9) handles per-recipient suppression/cap/quiet-hours and the actual send.",
+        "Update broadcasts.status (draft->scheduled->sending->sent / cancelled); record per-recipient sends in messages_log.",
+        "Idempotent dedupe_key per (broadcast_id, profile_id) prevents double-sends on retry."
+      ],
+      "specSections": "§9A (broadcast: resolve audience at send time, batched enumeration -> outbox, scheduling, status), §9 (Dispatcher), §6 (broadcasts, outbox, messages_log, segment_memberships)",
+      "title": "Broadcasts (one-off send)"
+    },
+    "score": 95
+  }
+}

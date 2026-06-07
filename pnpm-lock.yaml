@@ -205,7 +205,36 @@ importers:
         specifier: ^4.0.1
         version: 4.1.0
 
-  services/campaign-runner: {}
+  services/campaign-runner:
+    dependencies:
+      '@aws-sdk/client-sqs':
+        specifier: ^3.620.0
+        version: 3.1063.0
+      '@cdp/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cdp/segments':
+        specifier: workspace:*
+        version: link:../../packages/segments
+      '@cdp/service-dispatcher':
+        specifier: workspace:*
+        version: link:../dispatcher
+      '@cdp/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      pg:
+        specifier: ^8.12.0
+        version: 8.21.0
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.140
+        version: 8.10.162
+      '@types/pg':
+        specifier: ^8.11.6
+        version: 8.20.0
+      aws-sdk-client-mock:
+        specifier: ^4.0.1
+        version: 4.1.0
 
   services/dispatcher:
     dependencies:
@@ -396,6 +425,9 @@ importers:
       '@cdp/service-authorizer':
         specifier: workspace:*
         version: link:../services/authorizer
+      '@cdp/service-campaign-runner':
+        specifier: workspace:*
+        version: link:../services/campaign-runner
       '@cdp/service-dispatcher':
         specifier: workspace:*
         version: link:../services/dispatcher

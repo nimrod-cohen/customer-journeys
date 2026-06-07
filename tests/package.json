@@ -17,6 +17,7 @@
     "@cdp/segments": "workspace:*",
     "@cdp/service-api": "workspace:*",
     "@cdp/service-authorizer": "workspace:*",
+    "@cdp/service-campaign-runner": "workspace:*",
     "@cdp/service-dispatcher": "workspace:*",
     "@cdp/service-feedback": "workspace:*",
     "@cdp/service-ingest": "workspace:*",

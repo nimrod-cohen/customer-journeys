@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-07T03:01:02.223Z",
+  "data": {
+    "effectId": "01KTG0DMKVXH4BTD17NMXA7VYB",
+    "invocationKey": "cdp/app-completion:S000004:commit-phase",
+    "invocationHash": "97518ebbe29c4e68d9b82f7b61b03f4aa3507c84fe2f9f776b62350eddd28fb2",
+    "stepId": "S000004",
+    "taskId": "commit-phase",
+    "kind": "agent",
+    "label": "commit",
+    "taskDefRef": "tasks/01KTG0DMKVXH4BTD17NMXA7VYB/task.json",
+    "labels": [
+      "commit",
+      "phase9-broadcasts"
+    ]
+  },
+  "checksum": "8b73bb64e84a3c63d842c73651ab26f2320077eba50bfe1f58abababb0e0087d"
+}

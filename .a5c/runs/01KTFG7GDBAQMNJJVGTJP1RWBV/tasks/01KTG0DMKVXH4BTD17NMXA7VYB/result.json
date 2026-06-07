@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTG0DMKVXH4BTD17NMXA7VYB",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/app-completion:S000004:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "fe8439cbade58873d9e4bc5c1edf8ae071afb06c",
+    "committed": true,
+    "message": "feat(phase9): broadcasts (one-off send to segment/manual audience)"
+  },
+  "startedAt": "2026-06-07T03:01:02.386Z",
+  "finishedAt": "2026-06-07T03:01:02.386Z",
+  "value": {
+    "commitHash": "fe8439cbade58873d9e4bc5c1edf8ae071afb06c",
+    "committed": true,
+    "message": "feat(phase9): broadcasts (one-off send to segment/manual audience)"
+  }
+}

@@ -1,0 +1,611 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commandsRun": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "e2eSummary": {
+          "type": "string"
+        },
+        "filesCreated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesModified": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "lintOk": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "testsPass": {
+          "type": "boolean"
+        },
+        "testSummary": {
+          "type": "string"
+        },
+        "typecheckOk": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "filesCreated",
+        "filesModified",
+        "testsPass"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "env": "Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp (migrations applied). turbo test task is cache:false. Docker is available for LocalStack. For UI: build a runnable local app + local API adapter so Playwright can drive it.",
+        "firstIteration": true,
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
+          "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
+          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
+          "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no features beyond the spec. Keep the cost model EXACTLY as §20 (direct usage + even split of fixed costs)."
+        ],
+        "iteration": 1,
+        "loop": "Backend phase: pure unit tests + DB-integration against REAL local Postgres (localhost:5433); mock AWS (aws-sdk-client-mock) / LocalStack. No frontend.",
+        "phase": {
+          "criteria": [
+            "An enrolled profile advances through trigger -> wait -> condition -> action -> exit.",
+            "A wait defers until next_run_at; a branch (condition) routes correctly using the §8 compiler against profile/features/membership.",
+            "The runner is idempotent (no double-advance on retry / concurrent sweep).",
+            "Campaign action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
+          ],
+          "frontend": false,
+          "id": "phase10-campaigns",
+          "scope": [
+            "A campaign DSL: campaigns.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.",
+            "Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a campaign_enrollments row at the start node (UNIQUE (campaign_id, profile_id)).",
+            "services/campaign-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.",
+            "Idempotent advance (tolerate retries without double-advancing — use updated_at / optimistic checks). Define and implement the re-enrollment policy."
+          ],
+          "specSections": "§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log)",
+          "title": "Campaign workflow engine"
+        },
+        "plan": {
+          "e2eFlows": [],
+          "implUnits": [
+            "services/campaign-runner/src/dsl.ts node types + validateCampaignDefinition + resolveStartNode/findNode",
+            "services/campaign-runner/src/core.ts pure decisions + SqlStatement builders (reuse @cdp/segments buildSegmentMatch + broadcast enqueue contract)",
+            "services/campaign-runner/src/enroll.ts enrollment orchestrator (parse change_log -> decideReenrollment -> insert in workspace tx)",
+            "services/campaign-runner/src/run.ts runEnrollment: claim CAS -> process node chain single tick to wait/exit boundary -> enqueue sends -> advance; workspace_id from row",
+            "services/campaign-runner/src/deps.ts runStatementsInWorkspaceTx + makeProdDeps",
+            "services/campaign-runner/src/handler.ts thin sweep handler isolate per-row failures",
+            "index.ts",
+            "package.json add @cdp/db,@cdp/segments,@cdp/service-dispatcher,@cdp/service-broadcast or @aws-sdk/client-sqs,@cdp/shared,pg; dev aws-sdk-client-mock",
+            "order dsl->core->enroll->run->deps->handler->index"
+          ],
+          "mocks": [
+            "SES via injected SesEmailClient CountingSes through real dispatchOutbox",
+            "SQS via aws-sdk-client-mock / injected sender ({outbox_id} only)",
+            "EventBridge NOT tested (test sweep query + advance directly)",
+            "injected clock now()",
+            "pure tests use fake reader/tx/sqs",
+            "Postgres NOT mocked (real localhost:5433)"
+          ],
+          "notes": "Schema exists (0005): campaigns + campaign_enrollments UNIQUE(campaign_id,profile_id) + (status,next_run_at) index — no migration. DSL: definition={startNode, nodes:{id:Node}}; Node=trigger{kind:segment_entry|event|manual,next}|wait{delay{seconds}|ISO8601|until,next}|condition{ast:§8,onTrue,onFalse}|action{kind:send|set_attribute,template_id?/key?/value?,next}|exit. Re-enrollment 'once' default (structural ON CONFLICT (campaign_id,profile_id) DO NOTHING + decideReenrollment); reenroll_after_exit specified but off (UNIQUE has no status component; true re-entry needs versioned key, documented). Idempotent advance = CAS on updated_at (UPDATE WHERE updated_at=$expected RETURNING) so concurrent sweeps/retries advance at most once; action sends also rely on outbox dedupe_key + dispatcher atomic claim for exactly-once SEND. Runner re-implements NONE of suppression/cap/quiet — all campaign sends via real dispatchOutbox. Sweep cross-workspace (each row carries workspace_id loaded from row never assumed); every WRITE workspace-scoped via runStatementsInWorkspaceTx. Mock SES+SQS at boundary; real PG for integration gated hasDatabaseUrl/skipIf. Don't unit-test scheduler fired. Reuse runStatementsInWorkspaceTx (dispatcher/broadcast) not runPlanInWorkspaceTx for these writes.",
+          "pureFunctions": [
+            "validateCampaignDefinition(def)",
+            "resolveStartNode/findNode",
+            "processNode(node,state,matchesNow,now)",
+            "computeWaitNextRunAt(waitNode,now)",
+            "isWaitElapsed(waitNode,dueAt,now)",
+            "buildBranchMatchQuery(workspaceId,ast,profileId)",
+            "evaluateBranch(matchRowCount,node)",
+            "decideReenrollment(policy,prior)",
+            "parseEnrollmentTrigger(changeLogRow,campaign)",
+            "buildEnrollmentInsert(workspaceId,campaignId,profileId,startNode,now)",
+            "buildSweepQuery(now)",
+            "buildEnrollmentClaim(workspaceId,enrollmentId,expectedUpdatedAt)",
+            "buildAdvanceEnrollment(...)",
+            "buildCampaignDedupeKey(campaignId,profileId,nodeId)",
+            "buildCampaignOutboxInsert(...)"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "validateCampaignDefinition: one trigger, unique ids, resolvable edges, reachable exit",
+                "rejects no/2+ trigger, dangling edge, dup id",
+                "rejects unknown node/trigger types",
+                "wait requires exactly one of delay|until",
+                "condition requires §8 AST + onTrue + onFalse",
+                "action send requires template_id; set_attribute requires key+value",
+                "resolveStartNode/findNode"
+              ],
+              "criterion": "DSL",
+              "path": "services/campaign-runner/test/node-dsl-and-validation.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "trigger -> advance to next immediately",
+                "wait{delay} -> stay nextRunAt=now+delay",
+                "wait{until future} -> nextRunAt=until stay",
+                "wait{until past} -> advance",
+                "condition matchesNow true->onTrue false->onFalse process immediately",
+                "action send -> advance + sideEffect enqueue_send",
+                "exit -> complete status=completed",
+                "pure"
+              ],
+              "criterion": "1",
+              "path": "services/campaign-runner/test/process-node-decision.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "computeWaitNextRunAt {seconds} and ISO-8601 duration",
+                "until returns absolute date",
+                "isWaitElapsed boundary-inclusive",
+                "throws if no delay/until"
+              ],
+              "criterion": "2",
+              "path": "services/campaign-runner/test/wait-delay.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildBranchMatchQuery delegates to @cdp/segments buildSegmentMatch, workspace_id values[0], AND p.id=$",
+                "unknown field/operator throws (whitelist)",
+                "non-empty match->onTrue empty->onFalse",
+                "null AST -> match-all -> onTrue"
+              ],
+              "criterion": "2",
+              "path": "services/campaign-runner/test/branch-evaluation-wiring.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildEnrollmentClaim CAS WHERE workspace_id=$1 AND id=$2 AND status=active AND updated_at=$3 RETURNING",
+                "buildAdvanceEnrollment sets current_node/next_run_at/status/updated_at guarded on prior updated_at, workspace_id $1",
+                "throws falsy workspaceId",
+                "buildSweepQuery status=active AND next_run_at<=now cross-workspace",
+                "RETURNING distinguishes winner/loser"
+              ],
+              "criterion": "3",
+              "path": "services/campaign-runner/test/optimistic-advance-claim.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildEnrollmentInsert ON CONFLICT (campaign_id,profile_id) DO NOTHING current_node=start status=active workspace_id $1",
+                "decideReenrollment 'once' blocks while any prior exists",
+                "parseEnrollmentTrigger maps entered+segment_id to enrollment intent for campaign with matching trigger_segment_id; exited -> none",
+                "dedupe (campaign_id,profile_id)"
+              ],
+              "criterion": "4",
+              "path": "services/campaign-runner/test/enrollment-and-reenrollment.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildCampaignDedupeKey(campaignId,profileId,nodeId) stable unique",
+                "buildCampaignOutboxInsert ON CONFLICT (dedupe_key) DO NOTHING campaign_id set workspace_id $1",
+                "buildDispatchEnqueueMessage {outbox_id} only no workspace_id",
+                "enqueue-only: no suppression/cap/quiet re-implemented"
+              ],
+              "criterion": "4",
+              "path": "services/campaign-runner/test/action-send-sideeffect.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "trigger->wait in one tick: claim, process trigger, land wait, next_run_at=now+delay, SQS not called",
+                "later tick wait->condition->action: evaluate branch, enqueue one send, advance to exit",
+                "exit -> status=completed clear next_run_at not re-swept",
+                "condition->immediate chains multiple non-wait nodes single tick",
+                "loop-guard MAX_STEPS_PER_TICK"
+              ],
+              "criterion": "1",
+              "path": "services/campaign-runner/test/run-enrollment-orchestrator.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "sweep then runEnrollment per row; lost CAS claim skipped no-op",
+                "throwing enrollment isolated, others advance",
+                "thin wrapper, logic in injected core"
+              ],
+              "criterion": "3",
+              "path": "services/campaign-runner/test/handler.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "real PG: campaign trigger->wait->condition->action(send)->exit; enroll; tick1 lands wait next_run_at=now+delay",
+                "advance clock + sweep: condition evals real profile_features via §8 compiler, routes action, one outbox row campaign_id status=pending",
+                "real dispatchOutbox (SES mocked): SES once with config_set, messages_log with campaign_id, outbox sent",
+                "final tick exit -> status=completed next_run_at NULL not re-swept"
+              ],
+              "criterion": "1",
+              "path": "services/campaign-runner/test/full-lifecycle.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "sweep doesn't return enrollment while now<next_run_at",
+                "no advance/outbox while wait pending",
+                "once now>=next_run_at sweep returns + advances; deferral by real sweep query/index"
+              ],
+              "criterion": "2",
+              "path": "services/campaign-runner/test/wait-deferral.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "purchase_30d>=3: profile w/5 -> onTrue, w/1 -> onFalse vs real profile_features via buildSegmentMatch",
+                "branch scoped workspace_id $1 + AND p.id=$profile",
+                "onTrue/onFalse target written to current_node"
+              ],
+              "criterion": "2",
+              "path": "services/campaign-runner/test/branch-routing.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "two concurrent runEnrollment on same due enrollment: CAS on updated_at -> exactly one wins advances, loser no-op",
+                "advances exactly one step no double-advance",
+                "due action under concurrent sweep -> one outbox row (ON CONFLICT dedupe_key)",
+                "replay same tick after complete -> no-op (stale updated_at matches no row)"
+              ],
+              "criterion": "3",
+              "path": "services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "segment_change_log entered+segment_id=S -> one enrollment at start node workspace-scoped",
+                "second entered same (campaign,P) -> no row (ON CONFLICT)",
+                "exited -> no enrollment",
+                "other workspace's segment never enrolls here",
+                "campaign status!=active -> no enroll"
+              ],
+              "criterion": "4",
+              "path": "services/campaign-runner/test/enrollment-from-segment-entry.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "action send -> outbox -> real dispatchOutbox passes gate->suppression->cap->quiet before SES",
+                "suppressed recipient -> campaign send SKIPPED SES not called",
+                "workspace not active/verified -> refused at gate",
+                "clean send -> messages_log campaign_id + usage emails_sent +1",
+                "runner never calls SES"
+              ],
+              "criterion": "4",
+              "path": "services/campaign-runner/test/action-send-through-dispatcher.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "every write binds workspace_id $1 (runStatementsInWorkspaceTx asserts values[0])",
+                "two workspaces same campaign shape + same external_id advance independently no cross-bleed",
+                "cross-workspace sweep claims each row under its own workspace_id from the row"
+              ],
+              "criterion": "4",
+              "path": "services/campaign-runner/test/workspace-scoping.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "cross-phase: segment entry->enrollment->sweep->wait->branch(§8)->action->real dispatchOutbox->messages_log driving actual cores",
+                "happy path: status=completed, one messages_log campaign_id, outbox sent, workspace config_set on send",
+                "isolation peer workspace unaffected"
+              ],
+              "criterion": "1",
+              "path": "tests/integration/campaign-journey.integration.test.ts",
+              "tier": "integration"
+            }
+          ]
+        },
+        "previousGateFeedback": null,
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log).",
+        "FIRST write the failing tests from the plan (red), then implement to green. Logic in pure injected functions; handlers/components thin.",
+        "Honor every invariant — tenant isolation, role enforcement, idempotency, and \"all sends go through the Dispatcher guards\" are pass/fail.",
+        "Mock AWS (aws-sdk-client-mock) or use LocalStack; integration tier uses the REAL local Postgres (never mock the DB). For UI phases, verify with Playwright in a real browser against the locally-running app + local API; seed deterministic data.",
+        "Run the relevant `pnpm test` (with DATABASE_URL), plus Playwright e2e for UI phases, `pnpm typecheck`, `pnpm lint`. Iterate until GREEN including a COLD turbo run. Confirm no regression in earlier phases. Report actual command output.",
+        "Implement ONLY what the cited sections require. Keep the §20 cost model exact. The editor must emit MJML, not hand-rolled HTML.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { filesCreated: string[], filesModified: string[], testsPass: boolean, testSummary: string, e2eSummary: string, typecheckOk: boolean, lintOk: boolean, commandsRun: string[], notes: string }",
+      "role": "senior full-stack TypeScript engineer building a serverless multi-tenant CDP + Preact SPA, test-first",
+      "task": "Implement \"Campaign workflow engine\" to satisfy its test plan and §18 criteria. Red -> green -> refactor."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTGACBB6S1CXHPD03BP6XNNE/input.json",
+    "outputJsonPath": "tasks/01KTGACBB6S1CXHPD03BP6XNNE/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "implement",
+    "iteration-1",
+    "phase10-campaigns"
+  ],
+  "title": "Implement: Campaign workflow engine (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTGACBB6S1CXHPD03BP6XNNE",
+  "taskId": "implement-phase",
+  "invocationKey": "cdp/app-completion:S000006:implement-phase",
+  "stepId": "S000006",
+  "inputs": {
+    "firstIteration": true,
+    "iteration": 1,
+    "phase": {
+      "criteria": [
+        "An enrolled profile advances through trigger -> wait -> condition -> action -> exit.",
+        "A wait defers until next_run_at; a branch (condition) routes correctly using the §8 compiler against profile/features/membership.",
+        "The runner is idempotent (no double-advance on retry / concurrent sweep).",
+        "Campaign action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
+      ],
+      "frontend": false,
+      "id": "phase10-campaigns",
+      "scope": [
+        "A campaign DSL: campaigns.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.",
+        "Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a campaign_enrollments row at the start node (UNIQUE (campaign_id, profile_id)).",
+        "services/campaign-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.",
+        "Idempotent advance (tolerate retries without double-advancing — use updated_at / optimistic checks). Define and implement the re-enrollment policy."
+      ],
+      "specSections": "§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log)",
+      "title": "Campaign workflow engine"
+    },
+    "plan": {
+      "e2eFlows": [],
+      "implUnits": [
+        "services/campaign-runner/src/dsl.ts node types + validateCampaignDefinition + resolveStartNode/findNode",
+        "services/campaign-runner/src/core.ts pure decisions + SqlStatement builders (reuse @cdp/segments buildSegmentMatch + broadcast enqueue contract)",
+        "services/campaign-runner/src/enroll.ts enrollment orchestrator (parse change_log -> decideReenrollment -> insert in workspace tx)",
+        "services/campaign-runner/src/run.ts runEnrollment: claim CAS -> process node chain single tick to wait/exit boundary -> enqueue sends -> advance; workspace_id from row",
+        "services/campaign-runner/src/deps.ts runStatementsInWorkspaceTx + makeProdDeps",
+        "services/campaign-runner/src/handler.ts thin sweep handler isolate per-row failures",
+        "index.ts",
+        "package.json add @cdp/db,@cdp/segments,@cdp/service-dispatcher,@cdp/service-broadcast or @aws-sdk/client-sqs,@cdp/shared,pg; dev aws-sdk-client-mock",
+        "order dsl->core->enroll->run->deps->handler->index"
+      ],
+      "mocks": [
+        "SES via injected SesEmailClient CountingSes through real dispatchOutbox",
+        "SQS via aws-sdk-client-mock / injected sender ({outbox_id} only)",
+        "EventBridge NOT tested (test sweep query + advance directly)",
+        "injected clock now()",
+        "pure tests use fake reader/tx/sqs",
+        "Postgres NOT mocked (real localhost:5433)"
+      ],
+      "notes": "Schema exists (0005): campaigns + campaign_enrollments UNIQUE(campaign_id,profile_id) + (status,next_run_at) index — no migration. DSL: definition={startNode, nodes:{id:Node}}; Node=trigger{kind:segment_entry|event|manual,next}|wait{delay{seconds}|ISO8601|until,next}|condition{ast:§8,onTrue,onFalse}|action{kind:send|set_attribute,template_id?/key?/value?,next}|exit. Re-enrollment 'once' default (structural ON CONFLICT (campaign_id,profile_id) DO NOTHING + decideReenrollment); reenroll_after_exit specified but off (UNIQUE has no status component; true re-entry needs versioned key, documented). Idempotent advance = CAS on updated_at (UPDATE WHERE updated_at=$expected RETURNING) so concurrent sweeps/retries advance at most once; action sends also rely on outbox dedupe_key + dispatcher atomic claim for exactly-once SEND. Runner re-implements NONE of suppression/cap/quiet — all campaign sends via real dispatchOutbox. Sweep cross-workspace (each row carries workspace_id loaded from row never assumed); every WRITE workspace-scoped via runStatementsInWorkspaceTx. Mock SES+SQS at boundary; real PG for integration gated hasDatabaseUrl/skipIf. Don't unit-test scheduler fired. Reuse runStatementsInWorkspaceTx (dispatcher/broadcast) not runPlanInWorkspaceTx for these writes.",
+      "pureFunctions": [
+        "validateCampaignDefinition(def)",
+        "resolveStartNode/findNode",
+        "processNode(node,state,matchesNow,now)",
+        "computeWaitNextRunAt(waitNode,now)",
+        "isWaitElapsed(waitNode,dueAt,now)",
+        "buildBranchMatchQuery(workspaceId,ast,profileId)",
+        "evaluateBranch(matchRowCount,node)",
+        "decideReenrollment(policy,prior)",
+        "parseEnrollmentTrigger(changeLogRow,campaign)",
+        "buildEnrollmentInsert(workspaceId,campaignId,profileId,startNode,now)",
+        "buildSweepQuery(now)",
+        "buildEnrollmentClaim(workspaceId,enrollmentId,expectedUpdatedAt)",
+        "buildAdvanceEnrollment(...)",
+        "buildCampaignDedupeKey(campaignId,profileId,nodeId)",
+        "buildCampaignOutboxInsert(...)"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "validateCampaignDefinition: one trigger, unique ids, resolvable edges, reachable exit",
+            "rejects no/2+ trigger, dangling edge, dup id",
+            "rejects unknown node/trigger types",
+            "wait requires exactly one of delay|until",
+            "condition requires §8 AST + onTrue + onFalse",
+            "action send requires template_id; set_attribute requires key+value",
+            "resolveStartNode/findNode"
+          ],
+          "criterion": "DSL",
+          "path": "services/campaign-runner/test/node-dsl-and-validation.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "trigger -> advance to next immediately",
+            "wait{delay} -> stay nextRunAt=now+delay",
+            "wait{until future} -> nextRunAt=until stay",
+            "wait{until past} -> advance",
+            "condition matchesNow true->onTrue false->onFalse process immediately",
+            "action send -> advance + sideEffect enqueue_send",
+            "exit -> complete status=completed",
+            "pure"
+          ],
+          "criterion": "1",
+          "path": "services/campaign-runner/test/process-node-decision.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "computeWaitNextRunAt {seconds} and ISO-8601 duration",
+            "until returns absolute date",
+            "isWaitElapsed boundary-inclusive",
+            "throws if no delay/until"
+          ],
+          "criterion": "2",
+          "path": "services/campaign-runner/test/wait-delay.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildBranchMatchQuery delegates to @cdp/segments buildSegmentMatch, workspace_id values[0], AND p.id=$",
+            "unknown field/operator throws (whitelist)",
+            "non-empty match->onTrue empty->onFalse",
+            "null AST -> match-all -> onTrue"
+          ],
+          "criterion": "2",
+          "path": "services/campaign-runner/test/branch-evaluation-wiring.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildEnrollmentClaim CAS WHERE workspace_id=$1 AND id=$2 AND status=active AND updated_at=$3 RETURNING",
+            "buildAdvanceEnrollment sets current_node/next_run_at/status/updated_at guarded on prior updated_at, workspace_id $1",
+            "throws falsy workspaceId",
+            "buildSweepQuery status=active AND next_run_at<=now cross-workspace",
+            "RETURNING distinguishes winner/loser"
+          ],
+          "criterion": "3",
+          "path": "services/campaign-runner/test/optimistic-advance-claim.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildEnrollmentInsert ON CONFLICT (campaign_id,profile_id) DO NOTHING current_node=start status=active workspace_id $1",
+            "decideReenrollment 'once' blocks while any prior exists",
+            "parseEnrollmentTrigger maps entered+segment_id to enrollment intent for campaign with matching trigger_segment_id; exited -> none",
+            "dedupe (campaign_id,profile_id)"
+          ],
+          "criterion": "4",
+          "path": "services/campaign-runner/test/enrollment-and-reenrollment.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildCampaignDedupeKey(campaignId,profileId,nodeId) stable unique",
+            "buildCampaignOutboxInsert ON CONFLICT (dedupe_key) DO NOTHING campaign_id set workspace_id $1",
+            "buildDispatchEnqueueMessage {outbox_id} only no workspace_id",
+            "enqueue-only: no suppression/cap/quiet re-implemented"
+          ],
+          "criterion": "4",
+          "path": "services/campaign-runner/test/action-send-sideeffect.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "trigger->wait in one tick: claim, process trigger, land wait, next_run_at=now+delay, SQS not called",
+            "later tick wait->condition->action: evaluate branch, enqueue one send, advance to exit",
+            "exit -> status=completed clear next_run_at not re-swept",
+            "condition->immediate chains multiple non-wait nodes single tick",
+            "loop-guard MAX_STEPS_PER_TICK"
+          ],
+          "criterion": "1",
+          "path": "services/campaign-runner/test/run-enrollment-orchestrator.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "sweep then runEnrollment per row; lost CAS claim skipped no-op",
+            "throwing enrollment isolated, others advance",
+            "thin wrapper, logic in injected core"
+          ],
+          "criterion": "3",
+          "path": "services/campaign-runner/test/handler.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "real PG: campaign trigger->wait->condition->action(send)->exit; enroll; tick1 lands wait next_run_at=now+delay",
+            "advance clock + sweep: condition evals real profile_features via §8 compiler, routes action, one outbox row campaign_id status=pending",
+            "real dispatchOutbox (SES mocked): SES once with config_set, messages_log with campaign_id, outbox sent",
+            "final tick exit -> status=completed next_run_at NULL not re-swept"
+          ],
+          "criterion": "1",
+          "path": "services/campaign-runner/test/full-lifecycle.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "sweep doesn't return enrollment while now<next_run_at",
+            "no advance/outbox while wait pending",
+            "once now>=next_run_at sweep returns + advances; deferral by real sweep query/index"
+          ],
+          "criterion": "2",
+          "path": "services/campaign-runner/test/wait-deferral.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "purchase_30d>=3: profile w/5 -> onTrue, w/1 -> onFalse vs real profile_features via buildSegmentMatch",
+            "branch scoped workspace_id $1 + AND p.id=$profile",
+            "onTrue/onFalse target written to current_node"
+          ],
+          "criterion": "2",
+          "path": "services/campaign-runner/test/branch-routing.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "two concurrent runEnrollment on same due enrollment: CAS on updated_at -> exactly one wins advances, loser no-op",
+            "advances exactly one step no double-advance",
+            "due action under concurrent sweep -> one outbox row (ON CONFLICT dedupe_key)",
+            "replay same tick after complete -> no-op (stale updated_at matches no row)"
+          ],
+          "criterion": "3",
+          "path": "services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "segment_change_log entered+segment_id=S -> one enrollment at start node workspace-scoped",
+            "second entered same (campaign,P) -> no row (ON CONFLICT)",
+            "exited -> no enrollment",
+            "other workspace's segment never enrolls here",
+            "campaign status!=active -> no enroll"
+          ],
+          "criterion": "4",
+          "path": "services/campaign-runner/test/enrollment-from-segment-entry.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "action send -> outbox -> real dispatchOutbox passes gate->suppression->cap->quiet before SES",
+            "suppressed recipient -> campaign send SKIPPED SES not called",
+            "workspace not active/verified -> refused at gate",
+            "clean send -> messages_log campaign_id + usage emails_sent +1",
+            "runner never calls SES"
+          ],
+          "criterion": "4",
+          "path": "services/campaign-runner/test/action-send-through-dispatcher.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "every write binds workspace_id $1 (runStatementsInWorkspaceTx asserts values[0])",
+            "two workspaces same campaign shape + same external_id advance independently no cross-bleed",
+            "cross-workspace sweep claims each row under its own workspace_id from the row"
+          ],
+          "criterion": "4",
+          "path": "services/campaign-runner/test/workspace-scoping.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "cross-phase: segment entry->enrollment->sweep->wait->branch(§8)->action->real dispatchOutbox->messages_log driving actual cores",
+            "happy path: status=completed, one messages_log campaign_id, outbox sent, workspace config_set on send",
+            "isolation peer workspace unaffected"
+          ],
+          "criterion": "1",
+          "path": "tests/integration/campaign-journey.integration.test.ts",
+          "tier": "integration"
+        }
+      ]
+    },
+    "prevFeedback": null
+  }
+}
