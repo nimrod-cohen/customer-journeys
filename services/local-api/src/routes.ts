@@ -56,6 +56,9 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   // --- profiles (manage_content) ---
   'GET /profiles': 'manage_content',
   'GET /profiles/:id': 'manage_content',
+  'PATCH /profiles/:id': 'manage_content',
+  'GET /profiles/:id/events': 'manage_content',
+  'GET /profiles/:id/segments': 'manage_content',
 
   // --- dashboards (manage_content — marketer+ view) ---
   'GET /dashboards/summary': 'manage_content',

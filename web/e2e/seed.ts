@@ -73,6 +73,7 @@ export async function seed(): Promise<void> {
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
       [SEG_B, WS_B, SEG_B_NAME, 'manual'],
     );
+    let firstProfileId = '';
     for (const [ext, email, tier] of [
       ['a1', 'a1@acme.com', 'vip'],
       ['a2', 'a2@acme.com', 'vip'],
@@ -82,11 +83,29 @@ export async function seed(): Promise<void> {
         'INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,$2,$3,$4::jsonb) RETURNING id',
         [WS_A, ext, email, JSON.stringify({ tier })],
       );
+      if (!firstProfileId) firstProfileId = pr[0]!.id;
       await pool.query(
         'INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1,$2)',
         [pr[0]!.id, WS_A],
       );
     }
+    // Give the first profile (a1) past events + a manual segment membership so the
+    // Profile detail screen's Events/Segments tabs render live data in the e2e.
+    await pool.query('UPDATE profile_features SET total_events = 2 WHERE profile_id = $1', [
+      firstProfileId,
+    ]);
+    await pool.query(
+      "INSERT INTO events (event_id, workspace_id, profile_id, type, occurred_at, payload) VALUES (gen_random_uuid(),$1,$2,'page_view','2026-01-01T10:00:00Z','{}'::jsonb)",
+      [WS_A, firstProfileId],
+    );
+    await pool.query(
+      "INSERT INTO events (event_id, workspace_id, profile_id, type, occurred_at, payload) VALUES (gen_random_uuid(),$1,$2,'purchase','2026-02-01T10:00:00Z','{\"amount\":50}'::jsonb)",
+      [WS_A, firstProfileId],
+    );
+    await pool.query(
+      "INSERT INTO segment_memberships (segment_id, profile_id, workspace_id, source) VALUES ($1,$2,$3,'manual')",
+      [SEG_A, firstProfileId, WS_A],
+    );
     // One profile in WS_B (must never appear in WS_A views).
     const { rows: pb } = await pool.query<{ id: string }>(
       'INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,$2,$3) RETURNING id',
@@ -104,6 +123,7 @@ export async function seed(): Promise<void> {
 export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void> {
   for (const ws of [WS_A, WS_B]) {
     await pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM outbox WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM broadcasts WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);

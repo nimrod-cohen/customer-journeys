@@ -4,7 +4,8 @@
 // (Visual redesign; all data-testid attributes preserved.)
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
-import { Badge, Card, EmptyState, PageHeader, Stat, toneFor } from '../ui/kit.js';
+import { navigate } from '../router.js';
+import { Badge, Card, EmptyState, Input, PageHeader, Stat, toneFor } from '../ui/kit.js';
 
 export function Dashboards() {
   const [s, setS] = useState<Record<string, number> | null>(null);
@@ -37,34 +38,74 @@ interface Profile {
 
 export function ProfileExplorer() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [q, setQ] = useState('');
   useEffect(() => {
     void api.get<{ profiles: Profile[] }>('/profiles').then((r) => setProfiles(r.profiles));
   }, []);
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? profiles.filter(
+        (p) =>
+          (p.email ?? '').toLowerCase().includes(needle) ||
+          (p.external_id ?? '').toLowerCase().includes(needle),
+      )
+    : profiles;
   return (
     <section data-testid="profile-explorer">
       <PageHeader title="Profiles" subtitle="Unified customer profiles in this workspace." />
-      <Card class="overflow-hidden">
+      <div class="mb-4 max-w-sm">
+        <Input
+          data-testid="profile-search"
+          type="search"
+          placeholder="Search by email or external ID…"
+          value={q}
+          onInput={(e: Event) => setQ((e.target as HTMLInputElement).value)}
+        />
+      </div>
+      <Card class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="border-b border-stone-200 bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
             <tr>
               <th class="px-4 py-2.5 font-semibold">External ID</th>
               <th class="px-4 py-2.5 font-semibold">Email</th>
               <th class="px-4 py-2.5 font-semibold">Status</th>
+              <th class="px-4 py-2.5" />
             </tr>
           </thead>
           <tbody class="divide-y divide-stone-100">
-            {profiles.map((p) => (
-              <tr data-testid="profile-row" key={p.id} class="hover:bg-stone-50/70">
+            {shown.map((p) => (
+              <tr
+                data-testid="profile-row"
+                key={p.id}
+                onClick={() => navigate(`/profiles/${p.id}`)}
+                class="cursor-pointer hover:bg-stone-50/70"
+              >
                 <td class="px-4 py-2.5 font-mono text-xs text-stone-600">{p.external_id}</td>
                 <td class="px-4 py-2.5 text-ink-900">{p.email}</td>
                 <td class="px-4 py-2.5">
                   <Badge tone={toneFor(p.email_status)}>{p.email_status}</Badge>
                 </td>
+                <td class="px-4 py-2.5 text-right">
+                  <button
+                    data-testid="profile-open"
+                    class="btn-ghost btn-sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/profiles/${p.id}`);
+                    }}
+                  >
+                    View →
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {profiles.length === 0 ? <div class="p-4"><EmptyState>No profiles yet.</EmptyState></div> : null}
+        {shown.length === 0 ? (
+          <div class="p-4">
+            <EmptyState>{profiles.length === 0 ? 'No profiles yet.' : 'No profiles match your search.'}</EmptyState>
+          </div>
+        ) : null}
       </Card>
     </section>
   );

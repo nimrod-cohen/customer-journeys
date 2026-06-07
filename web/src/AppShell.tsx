@@ -21,10 +21,20 @@ import {
   SuppressionList,
   BillingUsageView,
 } from './screens/SimpleScreens.js';
+import { ProfileDetail } from './screens/ProfileDetail.js';
 import { EmailEditor } from './EmailEditor.js';
 import type { JSX } from 'preact';
 
+/** True when `route` is `item` or a sub-route of it (e.g. /profiles/<id> under /profiles). */
+function underNav(route: string, itemPath: string): boolean {
+  return route === itemPath || route.startsWith(`${itemPath}/`);
+}
+
 function screenFor(path: string): JSX.Element {
+  // Profile detail is a sub-route of /profiles carrying the id in the path.
+  if (path.startsWith('/profiles/')) {
+    return <ProfileDetail id={path.slice('/profiles/'.length)} />;
+  }
   switch (path) {
     case '/segments':
       return <SegmentBuilder />;
@@ -60,7 +70,7 @@ export function AppShell(): JSX.Element {
   // Land on a permitted screen: if the current route isn't in the role's nav
   // (e.g. a system-admin with no active workspace can't open /dashboards),
   // fall back to the first permitted item (the System Admin console for them).
-  const permitted = nav.some((n) => n.path === route);
+  const permitted = nav.some((n) => underNav(route, n.path));
   const effectiveRoute = permitted ? route : (nav[0]?.path ?? route);
   useEffect(() => {
     if (!permitted && nav[0] && route !== nav[0].path) navigate(nav[0].path);
@@ -89,23 +99,24 @@ export function AppShell(): JSX.Element {
         <WorkspaceSwitcher />
 
         <nav class="mt-1 flex flex-1 flex-col gap-0.5 overflow-y-auto">
-          {nav.map((item) => (
-            <a
-              data-testid={`nav-${item.id}`}
-              key={item.id}
-              href={`#${item.path}`}
-              onClick={(e) => {
-                e.preventDefault();
-                navigate(item.path);
-              }}
-              class={`nav-link ${route === item.path ? 'nav-link-active' : ''}`}
-            >
-              <span class={route === item.path ? 'text-brand-300' : 'text-stone-400'}>
-                {ICONS[item.id]}
-              </span>
-              {item.label}
-            </a>
-          ))}
+          {nav.map((item) => {
+            const active = underNav(route, item.path);
+            return (
+              <a
+                data-testid={`nav-${item.id}`}
+                key={item.id}
+                href={`#${item.path}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate(item.path);
+                }}
+                class={`nav-link ${active ? 'nav-link-active' : ''}`}
+              >
+                <span class={active ? 'text-brand-300' : 'text-stone-400'}>{ICONS[item.id]}</span>
+                {item.label}
+              </a>
+            );
+          })}
         </nav>
 
         {/* Footer: role + logout */}

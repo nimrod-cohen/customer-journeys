@@ -446,12 +446,91 @@ export const getProfile: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, external_id, email, email_status, attributes FROM profiles WHERE id = $1',
+    'SELECT id, external_id, email, email_status, attributes, created_at, updated_at FROM profiles WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
   if (!rows[0]) return ok({ error: 'not found' }, 404);
+  // Rolling aggregates for the detail header (workspace-scoped). Absent until the
+  // processor has computed features for this profile — return nulls/zeros then.
+  const f = await pool.query(
+    `SELECT total_events, last_event_at, last_email_open_at, monetary_total
+       FROM profile_features WHERE profile_id = $1 AND workspace_id = $2`,
+    [id, ctx.workspaceId],
+  );
+  return ok({ profile: rows[0], features: f.rows[0] ?? null });
+};
+
+/** Email statuses a marketer may set by hand (mirrors §10 lifecycle values). */
+const EDITABLE_EMAIL_STATUS = new Set(['active', 'unsubscribed', 'bounced', 'complained']);
+
+/**
+ * PATCH /profiles/:id — edit core fields + REPLACE the attributes object (§6).
+ * Scoped to the token's workspace in code (workspace_id in the WHERE, NEVER the
+ * body — CLAUDE.md inv.2); a cross-workspace id simply matches nothing → 404.
+ */
+export const updateProfile: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const email = b.email !== undefined ? String(b.email) : null;
+  const externalId = b.external_id !== undefined ? String(b.external_id) : null;
+  const emailStatus = b.email_status !== undefined ? String(b.email_status) : null;
+  if (emailStatus !== null && !EDITABLE_EMAIL_STATUS.has(emailStatus))
+    return ok({ error: `invalid email_status: ${emailStatus}` }, 400);
+  // attributes: full replacement when provided; must be a plain JSON object.
+  const hasAttrs = b.attributes !== undefined;
+  let attributes: string | null = null;
+  if (hasAttrs) {
+    const a = b.attributes;
+    if (a === null || typeof a !== 'object' || Array.isArray(a))
+      return ok({ error: 'attributes must be an object' }, 400);
+    attributes = JSON.stringify(a);
+  }
+  // Explicit workspace_id in the WHERE (scopedQuery can't host a trailing
+  // RETURNING). NULLIF('') lets external_id be cleared to NULL from the UI.
+  const { rows } = await pool.query(
+    `UPDATE profiles SET
+       email = COALESCE($1, email),
+       external_id = COALESCE($2, external_id),
+       email_status = COALESCE($3, email_status),
+       attributes = CASE WHEN $5::boolean THEN $4::jsonb ELSE attributes END,
+       updated_at = now()
+     WHERE id = $6 AND workspace_id = $7
+     RETURNING id, external_id, email, email_status, attributes`,
+    [email, externalId, emailStatus, attributes, hasAttrs, id, ctx.workspaceId],
+  );
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
   return ok({ profile: rows[0] });
+};
+
+/** GET /profiles/:id/events — this profile's event history, newest first (scoped). */
+export const listProfileEvents: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  // workspace_id + profile_id both scope the read; a cross-tenant profile id can
+  // never surface another workspace's events (the workspace_id predicate fails).
+  const { rows } = await pool.query(
+    `SELECT event_id, type, occurred_at, received_at, payload
+       FROM events
+      WHERE workspace_id = $1 AND profile_id = $2
+      ORDER BY occurred_at DESC
+      LIMIT 200`,
+    [ctx.workspaceId, id],
+  );
+  return ok({ events: rows });
+};
+
+/** GET /profiles/:id/segments — segments this profile currently belongs to (scoped). */
+export const listProfileSegments: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const { rows } = await pool.query(
+    `SELECT s.id, s.name, s.kind, sm.source, sm.entered_at
+       FROM segment_memberships sm
+       JOIN segments s ON s.id = sm.segment_id
+      WHERE sm.workspace_id = $1 AND sm.profile_id = $2
+      ORDER BY sm.entered_at DESC`,
+    [ctx.workspaceId, id],
+  );
+  return ok({ segments: rows });
 };
 
 // ---------------------------------------------------------------------------
@@ -609,6 +688,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /campaigns/:id': updateCampaign,
   'GET /profiles': listProfiles,
   'GET /profiles/:id': getProfile,
+  'PATCH /profiles/:id': updateProfile,
+  'GET /profiles/:id/events': listProfileEvents,
+  'GET /profiles/:id/segments': listProfileSegments,
   'GET /dashboards/summary': dashboardSummary,
   'GET /suppressions': listSuppressions,
   'GET /billing/usage': billingUsage,
