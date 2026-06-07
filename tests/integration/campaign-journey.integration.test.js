@@ -56,6 +56,9 @@ class CountingSes {
     async createConfigurationSet() {
         /* no-op */
     }
+    async provisionDedicatedIp() {
+        /* no-op */
+    }
 }
 class CapturingSqs {
     bodies = [];

@@ -99,6 +99,11 @@ export async function seed(): Promise<void> {
         [pr[0]!.id, WS_A],
       );
     }
+    // a3 is unsubscribed — so "email_status = unsubscribed" matches exactly one.
+    await pool.query(
+      "UPDATE profiles SET email_status = 'unsubscribed' WHERE workspace_id = $1 AND external_id = 'a3'",
+      [WS_A],
+    );
     // Give the first profile (a1) past events + a manual segment membership so the
     // Profile detail screen's Events/Segments tabs render live data in the e2e.
     await pool.query('UPDATE profile_features SET total_events = 2 WHERE profile_id = $1', [
@@ -109,7 +114,7 @@ export async function seed(): Promise<void> {
       [WS_A, firstProfileId],
     );
     await pool.query(
-      "INSERT INTO events (event_id, workspace_id, profile_id, type, occurred_at, payload) VALUES (gen_random_uuid(),$1,$2,'purchase','2026-02-01T10:00:00Z','{\"amount\":50}'::jsonb)",
+      "INSERT INTO events (event_id, workspace_id, profile_id, type, occurred_at, payload) VALUES (gen_random_uuid(),$1,$2,'purchase','2026-02-01T10:00:00Z','{\"amount\":50,\"sku\":\"book\"}'::jsonb)",
       [WS_A, firstProfileId],
     );
     await pool.query(

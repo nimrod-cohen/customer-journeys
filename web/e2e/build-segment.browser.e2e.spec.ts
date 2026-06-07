@@ -33,6 +33,41 @@ test('create a dynamic segment from the list, preview size, and see it appear', 
   await expect(page.getByTestId('segment-list')).toContainText('VIP members');
 });
 
+test('segment by a profile field (unsubscribers) and by an event', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+  await page.getByTestId('segment-name').fill('Audience tests');
+
+  // (1) Profile field: email_status = unsubscribed → the one seeded unsubscriber.
+  await page.getByTestId('rule-field').first().fill('email_status');
+  await page.getByTestId('rule-operator').first().selectOption('=');
+  await page.getByTestId('rule-value').first().fill('unsubscribed');
+  await page.getByTestId('preview-size').click();
+  await expect(page.getByTestId('segment-size')).toContainText('1');
+
+  // (2) Switch the row to an EVENT rule: did 'purchase' (a1 has one).
+  await page.getByTestId('rule-kind').first().selectOption('event');
+  await page.getByTestId('event-name').first().fill('purchase');
+  await page.getByTestId('preview-size').click();
+  await expect(page.getByTestId('segment-size')).toContainText('1');
+
+  // (3) Add an event-attribute filter: payload.sku = book → still the one match.
+  await page.getByTestId('event-cond-add').click();
+  await page.getByTestId('event-cond-field').fill('sku');
+  await page.getByTestId('event-cond-op').selectOption('=');
+  await page.getByTestId('event-cond-value').fill('book');
+  await page.getByTestId('preview-size').click();
+  await expect(page.getByTestId('segment-size')).toContainText('1');
+
+  // A non-matching payload value yields zero.
+  await page.getByTestId('event-cond-value').fill('nope');
+  await page.getByTestId('preview-size').click();
+  await expect(page.getByTestId('segment-size')).toContainText('0');
+});
+
 test('edit a segment from the list: builder hydrates and the rename reflects', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();

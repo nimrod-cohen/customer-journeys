@@ -35,8 +35,29 @@ export interface GroupNode {
   readonly conditions: readonly AstNode[];
 }
 
-/** A rule-AST node — either a boolean group or a leaf condition. */
-export type AstNode = GroupNode | ConditionNode;
+/**
+ * An EVENT predicate leaf (§7/§8): "the profile has events of `event` type".
+ * Compiles to a workspace-scoped subquery over `events e` keyed to `p.id`:
+ *   - no `operator` → `EXISTS (… e.type = $)` (occurred at least once),
+ *   - with `operator`+`value` → `(SELECT count(*) …) <op> $value` (count test),
+ *   - optional `where` → payload predicates (`payload.<key>`) ANDed into the
+ *     subquery (lets you match "had a purchase WHERE payload.amount = 100").
+ * workspace_id is bound at $1 INSIDE the subquery too — never another tenant.
+ */
+export interface EventNode {
+  readonly event: string;
+  readonly operator?: '>' | '>=' | '=' | '<=' | '<';
+  readonly value?: number;
+  readonly where?: readonly ConditionNode[];
+}
+
+/** A rule-AST node — a boolean group, a leaf condition, or an event predicate. */
+export type AstNode = GroupNode | ConditionNode | EventNode;
+
+/** The count-comparison operators an EventNode may use. */
+const EVENT_COUNT_OPERATORS = new Set(['>', '>=', '=', '<=', '<']);
+/** The jsonb prefix for event payload fields inside an EventNode.where. */
+const PAYLOAD_PREFIX = 'payload.';
 
 /** How a whitelisted field maps to a SQL column expression. */
 type FieldKind =
@@ -55,6 +76,18 @@ export const SCALAR_FEATURE_FIELDS: Readonly<Record<string, string>> = {
   monetary_total: 'pf.monetary_total',
   last_event_at: 'pf.last_event_at',
   last_email_open_at: 'pf.last_email_open_at',
+};
+
+/**
+ * Scalar columns on `profiles` a rule may reference directly (§6/§8). Notably
+ * `email_status` — so "unsubscribers" is `email_status = unsubscribed` (a profile
+ * column), NOT an attribute. Mapped to a fixed, never-interpolated `p.<col>`.
+ */
+export const SCALAR_PROFILE_FIELDS: Readonly<Record<string, string>> = {
+  email_status: 'p.email_status',
+  email: 'p.email',
+  external_id: 'p.external_id',
+  created_at: 'p.created_at',
 };
 
 /** Prefix for profile attribute fields: `attributes.<key>` (jsonb ->> key). */
@@ -103,6 +136,10 @@ function isGroup(node: AstNode): node is GroupNode {
   );
 }
 
+function isEvent(node: AstNode): node is EventNode {
+  return typeof (node as EventNode).event === 'string';
+}
+
 /**
  * Resolve an AST field name against the whitelist. THROWS on anything unknown —
  * this is the field-name injection guard. For `attributes.*` and
@@ -115,6 +152,10 @@ export function resolveField(field: string): ResolvedField {
   }
   if (Object.prototype.hasOwnProperty.call(SCALAR_FEATURE_FIELDS, field)) {
     const column = SCALAR_FEATURE_FIELDS[field] as string;
+    return { mapping: { kind: 'scalar', column }, jsonKey: null };
+  }
+  if (Object.prototype.hasOwnProperty.call(SCALAR_PROFILE_FIELDS, field)) {
+    const column = SCALAR_PROFILE_FIELDS[field] as string;
     return { mapping: { kind: 'scalar', column }, jsonKey: null };
   }
   if (field.startsWith(COUNTER_PREFIX)) {
@@ -160,6 +201,36 @@ export function validateAst(node: AstNode): void {
     for (const child of node.conditions) validateAst(child);
     return;
   }
+  if (isEvent(node)) {
+    if (typeof node.event !== 'string' || node.event.length === 0) {
+      throw new Error('validateAst: event.event must be a non-empty string');
+    }
+    const hasOp = node.operator !== undefined;
+    const hasVal = node.value !== undefined;
+    if (hasOp !== hasVal) {
+      throw new Error('validateAst: event operator and value must be set together');
+    }
+    if (hasOp) {
+      if (!EVENT_COUNT_OPERATORS.has(node.operator as string)) {
+        throw new Error(`validateAst: invalid event count operator "${node.operator}"`);
+      }
+      if (typeof node.value !== 'number' || Number.isNaN(node.value)) {
+        throw new Error('validateAst: event count value must be a number');
+      }
+    }
+    if (node.where !== undefined) {
+      if (!Array.isArray(node.where)) {
+        throw new Error('validateAst: event.where must be an array');
+      }
+      for (const w of node.where) {
+        validateAst(w);
+        if (typeof w.field !== 'string' || !w.field.startsWith(PAYLOAD_PREFIX)) {
+          throw new Error(`validateAst: event.where field must start with "${PAYLOAD_PREFIX}"`);
+        }
+      }
+    }
+    return;
+  }
   // Leaf condition.
   const cond = node as ConditionNode;
   if (typeof cond.field !== 'string' || cond.field.length === 0) {
@@ -197,13 +268,18 @@ function renderColumn(field: ResolvedField, params: ParamBuilder): string {
   }
 }
 
-/** Compile a single leaf condition to a parameterized predicate. */
-function compileCondition(cond: ConditionNode, params: ParamBuilder): string {
-  const field = resolveField(cond.field);
-  const op = resolveOperator(cond.operator);
+/**
+ * Render a parameterized predicate for an already-resolved column expression.
+ * Shared by profile/feature conditions (`renderColumn`) and event-payload
+ * conditions (`e.payload ->> $key`), so operator handling lives in ONE place.
+ */
+function compilePredicate(
+  col: string,
+  op: OperatorToken,
+  value: unknown,
+  params: ParamBuilder,
+): string {
   const spec = OPERATORS[op];
-  const col = renderColumn(field, params);
-
   if (op === 'exists') {
     return `${col} IS NOT NULL`;
   }
@@ -212,20 +288,67 @@ function compileCondition(cond: ConditionNode, params: ParamBuilder): string {
     throw new Error(`compileWhere: operator "${op}" has no value handler`);
   }
   if (spec.arrayParam) {
-    if (!Array.isArray(cond.value)) {
+    if (!Array.isArray(value)) {
       throw new Error(`compileWhere: operator "${op}" requires an array value`);
     }
     // Bind the WHOLE array as ONE param.
-    const arrParam = params.bind(cond.value);
+    const arrParam = params.bind(value);
     if (op === 'in') return `${col} = ANY(${arrParam})`;
     return `${col} != ALL(${arrParam})`;
   }
   // Scalar comparison: value is bound as a single $n placeholder.
-  const valParam = params.bind(cond.value);
+  const valParam = params.bind(value);
   return `${col} ${op} ${valParam}`;
 }
 
-/** Compile any AST node (group or leaf) to a parameterized SQL boolean expression. */
+/** Compile a single leaf condition (profile attribute / feature / scalar field). */
+function compileCondition(cond: ConditionNode, params: ParamBuilder): string {
+  const field = resolveField(cond.field);
+  const op = resolveOperator(cond.operator);
+  const col = renderColumn(field, params);
+  return compilePredicate(col, op, cond.value, params);
+}
+
+/** Compile one event-payload condition (`payload.<key>` → `e.payload ->> $key`). */
+function compilePayloadCondition(cond: ConditionNode, params: ParamBuilder): string {
+  if (typeof cond.field !== 'string' || !cond.field.startsWith(PAYLOAD_PREFIX)) {
+    throw new Error(`compileWhere: event payload field must start with "${PAYLOAD_PREFIX}"`);
+  }
+  const key = cond.field.slice(PAYLOAD_PREFIX.length);
+  if (key.length === 0) throw new Error('compileWhere: empty payload key');
+  const op = resolveOperator(cond.operator);
+  const keyParam = params.bind(key);
+  const col = `(e.payload ->> ${keyParam})`;
+  return compilePredicate(col, op, cond.value, params);
+}
+
+/**
+ * Compile an EVENT predicate into a workspace-scoped subquery over `events e`.
+ * workspace_id is bound at $1 here too (the SAME structural guard), and the
+ * event type / payload keys / values are ALL parameters — never interpolated.
+ */
+function compileEvent(node: EventNode, params: ParamBuilder): string {
+  const typeParam = params.bind(node.event);
+  const preds = [`e.workspace_id = $1`, `e.profile_id = p.id`, `e.type = ${typeParam}`];
+  for (const w of node.where ?? []) {
+    preds.push(compilePayloadCondition(w, params));
+  }
+  const subWhere = preds.join(' AND ');
+  if (node.operator !== undefined) {
+    if (!EVENT_COUNT_OPERATORS.has(node.operator)) {
+      throw new Error(`compileWhere: invalid event count operator "${node.operator}"`);
+    }
+    if (typeof node.value !== 'number' || Number.isNaN(node.value)) {
+      throw new Error('compileWhere: event count value must be a number');
+    }
+    const valParam = params.bind(node.value);
+    return `(SELECT count(*) FROM events e WHERE ${subWhere}) ${node.operator} ${valParam}`;
+  }
+  // No count test → "occurred at least once".
+  return `EXISTS (SELECT 1 FROM events e WHERE ${subWhere})`;
+}
+
+/** Compile any AST node (group / event / leaf) to a parameterized SQL boolean expression. */
 function compileNode(node: AstNode, params: ParamBuilder): string {
   if (isGroup(node)) {
     if (node.op === 'not') {
@@ -235,6 +358,9 @@ function compileNode(node: AstNode, params: ParamBuilder): string {
     const joiner = node.op === 'and' ? ' AND ' : ' OR ';
     const parts = node.conditions.map((c) => compileNode(c, params));
     return `(${parts.join(joiner)})`;
+  }
+  if (isEvent(node)) {
+    return compileEvent(node, params);
   }
   return compileCondition(node as ConditionNode, params);
 }

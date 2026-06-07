@@ -10,13 +10,39 @@ import {
   buildAst,
   rowsFromAst,
   emptyRow,
+  emptyEventRow,
+  emptyEventCondition,
   BUILDER_OPERATORS,
+  EVENT_COUNT_OPS,
   type AstNode,
   type RuleRow,
+  type RuleKind,
+  type EventCondition,
+  type EventCountOp,
   type BuilderOperator,
   type Combinator,
 } from '../segments/ast-builder.js';
 import { Badge, Button, Card, Field, Input, PageHeader, Select, Textarea } from '../ui/kit.js';
+
+/** Common field paths offered as suggestions for a 'field' rule. */
+const FIELD_SUGGESTIONS = [
+  'email_status',
+  'total_events',
+  'monetary_total',
+  'last_event_at',
+  'attributes.tier',
+  'attributes.source',
+  'features.counters.purchase_30d',
+];
+/** Friendly labels for the event count operator. */
+const EVENT_OP_LABEL: Record<EventCountOp, string> = {
+  occurred: 'has been performed',
+  '>=': 'performed ≥ N times',
+  '>': 'performed > N times',
+  '=': 'performed exactly N times',
+  '<=': 'performed ≤ N times',
+  '<': 'performed < N times',
+};
 
 /**
  * SegmentBuilder is the DESIGNATED create/edit screen. With no `id` it creates a
@@ -51,6 +77,25 @@ export function SegmentBuilder({ id }: { id?: string }) {
 
   const update = (i: number, patch: Partial<RuleRow>) =>
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const removeRow = (i: number) => setRows((rs) => rs.filter((_, idx) => idx !== i));
+  // Switching kind resets the row to a clean default of that kind.
+  const setKind = (i: number, kind: RuleKind) =>
+    setRows((rs) => rs.map((r, idx) => (idx === i ? (kind === 'event' ? emptyEventRow() : emptyRow()) : r)));
+  // Event payload ("event attribute") sub-condition editing.
+  const setCond = (i: number, j: number, patch: Partial<EventCondition>) =>
+    setRows((rs) =>
+      rs.map((r, idx) =>
+        idx === i ? { ...r, conditions: (r.conditions ?? []).map((c, k) => (k === j ? { ...c, ...patch } : c)) } : r,
+      ),
+    );
+  const addCond = (i: number) =>
+    setRows((rs) =>
+      rs.map((r, idx) => (idx === i ? { ...r, conditions: [...(r.conditions ?? []), emptyEventCondition()] } : r)),
+    );
+  const removeCond = (i: number, j: number) =>
+    setRows((rs) =>
+      rs.map((r, idx) => (idx === i ? { ...r, conditions: (r.conditions ?? []).filter((_, k) => k !== j) } : r)),
+    );
 
   const preview = async () => {
     const ast = buildAst(rows, combinator);
@@ -128,52 +173,202 @@ export function SegmentBuilder({ id }: { id?: string }) {
               </Field>
             </div>
 
-            <div class="mt-5 space-y-2">
-              <span class="label">Rules</span>
-              {rows.map((row, i) => (
-                <div
-                  data-testid="rule-row"
-                  key={i}
-                  class="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 bg-stone-50/60 p-2"
-                >
-                  <Input
-                    data-testid="rule-field"
-                    class="min-w-[12rem] flex-1 font-mono text-xs"
-                    placeholder="features.counters.purchase_30d"
-                    value={row.field}
-                    onInput={(e: Event) => update(i, { field: (e.target as HTMLInputElement).value })}
-                  />
-                  <Select
-                    data-testid="rule-operator"
-                    class="w-28"
-                    value={row.operator}
-                    onChange={(e: Event) =>
-                      update(i, { operator: (e.target as HTMLSelectElement).value as BuilderOperator })
-                    }
-                  >
-                    {BUILDER_OPERATORS.map((op) => (
-                      <option key={op} value={op}>
-                        {op}
-                      </option>
-                    ))}
-                  </Select>
-                  <Input
-                    data-testid="rule-value"
-                    class="w-32"
-                    placeholder="value"
-                    value={row.value}
-                    onInput={(e: Event) => update(i, { value: (e.target as HTMLInputElement).value })}
-                  />
-                </div>
+            <datalist id="field-suggestions">
+              {FIELD_SUGGESTIONS.map((f) => (
+                <option key={f} value={f} />
               ))}
-              <Button
-                data-testid="add-rule"
-                variant="ghost"
-                size="sm"
-                onClick={() => setRows((rs) => [...rs, emptyRow()])}
-              >
-                + Add rule
-              </Button>
+            </datalist>
+
+            <div class="mt-5 space-y-3">
+              <span class="label">Rules</span>
+              {rows.map((row, i) => {
+                const kind: RuleKind = row.kind ?? 'field';
+                return (
+                  <div
+                    data-testid="rule-row"
+                    key={i}
+                    class="rounded-xl border border-stone-200 bg-stone-50/60 p-3"
+                  >
+                    {/* Row header: kind selector + remove */}
+                    <div class="mb-2 flex items-center gap-2">
+                      <Select
+                        data-testid="rule-kind"
+                        class="w-32"
+                        value={kind}
+                        onChange={(e: Event) => setKind(i, (e.target as HTMLSelectElement).value as RuleKind)}
+                      >
+                        <option value="field">Attribute / field</option>
+                        <option value="event">Event</option>
+                      </Select>
+                      {rows.length > 1 ? (
+                        <Button
+                          data-testid="rule-remove"
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Remove rule"
+                          onClick={() => removeRow(i)}
+                          class="ml-auto"
+                        >
+                          ✕
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    {kind === 'field' ? (
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Input
+                          data-testid="rule-field"
+                          list="field-suggestions"
+                          class="min-w-[12rem] flex-1 font-mono text-xs"
+                          placeholder="email_status, attributes.tier, features.counters.purchase_30d…"
+                          value={row.field}
+                          onInput={(e: Event) => update(i, { field: (e.target as HTMLInputElement).value })}
+                        />
+                        <Select
+                          data-testid="rule-operator"
+                          class="w-28"
+                          value={row.operator}
+                          onChange={(e: Event) =>
+                            update(i, { operator: (e.target as HTMLSelectElement).value as BuilderOperator })
+                          }
+                        >
+                          {BUILDER_OPERATORS.map((op) => (
+                            <option key={op} value={op}>
+                              {op}
+                            </option>
+                          ))}
+                        </Select>
+                        {row.operator !== 'exists' ? (
+                          <Input
+                            data-testid="rule-value"
+                            class="w-40"
+                            placeholder="value"
+                            value={row.value}
+                            onInput={(e: Event) => update(i, { value: (e.target as HTMLInputElement).value })}
+                          />
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div class="space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="text-sm text-stone-500">did event</span>
+                          <Input
+                            data-testid="event-name"
+                            class="min-w-[10rem] flex-1 font-mono text-xs"
+                            placeholder="e.g. lead, purchase"
+                            value={row.field}
+                            onInput={(e: Event) => update(i, { field: (e.target as HTMLInputElement).value })}
+                          />
+                          <Select
+                            data-testid="event-op"
+                            class="w-56"
+                            value={row.eventOp ?? 'occurred'}
+                            onChange={(e: Event) =>
+                              update(i, { eventOp: (e.target as HTMLSelectElement).value as EventCountOp })
+                            }
+                          >
+                            {EVENT_COUNT_OPS.map((op) => (
+                              <option key={op} value={op}>
+                                {EVENT_OP_LABEL[op]}
+                              </option>
+                            ))}
+                          </Select>
+                          {(row.eventOp ?? 'occurred') !== 'occurred' ? (
+                            <Input
+                              data-testid="event-count"
+                              type="number"
+                              class="w-20"
+                              placeholder="N"
+                              value={row.value}
+                              onInput={(e: Event) => update(i, { value: (e.target as HTMLInputElement).value })}
+                            />
+                          ) : null}
+                        </div>
+
+                        {/* Event payload ("event attribute") filters */}
+                        <div class="rounded-lg border border-stone-200 bg-white p-2.5">
+                          <p class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+                            with all of these event attributes
+                          </p>
+                          {(row.conditions ?? []).length === 0 ? (
+                            <p class="text-xs text-stone-400">No event-attribute filters.</p>
+                          ) : null}
+                          {(row.conditions ?? []).map((c, j) => (
+                            <div data-testid="event-cond-row" key={j} class="mt-1.5 flex flex-wrap items-center gap-2">
+                              <Input
+                                data-testid="event-cond-field"
+                                class="min-w-[8rem] flex-1 font-mono text-xs"
+                                placeholder="payload key (e.g. interest)"
+                                value={c.field}
+                                onInput={(e: Event) => setCond(i, j, { field: (e.target as HTMLInputElement).value })}
+                              />
+                              <Select
+                                data-testid="event-cond-op"
+                                class="w-24"
+                                value={c.operator}
+                                onChange={(e: Event) =>
+                                  setCond(i, j, { operator: (e.target as HTMLSelectElement).value as BuilderOperator })
+                                }
+                              >
+                                {BUILDER_OPERATORS.map((op) => (
+                                  <option key={op} value={op}>
+                                    {op}
+                                  </option>
+                                ))}
+                              </Select>
+                              {c.operator !== 'exists' ? (
+                                <Input
+                                  data-testid="event-cond-value"
+                                  class="w-36"
+                                  placeholder="value"
+                                  value={c.value}
+                                  onInput={(e: Event) => setCond(i, j, { value: (e.target as HTMLInputElement).value })}
+                                />
+                              ) : null}
+                              <Button
+                                data-testid="event-cond-remove"
+                                variant="ghost"
+                                size="sm"
+                                aria-label="Remove event attribute filter"
+                                onClick={() => removeCond(i, j)}
+                              >
+                                ✕
+                              </Button>
+                            </div>
+                          ))}
+                          <Button
+                            data-testid="event-cond-add"
+                            variant="ghost"
+                            size="sm"
+                            class="mt-1.5"
+                            onClick={() => addCond(i)}
+                          >
+                            + Add event attribute filter
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <div class="flex flex-wrap gap-2">
+                <Button
+                  data-testid="add-rule"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRows((rs) => [...rs, emptyRow()])}
+                >
+                  + Add field rule
+                </Button>
+                <Button
+                  data-testid="add-event-rule"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRows((rs) => [...rs, emptyEventRow()])}
+                >
+                  + Add event rule
+                </Button>
+              </div>
             </div>
 
             <div class="mt-5 flex flex-wrap items-center gap-3 border-t border-stone-100 pt-4">

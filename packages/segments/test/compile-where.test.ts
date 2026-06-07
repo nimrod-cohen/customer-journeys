@@ -5,6 +5,7 @@ import {
   resolveField,
   resolveOperator,
   SCALAR_FEATURE_FIELDS,
+  SCALAR_PROFILE_FIELDS,
   type AstNode,
 } from '../src/compile.js';
 
@@ -210,6 +211,96 @@ describe('validateAst (shape guard)', () => {
   });
   it('rejects a leaf missing field/operator', () => {
     expect(() => validateAst({ field: '', operator: '=' } as unknown as AstNode)).toThrow();
+  });
+});
+
+describe('profile scalar fields (email_status etc.) — "unsubscribers"', () => {
+  it('maps email_status to the profiles column', () => {
+    expect(resolveField('email_status').mapping).toEqual({ kind: 'scalar', column: 'p.email_status' });
+  });
+
+  it('compiles email_status = unsubscribed as a parameterized predicate', () => {
+    const q = compileWhere(WS, { field: 'email_status', operator: '=', value: 'unsubscribed' });
+    expect(q.text).toBe('p.workspace_id = $1 AND (p.email_status = $2)');
+    expect(q.values).toEqual([WS, 'unsubscribed']);
+    expect(q.text).not.toContain('unsubscribed');
+  });
+});
+
+describe('event predicates — "people who did an event"', () => {
+  it('occurred (no count) → workspace-scoped EXISTS over events', () => {
+    const q = compileWhere(WS, { event: 'purchase' } as AstNode);
+    expect(q.text).toBe(
+      'p.workspace_id = $1 AND (EXISTS (SELECT 1 FROM events e WHERE ' +
+        'e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $2))',
+    );
+    expect(q.values).toEqual([WS, 'purchase']);
+    // The event type is a bound param, never concatenated.
+    expect(q.text).not.toContain('purchase');
+  });
+
+  it('count test → (SELECT count(*) …) <op> $n', () => {
+    const q = compileWhere(WS, { event: 'purchase', operator: '>=', value: 2 } as AstNode);
+    expect(q.text).toBe(
+      'p.workspace_id = $1 AND ((SELECT count(*) FROM events e WHERE ' +
+        'e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $2) >= $3)',
+    );
+    expect(q.values).toEqual([WS, 'purchase', 2]);
+  });
+
+  it('payload conditions (event attributes) bind key + value as params', () => {
+    const q = compileWhere(WS, {
+      event: 'lead',
+      where: [{ field: 'payload.interest', operator: '=', value: 'strategies-webinar' }],
+    } as AstNode);
+    expect(q.text).toBe(
+      'p.workspace_id = $1 AND (EXISTS (SELECT 1 FROM events e WHERE ' +
+        'e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $2 AND (e.payload ->> $3) = $4))',
+    );
+    expect(q.values).toEqual([WS, 'lead', 'interest', 'strategies-webinar']);
+    expect(q.text).not.toContain('strategies-webinar');
+    expect(q.text).not.toContain('interest');
+  });
+
+  it('workspace_id is bound at $1 INSIDE the subquery (no cross-tenant events)', () => {
+    const q = compileWhere(WS, { event: 'x' } as AstNode);
+    // Two references to $1: the outer profile scope and the inner events scope.
+    expect(q.text.match(/e\.workspace_id = \$1/g)).toHaveLength(1);
+    expect(q.values[0]).toBe(WS);
+  });
+
+  it('an event payload field NOT prefixed payload.* is rejected', () => {
+    expect(() =>
+      validateAst({ event: 'x', where: [{ field: 'attributes.k', operator: '=', value: 1 }] } as AstNode),
+    ).toThrow();
+  });
+
+  it('an invalid event count operator is rejected', () => {
+    expect(() =>
+      validateAst({ event: 'x', operator: 'LIKE', value: 1 } as unknown as AstNode),
+    ).toThrow();
+  });
+
+  it('combines with field conditions in a group', () => {
+    const q = compileWhere(WS, {
+      op: 'and',
+      conditions: [
+        { field: 'email_status', operator: '=', value: 'active' },
+        { event: 'purchase', operator: '>=', value: 1 },
+      ],
+    } as AstNode);
+    expect(q.text).toBe(
+      'p.workspace_id = $1 AND (' +
+        '(p.email_status = $2 AND ' +
+        '(SELECT count(*) FROM events e WHERE e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $3) >= $4))',
+    );
+    expect(q.values).toEqual([WS, 'active', 'purchase', 1]);
+  });
+});
+
+describe('SCALAR_PROFILE_FIELDS export', () => {
+  it('includes email_status mapped to p.email_status', () => {
+    expect(SCALAR_PROFILE_FIELDS.email_status).toBe('p.email_status');
   });
 });
 

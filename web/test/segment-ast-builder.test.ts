@@ -62,10 +62,16 @@ describe('segment AST builder', () => {
     // null definition (manual / match-all) → one blank starter row.
     expect(rowsFromAst(null).rows.length).toBe(1);
 
-    // A single bare condition round-trips to one row.
+    // A single bare condition round-trips to one field row.
     const single = rowsFromAst({ field: 'attributes.tier', operator: '=', value: 'vip' });
     expect(single.combinator).toBe('and');
-    expect(single.rows).toEqual([{ field: 'attributes.tier', operator: '=', value: 'vip' }]);
+    expect(single.rows).toHaveLength(1);
+    expect(single.rows[0]).toMatchObject({
+      kind: 'field',
+      field: 'attributes.tier',
+      operator: '=',
+      value: 'vip',
+    });
 
     // A group round-trips back to the same AST through buildAst (stable).
     const rows: RuleRow[] = [
@@ -80,6 +86,64 @@ describe('segment AST builder', () => {
     // 'in' arrays stringify back to a comma list the input understands.
     const inAst = buildAst([{ field: 'attributes.tier', operator: 'in', value: 'a, b' }], 'and');
     expect(rowsFromAst(inAst).rows[0]!.value).toBe('a, b');
+  });
+
+  it('builds an EVENT node from an event row (occurred + payload) and compiles it', () => {
+    const rows: RuleRow[] = [
+      {
+        kind: 'event',
+        field: 'lead',
+        operator: '=',
+        value: '',
+        eventOp: 'occurred',
+        conditions: [{ field: 'interest', operator: '=', value: 'webinar' }],
+      },
+    ];
+    const ast = buildAst(rows, 'and');
+    expect(ast).toEqual({
+      event: 'lead',
+      where: [{ field: 'payload.interest', operator: '=', value: 'webinar' }],
+    });
+    const sql = compileWhere(WS, ast as never);
+    expect(sql.text).toContain('EXISTS (SELECT 1 FROM events e');
+    expect(sql.text).toContain('e.workspace_id = $1');
+    expect(sql.text).not.toContain('webinar'); // value is a bound param
+  });
+
+  it('builds an event COUNT node (did ≥ N times)', () => {
+    const rows: RuleRow[] = [
+      { kind: 'event', field: 'purchase', operator: '=', value: '2', eventOp: '>=', conditions: [] },
+    ];
+    expect(buildAst(rows, 'and')).toEqual({ event: 'purchase', operator: '>=', value: 2 });
+  });
+
+  it('builds a profile-field node (email_status = unsubscribed) and compiles it', () => {
+    const rows: RuleRow[] = [
+      { kind: 'field', field: 'email_status', operator: '=', value: 'unsubscribed' },
+    ];
+    expect(buildAst(rows, 'and')).toEqual({
+      field: 'email_status',
+      operator: '=',
+      value: 'unsubscribed',
+    });
+    const sql = compileWhere(WS, buildAst(rows, 'and') as never);
+    expect(sql.text).toContain('p.email_status = $2');
+  });
+
+  it('rowsFromAst reconstructs an event row from an EventNode', () => {
+    const back = rowsFromAst({
+      event: 'lead',
+      operator: '>=',
+      value: 3,
+      where: [{ field: 'payload.interest', operator: '=', value: 'webinar' }],
+    });
+    expect(back.rows[0]).toMatchObject({
+      kind: 'event',
+      field: 'lead',
+      eventOp: '>=',
+      value: '3',
+    });
+    expect(back.rows[0]!.conditions?.[0]).toMatchObject({ field: 'interest', operator: '=', value: 'webinar' });
   });
 
   it('an exists row compiles to a value-less predicate', () => {

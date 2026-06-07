@@ -8,11 +8,13 @@ export {
   resolveField,
   resolveOperator,
   SCALAR_FEATURE_FIELDS,
+  SCALAR_PROFILE_FIELDS,
   OPERATORS,
   type SqlStatement,
   type AstNode,
   type GroupNode,
   type ConditionNode,
+  type EventNode,
   type OperatorToken,
   type ResolvedField,
 } from './compile.js';
