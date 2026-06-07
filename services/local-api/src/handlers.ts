@@ -432,7 +432,24 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
 // profiles (manage_content)
 // ---------------------------------------------------------------------------
 
-export const listProfiles: Handler = async (ctx, pool) => {
+export const listProfiles: Handler = async (ctx, pool, req) => {
+  // Optional ?segment_id=… narrows to that segment's members. Both the profile
+  // AND the membership are scoped to the token's workspace (workspace_id = $1),
+  // so a cross-workspace segment id can never surface another tenant's profiles.
+  const segmentId = req.query.segment_id;
+  if (segmentId) {
+    const { rows } = await pool.query(
+      `SELECT p.id, p.external_id, p.email, p.email_status
+         FROM profiles p
+         JOIN segment_memberships sm
+           ON sm.profile_id = p.id AND sm.workspace_id = p.workspace_id
+        WHERE p.workspace_id = $1 AND sm.segment_id = $2
+        ORDER BY p.created_at DESC
+        LIMIT 200`,
+      [ctx.workspaceId, segmentId],
+    );
+    return ok({ profiles: rows });
+  }
   // Explicit workspace_id = $1 scoping (the token's workspace), since this query
   // carries ORDER BY/LIMIT that scopedQuery's WHERE-rewriter cannot wrap.
   const { rows } = await pool.query(

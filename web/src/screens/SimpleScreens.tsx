@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { Badge, Card, EmptyState, Input, PageHeader, Stat, toneFor } from '../ui/kit.js';
+import { Badge, Card, EmptyState, Input, PageHeader, Select, Stat, toneFor } from '../ui/kit.js';
 
 export function Dashboards() {
   const [s, setS] = useState<Record<string, number> | null>(null);
@@ -36,12 +36,26 @@ interface Profile {
   email_status: string;
 }
 
+interface SegmentOption {
+  id: string;
+  name: string;
+}
+
 export function ProfileExplorer() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [segments, setSegments] = useState<SegmentOption[]>([]);
+  const [segmentId, setSegmentId] = useState('');
   const [q, setQ] = useState('');
+  // The segment list populates the filter dropdown.
   useEffect(() => {
-    void api.get<{ profiles: Profile[] }>('/profiles').then((r) => setProfiles(r.profiles));
+    void api.get<{ segments: SegmentOption[] }>('/segments').then((r) => setSegments(r.segments));
   }, []);
+  // Reload profiles whenever the segment filter changes (server-side membership
+  // filter; text search stays client-side on top of the result).
+  useEffect(() => {
+    const opts = segmentId ? { query: { segment_id: segmentId } } : undefined;
+    void api.get<{ profiles: Profile[] }>('/profiles', opts).then((r) => setProfiles(r.profiles));
+  }, [segmentId]);
   const needle = q.trim().toLowerCase();
   const shown = needle
     ? profiles.filter(
@@ -53,14 +67,28 @@ export function ProfileExplorer() {
   return (
     <section data-testid="profile-explorer">
       <PageHeader title="Profiles" subtitle="Unified customer profiles in this workspace." />
-      <div class="mb-4 max-w-sm">
+      <div class="mb-4 flex flex-wrap items-center gap-3">
         <Input
           data-testid="profile-search"
+          class="max-w-sm flex-1"
           type="search"
           placeholder="Search by email or external ID…"
           value={q}
           onInput={(e: Event) => setQ((e.target as HTMLInputElement).value)}
         />
+        <Select
+          data-testid="profile-segment-filter"
+          class="w-56"
+          value={segmentId}
+          onChange={(e: Event) => setSegmentId((e.target as HTMLSelectElement).value)}
+        >
+          <option value="">All segments</option>
+          {segments.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </Select>
       </div>
       <Card class="overflow-x-auto">
         <table class="w-full text-sm">
@@ -103,7 +131,13 @@ export function ProfileExplorer() {
         </table>
         {shown.length === 0 ? (
           <div class="p-4">
-            <EmptyState>{profiles.length === 0 ? 'No profiles yet.' : 'No profiles match your search.'}</EmptyState>
+            <EmptyState>
+              {profiles.length === 0
+                ? segmentId
+                  ? 'No profiles in this segment.'
+                  : 'No profiles yet.'
+                : 'No profiles match your search.'}
+            </EmptyState>
           </div>
         ) : null}
       </Card>

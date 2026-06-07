@@ -11,6 +11,7 @@ const WS_A = '0d1e2f03-0000-4000-8000-000000000a01';
 const WS_B = '0d1e2f03-0000-4000-8000-000000000a02';
 const USER = '0d1e2f03-0000-4000-8000-0000000000b1'; // owner of A only
 const P_A = '0d1e2f03-0000-4000-8000-0000000000c1';
+const P_A2 = '0d1e2f03-0000-4000-8000-0000000000c3'; // in A, NOT in the segment
 const P_B = '0d1e2f03-0000-4000-8000-0000000000c2';
 const SEG_A = '0d1e2f03-0000-4000-8000-0000000000d1';
 const EV_1 = '0d1e2f03-0000-4000-8000-0000000000e1';
@@ -40,6 +41,11 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     await world.pool.query(
       'INSERT INTO profile_features (profile_id, workspace_id, total_events) VALUES ($1,$2,2)',
       [P_A, WS_A],
+    );
+    // A second A profile that is NOT in the segment (proves the filter excludes).
+    await world.pool.query(
+      "INSERT INTO profiles (id, workspace_id, external_id, email) VALUES ($1,$2,'a2','a2@acme.com')",
+      [P_A2, WS_A],
     );
     await world.pool.query(
       "INSERT INTO profiles (id, workspace_id, external_id, email) VALUES ($1,$2,'b1','b1@beta.com')",
@@ -136,6 +142,24 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     const r = await call(world.env, 'GET', `/profiles/${P_B}/events`, { token: tokA() });
     expect(r.status).toBe(200);
     expect((r.body as { events: unknown[] }).events).toHaveLength(0);
+  });
+
+  it('GET /profiles?segment_id=… returns ONLY that segment\'s members (scoped)', async () => {
+    const r = await call(world.env, 'GET', '/profiles', {
+      token: tokA(),
+      query: { segment_id: SEG_A },
+    });
+    expect(r.status).toBe(200);
+    const ids = (r.body as { profiles: { id: string }[] }).profiles.map((p) => p.id);
+    expect(ids).toContain(P_A); // a member
+    expect(ids).not.toContain(P_A2); // same workspace, NOT a member
+  });
+
+  it('GET /profiles with no filter returns all workspace profiles', async () => {
+    const r = await call(world.env, 'GET', '/profiles', { token: tokA() });
+    const ids = (r.body as { profiles: { id: string }[] }).profiles.map((p) => p.id);
+    expect(ids).toEqual(expect.arrayContaining([P_A, P_A2]));
+    expect(ids).not.toContain(P_B); // never another tenant's profile
   });
 
   it('GET /profiles/:id/segments lists the segments the profile is in', async () => {

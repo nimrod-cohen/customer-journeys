@@ -41,3 +41,21 @@ test('open a profile, edit it, add an attribute, view events and segments', asyn
   await page.getByTestId('tab-segments').click();
   await expect(page.getByTestId('profile-segment-row')).toContainText('Manual VIPs');
 });
+
+test('filter the profiles list by segment membership', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+
+  // All three seeded A profiles are listed unfiltered.
+  await expect(page.getByTestId('profile-row')).toHaveCount(3);
+
+  // Filtering by the manual segment a1 belongs to narrows to just a1.
+  await page.getByTestId('profile-segment-filter').selectOption({ label: 'Manual VIPs' });
+  await expect(page.getByTestId('profile-row')).toHaveCount(1);
+  await expect(page.getByTestId('profile-row').first()).toContainText('a1@acme.com');
+
+  // Clearing the filter restores the full list.
+  await page.getByTestId('profile-segment-filter').selectOption({ label: 'All segments' });
+  await expect(page.getByTestId('profile-row')).toHaveCount(3);
+});
