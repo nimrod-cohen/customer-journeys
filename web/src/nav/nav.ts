@@ -28,6 +28,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'settings', label: 'Workspace settings', path: '/settings', capability: 'manage_workspace_users' },
   { id: 'onboarding', label: 'Domain onboarding', path: '/onboarding', capability: 'manage_sending_domain' },
   { id: 'admin', label: 'System admin', path: '/admin', capability: 'view_all_workspaces' },
+  // Help is reference material — always visible to any authenticated user.
+  { id: 'help', label: 'Help', path: '/help', capability: null },
 ];
 
 /**

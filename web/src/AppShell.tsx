@@ -23,6 +23,7 @@ import {
   BillingUsageView,
 } from './screens/SimpleScreens.js';
 import { ProfileDetail } from './screens/ProfileDetail.js';
+import { Help } from './screens/Help.js';
 import { EmailEditor } from './EmailEditor.js';
 import type { JSX } from 'preact';
 
@@ -62,6 +63,8 @@ function screenFor(path: string): JSX.Element {
       return <OnboardingWizard />;
     case '/admin':
       return <SystemAdminConsole />;
+    case '/help':
+      return <Help />;
     case '/dashboards':
     default:
       return <Dashboards />;
