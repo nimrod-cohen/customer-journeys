@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-07T11:34:27.862Z",
+  "data": {
+    "effectId": "01KTGXSR8541MZHNXKANESGAES",
+    "invocationKey": "cdp/app-completion:S000022:implement-phase",
+    "invocationHash": "13d1afb55947f6323c585be4bdf922492aedf350c3d4dcf7db45a82de329d249",
+    "stepId": "S000022",
+    "taskId": "implement-phase",
+    "kind": "agent",
+    "label": "implement",
+    "taskDefRef": "tasks/01KTGXSR8541MZHNXKANESGAES/task.json",
+    "labels": [
+      "implement",
+      "phase13-metering",
+      "iteration-1"
+    ]
+  },
+  "checksum": "5dba9a70dbfa4bb434685bab19a7b64940f5f0e151e44c3eca30c9fba248382b"
+}

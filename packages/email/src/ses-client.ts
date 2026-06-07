@@ -8,6 +8,7 @@ import {
   CreateEmailIdentityCommand,
   GetEmailIdentityCommand,
   CreateConfigurationSetCommand,
+  CreateDedicatedIpPoolCommand,
   SendEmailCommand,
 } from '@aws-sdk/client-sesv2';
 
@@ -82,6 +83,12 @@ export interface SesEmailClient {
   ): Promise<IdentityVerificationAttributes>;
   createConfigurationSet(name: string): Promise<void>;
   sendEmail(input: SendEmailInput): Promise<SendEmailResult>;
+  /**
+   * Provision a STANDARD dedicated IP pool (§10). The upgrade orchestrator calls
+   * this FIRST; only if it succeeds does it write the ip_mode DB transition, so
+   * a provisioning failure leaves the workspace on the shared pool.
+   */
+  provisionDedicatedIp(poolName: string): Promise<void>;
 }
 
 function normalizeDkimStatus(status: string | undefined): DkimStatus {
@@ -139,6 +146,12 @@ export class ProdSesEmailClient implements SesEmailClient {
   async createConfigurationSet(name: string): Promise<void> {
     await this.client.send(
       new CreateConfigurationSetCommand({ ConfigurationSetName: name }),
+    );
+  }
+
+  async provisionDedicatedIp(poolName: string): Promise<void> {
+    await this.client.send(
+      new CreateDedicatedIpPoolCommand({ PoolName: poolName, ScalingMode: 'STANDARD' }),
     );
   }
 

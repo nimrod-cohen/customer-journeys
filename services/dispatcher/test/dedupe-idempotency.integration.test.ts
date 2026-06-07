@@ -31,6 +31,9 @@ class CountingSes implements SesEmailClient {
   async createConfigurationSet() {
     /* no-op */
   }
+  async provisionDedicatedIp() {
+    /* no-op */
+  }
 }
 
 describe.skipIf(!RUN)('dispatcher dedupe / idempotency (real Postgres)', () => {

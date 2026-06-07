@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-07T11:29:45.074Z",
+  "data": {
+    "effectId": "01KTGXH42XQJ8NYZRRFB0N1KG5",
+    "invocationKey": "cdp/app-completion:S000021:plan-phase",
+    "invocationHash": "73cfaebcf32a3897988550c571484fcd2031b9468e299e264ef9ea9af8d1526b",
+    "stepId": "S000021",
+    "taskId": "plan-phase",
+    "kind": "agent",
+    "label": "plan",
+    "taskDefRef": "tasks/01KTGXH42XQJ8NYZRRFB0N1KG5/task.json",
+    "labels": [
+      "plan",
+      "phase13-metering"
+    ]
+  },
+  "checksum": "3e7a38e2304d93e9c4b5b958875effea3e7b6c182f7f2a0d0f8bcc93328369e5"
+}

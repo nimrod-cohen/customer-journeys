@@ -377,6 +377,9 @@ importers:
       '@cdp/service-campaign-runner':
         specifier: workspace:*
         version: link:../campaign-runner
+      '@cdp/service-metering':
+        specifier: workspace:*
+        version: link:../metering
       '@cdp/service-onboarding':
         specifier: workspace:*
         version: link:../onboarding
@@ -403,7 +406,27 @@ importers:
         specifier: ^4.16.0
         version: 4.22.4
 
-  services/metering: {}
+  services/metering:
+    dependencies:
+      '@cdp/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cdp/email':
+        specifier: workspace:*
+        version: link:../../packages/email
+      '@cdp/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      pg:
+        specifier: ^8.12.0
+        version: 8.21.0
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.140
+        version: 8.10.162
+      '@types/pg':
+        specifier: ^8.11.6
+        version: 8.20.0
 
   services/onboarding:
     dependencies:

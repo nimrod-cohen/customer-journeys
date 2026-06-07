@@ -100,6 +100,9 @@ class CountingSes implements SesEmailClient {
   async createConfigurationSet() {
     /* no-op */
   }
+  async provisionDedicatedIp() {
+    /* no-op */
+  }
 }
 
 /** Onboarding SES fake parameterized by the DKIM status it reports (the gate). */

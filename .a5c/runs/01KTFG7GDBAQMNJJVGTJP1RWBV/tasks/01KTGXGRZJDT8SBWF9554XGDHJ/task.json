@@ -1,0 +1,90 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "criteria": [
+            "Login (Supabase Auth) + a workspace switcher: a user in two workspaces sees only the active workspace; switching re-scopes all reads/writes (no cross-bleed). Verified in a real browser (Playwright).",
+            "Role-aware UI (§3A): marketer cannot see/use user/domain/billing admin; accounting sees billing but cannot edit segments/campaigns; owner can do both; system-admin sees the cross-company console. Verified in-browser per role.",
+            "The core screens work end-to-end against the local API: build a segment (dynamic + manual), compose+send a broadcast, build a campaign, view dashboards/suppressions/profiles — exercising the real phase 2–11 backends.",
+            "The API enforces role + workspace scope regardless of the UI (a forbidden action is rejected server-side, not just hidden)."
+          ],
+          "frontend": true,
+          "id": "phase12-frontend",
+          "scope": [
+            "A Vite + Preact (or React) SPA in /web wired to the API Gateway REST API (via the Lambda handlers; stand up a LOCAL API — e.g. a thin adapter/serverless-offline + LocalStack — so the SPA + Playwright run end-to-end locally). Supabase Auth login + a workspace switcher that sets the active workspace_id claim and re-scopes the app.",
+            "Role-aware, workspace-scoped screens (§3A capability matrix): workspace onboarding wizard (§10A), workspace settings (members+roles, sending domain status), segment builder (dynamic rule-AST + manual hand-pick/CSV) with live size preview, broadcast composer, campaign/workflow visual builder (trigger/wait/condition/action/exit), email editor (GrapesJS+MJML from phase 11), dashboards (deliverability/segment sizes/send volume), suppression list, profile explorer, billing/usage view (owner+accounting), system-admin cross-company console (system-admin only).",
+            "The UI shows only what the role permits AND is scoped to the active workspace; the API still enforces roles + scope independently."
+          ],
+          "specSections": "§12 (Vite SPA, Supabase Auth, workspace switcher, role-aware + workspace-scoped UI, segment builder dynamic+manual, broadcast composer, campaign/workflow builder, email editor, dashboards, suppression list, profile explorer, billing/usage view, system-admin console), §3A (roles), §10A (onboarding wizard UI)",
+          "title": "Admin frontend (role-aware SPA)"
+        },
+        "score": 95
+      },
+      "instructions": [
+        "Run `git add -A`.",
+        "Commit with a clear conventional message describing the phase (Admin frontend (role-aware SPA)), gate score (95), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Admin frontend (role-aware SPA)\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTGXGRZJDT8SBWF9554XGDHJ/input.json",
+    "outputJsonPath": "tasks/01KTGXGRZJDT8SBWF9554XGDHJ/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "phase12-frontend"
+  ],
+  "title": "Commit: Admin frontend (role-aware SPA)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTGXGRZJDT8SBWF9554XGDHJ",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/app-completion:S000020:commit-phase",
+  "stepId": "S000020",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "criteria": [
+        "Login (Supabase Auth) + a workspace switcher: a user in two workspaces sees only the active workspace; switching re-scopes all reads/writes (no cross-bleed). Verified in a real browser (Playwright).",
+        "Role-aware UI (§3A): marketer cannot see/use user/domain/billing admin; accounting sees billing but cannot edit segments/campaigns; owner can do both; system-admin sees the cross-company console. Verified in-browser per role.",
+        "The core screens work end-to-end against the local API: build a segment (dynamic + manual), compose+send a broadcast, build a campaign, view dashboards/suppressions/profiles — exercising the real phase 2–11 backends.",
+        "The API enforces role + workspace scope regardless of the UI (a forbidden action is rejected server-side, not just hidden)."
+      ],
+      "frontend": true,
+      "id": "phase12-frontend",
+      "scope": [
+        "A Vite + Preact (or React) SPA in /web wired to the API Gateway REST API (via the Lambda handlers; stand up a LOCAL API — e.g. a thin adapter/serverless-offline + LocalStack — so the SPA + Playwright run end-to-end locally). Supabase Auth login + a workspace switcher that sets the active workspace_id claim and re-scopes the app.",
+        "Role-aware, workspace-scoped screens (§3A capability matrix): workspace onboarding wizard (§10A), workspace settings (members+roles, sending domain status), segment builder (dynamic rule-AST + manual hand-pick/CSV) with live size preview, broadcast composer, campaign/workflow visual builder (trigger/wait/condition/action/exit), email editor (GrapesJS+MJML from phase 11), dashboards (deliverability/segment sizes/send volume), suppression list, profile explorer, billing/usage view (owner+accounting), system-admin cross-company console (system-admin only).",
+        "The UI shows only what the role permits AND is scoped to the active workspace; the API still enforces roles + scope independently."
+      ],
+      "specSections": "§12 (Vite SPA, Supabase Auth, workspace switcher, role-aware + workspace-scoped UI, segment builder dynamic+manual, broadcast composer, campaign/workflow builder, email editor, dashboards, suppression list, profile explorer, billing/usage view, system-admin console), §3A (roles), §10A (onboarding wizard UI)",
+      "title": "Admin frontend (role-aware SPA)"
+    },
+    "score": 95
+  }
+}

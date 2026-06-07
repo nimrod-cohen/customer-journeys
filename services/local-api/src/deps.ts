@@ -55,6 +55,9 @@ export function makeLocalSes(): SesEmailClient {
     async sendEmail(_input: SendEmailInput): Promise<SendEmailResult> {
       return { sesMessageId: `local-${Date.now()}` };
     },
+    async provisionDedicatedIp(): Promise<void> {
+      /* no-op locally */
+    },
   };
 }
 

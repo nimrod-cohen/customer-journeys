@@ -35,6 +35,9 @@ class CountingSes implements SesEmailClient {
   async createConfigurationSet() {
     /* no-op */
   }
+  async provisionDedicatedIp() {
+    /* no-op */
+  }
 }
 
 class CapturingSqs {

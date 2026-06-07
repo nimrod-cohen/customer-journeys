@@ -1,0 +1,429 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commandsRun": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "e2eSummary": {
+          "type": "string"
+        },
+        "filesCreated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesModified": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "lintOk": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "testsPass": {
+          "type": "boolean"
+        },
+        "testSummary": {
+          "type": "string"
+        },
+        "typecheckOk": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "filesCreated",
+        "filesModified",
+        "testsPass"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "env": "Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp (migrations applied). turbo test task is cache:false. Docker is available for LocalStack. For UI: build a runnable local app + local API adapter so Playwright can drive it.",
+        "firstIteration": true,
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
+          "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
+          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
+          "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no features beyond the spec. Keep the cost model EXACTLY as §20 (direct usage + even split of fixed costs)."
+        ],
+        "iteration": 1,
+        "loop": "Backend phase: pure unit tests + DB-integration against REAL local Postgres (localhost:5433); mock AWS (aws-sdk-client-mock) / LocalStack. No frontend.",
+        "phase": {
+          "criteria": [
+            "Per-workspace emails_sent / events_ingested reconcile with messages_log / events.",
+            "The cost view = direct usage cost + an equal share of fixed costs; per-workspace figures sum to the true total (worked example from §20 holds).",
+            "The IP-advisor recommends a dedicated IP only when sustained-volume + cadence + reputation criteria are all met; one-off spikes do not trigger it.",
+            "The upgrade-ip flow provisions a dedicated IP, warms it gradually (split routing), and tracks ip_mode/warmup_status; the $24.95 lands only on upgraded workspaces."
+          ],
+          "frontend": false,
+          "id": "phase13-metering",
+          "scope": [
+            "services/metering: a scheduled rollup job populating usage_counters (emails_sent from messages_log, events_ingested, image bytes) and a per-workspace monthly cost computation using the EXACT §20 hybrid policy: direct/variable costs attributed to the workspace (emails_sent x $0.0001, dedicated IP $24.95 if upgraded, image bytes) PLUS an EQUAL share of the fixed pool (fixed_total / active_workspace_count). Per-workspace figures must sum to the true total.",
+            "A monthly IP-advisor job that recommends a dedicated IP only when ALL hold: sustained volume (~100k/mo for 2-3 consecutive months), consistent cadence, healthy reputation. Surfaces a recommendation (no auto-upgrade).",
+            "An upgrade-ip flow: provision a dedicated IP/pool, gradual warmup (split routing), track ip_mode/warmup_status per workspace; ~$24.95/mo becomes a direct cost only for upgraded workspaces."
+          ],
+          "specSections": "§20 (metering into usage_counters, hybrid cost model: direct usage + even split of fixed costs; per-workspace cost view), §10 (dedicated-IP recommendation engine + upgrade-ip migration with warmup), §6 (usage_counters, messages_log, email_events)",
+          "title": "Usage metering + cost attribution + IP advisor"
+        },
+        "plan": {
+          "implUnits": [
+            "1. services/metering/src/usage.ts period helpers + reconcile-from-truth rollup builders",
+            "2. cost.ts computeDirectCost/evenShare/computeAllWorkspaceCosts (highest-value, sum-to-total)",
+            "3. advisor.ts decideIpRecommendation + input reads + buildIpRecommendationUpdate",
+            "4. ip-upgrade.ts planUpgradeIp/warmupSplit/chooseSendPool state machine",
+            "5. packages/email SesEmailClient add provisionDedicatedIp + prod impl",
+            "6. metering deps.ts (reader + runStatementsInWorkspaceTx + listActiveWorkspaceIds + ProdSes, mirror batch-eval)",
+            "7. core.ts rollup-all + advisor-all orchestrators (per-workspace tx)",
+            "8. handler.ts + index.ts thin EventBridge-scheduled",
+            "9. dispatcher: route send via chooseSendPool/warmupSplit during warmup (split routing) + pool selection in buildSendEmailInput",
+            "10. local-api: GET /billing/usage returns computed cost view (sums to total) + ip_recommendation badge (read-only, accounting/owner)"
+          ],
+          "migration": "NO new migration required. usage_counters exists, metric is free-text. ip_mode/warmup_status/dedicated_ip/ip_pool/ip_recommendation live in workspaces.sending_identity jsonb (§10A 'no new table'). Optional 0008 only to backfill sending_identity ip_mode:'shared' defaults (hardening, not required).",
+          "mocks": [
+            "SES dedicated-IP provisioning (CreateDedicatedIpPool/PutDedicatedIpInPool/config-set IpPoolName) via aws-sdk-client-mock; extend SesEmailClient provisionDedicatedIp; never real",
+            "deps.now() injected clock",
+            "injected price/threshold constants",
+            "Postgres NOT mocked (real localhost:5433)"
+          ],
+          "notes": "CRITICAL reconciliation gotcha: emails_sent ALREADY incremented per-send by dispatcher (value+1) and image bytes additive by image Lambda. Rollup MUST DERIVE authoritative monthly total from messages_log/events and write SET-to-truth (ON CONFLICT DO UPDATE SET value=EXCLUDED.value), NOT add, else double-count and AC1 fails. image_egress_bytes has no current writer (CloudFront-log derived) -> treat as 0. Cost sum-to-total is the segment-compiler-equivalent highest-value unit target. active_workspace_count = status='active' (excludes onboarding/suspended) and MUST be the same set for both even-split denominator and iterated rows or sum-to-total breaks. Advisor only RECOMMENDS (persists ip_recommendation); upgrade owner-triggered separately, never automatic (§10). Reuse SqlStatement + batch-eval deps pattern (scheduled, per-workspace tx, service-role bypass -> bind workspace_id $1). SES only mocked boundary.",
+          "pureFunctions": [
+            "buildEmailsSentRollup(workspaceId,period)",
+            "buildEventsIngestedRollup(workspaceId,period)",
+            "monthBucket/periodRange",
+            "computeDirectCost({emails_sent,ipUpgraded,imageStorageBytes,imageEgressBytes},prices)",
+            "evenShare(fixedTotal,activeWorkspaceCount) penny-accurate",
+            "computeWorkspaceCost/computeAllWorkspaceCosts (sum===directTotal+fixedTotal)",
+            "decideIpRecommendation(series,thresholds)",
+            "buildIpRecommendationUpdate(workspaceId,rec)",
+            "planUpgradeIp(workspaceId,poolName,now)",
+            "warmupSplit(warmup_status,now)",
+            "chooseSendPool(dedicatedShare,profileId)",
+            "buildSelectActiveWorkspaceUsage/ReputationSeries/SendDays"
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "buildEmailsSentRollup binds workspace_id $1 + month, COUNT messages_log status=sent in [period,period+1mo), SET-to-truth upsert ON CONFLICT DO UPDATE SET value=EXCLUDED.value (NOT +EXCLUDED, derives authoritative, no double-count vs dispatcher)",
+                "buildEventsIngestedRollup same on events.received_at",
+                "throws falsy workspaceId",
+                "monthBucket UTC YYYY-MM-01",
+                "leaves image bytes rows untouched"
+              ],
+              "criterion": "1",
+              "path": "services/metering/test/rollup-aggregation.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "computeDirectCost emails*0.0001 + (24.95 if upgraded) + imageBytesCost",
+                "evenShare(40,5)=8, guards count=0",
+                "§20 example: small 10k shared ~9, large 300k upgraded ~63",
+                "SUM-TO-TOTAL: sum_i cost === sum_i direct + fixedTotal exactly (penny allocation, 40.01/3 no drift)",
+                "$24.95 only on ipUpgraded",
+                "image priced per $/GB, zero->0"
+              ],
+              "criterion": "2",
+              "path": "services/metering/test/cost-math.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "recommend ONLY when ALL: sustained ~100k/mo 2-3 consecutive months + consistent cadence + healthy reputation",
+                "all met -> recommend:true + rationale",
+                "volume met but single-blast cadence -> false",
+                "volume+cadence but high bounce -> false",
+                "one-off spike (single 300k among 5k) -> false",
+                "1 sustained month false, 2 consecutive true",
+                "pure, never auto-upgrades",
+                "thresholds injected"
+              ],
+              "criterion": "3",
+              "path": "services/metering/test/ip-advisor-decision.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "planUpgradeIp ip_mode shared->dedicated/warming + warmup_status, merges sending_identity || $2::jsonb no clobber, workspace_id $1 one row",
+                "warmupSplit monotonic ramp over 2-4 weeks 0<share<=1 -> complete at 1.0",
+                "chooseSendPool deterministic by profile_id hash (retries route same)",
+                "buildIpRecommendationUpdate persists ip_recommendation without flipping ip_mode",
+                "no dedicated transition without explicit upgrade"
+              ],
+              "criterion": "4",
+              "path": "services/metering/test/upgrade-ip-state.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "provisionDedicatedIp calls SES dedicated-IP-pool boundary (CreateDedicatedIpPool/PutDedicatedIpInPool/config-set IpPoolName) via aws-sdk-client-mock, never real",
+                "DB dedicated transition only AFTER SES provisioning resolves; failure leaves ip_mode=shared (no half-upgrade)",
+                "SES only mocked boundary"
+              ],
+              "criterion": "4",
+              "path": "services/metering/test/aws-ses-provision.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "real PG: seed messages_log(sent)+events 2 months 2 workspaces, rollup -> usage_counters.emails_sent==COUNT(messages_log), events_ingested==COUNT(events) per (workspace,period)",
+                "re-run idempotent (SET-to-truth, not doubled despite dispatcher increments)",
+                "tenant isolation: A counters only A's rows",
+                "month bucketing boundary correct"
+              ],
+              "criterion": "1",
+              "path": "services/metering/test/rollup-reconcile.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "real PG: 5 active workspaces (one dedicated, small 10k, large 300k), compute cost view",
+                "each = direct + fixedTotal/5; small~9 large(upgraded)~63 within cent",
+                "SUM all costs === total direct + fixedTotal exactly (load-bearing)",
+                "$24.95 only on upgraded workspace breakdown",
+                "active_workspace_count excludes suspended/onboarding from denominator AND rows"
+              ],
+              "criterion": "2",
+              "path": "services/metering/test/cost-view-sums-to-total.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "real PG: build series from usage_counters (volume) + email_events (reputation) + messages_log distinct send-days (cadence), workspace-scoped",
+                "2-3 consecutive ~100k + daily + low bounce -> ip_recommendation persisted recommend:true",
+                "one-off spike -> none",
+                "high-bounce high-volume -> none; per-workspace isolation"
+              ],
+              "criterion": "3",
+              "path": "services/metering/test/ip-advisor-inputs.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "real PG: upgrade-ip (SES mocked) -> sending_identity ip_mode shared->dedicated + warmup_status on one row",
+                "advancing warmup increases dedicatedShare -> complete cutover",
+                "$24.95 now in cost view for this workspace, NOT sibling shared",
+                "isolation: B sending_identity untouched"
+              ],
+              "criterion": "4",
+              "path": "services/metering/test/ip-mode-warmup-transitions.integration.test.ts",
+              "tier": "integration"
+            }
+          ]
+        },
+        "previousGateFeedback": null,
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md sections: §20 (metering into usage_counters, hybrid cost model: direct usage + even split of fixed costs; per-workspace cost view), §10 (dedicated-IP recommendation engine + upgrade-ip migration with warmup), §6 (usage_counters, messages_log, email_events).",
+        "FIRST write the failing tests from the plan (red), then implement to green. Logic in pure injected functions; handlers/components thin.",
+        "Honor every invariant — tenant isolation, role enforcement, idempotency, and \"all sends go through the Dispatcher guards\" are pass/fail.",
+        "Mock AWS (aws-sdk-client-mock) or use LocalStack; integration tier uses the REAL local Postgres (never mock the DB). For UI phases, verify with Playwright in a real browser against the locally-running app + local API; seed deterministic data.",
+        "Run the relevant `pnpm test` (with DATABASE_URL), plus Playwright e2e for UI phases, `pnpm typecheck`, `pnpm lint`. Iterate until GREEN including a COLD turbo run. Confirm no regression in earlier phases. Report actual command output.",
+        "Implement ONLY what the cited sections require. Keep the §20 cost model exact. The editor must emit MJML, not hand-rolled HTML.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { filesCreated: string[], filesModified: string[], testsPass: boolean, testSummary: string, e2eSummary: string, typecheckOk: boolean, lintOk: boolean, commandsRun: string[], notes: string }",
+      "role": "senior full-stack TypeScript engineer building a serverless multi-tenant CDP + Preact SPA, test-first",
+      "task": "Implement \"Usage metering + cost attribution + IP advisor\" to satisfy its test plan and §18 criteria. Red -> green -> refactor."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTGXSR8541MZHNXKANESGAES/input.json",
+    "outputJsonPath": "tasks/01KTGXSR8541MZHNXKANESGAES/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "implement",
+    "iteration-1",
+    "phase13-metering"
+  ],
+  "title": "Implement: Usage metering + cost attribution + IP advisor (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTGXSR8541MZHNXKANESGAES",
+  "taskId": "implement-phase",
+  "invocationKey": "cdp/app-completion:S000022:implement-phase",
+  "stepId": "S000022",
+  "inputs": {
+    "firstIteration": true,
+    "iteration": 1,
+    "phase": {
+      "criteria": [
+        "Per-workspace emails_sent / events_ingested reconcile with messages_log / events.",
+        "The cost view = direct usage cost + an equal share of fixed costs; per-workspace figures sum to the true total (worked example from §20 holds).",
+        "The IP-advisor recommends a dedicated IP only when sustained-volume + cadence + reputation criteria are all met; one-off spikes do not trigger it.",
+        "The upgrade-ip flow provisions a dedicated IP, warms it gradually (split routing), and tracks ip_mode/warmup_status; the $24.95 lands only on upgraded workspaces."
+      ],
+      "frontend": false,
+      "id": "phase13-metering",
+      "scope": [
+        "services/metering: a scheduled rollup job populating usage_counters (emails_sent from messages_log, events_ingested, image bytes) and a per-workspace monthly cost computation using the EXACT §20 hybrid policy: direct/variable costs attributed to the workspace (emails_sent x $0.0001, dedicated IP $24.95 if upgraded, image bytes) PLUS an EQUAL share of the fixed pool (fixed_total / active_workspace_count). Per-workspace figures must sum to the true total.",
+        "A monthly IP-advisor job that recommends a dedicated IP only when ALL hold: sustained volume (~100k/mo for 2-3 consecutive months), consistent cadence, healthy reputation. Surfaces a recommendation (no auto-upgrade).",
+        "An upgrade-ip flow: provision a dedicated IP/pool, gradual warmup (split routing), track ip_mode/warmup_status per workspace; ~$24.95/mo becomes a direct cost only for upgraded workspaces."
+      ],
+      "specSections": "§20 (metering into usage_counters, hybrid cost model: direct usage + even split of fixed costs; per-workspace cost view), §10 (dedicated-IP recommendation engine + upgrade-ip migration with warmup), §6 (usage_counters, messages_log, email_events)",
+      "title": "Usage metering + cost attribution + IP advisor"
+    },
+    "plan": {
+      "implUnits": [
+        "1. services/metering/src/usage.ts period helpers + reconcile-from-truth rollup builders",
+        "2. cost.ts computeDirectCost/evenShare/computeAllWorkspaceCosts (highest-value, sum-to-total)",
+        "3. advisor.ts decideIpRecommendation + input reads + buildIpRecommendationUpdate",
+        "4. ip-upgrade.ts planUpgradeIp/warmupSplit/chooseSendPool state machine",
+        "5. packages/email SesEmailClient add provisionDedicatedIp + prod impl",
+        "6. metering deps.ts (reader + runStatementsInWorkspaceTx + listActiveWorkspaceIds + ProdSes, mirror batch-eval)",
+        "7. core.ts rollup-all + advisor-all orchestrators (per-workspace tx)",
+        "8. handler.ts + index.ts thin EventBridge-scheduled",
+        "9. dispatcher: route send via chooseSendPool/warmupSplit during warmup (split routing) + pool selection in buildSendEmailInput",
+        "10. local-api: GET /billing/usage returns computed cost view (sums to total) + ip_recommendation badge (read-only, accounting/owner)"
+      ],
+      "migration": "NO new migration required. usage_counters exists, metric is free-text. ip_mode/warmup_status/dedicated_ip/ip_pool/ip_recommendation live in workspaces.sending_identity jsonb (§10A 'no new table'). Optional 0008 only to backfill sending_identity ip_mode:'shared' defaults (hardening, not required).",
+      "mocks": [
+        "SES dedicated-IP provisioning (CreateDedicatedIpPool/PutDedicatedIpInPool/config-set IpPoolName) via aws-sdk-client-mock; extend SesEmailClient provisionDedicatedIp; never real",
+        "deps.now() injected clock",
+        "injected price/threshold constants",
+        "Postgres NOT mocked (real localhost:5433)"
+      ],
+      "notes": "CRITICAL reconciliation gotcha: emails_sent ALREADY incremented per-send by dispatcher (value+1) and image bytes additive by image Lambda. Rollup MUST DERIVE authoritative monthly total from messages_log/events and write SET-to-truth (ON CONFLICT DO UPDATE SET value=EXCLUDED.value), NOT add, else double-count and AC1 fails. image_egress_bytes has no current writer (CloudFront-log derived) -> treat as 0. Cost sum-to-total is the segment-compiler-equivalent highest-value unit target. active_workspace_count = status='active' (excludes onboarding/suspended) and MUST be the same set for both even-split denominator and iterated rows or sum-to-total breaks. Advisor only RECOMMENDS (persists ip_recommendation); upgrade owner-triggered separately, never automatic (§10). Reuse SqlStatement + batch-eval deps pattern (scheduled, per-workspace tx, service-role bypass -> bind workspace_id $1). SES only mocked boundary.",
+      "pureFunctions": [
+        "buildEmailsSentRollup(workspaceId,period)",
+        "buildEventsIngestedRollup(workspaceId,period)",
+        "monthBucket/periodRange",
+        "computeDirectCost({emails_sent,ipUpgraded,imageStorageBytes,imageEgressBytes},prices)",
+        "evenShare(fixedTotal,activeWorkspaceCount) penny-accurate",
+        "computeWorkspaceCost/computeAllWorkspaceCosts (sum===directTotal+fixedTotal)",
+        "decideIpRecommendation(series,thresholds)",
+        "buildIpRecommendationUpdate(workspaceId,rec)",
+        "planUpgradeIp(workspaceId,poolName,now)",
+        "warmupSplit(warmup_status,now)",
+        "chooseSendPool(dedicatedShare,profileId)",
+        "buildSelectActiveWorkspaceUsage/ReputationSeries/SendDays"
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "buildEmailsSentRollup binds workspace_id $1 + month, COUNT messages_log status=sent in [period,period+1mo), SET-to-truth upsert ON CONFLICT DO UPDATE SET value=EXCLUDED.value (NOT +EXCLUDED, derives authoritative, no double-count vs dispatcher)",
+            "buildEventsIngestedRollup same on events.received_at",
+            "throws falsy workspaceId",
+            "monthBucket UTC YYYY-MM-01",
+            "leaves image bytes rows untouched"
+          ],
+          "criterion": "1",
+          "path": "services/metering/test/rollup-aggregation.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "computeDirectCost emails*0.0001 + (24.95 if upgraded) + imageBytesCost",
+            "evenShare(40,5)=8, guards count=0",
+            "§20 example: small 10k shared ~9, large 300k upgraded ~63",
+            "SUM-TO-TOTAL: sum_i cost === sum_i direct + fixedTotal exactly (penny allocation, 40.01/3 no drift)",
+            "$24.95 only on ipUpgraded",
+            "image priced per $/GB, zero->0"
+          ],
+          "criterion": "2",
+          "path": "services/metering/test/cost-math.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "recommend ONLY when ALL: sustained ~100k/mo 2-3 consecutive months + consistent cadence + healthy reputation",
+            "all met -> recommend:true + rationale",
+            "volume met but single-blast cadence -> false",
+            "volume+cadence but high bounce -> false",
+            "one-off spike (single 300k among 5k) -> false",
+            "1 sustained month false, 2 consecutive true",
+            "pure, never auto-upgrades",
+            "thresholds injected"
+          ],
+          "criterion": "3",
+          "path": "services/metering/test/ip-advisor-decision.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "planUpgradeIp ip_mode shared->dedicated/warming + warmup_status, merges sending_identity || $2::jsonb no clobber, workspace_id $1 one row",
+            "warmupSplit monotonic ramp over 2-4 weeks 0<share<=1 -> complete at 1.0",
+            "chooseSendPool deterministic by profile_id hash (retries route same)",
+            "buildIpRecommendationUpdate persists ip_recommendation without flipping ip_mode",
+            "no dedicated transition without explicit upgrade"
+          ],
+          "criterion": "4",
+          "path": "services/metering/test/upgrade-ip-state.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "provisionDedicatedIp calls SES dedicated-IP-pool boundary (CreateDedicatedIpPool/PutDedicatedIpInPool/config-set IpPoolName) via aws-sdk-client-mock, never real",
+            "DB dedicated transition only AFTER SES provisioning resolves; failure leaves ip_mode=shared (no half-upgrade)",
+            "SES only mocked boundary"
+          ],
+          "criterion": "4",
+          "path": "services/metering/test/aws-ses-provision.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "real PG: seed messages_log(sent)+events 2 months 2 workspaces, rollup -> usage_counters.emails_sent==COUNT(messages_log), events_ingested==COUNT(events) per (workspace,period)",
+            "re-run idempotent (SET-to-truth, not doubled despite dispatcher increments)",
+            "tenant isolation: A counters only A's rows",
+            "month bucketing boundary correct"
+          ],
+          "criterion": "1",
+          "path": "services/metering/test/rollup-reconcile.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "real PG: 5 active workspaces (one dedicated, small 10k, large 300k), compute cost view",
+            "each = direct + fixedTotal/5; small~9 large(upgraded)~63 within cent",
+            "SUM all costs === total direct + fixedTotal exactly (load-bearing)",
+            "$24.95 only on upgraded workspace breakdown",
+            "active_workspace_count excludes suspended/onboarding from denominator AND rows"
+          ],
+          "criterion": "2",
+          "path": "services/metering/test/cost-view-sums-to-total.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "real PG: build series from usage_counters (volume) + email_events (reputation) + messages_log distinct send-days (cadence), workspace-scoped",
+            "2-3 consecutive ~100k + daily + low bounce -> ip_recommendation persisted recommend:true",
+            "one-off spike -> none",
+            "high-bounce high-volume -> none; per-workspace isolation"
+          ],
+          "criterion": "3",
+          "path": "services/metering/test/ip-advisor-inputs.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "real PG: upgrade-ip (SES mocked) -> sending_identity ip_mode shared->dedicated + warmup_status on one row",
+            "advancing warmup increases dedicatedShare -> complete cutover",
+            "$24.95 now in cost view for this workspace, NOT sibling shared",
+            "isolation: B sending_identity untouched"
+          ],
+          "criterion": "4",
+          "path": "services/metering/test/ip-mode-warmup-transitions.integration.test.ts",
+          "tier": "integration"
+        }
+      ]
+    },
+    "prevFeedback": null
+  }
+}

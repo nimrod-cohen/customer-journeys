@@ -24,6 +24,12 @@ import {
 import { validateCampaignDefinition } from '@cdp/service-campaign-runner';
 import { runBroadcast } from '@cdp/service-broadcast';
 import {
+  computeCostViewForWorkspaces,
+  monthBucket,
+  DEFAULT_PRICES,
+  type MeteringDeps,
+} from '@cdp/service-metering';
+import {
   startDomain,
   checkDomain,
   activate,
@@ -456,12 +462,60 @@ export const listSuppressions: Handler = async (ctx, pool) => {
 // billing / usage (view_billing)
 // ---------------------------------------------------------------------------
 
+/** The fixed-cost pool split evenly across active workspaces (§20, ≈$40/mo). */
+const FIXED_COST_TOTAL = Number(process.env.METERING_FIXED_TOTAL ?? '40');
+
 export const billingUsage: Handler = async (ctx, pool) => {
+  // Raw counters (unchanged contract) for the current workspace.
   const { rows } = await pool.query(
     'SELECT period, metric, value FROM usage_counters WHERE workspace_id = $1 ORDER BY period DESC',
     [ctx.workspaceId],
   );
-  return ok({ usage: rows });
+
+  // Computed §20 cost view. The even-split denominator AND iterated rows are the
+  // SAME active set (status='active'); per-workspace figures sum to the true
+  // total. This workspace's line is surfaced; the platform totals reconcile.
+  const period = monthBucket(new Date());
+  const active = await pool.query("SELECT id FROM workspaces WHERE status = 'active' ORDER BY id");
+  const activeIds = active.rows.map((r) => r.id as string);
+  const meteringDeps: MeteringDeps = {
+    reader: { query: (text, values) => pool.query(text, values) },
+    // The billing view is READ-ONLY; no tx writer is needed (and never called).
+    runInWorkspaceTx: async () => {
+      throw new Error('billingUsage is read-only');
+    },
+  };
+  const view = await computeCostViewForWorkspaces(
+    meteringDeps,
+    activeIds,
+    period,
+    FIXED_COST_TOTAL,
+    DEFAULT_PRICES,
+  );
+  const mine = view.workspaces.find((w) => w.workspaceId === ctx.workspaceId) ?? null;
+
+  // ip_recommendation badge (read-only) from sending_identity.
+  const wsRow = await pool.query(
+    "SELECT sending_identity ->> 'ip_mode' AS ip_mode, sending_identity -> 'ip_recommendation' AS ip_recommendation FROM workspaces WHERE id = $1",
+    [ctx.workspaceId],
+  );
+  const ipMode = (wsRow.rows[0]?.ip_mode as string | null) ?? 'shared';
+  const ipRecommendation = wsRow.rows[0]?.ip_recommendation ?? null;
+
+  return ok({
+    usage: rows,
+    period,
+    cost: mine
+      ? { directCost: mine.directCost, fixedShare: mine.fixedShare, total: mine.total }
+      : null,
+    totals: {
+      directTotal: view.directTotal,
+      fixedTotal: view.fixedTotal,
+      activeWorkspaceCount: view.activeWorkspaceCount,
+    },
+    ip_mode: ipMode,
+    ip_recommendation: ipRecommendation,
+  });
 };
 
 // ---------------------------------------------------------------------------

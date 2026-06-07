@@ -1,0 +1,19 @@
+{
+  "score": 96,
+  "testsPass": true,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {"criterion":"AC1","met":true,"evidence":"rollup-reconcile.integration (real PG): emails_sent DERIVES from messages_log SET-to-truth (excludes failed+other month), idempotent on re-run, HEALS drift (999->7), workspace-scoped. usage.ts ON CONFLICT DO UPDATE SET value=EXCLUDED.value (vs dispatcher additive). events_ingested analogous."},
+    {"criterion":"AC2","met":true,"evidence":"cost.ts integer cents; evenShare distributes remainder penny-by-penny summing to fixedTotal; same active set as denominator AND iterated rows. cost-math: §20 example small $9 large $62.95 fixed $8; penny-exact on 37.01/3, 40/3. cost-view-sums-to-total.integration: sum cents===direct+fixed, $24.95 only on dedicated."},
+    {"criterion":"AC3","met":true,"evidence":"advisor strict ALL-AND: recommends only sustained+cadence+healthy; rejects one-off spike, single-blast cadence, unhealthy at volume, insufficient history. integration: qualifying persists ip_recommendation, ip_mode stays shared; buildIpRecommendationUpdate never sets dedicated/warming."},
+    {"criterion":"AC4","met":true,"evidence":"upgradeIp SES provisionDedicatedIp FIRST then DB (order asserted); SES throw -> no DB write (ip_mode stays shared). warmupSplit monotonic >0 ->1.0; chooseSendPool deterministic FNV-1a profile hash. $24.95 only ipUpgraded (dedicated|warming). real-PG transition preserves existing jsonb keys."}
+  ],
+  "isolationOk": true,
+  "scopeCreep": [],
+  "recommendations": [
+    "Advisor reads `delivered` but computes rate against volume (emailsSent); remove unused read or compute against delivered. Cosmetic.",
+    "Add a 5-workspace integration case to match the §20 literal example end-to-end (unit tier already covers it).",
+    "Document that advisor reputation type='bounce' folds soft+hard so maxBounceRate is interpreted correctly."
+  ],
+  "criticalIssues": []
+}
