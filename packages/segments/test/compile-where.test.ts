@@ -214,16 +214,16 @@ describe('validateAst (shape guard)', () => {
   });
 });
 
-describe('profile scalar fields (email_status etc.) — "unsubscribers"', () => {
+describe('profile scalar fields (email_status etc.) — deliverability state', () => {
   it('maps email_status to the profiles column', () => {
     expect(resolveField('email_status').mapping).toEqual({ kind: 'scalar', column: 'p.email_status' });
   });
 
-  it('compiles email_status = unsubscribed as a parameterized predicate', () => {
-    const q = compileWhere(WS, { field: 'email_status', operator: '=', value: 'unsubscribed' });
+  it('compiles email_status = bounced as a parameterized predicate', () => {
+    const q = compileWhere(WS, { field: 'email_status', operator: '=', value: 'bounced' });
     expect(q.text).toBe('p.workspace_id = $1 AND (p.email_status = $2)');
-    expect(q.values).toEqual([WS, 'unsubscribed']);
-    expect(q.text).not.toContain('unsubscribed');
+    expect(q.values).toEqual([WS, 'bounced']);
+    expect(q.text).not.toContain('bounced');
   });
 });
 

@@ -111,13 +111,13 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
   it('PATCH /profiles/:id edits status and REPLACES attributes', async () => {
     const r = await call(world.env, 'PATCH', `/profiles/${P_A}`, {
       token: tokA(),
-      body: { email_status: 'unsubscribed', attributes: { tier: 'gold', vip: true } },
+      body: { email_status: 'bounced', attributes: { tier: 'gold', vip: true } },
     });
     expect(r.status).toBe(200);
     // Re-read to confirm persistence: tier changed, old keys gone, new key present.
     const got = await call(world.env, 'GET', `/profiles/${P_A}`, { token: tokA() });
     const p = (got.body as { profile: { email_status: string; attributes: Record<string, unknown> } }).profile;
-    expect(p.email_status).toBe('unsubscribed');
+    expect(p.email_status).toBe('bounced');
     expect(p.attributes).toEqual({ tier: 'gold', vip: true });
   });
 

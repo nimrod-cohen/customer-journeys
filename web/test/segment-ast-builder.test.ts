@@ -117,14 +117,14 @@ describe('segment AST builder', () => {
     expect(buildAst(rows, 'and')).toEqual({ event: 'purchase', operator: '>=', value: 2 });
   });
 
-  it('builds a profile-field node (email_status = unsubscribed) and compiles it', () => {
+  it('builds a profile-field node (email_status = bounced) and compiles it', () => {
     const rows: RuleRow[] = [
-      { kind: 'field', field: 'email_status', operator: '=', value: 'unsubscribed' },
+      { kind: 'field', field: 'email_status', operator: '=', value: 'bounced' },
     ];
     expect(buildAst(rows, 'and')).toEqual({
       field: 'email_status',
       operator: '=',
-      value: 'unsubscribed',
+      value: 'bounced',
     });
     const sql = compileWhere(WS, buildAst(rows, 'and') as never);
     expect(sql.text).toContain('p.email_status = $2');

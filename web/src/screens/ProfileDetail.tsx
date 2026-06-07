@@ -50,7 +50,9 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
-const EMAIL_STATUSES = ['active', 'unsubscribed', 'bounced', 'complained'];
+// Deliverability state only (NOT consent). "unsubscribed" is the separate
+// boolean attribute, which can be true alongside any of these.
+const EMAIL_STATUSES = ['active', 'bounced', 'complained'];
 
 /** Render an attribute value for editing: strings as-is, everything else as JSON. */
 function valueToString(v: unknown): string {

@@ -33,7 +33,7 @@ test('create a dynamic segment from the list, preview size, and see it appear', 
   await expect(page.getByTestId('segment-list')).toContainText('VIP members');
 });
 
-test('segment by a profile field (unsubscribers) and by an event', async ({ page }) => {
+test('segment by the unsubscribed attribute and by an event', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();
   await page.getByTestId('segments-list').waitFor();

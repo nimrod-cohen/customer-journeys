@@ -522,8 +522,11 @@ export const getProfile: Handler = async (ctx, pool, req) => {
   return ok({ profile: rows[0], features: f.rows[0] ?? null });
 };
 
-/** Email statuses a marketer may set by hand (mirrors §10 lifecycle values). */
-const EDITABLE_EMAIL_STATUS = new Set(['active', 'unsubscribed', 'bounced', 'complained']);
+// email_status is the address DELIVERABILITY state (what the provider told us):
+// active (good), bounced (hard bounce — address invalid), complained (marked
+// spam). It is NOT consent — unsubscribe is the separate boolean attribute
+// `unsubscribed`, which can be true in parallel with any deliverability state.
+const EDITABLE_EMAIL_STATUS = new Set(['active', 'bounced', 'complained']);
 
 /**
  * PATCH /profiles/:id — edit core fields + REPLACE the attributes object (§6).

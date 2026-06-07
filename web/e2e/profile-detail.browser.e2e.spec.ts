@@ -18,9 +18,9 @@ test('open a profile, edit it, add an attribute, view events and segments', asyn
   await page.getByTestId('profile-detail').waitFor();
   await expect(page.getByTestId('profile-email')).toContainText('a1@acme.com');
 
-  // Details tab: change the email status and save.
+  // Details tab: change the email (deliverability) status and save.
   await page.getByTestId('tab-details').click();
-  await page.getByTestId('profile-status-select').selectOption('unsubscribed');
+  await page.getByTestId('profile-status-select').selectOption('bounced');
   await page.getByTestId('profile-save').click();
   await expect(page.getByTestId('profile-save-status')).toContainText('Saved');
 
