@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTGWD51H67J2NDZMCFARPE5E",
+  "taskId": "implement-phase",
+  "invocationKey": "cdp/app-completion:S000018:implement-phase",
+  "status": "ok",
+  "result": {
+    "commandsRun": [
+      "DATABASE_URL=... pnpm --filter @cdp/service-local-api vitest run",
+      "cd web && DATABASE_URL=... pnpm exec playwright test",
+      "rm -rf .turbo && DATABASE_URL=... AWS_ENDPOINT_URL=... pnpm test",
+      "pnpm typecheck",
+      "pnpm lint"
+    ],
+    "e2eSummary": "Playwright real Chromium 9/9 incl. strengthened login-workspace-switch: after A->B switch, A-only segment 'Manual VIPs' GONE in-DOM and B-only 'Beta Loyalty Club' appears (new segment list view).",
+    "filesCreated": [
+      "services/local-api/test/cross-workspace-action.integration.test.ts"
+    ],
+    "filesModified": [
+      "services/local-api/src/handlers.ts",
+      "web/src/screens/SegmentBuilder.tsx",
+      "web/e2e/seed.ts",
+      "web/e2e/login-workspace-switch.browser.e2e.spec.ts"
+    ],
+    "lintOk": true,
+    "notes": "workspace_id always from token ctx never body in every guard. New integration test includes a POSITIVE control (WS-A owner CAN send own broadcast -> 200, 1 outbox in A, 0 in B) so the guard doesn't over-block, plus cross-workspace PUT-campaign/PUT-segment/add-members assertions (WS-B rows unchanged). web SegmentBuilder gained an 'Existing segments' list (GET /segments) reloading on session.workspaceId change -> re-scoping is browser-assertable. SES/SQS/DNS mocked; Postgres never mocked.",
+    "otherGapsFound": [
+      "sendBroadcast: FIXED — scopedQuery SELECT 1 FROM broadcasts WHERE id=$1 against ctx.workspaceId before runBroadcast; 404 on miss (no existence leak); comment corrected.",
+      "addSegmentMembers/removeSegmentMembers/importCsvMembers: FOUND + FIXED — added ownsResource(ctx.workspaceId,'segments',id) guard (404) before mutating manual membership (a WS-A token could otherwise write membership for a WS-B segment id).",
+      "Audited ALREADY SAFE: updateSegment/updateCampaign/getProfile use scopedQuery (workspace_id=$1 AND id -> 404 cross-workspace); updateMember explicit WHERE workspace_id=$1; admin handlers intentionally cross-tenant (view_all_workspaces + audited); sending-domain scopes by ctx only (no path id)."
+    ],
+    "testsPass": true,
+    "testSummary": "service-local-api 6 files/24 tests pass (new cross-workspace-action.integration 6 tests). Cold full pnpm test 39/39 tasks, 0 cached, no failures. typecheck+lint OK.",
+    "typecheckOk": true
+  },
+  "startedAt": "2026-06-07T11:25:57.466Z",
+  "finishedAt": "2026-06-07T11:25:57.466Z",
+  "value": {
+    "commandsRun": [
+      "DATABASE_URL=... pnpm --filter @cdp/service-local-api vitest run",
+      "cd web && DATABASE_URL=... pnpm exec playwright test",
+      "rm -rf .turbo && DATABASE_URL=... AWS_ENDPOINT_URL=... pnpm test",
+      "pnpm typecheck",
+      "pnpm lint"
+    ],
+    "e2eSummary": "Playwright real Chromium 9/9 incl. strengthened login-workspace-switch: after A->B switch, A-only segment 'Manual VIPs' GONE in-DOM and B-only 'Beta Loyalty Club' appears (new segment list view).",
+    "filesCreated": [
+      "services/local-api/test/cross-workspace-action.integration.test.ts"
+    ],
+    "filesModified": [
+      "services/local-api/src/handlers.ts",
+      "web/src/screens/SegmentBuilder.tsx",
+      "web/e2e/seed.ts",
+      "web/e2e/login-workspace-switch.browser.e2e.spec.ts"
+    ],
+    "lintOk": true,
+    "notes": "workspace_id always from token ctx never body in every guard. New integration test includes a POSITIVE control (WS-A owner CAN send own broadcast -> 200, 1 outbox in A, 0 in B) so the guard doesn't over-block, plus cross-workspace PUT-campaign/PUT-segment/add-members assertions (WS-B rows unchanged). web SegmentBuilder gained an 'Existing segments' list (GET /segments) reloading on session.workspaceId change -> re-scoping is browser-assertable. SES/SQS/DNS mocked; Postgres never mocked.",
+    "otherGapsFound": [
+      "sendBroadcast: FIXED — scopedQuery SELECT 1 FROM broadcasts WHERE id=$1 against ctx.workspaceId before runBroadcast; 404 on miss (no existence leak); comment corrected.",
+      "addSegmentMembers/removeSegmentMembers/importCsvMembers: FOUND + FIXED — added ownsResource(ctx.workspaceId,'segments',id) guard (404) before mutating manual membership (a WS-A token could otherwise write membership for a WS-B segment id).",
+      "Audited ALREADY SAFE: updateSegment/updateCampaign/getProfile use scopedQuery (workspace_id=$1 AND id -> 404 cross-workspace); updateMember explicit WHERE workspace_id=$1; admin handlers intentionally cross-tenant (view_all_workspaces + audited); sending-domain scopes by ctx only (no path id)."
+    ],
+    "testsPass": true,
+    "testSummary": "service-local-api 6 files/24 tests pass (new cross-workspace-action.integration 6 tests). Cold full pnpm test 39/39 tasks, 0 cached, no failures. typecheck+lint OK.",
+    "typecheckOk": true
+  }
+}

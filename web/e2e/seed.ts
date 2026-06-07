@@ -1,0 +1,112 @@
+// Deterministic e2e seed (real Postgres). Run by Playwright globalSetup before
+// the browser specs. Seeds two workspaces, a multi-workspace user, a marketer, a
+// platform admin, plus profiles/templates so the SPA flows (segment preview,
+// broadcast, campaign, switching, role visibility, admin console) have data.
+// Uses the admin (service-role) pool to seed across workspaces. Idempotent:
+// deletes its own rows first.
+import { adminPool, applyMigrations } from '@cdp/db';
+
+// Stable UUIDs (unique namespace for the SPA e2e).
+export const WS_A = '0e2efe00-0000-4000-8000-000000000a01';
+export const WS_B = '0e2efe00-0000-4000-8000-000000000a02';
+export const USER_MULTI = '0e2efe00-0000-4000-8000-0000000000b1'; // owner of A + B
+export const USER_MKT = '0e2efe00-0000-4000-8000-0000000000b2'; // marketer of A
+export const USER_ADMIN = '0e2efe00-0000-4000-8000-0000000000b3'; // platform admin
+export const TPL_A = '0e2efe00-0000-4000-8000-0000000000c1';
+export const SEG_A = '0e2efe00-0000-4000-8000-0000000000c2';
+export const SEG_B = '0e2efe00-0000-4000-8000-0000000000c3';
+
+/** A-only and B-only segment names — asserted present/absent after switching. */
+export const SEG_A_NAME = 'Manual VIPs';
+export const SEG_B_NAME = 'Beta Loyalty Club';
+
+export async function seed(): Promise<void> {
+  const pool = adminPool();
+  try {
+    // Ensure schema exists on a fresh DB.
+    const { rows } = await pool.query(
+      "SELECT to_regclass('public.workspaces') IS NOT NULL AS exists",
+    );
+    if (!rows[0]?.exists) await applyMigrations(pool);
+
+    await cleanup(pool);
+
+    for (const [ws, name] of [
+      [WS_A, 'Acme (A)'],
+      [WS_B, 'Beta (B)'],
+    ] as const) {
+      await pool.query("INSERT INTO workspaces (id, name, status) VALUES ($1,$2,'active')", [ws, name]);
+    }
+    // Memberships.
+    await pool.query(
+      "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')",
+      [WS_A, USER_MULTI],
+    );
+    await pool.query(
+      "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')",
+      [WS_B, USER_MULTI],
+    );
+    await pool.query(
+      "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'marketer')",
+      [WS_A, USER_MKT],
+    );
+    await pool.query('INSERT INTO platform_admins (user_id) VALUES ($1)', [USER_ADMIN]);
+
+    // A template + a saved segment + a couple of profiles in WS_A.
+    await pool.query(
+      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html) VALUES ($1,$2,'Welcome','<mjml/>','<html>Hi</html>')",
+      [TPL_A, WS_A],
+    );
+    await pool.query(
+      'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
+      [SEG_A, WS_A, SEG_A_NAME, 'manual'],
+    );
+    // A B-only segment so switching A→B surfaces B's data and drops A's.
+    await pool.query(
+      'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
+      [SEG_B, WS_B, SEG_B_NAME, 'manual'],
+    );
+    for (const [ext, email, tier] of [
+      ['a1', 'a1@acme.com', 'vip'],
+      ['a2', 'a2@acme.com', 'vip'],
+      ['a3', 'a3@acme.com', 'std'],
+    ] as const) {
+      const { rows: pr } = await pool.query<{ id: string }>(
+        'INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,$2,$3,$4::jsonb) RETURNING id',
+        [WS_A, ext, email, JSON.stringify({ tier })],
+      );
+      await pool.query(
+        'INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1,$2)',
+        [pr[0]!.id, WS_A],
+      );
+    }
+    // One profile in WS_B (must never appear in WS_A views).
+    const { rows: pb } = await pool.query<{ id: string }>(
+      'INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,$2,$3) RETURNING id',
+      [WS_B, 'b1', 'b1@beta.com'],
+    );
+    await pool.query('INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1,$2)', [
+      pb[0]!.id,
+      WS_B,
+    ]);
+  } finally {
+    await pool.end();
+  }
+}
+
+export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void> {
+  for (const ws of [WS_A, WS_B]) {
+    await pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM outbox WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM broadcasts WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM segments WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM email_templates WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
+  }
+  await pool.query('DELETE FROM admin_audit_log WHERE user_id = $1', [USER_ADMIN]);
+  await pool.query('DELETE FROM platform_admins WHERE user_id = $1', [USER_ADMIN]);
+}

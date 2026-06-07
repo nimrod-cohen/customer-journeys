@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTGW4GFAF29XCEE5ASPM7Z90",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/app-completion:S000017:quality-gate",
+  "status": "ok",
+  "result": {
+    "browserVerified": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "login-workspace-switch real Chromium: switcher lists both WS, switching flips active; DB-level no-cross-bleed proven in workspace-scope.integration (wsA reads only SEG_A, after switch only SEG_B). WEAKNESS: browser spec doesn't assert WS_A data GONE in-DOM after switch (only select value).",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "role-visibility real Chromium: marketer nav hides billing/settings/admin; owner shows them. nav uses can() (§3A). accounting billing-only, system-admin console asserted in unit.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "build-segment (live preview from real §8 compiler, WS_B excluded), broadcast-and-campaign (real runBroadcast, validateCampaignDefinition), editor — pass real Chromium. handlers delegate to real cores, scoped by ctx.workspaceId.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "dispatch: authorizer->contextFromAuthorizer->enforceRoute per route; router-role-enforcement.integration: marketer 403 billing/members/domain, accounting 403 POST segments, owner 403 /admin, no token 401. role-visibility e2e proves marketer 403 on /billing via in-browser fetch. apiClient assertNoWorkspaceIdInBody.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [
+      "TENANT-ISOLATION GAP: sendBroadcast (services/local-api/src/handlers.ts:311) ignores ctx and calls runBroadcast(deps.broadcast, id) on ANY broadcast id with no check the broadcast belongs to ctx.workspaceId. runBroadcast loads workspace_id FROM the broadcast row, so a marketer in WS_A who knows a WS_B broadcast id could trigger WS_B's send (manage_content passes in their own ws). Real cross-tenant action vector; handler comment falsely claims the guard exists. Fix: verify broadcast row workspace_id == ctx.workspaceId before runBroadcast; add a cross-workspace-send-attempt test."
+    ],
+    "isolationOk": false,
+    "recommendations": [
+      "Add integration test: WS_A token -> 404/403 on POST /broadcasts/{WS_B_broadcast_id}/send.",
+      "Strengthen login-workspace-switch e2e to assert WS_A's seeded data is absent in-DOM after switching to WS_B (surface a segment list)."
+    ],
+    "scopeCreep": [],
+    "score": 88,
+    "testsPass": true
+  },
+  "startedAt": "2026-06-07T11:10:05.987Z",
+  "finishedAt": "2026-06-07T11:10:05.987Z",
+  "value": {
+    "browserVerified": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "AC1",
+        "evidence": "login-workspace-switch real Chromium: switcher lists both WS, switching flips active; DB-level no-cross-bleed proven in workspace-scope.integration (wsA reads only SEG_A, after switch only SEG_B). WEAKNESS: browser spec doesn't assert WS_A data GONE in-DOM after switch (only select value).",
+        "met": true
+      },
+      {
+        "criterion": "AC2",
+        "evidence": "role-visibility real Chromium: marketer nav hides billing/settings/admin; owner shows them. nav uses can() (§3A). accounting billing-only, system-admin console asserted in unit.",
+        "met": true
+      },
+      {
+        "criterion": "AC3",
+        "evidence": "build-segment (live preview from real §8 compiler, WS_B excluded), broadcast-and-campaign (real runBroadcast, validateCampaignDefinition), editor — pass real Chromium. handlers delegate to real cores, scoped by ctx.workspaceId.",
+        "met": true
+      },
+      {
+        "criterion": "AC4",
+        "evidence": "dispatch: authorizer->contextFromAuthorizer->enforceRoute per route; router-role-enforcement.integration: marketer 403 billing/members/domain, accounting 403 POST segments, owner 403 /admin, no token 401. role-visibility e2e proves marketer 403 on /billing via in-browser fetch. apiClient assertNoWorkspaceIdInBody.",
+        "met": true
+      }
+    ],
+    "criticalIssues": [
+      "TENANT-ISOLATION GAP: sendBroadcast (services/local-api/src/handlers.ts:311) ignores ctx and calls runBroadcast(deps.broadcast, id) on ANY broadcast id with no check the broadcast belongs to ctx.workspaceId. runBroadcast loads workspace_id FROM the broadcast row, so a marketer in WS_A who knows a WS_B broadcast id could trigger WS_B's send (manage_content passes in their own ws). Real cross-tenant action vector; handler comment falsely claims the guard exists. Fix: verify broadcast row workspace_id == ctx.workspaceId before runBroadcast; add a cross-workspace-send-attempt test."
+    ],
+    "isolationOk": false,
+    "recommendations": [
+      "Add integration test: WS_A token -> 404/403 on POST /broadcasts/{WS_B_broadcast_id}/send.",
+      "Strengthen login-workspace-switch e2e to assert WS_A's seeded data is absent in-DOM after switching to WS_B (surface a segment list)."
+    ],
+    "scopeCreep": [],
+    "score": 88,
+    "testsPass": true
+  }
+}

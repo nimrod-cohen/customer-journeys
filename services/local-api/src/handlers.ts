@@ -1,0 +1,536 @@
+// Route handlers (§12). Each handler receives the TRUSTED WorkspaceContext (from
+// the local authorizer via contextFromAuthorizer) + a pg Pool + the parsed
+// request, and:
+//   - scopes EVERY DB op to ctx.workspaceId via scopedQuery (workspace_id from
+//     the token, NEVER the body — CLAUDE.md inv.2),
+//   - delegates to existing cores (segments compiler / manual members / onboarding
+//     / broadcast / campaign DSL) rather than re-implementing,
+//   - audits system-admin cross-tenant reads via handleAdminAccess →
+//     writeAuditEntry.
+//
+// SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
+import type { Pool } from 'pg';
+import type { WorkspaceContext } from '@cdp/shared';
+import { scopedQuery } from '@cdp/db';
+import { handleAdminAccess, writeAuditEntry } from '@cdp/service-api';
+import { recordCrossTenantAccess } from '@cdp/tenancy';
+import {
+  compileWhere,
+  validateAst,
+  addManualMembers,
+  removeManualMembers,
+  type AstNode,
+} from '@cdp/segments';
+import { validateCampaignDefinition } from '@cdp/service-campaign-runner';
+import { runBroadcast } from '@cdp/service-broadcast';
+import {
+  startDomain,
+  checkDomain,
+  activate,
+} from '@cdp/service-onboarding';
+import type { LocalApiDeps } from './deps.js';
+
+/** A handler's request shape (already parsed by the server). */
+export interface HandlerRequest {
+  readonly params: Readonly<Record<string, string>>;
+  readonly query: Readonly<Record<string, string>>;
+  readonly body: unknown;
+}
+
+/** A handler's JSON response. */
+export interface HandlerResponse {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+/** The signature every handler implements. */
+export type Handler = (
+  ctx: WorkspaceContext,
+  pool: Pool,
+  req: HandlerRequest,
+  deps: LocalApiDeps,
+) => Promise<HandlerResponse>;
+
+function ok(body: unknown, status = 200): HandlerResponse {
+  return { status, body };
+}
+
+function asObject(body: unknown): Record<string, unknown> {
+  return body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+}
+
+/**
+ * Confirm a row with `id` exists in the given table AND belongs to the token's
+ * active workspace. Tenant-isolation guard for path-id handlers whose underlying
+ * builders/cores don't themselves verify the id belongs to ctx.workspaceId
+ * (workspace_id from the TOKEN, never the body — CLAUDE.md inv.2).
+ */
+async function ownsResource(
+  pool: Pool,
+  workspaceId: string,
+  table: 'segments' | 'broadcasts' | 'campaigns',
+  id: string,
+): Promise<boolean> {
+  const q = scopedQuery(workspaceId, `SELECT 1 FROM ${table} WHERE id = $1`, [id]);
+  const { rowCount } = await pool.query(q.text, q.values);
+  return (rowCount ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// session / identity
+// ---------------------------------------------------------------------------
+
+/** GET /me — the resolved identity + the active workspace + capabilities the UI uses. */
+export const getMe: Handler = async (ctx, pool) => {
+  const { rows } = await pool.query(
+    'SELECT workspace_id, role FROM workspace_users WHERE user_id = $1',
+    [ctx.userId ?? ''],
+  );
+  return ok({
+    sub: ctx.userId,
+    workspace_id: ctx.workspaceId,
+    role: ctx.role ?? null,
+    is_platform_admin: ctx.isPlatformAdmin,
+    memberships: rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role })),
+  });
+};
+
+// ---------------------------------------------------------------------------
+// workspace members + roles (manage_workspace_users)
+// ---------------------------------------------------------------------------
+
+/** GET /workspace/members — members of the ACTIVE workspace only (scoped). */
+export const listMembers: Handler = async (ctx, pool) => {
+  const { rows } = await pool.query(
+    'SELECT user_id, role, created_at FROM workspace_users WHERE workspace_id = $1 ORDER BY created_at',
+    [ctx.workspaceId],
+  );
+  return ok({ members: rows });
+};
+
+/** POST /workspace/members — add a member to the active workspace. */
+export const addMember: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const userId = String(b.user_id ?? '');
+  const role = String(b.role ?? 'marketer');
+  if (!userId) return ok({ error: 'user_id required' }, 400);
+  await pool.query(
+    `INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1, $2, $3)
+     ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
+    [ctx.workspaceId, userId, role],
+  );
+  return ok({ workspaceId: ctx.workspaceId, userId, role }, 201);
+};
+
+/** PATCH /workspace/members — change a member's role in the active workspace. */
+export const updateMember: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const userId = String(b.user_id ?? '');
+  const role = String(b.role ?? '');
+  if (!userId || !role) return ok({ error: 'user_id and role required' }, 400);
+  const { rowCount } = await pool.query(
+    'UPDATE workspace_users SET role = $3 WHERE workspace_id = $1 AND user_id = $2',
+    [ctx.workspaceId, userId, role],
+  );
+  return ok({ updated: rowCount ?? 0 });
+};
+
+// ---------------------------------------------------------------------------
+// sending domain (manage_sending_domain) — onboarding cores, SES/DNS injected
+// ---------------------------------------------------------------------------
+
+export const sendingDomainStart: Handler = async (ctx, _pool, req, deps) => {
+  const b = asObject(req.body);
+  const out = await startDomain(deps.onboarding, {
+    workspaceId: ctx.workspaceId,
+    fromDomain: String(b.from_domain ?? ''),
+  });
+  return ok(out);
+};
+
+export const sendingDomainCheck: Handler = async (ctx, _pool, _req, deps) => {
+  const out = await checkDomain(deps.onboarding, { workspaceId: ctx.workspaceId });
+  return ok(out);
+};
+
+export const sendingDomainActivate: Handler = async (ctx, _pool, _req, deps) => {
+  const out = await activate(deps.onboarding, { workspaceId: ctx.workspaceId });
+  return ok(out);
+};
+
+// ---------------------------------------------------------------------------
+// segments + audiences (manage_content)
+// ---------------------------------------------------------------------------
+
+export const listSegments: Handler = async (ctx, pool) => {
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, kind, status, definition FROM segments',
+  );
+  const { rows } = await pool.query(q.text, q.values);
+  return ok({ segments: rows });
+};
+
+export const createSegment: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const name = String(b.name ?? '');
+  const kind = String(b.kind ?? 'dynamic_realtime');
+  const definition = (b.definition ?? null) as AstNode | null;
+  if (!name) return ok({ error: 'name required' }, 400);
+  if (definition !== null) validateAst(definition); // reject garbage AST early
+  const { rows } = await pool.query(
+    `INSERT INTO segments (workspace_id, name, kind, definition)
+     VALUES ($1, $2, $3, $4::jsonb) RETURNING id, name, kind, status`,
+    [ctx.workspaceId, name, kind, definition === null ? null : JSON.stringify(definition)],
+  );
+  return ok({ segment: rows[0] }, 201);
+};
+
+export const updateSegment: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const id = req.params.id!;
+  const name = b.name !== undefined ? String(b.name) : null;
+  const definition = b.definition !== undefined ? (b.definition as AstNode | null) : undefined;
+  if (definition !== undefined && definition !== null) validateAst(definition);
+  const q = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE segments SET
+       name = COALESCE($1, name),
+       definition = CASE WHEN $3::boolean THEN $2::jsonb ELSE definition END,
+       updated_at = now()
+     WHERE id = $4`,
+    [
+      name,
+      definition === undefined || definition === null ? null : JSON.stringify(definition),
+      definition !== undefined,
+      id,
+    ],
+  );
+  const { rowCount } = await pool.query(q.text, q.values);
+  return ok({ updated: rowCount ?? 0 });
+};
+
+/**
+ * POST /segments/preview — LIVE size preview for a dynamic rule AST (§12). Reuses
+ * the §8 compiler (workspace_id structurally $1) so the preview count is scoped
+ * to the active workspace and can NEVER match another workspace's profiles.
+ */
+export const previewSegment: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const ast = (b.definition ?? null) as AstNode | null;
+  const where = compileWhere(ctx.workspaceId, ast);
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS size
+     FROM profiles p
+     LEFT JOIN profile_features pf ON pf.profile_id = p.id
+     WHERE ${where.text}`,
+    where.values,
+  );
+  return ok({ size: rows[0]?.size ?? 0 });
+};
+
+export const addSegmentMembers: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const id = req.params.id!;
+  const profileIds = Array.isArray(b.profile_ids) ? (b.profile_ids as string[]) : [];
+  if (profileIds.length === 0) return ok({ added: 0 });
+  // The manual-members builder binds segment_id structurally but does NOT verify
+  // the segment row belongs to ctx.workspaceId — confirm ownership first so a
+  // cross-workspace segment id (from another tenant) can't be mutated.
+  if (!(await ownsResource(pool, ctx.workspaceId, 'segments', id)))
+    return ok({ error: 'not found' }, 404);
+  const stmt = addManualMembers(ctx.workspaceId, id, profileIds);
+  await pool.query(stmt.text, stmt.values);
+  return ok({ added: profileIds.length });
+};
+
+export const removeSegmentMembers: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const id = req.params.id!;
+  const profileIds = Array.isArray(b.profile_ids) ? (b.profile_ids as string[]) : [];
+  if (profileIds.length === 0) return ok({ removed: 0 });
+  if (!(await ownsResource(pool, ctx.workspaceId, 'segments', id)))
+    return ok({ error: 'not found' }, 404);
+  const stmt = removeManualMembers(ctx.workspaceId, id, profileIds);
+  const { rowCount } = await pool.query(stmt.text, stmt.values);
+  return ok({ removed: rowCount ?? 0 });
+};
+
+/** POST /segments/:id/import-csv — hand-pick by CSV: resolve emails → profile ids → manual members. */
+export const importCsvMembers: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const id = req.params.id!;
+  const emails = Array.isArray(b.emails) ? (b.emails as string[]) : [];
+  if (emails.length === 0) return ok({ added: 0, matched: 0 });
+  if (!(await ownsResource(pool, ctx.workspaceId, 'segments', id)))
+    return ok({ error: 'not found' }, 404);
+  // Resolve emails to profile ids WITHIN the active workspace (scoped).
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id FROM profiles WHERE email = ANY($1::citext[])',
+    [emails],
+  );
+  const { rows } = await pool.query<{ id: string }>(q.text, q.values);
+  const profileIds = rows.map((r) => r.id);
+  if (profileIds.length > 0) {
+    const stmt = addManualMembers(ctx.workspaceId, id, profileIds);
+    await pool.query(stmt.text, stmt.values);
+  }
+  return ok({ added: profileIds.length, matched: profileIds.length });
+};
+
+// ---------------------------------------------------------------------------
+// templates (manage_content)
+// ---------------------------------------------------------------------------
+
+export const listTemplates: Handler = async (ctx, pool) => {
+  const q = scopedQuery(ctx.workspaceId, 'SELECT id, name, updated_at FROM email_templates');
+  const { rows } = await pool.query(q.text, q.values);
+  return ok({ templates: rows });
+};
+
+export const createTemplate: Handler = async (ctx, pool, req, deps) => {
+  const b = asObject(req.body);
+  const name = String(b.name ?? 'Untitled');
+  const mjml = String(b.mjml ?? '');
+  // Compile MJML→HTML server-side (reuse @cdp/email compileMjml via deps).
+  const compiled = deps.compileMjml(mjml);
+  const { rows } = await pool.query(
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html)
+     VALUES ($1, $2, $3, $4) RETURNING id, name, updated_at`,
+    [ctx.workspaceId, name, mjml, compiled],
+  );
+  return ok({ template: rows[0] }, 201);
+};
+
+// ---------------------------------------------------------------------------
+// broadcasts (manage_content)
+// ---------------------------------------------------------------------------
+
+export const listBroadcasts: Handler = async (ctx, pool) => {
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, sent_at FROM broadcasts',
+  );
+  const { rows } = await pool.query(q.text, q.values);
+  return ok({ broadcasts: rows });
+};
+
+export const createBroadcast: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const { rows } = await pool.query(
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, status`,
+    [
+      ctx.workspaceId,
+      String(b.name ?? 'Untitled'),
+      b.template_id ?? null,
+      String(b.audience_kind ?? 'segment'),
+      b.audience_ref ?? null,
+      ctx.userId ?? null,
+    ],
+  );
+  return ok({ broadcast: rows[0] }, 201);
+};
+
+/** POST /broadcasts/:id/send — runs the broadcast core (SQS mocked at the boundary). */
+export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
+  const id = req.params.id!;
+  // CRITICAL (CLAUDE.md inv.2): runBroadcast loads workspace_id FROM the broadcast
+  // row, so it would happily send ANY broadcast id regardless of the caller's
+  // active workspace. We MUST first confirm the target broadcast belongs to the
+  // token's workspace (NEVER the body). If not, return 404 without revealing that
+  // the id exists in another workspace, and never invoke the broadcast core.
+  const guard = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM broadcasts WHERE id = $1', [id]);
+  const { rowCount } = await pool.query(guard.text, guard.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  const result = await runBroadcast(deps.broadcast, id);
+  return ok({ result });
+};
+
+// ---------------------------------------------------------------------------
+// campaigns (manage_content)
+// ---------------------------------------------------------------------------
+
+export const listCampaigns: Handler = async (ctx, pool) => {
+  const q = scopedQuery(ctx.workspaceId, 'SELECT id, name, status FROM campaigns');
+  const { rows } = await pool.query(q.text, q.values);
+  return ok({ campaigns: rows });
+};
+
+export const createCampaign: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const name = String(b.name ?? '');
+  const definition = b.definition;
+  if (!name) return ok({ error: 'name required' }, 400);
+  validateCampaignDefinition(definition); // reject malformed graphs (§9B)
+  const { rows } = await pool.query(
+    `INSERT INTO campaigns (workspace_id, name, definition, trigger_segment_id)
+     VALUES ($1, $2, $3::jsonb, $4) RETURNING id, name, status`,
+    [ctx.workspaceId, name, JSON.stringify(definition), b.trigger_segment_id ?? null],
+  );
+  return ok({ campaign: rows[0] }, 201);
+};
+
+export const updateCampaign: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const id = req.params.id!;
+  if (b.definition !== undefined) validateCampaignDefinition(b.definition);
+  const q = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE campaigns SET
+       name = COALESCE($1, name),
+       definition = CASE WHEN $3::boolean THEN $2::jsonb ELSE definition END,
+       status = COALESCE($4, status)
+     WHERE id = $5`,
+    [
+      b.name !== undefined ? String(b.name) : null,
+      b.definition !== undefined ? JSON.stringify(b.definition) : null,
+      b.definition !== undefined,
+      b.status !== undefined ? String(b.status) : null,
+      id,
+    ],
+  );
+  const { rowCount } = await pool.query(q.text, q.values);
+  return ok({ updated: rowCount ?? 0 });
+};
+
+// ---------------------------------------------------------------------------
+// profiles (manage_content)
+// ---------------------------------------------------------------------------
+
+export const listProfiles: Handler = async (ctx, pool) => {
+  // Explicit workspace_id = $1 scoping (the token's workspace), since this query
+  // carries ORDER BY/LIMIT that scopedQuery's WHERE-rewriter cannot wrap.
+  const { rows } = await pool.query(
+    'SELECT id, external_id, email, email_status FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200',
+    [ctx.workspaceId],
+  );
+  return ok({ profiles: rows });
+};
+
+export const getProfile: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, external_id, email, email_status, attributes FROM profiles WHERE id = $1',
+    [id],
+  );
+  const { rows } = await pool.query(q.text, q.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  return ok({ profile: rows[0] });
+};
+
+// ---------------------------------------------------------------------------
+// dashboards (manage_content)
+// ---------------------------------------------------------------------------
+
+export const dashboardSummary: Handler = async (ctx, pool) => {
+  const counts = await Promise.all([
+    pool.query(`SELECT count(*)::int AS c FROM profiles WHERE workspace_id = $1`, [ctx.workspaceId]),
+    pool.query(`SELECT count(*)::int AS c FROM segments WHERE workspace_id = $1`, [ctx.workspaceId]),
+    pool.query(`SELECT count(*)::int AS c FROM broadcasts WHERE workspace_id = $1`, [ctx.workspaceId]),
+    pool.query(`SELECT count(*)::int AS c FROM messages_log WHERE workspace_id = $1`, [ctx.workspaceId]),
+  ]);
+  return ok({
+    profiles: counts[0].rows[0]?.c ?? 0,
+    segments: counts[1].rows[0]?.c ?? 0,
+    broadcasts: counts[2].rows[0]?.c ?? 0,
+    messages_sent: counts[3].rows[0]?.c ?? 0,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// suppressions (manage_content)
+// ---------------------------------------------------------------------------
+
+export const listSuppressions: Handler = async (ctx, pool) => {
+  const { rows } = await pool.query(
+    'SELECT email, reason, source, created_at FROM suppressions WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 500',
+    [ctx.workspaceId],
+  );
+  return ok({ suppressions: rows });
+};
+
+// ---------------------------------------------------------------------------
+// billing / usage (view_billing)
+// ---------------------------------------------------------------------------
+
+export const billingUsage: Handler = async (ctx, pool) => {
+  const { rows } = await pool.query(
+    'SELECT period, metric, value FROM usage_counters WHERE workspace_id = $1 ORDER BY period DESC',
+    [ctx.workspaceId],
+  );
+  return ok({ usage: rows });
+};
+
+// ---------------------------------------------------------------------------
+// system-admin cross-tenant console (view_all_workspaces, AUDITED)
+// ---------------------------------------------------------------------------
+
+/** GET /admin/workspaces — cross-company list (system-admin only). Audited. */
+export const adminListWorkspaces: Handler = async (ctx, pool) => {
+  const { rows } = await pool.query(
+    'SELECT id, name, status, created_at FROM workspaces ORDER BY created_at',
+  );
+  // Listing ALL workspaces is inherently a cross-tenant action (only a platform
+  // admin reaches this route, gated by view_all_workspaces) — always audit it.
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.list_workspaces', {
+      count: rows.length,
+    }),
+  );
+  return ok({ workspaces: rows });
+};
+
+/** GET /admin/workspaces/:id — read ANOTHER workspace (cross-tenant). Audited. */
+export const adminGetWorkspace: Handler = async (ctx, pool, req) => {
+  const targetId = req.params.id!;
+  const { rows } = await pool.query(
+    'SELECT id, name, status, sending_identity, created_at FROM workspaces WHERE id = $1',
+    [targetId],
+  );
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  // Reading a workspace OTHER than the active claim is the audited cross-tenant case.
+  await handleAdminAccess(
+    ctx,
+    targetId,
+    'admin.read_workspace',
+    { workspace_id: targetId },
+    writeAuditEntry,
+  );
+  return ok({ workspace: rows[0] });
+};
+
+/** Map a route key → its handler. */
+export const HANDLERS: Readonly<Record<string, Handler>> = {
+  'GET /me': getMe,
+  'GET /workspace/members': listMembers,
+  'POST /workspace/members': addMember,
+  'PATCH /workspace/members': updateMember,
+  'POST /sending-domain/start': sendingDomainStart,
+  'POST /sending-domain/check': sendingDomainCheck,
+  'POST /sending-domain/activate': sendingDomainActivate,
+  'GET /segments': listSegments,
+  'POST /segments': createSegment,
+  'PUT /segments/:id': updateSegment,
+  'POST /segments/preview': previewSegment,
+  'POST /segments/:id/members': addSegmentMembers,
+  'DELETE /segments/:id/members': removeSegmentMembers,
+  'POST /segments/:id/import-csv': importCsvMembers,
+  'GET /templates': listTemplates,
+  'POST /templates': createTemplate,
+  'GET /broadcasts': listBroadcasts,
+  'POST /broadcasts': createBroadcast,
+  'POST /broadcasts/:id/send': sendBroadcast,
+  'GET /campaigns': listCampaigns,
+  'POST /campaigns': createCampaign,
+  'PUT /campaigns/:id': updateCampaign,
+  'GET /profiles': listProfiles,
+  'GET /profiles/:id': getProfile,
+  'GET /dashboards/summary': dashboardSummary,
+  'GET /suppressions': listSuppressions,
+  'GET /billing/usage': billingUsage,
+  'GET /admin/workspaces': adminListWorkspaces,
+  'GET /admin/workspaces/:id': adminGetWorkspace,
+};

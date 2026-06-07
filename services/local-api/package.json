@@ -1,0 +1,40 @@
+{
+  "name": "@cdp/service-local-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev:api": "node --import tsx/esm src/server.ts",
+    "typecheck": "tsc -b --noEmit false",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint src --no-error-on-unmatched-pattern"
+  },
+  "dependencies": {
+    "@cdp/db": "workspace:*",
+    "@cdp/email": "workspace:*",
+    "@cdp/segments": "workspace:*",
+    "@cdp/service-api": "workspace:*",
+    "@cdp/service-authorizer": "workspace:*",
+    "@cdp/service-broadcast": "workspace:*",
+    "@cdp/service-campaign-runner": "workspace:*",
+    "@cdp/service-onboarding": "workspace:*",
+    "@cdp/shared": "workspace:*",
+    "@cdp/tenancy": "workspace:*",
+    "@hono/node-server": "^1.12.0",
+    "hono": "^4.5.0",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.6",
+    "tsx": "^4.16.0"
+  }
+}

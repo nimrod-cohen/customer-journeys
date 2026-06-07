@@ -1,15 +1,21 @@
 import { test, expect } from '@playwright/test';
+import { loginAs } from './helpers.js';
+import { USER_MKT } from './seed.js';
 
 // §11 / §16A tier 3 (browser): the editor renders in REAL Chromium and EMITS
 // MJML — the third tier proving the "emit MJML, never hand-rolled HTML"
 // invariant (unit + integration + browser). Stable data-testid selectors; the
 // app seeds a deterministic starter doc so there's no flakiness.
 //
-// Skips cleanly (the whole project is gated) if Chromium isn't installed — the
-// webServer/build still has to succeed for the suite to run.
+// Phase 12: the editor is now the /editor screen behind auth — we log in (as a
+// marketer, manage_content) and navigate to it before asserting.
+async function openEditor(page: import('@playwright/test').Page): Promise<void> {
+  await loginAs(page, USER_MKT);
+  await page.getByTestId('nav-editor').click();
+}
 
 test('the GrapesJS+MJML editor renders and emits MJML rooted at <mjml>', async ({ page }) => {
-  await page.goto('/');
+  await openEditor(page);
 
   // The editor host mounts.
   await expect(page.getByTestId('gjs-host')).toBeVisible();
@@ -23,7 +29,7 @@ test('the GrapesJS+MJML editor renders and emits MJML rooted at <mjml>', async (
 });
 
 test('inserting an image adds an <mj-image src> referencing the asset URL', async ({ page }) => {
-  await page.goto('/');
+  await openEditor(page);
   await expect(page.getByTestId('gjs-host')).toBeVisible();
 
   await page.getByTestId('insert-image').click();

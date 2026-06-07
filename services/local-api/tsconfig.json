@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/db" },
+    { "path": "../../packages/email" },
+    { "path": "../../packages/segments" },
+    { "path": "../../packages/tenancy" },
+    { "path": "../api" },
+    { "path": "../authorizer" },
+    { "path": "../broadcast" },
+    { "path": "../campaign-runner" },
+    { "path": "../onboarding" }
+  ]
+}

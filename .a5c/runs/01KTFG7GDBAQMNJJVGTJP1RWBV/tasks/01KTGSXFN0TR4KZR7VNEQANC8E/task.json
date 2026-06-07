@@ -1,0 +1,88 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "criteria": [
+            "The Image Lambda issues a presigned S3 PUT URL under the workspace_id/ key prefix; uploaded image bytes are recorded in usage_counters; variants are produced by the sharp step. (Verified against LocalStack S3 / mocked S3.)",
+            "The GrapesJS+MJML editor renders in a real browser (Playwright), lets a user compose a template, and on save emits MJML that compiles to HTML stored in email_templates (workspace-scoped).",
+            "Image keys are workspace-prefixed; one workspace cannot read/overwrite another workspace prefix."
+          ],
+          "frontend": true,
+          "id": "phase11-image-wysiwyg",
+          "scope": [
+            "services/image: an Image Lambda that returns a presigned S3 PUT URL keyed under a workspace_id/ prefix (LocalStack S3); an S3-triggered Lambda that makes sharp variants; record bytes in usage_counters (image_storage_bytes). Mock/LocalStack S3.",
+            "Frontend (in /web): a GrapesJS + MJML-plugin email editor component (core GrapesJS, BSD-3, NOT the paid Studio SDK) that emits MJML; on save, MJML -> compiled HTML via the existing Template Lambda (@cdp/email compile) stored in email_templates. Images uploaded via the presigned URL flow.",
+            "The editor must OUTPUT MJML, not hand-rolled email HTML."
+          ],
+          "specSections": "§11 (presigned S3 PUT under workspace_id/ prefix, sharp variants via S3-triggered Lambda, CloudFront, GrapesJS+MJML editor emitting MJML), §6 (usage_counters image bytes)",
+          "title": "Image pipeline + WYSIWYG editor"
+        },
+        "score": 95
+      },
+      "instructions": [
+        "Run `git add -A`.",
+        "Commit with a clear conventional message describing the phase (Image pipeline + WYSIWYG editor), gate score (95), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Image pipeline + WYSIWYG editor\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTGSXFN0TR4KZR7VNEQANC8E/input.json",
+    "outputJsonPath": "tasks/01KTGSXFN0TR4KZR7VNEQANC8E/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "phase11-image-wysiwyg"
+  ],
+  "title": "Commit: Image pipeline + WYSIWYG editor",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTGSXFN0TR4KZR7VNEQANC8E",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/app-completion:S000014:commit-phase",
+  "stepId": "S000014",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "criteria": [
+        "The Image Lambda issues a presigned S3 PUT URL under the workspace_id/ key prefix; uploaded image bytes are recorded in usage_counters; variants are produced by the sharp step. (Verified against LocalStack S3 / mocked S3.)",
+        "The GrapesJS+MJML editor renders in a real browser (Playwright), lets a user compose a template, and on save emits MJML that compiles to HTML stored in email_templates (workspace-scoped).",
+        "Image keys are workspace-prefixed; one workspace cannot read/overwrite another workspace prefix."
+      ],
+      "frontend": true,
+      "id": "phase11-image-wysiwyg",
+      "scope": [
+        "services/image: an Image Lambda that returns a presigned S3 PUT URL keyed under a workspace_id/ prefix (LocalStack S3); an S3-triggered Lambda that makes sharp variants; record bytes in usage_counters (image_storage_bytes). Mock/LocalStack S3.",
+        "Frontend (in /web): a GrapesJS + MJML-plugin email editor component (core GrapesJS, BSD-3, NOT the paid Studio SDK) that emits MJML; on save, MJML -> compiled HTML via the existing Template Lambda (@cdp/email compile) stored in email_templates. Images uploaded via the presigned URL flow.",
+        "The editor must OUTPUT MJML, not hand-rolled email HTML."
+      ],
+      "specSections": "§11 (presigned S3 PUT under workspace_id/ prefix, sharp variants via S3-triggered Lambda, CloudFront, GrapesJS+MJML editor emitting MJML), §6 (usage_counters image bytes)",
+      "title": "Image pipeline + WYSIWYG editor"
+    },
+    "score": 95
+  }
+}
