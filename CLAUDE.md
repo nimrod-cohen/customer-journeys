@@ -104,6 +104,7 @@ Tooling: **pnpm workspaces + Turborepo + Vitest + TypeScript (strict)**. Node 20
 - **Lint / format:** `pnpm lint` · `pnpm format` (Prettier)
 - **Local Postgres (Supabase CLI):** `pnpm db:start` then `pnpm db:migrate` (reset + re-apply migrations in `packages/db/supabase/migrations`)
 - **LocalStack (SQS/S3/SNS/API GW):** `pnpm localstack:start` (docker compose; see `docker-compose.yml`)
+- **Browser e2e (Playwright):** `pnpm --filter @cdp/web test:e2e`. **DB isolation (critical):** the e2e suite re-seeds (deletes+reinserts the Acme/Beta demo workspaces) on every run, so it is pinned to its OWN database `cdp_e2e` on its OWN ports (local-api :8788, web :5174) in `web/playwright.config.ts`. The dev stack (`cdp`, :8787/:5173) and the e2e stack coexist — running e2e does NOT touch live dev data, and dev servers need not be stopped. Never point the e2e at `cdp`.
 - **CDK:** `pnpm --filter @cdp/infra synth` / `... deploy`
 
 Workspace layout: packages are `@cdp/<name>` (shared, db, segments, email, tenancy); services are `@cdp/service-<name>`; infra is `@cdp/infra`; web is `@cdp/web`. Strict TS base in `tsconfig.base.json`; each package extends it and uses project references (`tsc -b`).
