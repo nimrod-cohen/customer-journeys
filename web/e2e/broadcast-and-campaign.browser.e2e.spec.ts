@@ -5,10 +5,10 @@
 // validates and persists. Proven in a real browser against real Postgres.
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
-import { USER_MKT } from './seed.js';
+import { DEV_MKT } from './seed.js';
 
 test('compose and send a broadcast to a segment', async ({ page }) => {
-  await loginAs(page, USER_MKT);
+  await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-broadcasts').click();
   await page.getByTestId('broadcast-composer').waitFor();
 
@@ -25,7 +25,7 @@ test('compose and send a broadcast to a segment', async ({ page }) => {
 });
 
 test('build and save a campaign workflow', async ({ page }) => {
-  await loginAs(page, USER_MKT);
+  await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-campaigns').click();
   await page.getByTestId('campaign-builder').waitFor();
 

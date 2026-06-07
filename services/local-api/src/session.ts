@@ -4,7 +4,7 @@
 // platform-admin) and re-issues a token with the new active workspace_id —
 // reusing @cdp/tenancy switchActiveWorkspace so the cross-tenant rule is shared.
 import { switchActiveWorkspace } from '@cdp/tenancy';
-import type { Membership } from '@cdp/shared';
+import { findDevUser, type Membership } from '@cdp/shared';
 import { encodeDevToken, decodeDevToken, extractBearer } from './auth.js';
 import type { AuthorizerLookups } from './auth.js';
 
@@ -15,19 +15,32 @@ export interface SessionResult {
 }
 
 /**
- * POST /auth/dev-login — resolve a user's memberships and mint a dev token whose
- * active workspace_id defaults to the FIRST membership (or a body-provided
- * workspace_id IF the user is a member / platform admin). The user id is supplied
- * by the caller (a real Supabase login would supply `sub`); for local/e2e this is
- * a seeded user id. workspace_id in the TOKEN is authoritative thereafter.
+ * POST /auth/dev-login — authenticate and mint a dev token whose active
+ * workspace_id defaults to the FIRST membership (or a body-provided workspace_id
+ * IF the user is a member / platform admin). Two input shapes (a real Supabase
+ * login replaces all of this):
+ *   - { email, password } — the primary UI path: verified against the DEV_USERS
+ *     fixture, resolving to a seeded user id.
+ *   - { user_id } / { sub } — direct/e2e path: trust the supplied seeded id.
+ * workspace_id in the TOKEN is authoritative thereafter.
  */
 export async function devLogin(
   lookups: AuthorizerLookups,
   body: unknown,
 ): Promise<SessionResult> {
   const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
-  const sub = String(b.user_id ?? b.sub ?? '');
-  if (!sub) return { status: 400, body: { error: 'user_id (sub) required' } };
+
+  // Resolve the subject. Email+password is the primary path; verify against the
+  // dev credential fixture. user_id/sub remains for the direct/e2e path.
+  let sub = '';
+  if (typeof b.email === 'string') {
+    const user = findDevUser(b.email, String(b.password ?? ''));
+    if (!user) return { status: 401, body: { error: 'invalid email or password' } };
+    sub = user.userId;
+  } else {
+    sub = String(b.user_id ?? b.sub ?? '');
+  }
+  if (!sub) return { status: 400, body: { error: 'email + password required' } };
 
   const [memberships, isPlatformAdmin] = await Promise.all([
     lookups.loadMemberships(sub),

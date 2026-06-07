@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
-import { USER_MKT } from './seed.js';
+import { DEV_MKT } from './seed.js';
 
 // §11 / §16A tier 3 (browser): the editor renders in REAL Chromium and EMITS
 // MJML — the third tier proving the "emit MJML, never hand-rolled HTML"
@@ -10,7 +10,7 @@ import { USER_MKT } from './seed.js';
 // Phase 12: the editor is now the /editor screen behind auth — we log in (as a
 // marketer, manage_content) and navigate to it before asserting.
 async function openEditor(page: import('@playwright/test').Page): Promise<void> {
-  await loginAs(page, USER_MKT);
+  await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-editor').click();
 }
 

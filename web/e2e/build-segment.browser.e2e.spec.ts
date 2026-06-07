@@ -4,10 +4,10 @@
 // the builder → API → §8 compiler → real Postgres path in a browser.
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
-import { USER_MKT } from './seed.js';
+import { DEV_MKT } from './seed.js';
 
 test('build a dynamic segment and see a live size preview', async ({ page }) => {
-  await loginAs(page, USER_MKT);
+  await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();
   await page.getByTestId('segment-builder').waitFor();
 

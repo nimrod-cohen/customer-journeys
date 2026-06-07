@@ -62,10 +62,10 @@ interface MeResponse {
   memberships: Membership[];
 }
 
-/** Dev login: mint a token for a seeded user id, then load /me. */
-export async function login(userId: string, workspaceId?: string): Promise<void> {
+/** Dev login: authenticate email + password, mint a token, then load /me. */
+export async function login(email: string, password: string): Promise<void> {
   const res = await api.post<LoginResponse>('/auth/dev-login', {
-    body: workspaceId ? { user_id: userId, workspace_id: workspaceId } : { user_id: userId },
+    body: { email, password },
     // dev-login selects the initial active workspace — a session endpoint, not a
     // data request, so the workspace_id guard is intentionally bypassed here.
     allowWorkspaceId: true,

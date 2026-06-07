@@ -147,3 +147,43 @@ export interface AuthResult {
   /** Human-readable reason when denied (logged, not returned to clients). */
   readonly reason?: string;
 }
+
+// ---------------------------------------------------------------------------
+// DEV-ONLY auth fixtures. The local dev-login (services/local-api) authenticates
+// email + password against this list and resolves to a seeded user id. In
+// production this is entirely replaced by Supabase Auth — these credentials do
+// not exist there. The userIds MUST match the e2e/seed user UUIDs.
+// ---------------------------------------------------------------------------
+export interface DevUser {
+  readonly email: string;
+  readonly password: string;
+  readonly userId: string;
+  readonly label: string;
+}
+
+export const DEV_USERS: readonly DevUser[] = [
+  {
+    email: 'admin@journeys.dev',
+    password: 'admin1234',
+    userId: '0e2efe00-0000-4000-8000-0000000000b3',
+    label: 'Platform admin (system-admin)',
+  },
+  {
+    email: 'owner@acme.com',
+    password: 'owner1234',
+    userId: '0e2efe00-0000-4000-8000-0000000000b1',
+    label: 'Owner — Acme (A) + Beta (B)',
+  },
+  {
+    email: 'marketer@acme.com',
+    password: 'marketer1234',
+    userId: '0e2efe00-0000-4000-8000-0000000000b2',
+    label: 'Marketer — Acme (A)',
+  },
+];
+
+/** Resolve a dev user by email + password (constant work; dev-only). Returns null on mismatch. */
+export function findDevUser(email: string, password: string): DevUser | null {
+  const e = email.trim().toLowerCase();
+  return DEV_USERS.find((u) => u.email.toLowerCase() === e && u.password === password) ?? null;
+}

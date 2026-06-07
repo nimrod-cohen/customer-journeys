@@ -12,6 +12,13 @@ export const WS_B = '0e2efe00-0000-4000-8000-000000000a02';
 export const USER_MULTI = '0e2efe00-0000-4000-8000-0000000000b1'; // owner of A + B
 export const USER_MKT = '0e2efe00-0000-4000-8000-0000000000b2'; // marketer of A
 export const USER_ADMIN = '0e2efe00-0000-4000-8000-0000000000b3'; // platform admin
+
+// Dev-login credential handles (email+password fixtures in @cdp/shared), mapped
+// to the seeded user UUIDs so the e2e logs in exactly like a real user.
+import { DEV_USERS } from '@cdp/shared';
+export const DEV_OWNER = DEV_USERS.find((u) => u.userId === USER_MULTI)!;
+export const DEV_MKT = DEV_USERS.find((u) => u.userId === USER_MKT)!;
+export const DEV_ADMIN = DEV_USERS.find((u) => u.userId === USER_ADMIN)!;
 export const TPL_A = '0e2efe00-0000-4000-8000-0000000000c1';
 export const SEG_A = '0e2efe00-0000-4000-8000-0000000000c2';
 export const SEG_B = '0e2efe00-0000-4000-8000-0000000000c3';

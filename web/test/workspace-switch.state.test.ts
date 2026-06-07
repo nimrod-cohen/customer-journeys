@@ -70,7 +70,7 @@ describe('workspace-switch store', () => {
     });
 
     return (async () => {
-      await login('u1');
+      await login('u1@dev.local', 'pw');
       expect(sessionStore.get().workspaceId).toBe('WS_A');
       expect(sessionStore.get().role).toBe('owner');
 
@@ -99,7 +99,7 @@ describe('workspace-switch store', () => {
         memberships: [],
       }),
     });
-    await login('u1');
+    await login('u1@dev.local', 'pw');
     expect(sessionStore.get().token).not.toBeNull();
     logout();
     expect(sessionStore.get().token).toBeNull();

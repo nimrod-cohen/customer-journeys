@@ -8,10 +8,10 @@
 // This asserts the actual DATA re-scopes in the browser, not just the selector.
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
-import { USER_MULTI, WS_A, WS_B, SEG_A_NAME, SEG_B_NAME } from './seed.js';
+import { DEV_OWNER, WS_A, WS_B, SEG_A_NAME, SEG_B_NAME } from './seed.js';
 
 test('login then switch workspace re-scopes the app with no cross-bleed', async ({ page }) => {
-  await loginAs(page, USER_MULTI);
+  await loginAs(page, DEV_OWNER);
 
   // Active workspace is one of the memberships; navigate to segments.
   await page.getByTestId('nav-segments').click();

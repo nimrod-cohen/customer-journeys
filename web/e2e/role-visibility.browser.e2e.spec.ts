@@ -5,10 +5,10 @@
 // page's fetch, bypassing the hidden nav).
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
-import { USER_MKT, USER_MULTI } from './seed.js';
+import { DEV_MKT, DEV_OWNER } from './seed.js';
 
 test('marketer nav hides billing/settings/admin', async ({ page }) => {
-  await loginAs(page, USER_MKT);
+  await loginAs(page, DEV_MKT);
   await expect(page.getByTestId('nav-segments')).toBeVisible();
   await expect(page.getByTestId('nav-billing')).toHaveCount(0);
   await expect(page.getByTestId('nav-settings')).toHaveCount(0);
@@ -16,13 +16,13 @@ test('marketer nav hides billing/settings/admin', async ({ page }) => {
 });
 
 test('owner nav shows billing + settings', async ({ page }) => {
-  await loginAs(page, USER_MULTI);
+  await loginAs(page, DEV_OWNER);
   await expect(page.getByTestId('nav-billing')).toBeVisible();
   await expect(page.getByTestId('nav-settings')).toBeVisible();
 });
 
 test('server 403s a marketer on billing even when the UI route is hidden', async ({ page }) => {
-  await loginAs(page, USER_MKT);
+  await loginAs(page, DEV_MKT);
   // Call the API directly from the browser with the marketer's stored token —
   // the SERVER must enforce the capability regardless of the hidden nav link.
   const status = await page.evaluate(async () => {
