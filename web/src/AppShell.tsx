@@ -10,6 +10,7 @@ import { routeStore, navigate } from './router.js';
 import { buildNav } from './nav/nav.js';
 import { ICONS } from './ui/icons.js';
 import { SegmentBuilder } from './screens/SegmentBuilder.js';
+import { SegmentsList } from './screens/SegmentsList.js';
 import { BroadcastComposer } from './screens/BroadcastComposer.js';
 import { CampaignBuilder } from './screens/CampaignBuilder.js';
 import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
@@ -35,9 +36,14 @@ function screenFor(path: string): JSX.Element {
   if (path.startsWith('/profiles/')) {
     return <ProfileDetail id={path.slice('/profiles/'.length)} />;
   }
+  // Segments: list at /segments; the designated create/edit builder at
+  // /segments/new and /segments/:id.
+  if (path === '/segments') return <SegmentsList />;
+  if (path.startsWith('/segments/')) {
+    const rest = path.slice('/segments/'.length);
+    return rest === 'new' ? <SegmentBuilder /> : <SegmentBuilder id={rest} />;
+  }
   switch (path) {
-    case '/segments':
-      return <SegmentBuilder />;
     case '/broadcasts':
       return <BroadcastComposer />;
     case '/campaigns':

@@ -94,6 +94,15 @@ describeMaybe('workspace scope + switching (real Postgres)', () => {
     expect(ids).not.toContain(SEG_A);
   });
 
+  it('GET /segments/:id is workspace-scoped (own → 200, other tenant → 404)', async () => {
+    const own = await call(world.env, 'GET', `/segments/${SEG_A}`, { token: tokenFor(USER, WS_A) });
+    expect(own.status).toBe(200);
+    expect((own.body as { segment: { id: string } }).segment.id).toBe(SEG_A);
+    // The A-active token cannot read B's segment even though USER also belongs to B.
+    const other = await call(world.env, 'GET', `/segments/${SEG_B}`, { token: tokenFor(USER, WS_A) });
+    expect(other.status).toBe(404);
+  });
+
   it('a user cannot get a token active on a workspace they do not belong to', async () => {
     const stranger = '0c0d0e01-0000-4000-8000-0000000000ff';
     // Stranger has no membership → authorizer denies an active-wsA token (403).

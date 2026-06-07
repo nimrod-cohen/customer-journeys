@@ -1,27 +1,67 @@
-// E2E (real Chromium): build a dynamic segment with a LIVE size preview (§12).
-// The marketer enters a rule (attributes.tier = vip), previews the size (must be
-// 2 — the two seeded VIPs in WS_A, never WS_B's profile), and saves it. Proves
-// the builder → API → §8 compiler → real Postgres path in a browser.
+// E2E (real Chromium): the Segments list → designated builder flow (§12). The
+// marketer opens the builder from the list, enters a rule (attributes.tier =
+// vip), previews the size (must be 2 — the two seeded VIPs in WS_A, never WS_B's
+// profile), saves, and lands back on the list which now shows the new segment
+// (proves the list is reactive). A second test loads an existing segment into the
+// builder, renames it, and confirms the rename reflects in the list.
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
-test('build a dynamic segment and see a live size preview', async ({ page }) => {
+test('create a dynamic segment from the list, preview size, and see it appear', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+
+  // Open the designated create screen.
+  await page.getByTestId('new-segment').click();
   await page.getByTestId('segment-builder').waitFor();
 
   await page.getByTestId('segment-name').fill('VIP members');
-  // The first rule row: attributes.tier = vip.
   await page.getByTestId('rule-field').first().fill('attributes.tier');
   await page.getByTestId('rule-operator').first().selectOption('=');
   await page.getByTestId('rule-value').first().fill('vip');
 
   await page.getByTestId('preview-size').click();
   // Two seeded VIPs in WS_A; WS_B's VIP-less profile is excluded by scoping.
-  // (Copy-resilient: the preview element shows the matched count "2".)
   await expect(page.getByTestId('segment-size')).toContainText('2');
 
   await page.getByTestId('save-segment').click();
-  await expect(page.getByTestId('segment-saved')).toBeVisible();
+
+  // Saving returns to the list, which re-fetches and shows the new segment.
+  await page.getByTestId('segments-list').waitFor();
+  await expect(page.getByTestId('segment-list')).toContainText('VIP members');
+});
+
+test('edit a segment from the list: builder hydrates and the rename reflects', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+
+  // Create a segment to edit (self-contained — does not touch seeded data).
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+  await page.getByTestId('segment-name').fill('Seg To Edit');
+  await page.getByTestId('rule-field').first().fill('attributes.tier');
+  await page.getByTestId('rule-operator').first().selectOption('=');
+  await page.getByTestId('rule-value').first().fill('std');
+  await page.getByTestId('save-segment').click();
+  await page.getByTestId('segments-list').waitFor();
+
+  // Open it in the designated edit screen — the builder hydrates from its AST.
+  await page
+    .getByTestId('segment-list-item')
+    .filter({ hasText: 'Seg To Edit' })
+    .getByTestId('segment-edit')
+    .click();
+  await page.getByTestId('segment-builder').waitFor();
+  await expect(page.getByTestId('segment-name')).toHaveValue('Seg To Edit');
+  await expect(page.getByTestId('rule-field').first()).toHaveValue('attributes.tier');
+  await expect(page.getByTestId('rule-value').first()).toHaveValue('std');
+
+  // Rename and save → the list reflects the change.
+  await page.getByTestId('segment-name').fill('Seg Edited');
+  await page.getByTestId('save-segment').click();
+  await page.getByTestId('segments-list').waitFor();
+  await expect(page.getByTestId('segment-list')).toContainText('Seg Edited');
 });

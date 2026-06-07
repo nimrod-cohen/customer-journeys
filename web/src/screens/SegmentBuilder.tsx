@@ -4,53 +4,50 @@
 // members are added by CSV emails via /segments/:id/import-csv. (Visual redesign;
 // all data-testid attributes preserved.)
 import { useEffect, useState } from 'preact/hooks';
-import { api, sessionStore } from '../store/session.js';
-import { useStore } from '../store/store.js';
+import { api } from '../store/session.js';
+import { navigate } from '../router.js';
 import {
   buildAst,
+  rowsFromAst,
   emptyRow,
   BUILDER_OPERATORS,
+  type AstNode,
   type RuleRow,
   type BuilderOperator,
   type Combinator,
 } from '../segments/ast-builder.js';
-import { Badge, Button, Card, Field, Input, PageHeader, Select, Textarea, EmptyState } from '../ui/kit.js';
+import { Badge, Button, Card, Field, Input, PageHeader, Select, Textarea } from '../ui/kit.js';
 
-interface ExistingSegment {
-  readonly id: string;
-  readonly name: string;
-  readonly kind: string;
-}
-
-export function SegmentBuilder() {
+/**
+ * SegmentBuilder is the DESIGNATED create/edit screen. With no `id` it creates a
+ * new segment (/segments/new); with an `id` it loads that segment and edits it
+ * (/segments/:id). Saving routes back to the list, which re-fetches → reactive.
+ */
+export function SegmentBuilder({ id }: { id?: string }) {
+  const editing = Boolean(id);
   const [rows, setRows] = useState<RuleRow[]>([emptyRow()]);
   const [combinator, setCombinator] = useState<Combinator>('and');
   const [size, setSize] = useState<number | null>(null);
   const [name, setName] = useState('');
-  const [savedId, setSavedId] = useState<string | null>(null);
+  // The id of the segment being edited or just-created (enables CSV import).
+  const [savedId, setSavedId] = useState<string | null>(id ?? null);
+  const [saving, setSaving] = useState(false);
   const [csv, setCsv] = useState('');
   const [imported, setImported] = useState<number | null>(null);
 
-  const session = useStore(sessionStore);
-  const [existing, setExisting] = useState<readonly ExistingSegment[]>([]);
+  // Edit mode: load the existing segment and hydrate the builder from its AST.
   useEffect(() => {
-    let cancelled = false;
-    if (!session.workspaceId) {
-      setExisting([]);
-      return;
-    }
+    if (!id) return;
     void api
-      .get<{ segments: ExistingSegment[] }>('/segments')
+      .get<{ segment: { name: string; kind: string; definition: AstNode | null } }>(`/segments/${id}`)
       .then((res) => {
-        if (!cancelled) setExisting(res.segments);
+        setName(res.segment.name);
+        const { rows: r, combinator: c } = rowsFromAst(res.segment.definition);
+        setRows(r);
+        setCombinator(c);
       })
-      .catch(() => {
-        if (!cancelled) setExisting([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [session.workspaceId]);
+      .catch(() => navigate('/segments'));
+  }, [id]);
 
   const update = (i: number, patch: Partial<RuleRow>) =>
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -62,11 +59,22 @@ export function SegmentBuilder() {
   };
 
   const save = async () => {
-    const ast = buildAst(rows, combinator);
-    const res = await api.post<{ segment: { id: string } }>('/segments', {
-      body: { name: name || 'Untitled segment', kind: 'dynamic_realtime', definition: ast },
-    });
-    setSavedId(res.segment.id);
+    setSaving(true);
+    try {
+      const ast = buildAst(rows, combinator);
+      if (editing && id) {
+        await api.put(`/segments/${id}`, { body: { name: name || 'Untitled segment', definition: ast } });
+      } else {
+        const res = await api.post<{ segment: { id: string } }>('/segments', {
+          body: { name: name || 'Untitled segment', kind: 'dynamic_realtime', definition: ast },
+        });
+        setSavedId(res.segment.id);
+      }
+      // Return to the list, which re-fetches on mount and shows the change.
+      navigate('/segments');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const importCsv = async () => {
@@ -81,11 +89,21 @@ export function SegmentBuilder() {
 
   return (
     <section data-testid="segment-builder">
-      <PageHeader title="Segments" subtitle="Build a dynamic rule-based audience or curate a manual list." />
+      <button
+        data-testid="segments-back"
+        class="btn-ghost mb-4 btn-sm"
+        onClick={() => navigate('/segments')}
+      >
+        ← Back to segments
+      </button>
+      <PageHeader
+        title={editing ? 'Edit segment' : 'New segment'}
+        subtitle="Build a dynamic rule-based audience or curate a manual list."
+      />
 
-      <div class="grid gap-6 lg:grid-cols-3">
+      <div class="max-w-3xl space-y-6">
         {/* Builder */}
-        <div class="space-y-6 lg:col-span-2">
+        <div class="space-y-6">
           <Card class="p-5">
             <div class="flex flex-wrap items-end gap-3">
               <Field label="Segment name" class="min-w-[16rem] flex-1">
@@ -162,18 +180,13 @@ export function SegmentBuilder() {
               <Button data-testid="preview-size" variant="secondary" onClick={preview}>
                 Preview size
               </Button>
-              <Button data-testid="save-segment" onClick={save}>
-                Save segment
+              <Button data-testid="save-segment" onClick={save} disabled={saving}>
+                {saving ? 'Saving…' : editing ? 'Save changes' : 'Save segment'}
               </Button>
               {size !== null ? (
                 <span data-testid="segment-size" class="text-sm text-stone-600">
                   Matches <b class="text-ink-900">{size}</b> profile{size === 1 ? '' : 's'}
                 </span>
-              ) : null}
-              {savedId ? (
-                <Badge data-testid="segment-saved" tone="success">
-                  Saved
-                </Badge>
               ) : null}
             </div>
           </Card>
@@ -205,31 +218,6 @@ export function SegmentBuilder() {
             </div>
           </Card>
         </div>
-
-        {/* Existing segments */}
-        <Card class="h-fit p-5">
-          <h2 class="text-base font-bold text-ink-900">Existing segments</h2>
-          <p class="mt-1 text-xs text-stone-500">In the active workspace.</p>
-          {existing.length ? (
-            <ul data-testid="segment-list" class="mt-3 space-y-1.5">
-              {existing.map((s) => (
-                <li
-                  data-testid="segment-list-item"
-                  data-segment-id={s.id}
-                  key={s.id}
-                  class="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm"
-                >
-                  <span class="font-medium text-ink-900">{s.name}</span>
-                  <Badge tone={s.kind === 'manual' ? 'neutral' : 'success'}>{s.kind}</Badge>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div class="mt-3" data-testid="segment-list">
-              <EmptyState>No segments yet.</EmptyState>
-            </div>
-          )}
-        </Card>
       </div>
     </section>
   );

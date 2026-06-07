@@ -73,3 +73,47 @@ export function buildAst(rows: readonly RuleRow[], combinator: Combinator): AstN
   if (conditions.length === 1) return conditions[0]!;
   return { op: combinator, conditions };
 }
+
+function isCondition(n: AstNode): n is ConditionNode {
+  return (n as ConditionNode).field !== undefined;
+}
+
+/** Stringify an AST condition value back into the row's raw input form. */
+function valueToRaw(operator: string, value: unknown): string {
+  if (operator === 'exists' || value === undefined || value === null) return '';
+  if (Array.isArray(value)) return value.join(', ');
+  return String(value);
+}
+
+/** Turn one condition node into an editable row (unknown operators fall back to '='). */
+function conditionToRow(c: ConditionNode): RuleRow {
+  const operator = (BUILDER_OPERATORS as readonly string[]).includes(c.operator)
+    ? (c.operator as BuilderOperator)
+    : '=';
+  return { field: c.field, operator, value: valueToRaw(operator, c.value) };
+}
+
+/**
+ * Reverse of buildAst: reconstruct the editable rows + combinator from a stored
+ * §8 AST so an existing segment can be loaded into the builder. Best-effort for
+ * shapes the builder itself emits (a bare condition, or one and/or group of
+ * conditions); nested/`not` groups are flattened to their condition leaves.
+ */
+export function rowsFromAst(ast: AstNode | null | undefined): {
+  rows: RuleRow[];
+  combinator: Combinator;
+} {
+  if (!ast) return { rows: [emptyRow()], combinator: 'and' };
+  if (isCondition(ast)) return { rows: [conditionToRow(ast)], combinator: 'and' };
+  const combinator: Combinator = ast.op === 'or' ? 'or' : 'and';
+  const leaves: ConditionNode[] = [];
+  const collect = (n: AstNode): void => {
+    if (isCondition(n)) leaves.push(n);
+    else n.conditions.forEach(collect);
+  };
+  ast.conditions.forEach(collect);
+  return {
+    rows: leaves.length ? leaves.map(conditionToRow) : [emptyRow()],
+    combinator,
+  };
+}

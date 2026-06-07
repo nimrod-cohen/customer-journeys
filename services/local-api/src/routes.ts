@@ -32,6 +32,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
 
   // --- segments + audiences (manage_content) ---
   'GET /segments': 'manage_content',
+  'GET /segments/:id': 'manage_content',
   'POST /segments': 'manage_content',
   'PUT /segments/:id': 'manage_content',
   'POST /segments/preview': 'manage_content',

@@ -204,6 +204,19 @@ export const listSegments: Handler = async (ctx, pool) => {
   return ok({ segments: rows });
 };
 
+/** GET /segments/:id — one segment (with its definition) for the editor. Scoped. */
+export const getSegment: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, kind, status, definition FROM segments WHERE id = $1',
+    [id],
+  );
+  const { rows } = await pool.query(q.text, q.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  return ok({ segment: rows[0] });
+};
+
 export const createSegment: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const name = String(b.name ?? '');
@@ -689,6 +702,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /sending-domain/check': sendingDomainCheck,
   'POST /sending-domain/activate': sendingDomainActivate,
   'GET /segments': listSegments,
+  'GET /segments/:id': getSegment,
   'POST /segments': createSegment,
   'PUT /segments/:id': updateSegment,
   'POST /segments/preview': previewSegment,

@@ -13,9 +13,9 @@ import { DEV_OWNER, WS_A, WS_B, SEG_A_NAME, SEG_B_NAME } from './seed.js';
 test('login then switch workspace re-scopes the app with no cross-bleed', async ({ page }) => {
   await loginAs(page, DEV_OWNER);
 
-  // Active workspace is one of the memberships; navigate to segments.
+  // Active workspace is one of the memberships; navigate to segments (the list).
   await page.getByTestId('nav-segments').click();
-  await page.getByTestId('segment-builder').waitFor();
+  await page.getByTestId('segments-list').waitFor();
 
   // The switcher lists both workspaces.
   const select = page.getByTestId('workspace-select');
