@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-07T12:36:54.549Z",
+  "data": {
+    "effectId": "01KTH1C343N25995VVDA1F194P",
+    "invocationKey": "cdp/app-completion:S000028:commit-phase",
+    "invocationHash": "74b7645b5f1c1c581a8c97890b40165bcd04bff70f7a05abd3eb5d59bdfe70b9",
+    "stepId": "S000028",
+    "taskId": "commit-phase",
+    "kind": "agent",
+    "label": "commit",
+    "taskDefRef": "tasks/01KTH1C343N25995VVDA1F194P/task.json",
+    "labels": [
+      "commit",
+      "phase14-hardening"
+    ]
+  },
+  "checksum": "b1b4d419c999d389dd5ef8626f72ff8546667f64e269ea12ae4171be85d0fca7"
+}

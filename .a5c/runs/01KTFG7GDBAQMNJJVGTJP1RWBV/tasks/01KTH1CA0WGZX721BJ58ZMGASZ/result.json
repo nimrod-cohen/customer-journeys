@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTH1CA0WGZX721BJ58ZMGASZ",
+  "taskId": "integration",
+  "invocationKey": "cdp/app-completion:S000029:integration",
+  "status": "ok",
+  "result": {
+    "acceptanceBulletsCovered": 16,
+    "allPass": true,
+    "cdkSynthOk": true,
+    "commandsRun": [
+      "DATABASE_URL=... pnpm test:acceptance",
+      "pnpm typecheck",
+      "pnpm lint",
+      "cd infra && npx cdk synth",
+      "rm -rf .turbo && DATABASE_URL=... AWS_ENDPOINT_URL=... pnpm test (cold)",
+      "cd web && DATABASE_URL=... pnpm exec playwright test"
+    ],
+    "e2eSummary": "web Playwright real Chromium 9/9 incl login-workspace-switch (login -> switch -> Segments renders real workspace-scoped data from local-api + real PG, no cross-bleed). local-api :8787 + Vite :5173.",
+    "entrypoint": "pnpm test:acceptance",
+    "filesCreated": [],
+    "filesModified": [
+      "tests/acceptance/spec18-acceptance.test.ts"
+    ],
+    "fullSuiteGreen": true,
+    "lintOk": true,
+    "notes": "Closed the 4-bullet §18 gap inline composing REAL cores: (1) IP strategy — decideIpRecommendation (sustained+cadence+reputation, rejects spikes) + upgradeIp (SES provision -> shared->warming, jsonb-merge preserves verified) + planCompleteUpgrade + computeDirectCost ($24.95 only upgraded) vs real PG; (2) Multi-workspace switching — switchActiveWorkspace re-scopes workspace-bound read no cross-bleed, rejects non-member; (3) Segments — evaluateRealtimeSegmentsForProfile auto-updates dynamic (enter then exit) while manual membership untouched, both via resolveAudience; (4) Compliance — decideDispatch/dispatchOutbox skip (freq cap), defer (quiet hours), skip (one-click unsubscribe) SES never called. Single gate now 1:1 to all 16 §18 bullets (19 it()s). Phase-12 e2e represents full UI->backend wiring, passes unchanged. Consolidation + verification only, no features. Determinism preserved.",
+    "testSummary": "Cold full monorepo (cache cleared, 0 cached): 41/41 packages green, ~838 tests, 1 intentional skip (processor LocalStack FIFO), 0 failures. Postgres real, SES/SNS/S3 mocked. Acceptance gate: 28 (19 spec18 + 9 pen) green. Now 16/16 §18 bullets inline.",
+    "typecheckOk": true
+  },
+  "startedAt": "2026-06-07T12:42:55.137Z",
+  "finishedAt": "2026-06-07T12:42:55.137Z",
+  "value": {
+    "acceptanceBulletsCovered": 16,
+    "allPass": true,
+    "cdkSynthOk": true,
+    "commandsRun": [
+      "DATABASE_URL=... pnpm test:acceptance",
+      "pnpm typecheck",
+      "pnpm lint",
+      "cd infra && npx cdk synth",
+      "rm -rf .turbo && DATABASE_URL=... AWS_ENDPOINT_URL=... pnpm test (cold)",
+      "cd web && DATABASE_URL=... pnpm exec playwright test"
+    ],
+    "e2eSummary": "web Playwright real Chromium 9/9 incl login-workspace-switch (login -> switch -> Segments renders real workspace-scoped data from local-api + real PG, no cross-bleed). local-api :8787 + Vite :5173.",
+    "entrypoint": "pnpm test:acceptance",
+    "filesCreated": [],
+    "filesModified": [
+      "tests/acceptance/spec18-acceptance.test.ts"
+    ],
+    "fullSuiteGreen": true,
+    "lintOk": true,
+    "notes": "Closed the 4-bullet §18 gap inline composing REAL cores: (1) IP strategy — decideIpRecommendation (sustained+cadence+reputation, rejects spikes) + upgradeIp (SES provision -> shared->warming, jsonb-merge preserves verified) + planCompleteUpgrade + computeDirectCost ($24.95 only upgraded) vs real PG; (2) Multi-workspace switching — switchActiveWorkspace re-scopes workspace-bound read no cross-bleed, rejects non-member; (3) Segments — evaluateRealtimeSegmentsForProfile auto-updates dynamic (enter then exit) while manual membership untouched, both via resolveAudience; (4) Compliance — decideDispatch/dispatchOutbox skip (freq cap), defer (quiet hours), skip (one-click unsubscribe) SES never called. Single gate now 1:1 to all 16 §18 bullets (19 it()s). Phase-12 e2e represents full UI->backend wiring, passes unchanged. Consolidation + verification only, no features. Determinism preserved.",
+    "testSummary": "Cold full monorepo (cache cleared, 0 cached): 41/41 packages green, ~838 tests, 1 intentional skip (processor LocalStack FIFO), 0 failures. Postgres real, SES/SNS/S3 mocked. Acceptance gate: 28 (19 spec18 + 9 pen) green. Now 16/16 §18 bullets inline.",
+    "typecheckOk": true
+  }
+}

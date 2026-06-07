@@ -74,7 +74,27 @@ import {
   type SegmentChangeLogRow,
   type CampaignDefinition,
 } from '@cdp/service-campaign-runner';
-import { computeAllWorkspaceCosts, DEFAULT_PRICES, type WorkspaceUsage } from '@cdp/service-metering';
+import {
+  computeAllWorkspaceCosts,
+  DEFAULT_PRICES,
+  type WorkspaceUsage,
+  decideIpRecommendation,
+  DEFAULT_IP_THRESHOLDS,
+  computeDirectCost,
+  upgradeIp,
+  planCompleteUpgrade,
+  runStatementsInWorkspaceTx as meteringTx,
+  type MeteringDeps,
+  type MonthSeries,
+} from '@cdp/service-metering';
+import { switchActiveWorkspace } from '@cdp/tenancy';
+import type { Membership } from '@cdp/shared';
+import {
+  evaluateRealtimeSegmentsForProfile,
+  addManualMembers,
+  resolveAudience,
+  type EvaluateDeps,
+} from '@cdp/segments';
 import {
   contextFromAuthorizer,
   enforceRoute,
@@ -223,6 +243,19 @@ function runDeps(pool: Pool, now: Date, sqs: CapturingSqs): RunDeps {
     dispatchQueueUrl: 'https://sqs/dispatch',
   };
 }
+function meteringDeps(pool: Pool): MeteringDeps {
+  return {
+    reader: { query: (text, values) => pool.query(text, values as unknown[]) as never },
+    runInWorkspaceTx: (w, s) => meteringTx(pool, w, s),
+  };
+}
+function evaluateDeps(pool: Pool): EvaluateDeps {
+  return {
+    reader: { query: (text, values) => pool.query(text, values as unknown[]) as never },
+    runInWorkspaceTx: (w, s) =>
+      campaignTx(pool, w, s) as unknown as Promise<void>, // reuse the real workspace-scoped tx runner
+  };
+}
 function broadcastDeps(pool: Pool, sqs: CapturingSqs, now: Date): BroadcastDeps {
   return {
     reader: {
@@ -266,11 +299,18 @@ async function profileId(pool: Pool, ws: string, email: string): Promise<string>
 // outbox.dedupe_key is GLOBALLY unique — namespace every manual key with a
 // per-run token so an interrupted prior run can never collide.
 const RUN = `acc18-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-async function enqueueOutbox(pool: Pool, ws: string, pid: string, tpl: string, dedupe: string): Promise<string> {
+async function enqueueOutbox(
+  pool: Pool,
+  ws: string,
+  pid: string,
+  tpl: string,
+  dedupe: string,
+  payloadExtra: Record<string, unknown> = {},
+): Promise<string> {
   const o = await pool.query(
     `INSERT INTO outbox (workspace_id, profile_id, template_id, dedupe_key, status, payload)
      VALUES ($1,$2,$3,$4,'pending',$5::jsonb) RETURNING id`,
-    [ws, pid, tpl, `${RUN}-${dedupe}`, JSON.stringify({ subject: 'Hi', merge: { first_name: 'Ada' } })],
+    [ws, pid, tpl, `${RUN}-${dedupe}`, JSON.stringify({ subject: 'Hi', merge: { first_name: 'Ada' }, ...payloadExtra })],
   );
   return o.rows[0].id as string;
 }
@@ -685,5 +725,174 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
     const wsB = view.workspaces.find((w) => w.workspaceId === WS_B)!;
     const wsA = view.workspaces.find((w) => w.workspaceId === WS_A)!;
     expect(wsB.directCost).toBeGreaterThan(wsA.directCost + DEFAULT_PRICES.dedicatedIpMonthly - 0.01);
+  });
+
+  it('§18 IP strategy: shared by default; advisor recommends only on sustained volume+cadence+reputation; upgrade-ip warms + tracks ip_mode/warmup_status; $24.95 only on upgraded', async () => {
+    // (a) Shared by default — a freshly-created workspace's effective ip_mode is 'shared'.
+    const si0 = await pool.query("SELECT COALESCE(sending_identity->>'ip_mode','shared') AS m FROM workspaces WHERE id=$1", [WS_A]);
+    expect(si0.rows[0].m).toBe('shared');
+
+    // (b) Advisor RECOMMENDS only when ALL criteria hold (sustained volume + cadence + reputation).
+    const goodMonth = (period: string): MonthSeries => ({
+      period, emailsSent: 150_000, activeDays: 25, daysInMonth: 30, bounces: 100, complaints: 1, delivered: 149_000,
+    });
+    const recommend = decideIpRecommendation(
+      [goodMonth('2026-03-01'), goodMonth('2026-04-01'), goodMonth('2026-05-01')],
+      DEFAULT_IP_THRESHOLDS,
+    );
+    expect(recommend.recommend).toBe(true);
+    // A single spike (volume only one month, poor cadence) does NOT recommend.
+    const noRec = decideIpRecommendation(
+      [
+        { period: '2026-03-01', emailsSent: 500, activeDays: 1, daysInMonth: 31, bounces: 0, complaints: 0, delivered: 500 },
+        { period: '2026-04-01', emailsSent: 500, activeDays: 1, daysInMonth: 30, bounces: 0, complaints: 0, delivered: 500 },
+        { period: '2026-05-01', emailsSent: 200_000, activeDays: 1, daysInMonth: 31, bounces: 0, complaints: 0, delivered: 200_000 },
+      ],
+      DEFAULT_IP_THRESHOLDS,
+    );
+    expect(noRec.recommend).toBe(false);
+
+    // (c) upgrade-ip provisions (SES) + warms gradually + tracks ip_mode/warmup_status (REAL Postgres write path).
+    const upgradeSes = new CountingSes();
+    const start = new Date('2026-06-01T00:00:00.000Z');
+    await upgradeIp(meteringDeps(pool), upgradeSes, WS_B, 'cdp-pool-acc18-B', start);
+    const warming = await pool.query('SELECT sending_identity FROM workspaces WHERE id=$1', [WS_B]);
+    const siB = warming.rows[0].sending_identity as Record<string, unknown>;
+    expect(siB.ip_mode).toBe('warming');
+    expect(siB.ip_pool).toBe('cdp-pool-acc18-B');
+    expect((siB.warmup_status as { startedAt: string }).startedAt).toBe(start.toISOString());
+    expect(siB.verified).toBe(true); // jsonb merge preserved the verified identity
+    // Cut over warming → dedicated.
+    await meteringTx(pool, WS_B, [planCompleteUpgrade(WS_B)]);
+    const ded = await pool.query("SELECT sending_identity->>'ip_mode' AS m FROM workspaces WHERE id=$1", [WS_B]);
+    expect(ded.rows[0].m).toBe('dedicated');
+
+    // (d) The $24.95 dedicated-IP fee lands ONLY on the upgraded workspace.
+    const sharedCost = computeDirectCost(
+      { emails_sent: 10_000, ipUpgraded: false, imageStorageBytes: 0, imageEgressBytes: 0 },
+      DEFAULT_PRICES,
+    );
+    const upgradedCost = computeDirectCost(
+      { emails_sent: 10_000, ipUpgraded: true, imageStorageBytes: 0, imageEgressBytes: 0 },
+      DEFAULT_PRICES,
+    );
+    expect(Math.round((upgradedCost - sharedCost) * 100) / 100).toBe(DEFAULT_PRICES.dedicatedIpMonthly);
+  });
+
+  it('§18 Multi-workspace switching: a user in two workspaces re-scopes reads when the active workspace_id claim switches; no cross-bleed', async () => {
+    // A user who is a member of BOTH WS_A and WS_B (tenancy switchActiveWorkspace
+    // is the REAL claim resolver). Seed one profile per workspace, then prove a
+    // workspace_id-scoped read returns ONLY the active workspace's row.
+    const memberships: Membership[] = [
+      { workspaceId: WS_A, role: 'owner' },
+      { workspaceId: WS_B, role: 'marketer' },
+    ];
+    await pool.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'sw-a','sw-a@acc18.example')", [WS_A]);
+    await pool.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'sw-b','sw-b@acc18.example')", [WS_B]);
+
+    // Switch active → WS_A: the claim's workspace_id is WS_A; a scoped read sees only WS_A.
+    const ctxA = switchActiveWorkspace(memberships, WS_A, false);
+    expect(ctxA.workspaceId).toBe(WS_A);
+    expect(ctxA.role).toBe('owner');
+    const readA = await pool.query('SELECT external_id FROM profiles WHERE workspace_id=$1 AND external_id IN ($2,$3)', [
+      ctxA.workspaceId, 'sw-a', 'sw-b',
+    ]);
+    expect(readA.rows.map((r: { external_id: string }) => r.external_id)).toEqual(['sw-a']);
+
+    // Switch active → WS_B: the SAME read re-scopes; A's row is gone, B's appears. No cross-bleed.
+    const ctxB = switchActiveWorkspace(memberships, WS_B, false);
+    expect(ctxB.workspaceId).toBe(WS_B);
+    expect(ctxB.role).toBe('marketer');
+    const readB = await pool.query('SELECT external_id FROM profiles WHERE workspace_id=$1 AND external_id IN ($2,$3)', [
+      ctxB.workspaceId, 'sw-a', 'sw-b',
+    ]);
+    expect(readB.rows.map((r: { external_id: string }) => r.external_id)).toEqual(['sw-b']);
+
+    // A non-member cannot switch to a workspace they don't belong to.
+    expect(() => switchActiveWorkspace(memberships, WS_REP, false)).toThrow();
+  });
+
+  it('§18 Segments: dynamic segments auto-update on events/attributes; manual segments are untouched by the evaluator; both usable as audiences', async () => {
+    const SEG_DYN = 'acc18000-0000-4000-8000-0000000000d1'; // "<3 events" dynamic_realtime
+    const SEG_MAN = 'acc18000-0000-4000-8000-0000000000d2'; // manual
+    await pool.query(
+      `INSERT INTO segments (id, workspace_id, name, definition, kind, status)
+       VALUES ($1,$2,'dyn-few',$3::jsonb,'dynamic_realtime','active')`,
+      [SEG_DYN, WS_A, JSON.stringify({ op: 'and', conditions: [{ field: 'total_events', operator: '<', value: 3 }] })],
+    );
+    await pool.query("INSERT INTO segments (id, workspace_id, name, kind, status) VALUES ($1,$2,'man-vip','manual','active')", [SEG_MAN, WS_A]);
+
+    // Two profiles: one for the dynamic path, one hand-picked into the manual segment.
+    const dynPid = (await pool.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'seg-dyn','sd@acc18.example') RETURNING id", [WS_A])).rows[0].id;
+    const manPid = (await pool.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'seg-man','sm@acc18.example') RETURNING id", [WS_A])).rows[0].id;
+    await pool.query('INSERT INTO profile_features (profile_id, workspace_id, total_events) VALUES ($1,$2,1)', [dynPid, WS_A]);
+    await pool.query('INSERT INTO profile_features (profile_id, workspace_id, total_events) VALUES ($1,$2,0)', [manPid, WS_A]);
+
+    // Manual segment: membership ONLY via the user edit (addManualMembers).
+    await meteringTx(pool, WS_A, [addManualMembers(WS_A, SEG_MAN, [manPid])]);
+
+    // Dynamic segment auto-updates: evaluate the dynamic profile (total=1 < 3 → enters).
+    await evaluateRealtimeSegmentsForProfile(evaluateDeps(pool), WS_A, dynPid);
+    const audDyn1 = await pool.query(resolveAudience(WS_A, SEG_DYN).text, resolveAudience(WS_A, SEG_DYN).values);
+    expect(audDyn1.rows.map((r: { profile_id: string }) => r.profile_id)).toContain(dynPid);
+
+    // The evaluator must NOT touch the manual segment's membership.
+    const audManBefore = await pool.query(resolveAudience(WS_A, SEG_MAN).text, resolveAudience(WS_A, SEG_MAN).values);
+    await evaluateRealtimeSegmentsForProfile(evaluateDeps(pool), WS_A, manPid); // would not match dyn anyway
+    const audManAfter = await pool.query(resolveAudience(WS_A, SEG_MAN).text, resolveAudience(WS_A, SEG_MAN).values);
+    expect(audManAfter.rows.map((r: { profile_id: string }) => r.profile_id)).toEqual(
+      audManBefore.rows.map((r: { profile_id: string }) => r.profile_id),
+    );
+    expect(audManAfter.rows.map((r: { profile_id: string }) => r.profile_id)).toContain(manPid);
+
+    // Attribute/event change re-scopes dynamic membership: push total to 3 → exits.
+    await pool.query('UPDATE profile_features SET total_events=3 WHERE profile_id=$1 AND workspace_id=$2', [dynPid, WS_A]);
+    await evaluateRealtimeSegmentsForProfile(evaluateDeps(pool), WS_A, dynPid);
+    const audDyn2 = await pool.query(resolveAudience(WS_A, SEG_DYN).text, resolveAudience(WS_A, SEG_DYN).values);
+    expect(audDyn2.rows.map((r: { profile_id: string }) => r.profile_id)).not.toContain(dynPid);
+
+    // BOTH kinds are usable as audiences (resolveAudience returns rows for each).
+    expect((await pool.query(resolveAudience(WS_A, SEG_MAN).text, resolveAudience(WS_A, SEG_MAN).values)).rows.length).toBeGreaterThan(0);
+  });
+
+  it('§18 Compliance: frequency cap (skip), quiet hours (defer), and one-click unsubscribe (suppress) all hold through the dispatcher core', async () => {
+    const ext = 'comp-cust';
+    const email = 'comp@acc18.example';
+    const pid = (await pool.query("INSERT INTO profiles (workspace_id, external_id, email, email_status) VALUES ($1,$2,$3,'active') RETURNING id", [WS_A, ext, email])).rows[0].id;
+
+    // (1) FREQUENCY CAP: with cap=1/day and a prior send inside the rolling
+    // window (relative to the injected dispatch clock), the next send is skipped
+    // (SES not called). sent_at must fall within [now-1d, now].
+    const capNow = new Date('2026-06-10T15:00:00Z');
+    await pool.query("INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, sent_at) VALUES ($1,$2,$3,'sent',$4::timestamptz)", [
+      WS_A, pid, nextSesId(), new Date(capNow.getTime() - 3_600_000).toISOString(),
+    ]);
+    const sesCap = new CountingSes();
+    const obCap = await enqueueOutbox(pool, WS_A, pid, TPL_A, 'comp-cap', { frequency_cap_per_days: 1 });
+    const rCap = await dispatchOutbox(dispatchDeps(pool, sesCap, capNow), obCap);
+    expect(rCap.result).toBe('skip');
+    expect(sesCap.sends).toHaveLength(0);
+
+    // (2) QUIET HOURS: within a 22:00–06:00 UTC window the send is deferred (SES not called).
+    const sesQuiet = new CountingSes();
+    const obQuiet = await enqueueOutbox(pool, WS_A, pid, TPL_A, 'comp-quiet', { quiet_hours: { startHour: 22, endHour: 6 } });
+    const rQuiet = await dispatchOutbox(dispatchDeps(pool, sesQuiet, new Date('2026-06-11T23:30:00Z')), obQuiet);
+    expect(rQuiet.result).toBe('defer');
+    expect(sesQuiet.sends).toHaveLength(0);
+
+    // (3) ONE-CLICK UNSUBSCRIBE: the RFC 8058 POST suppresses the recipient in-workspace,
+    // and a subsequent dispatch is skipped by the suppression guard (SES not called).
+    const link = `${UNSUB_BASE}?workspace_id=${WS_A}&email=${encodeURIComponent(email)}`;
+    const parsed = parseUnsubscribeRequest('POST', link, 'List-Unsubscribe=One-Click');
+    expect(parsed.valid).toBe(true);
+    if (!parsed.valid) throw new Error('unreachable');
+    await runUnsubscribeInWorkspaceTx(pool, parsed.workspaceId, [buildUnsubscribeSuppression(parsed.workspaceId, parsed.email, 'one-click')]);
+    const sup = await pool.query('SELECT 1 FROM suppressions WHERE workspace_id=$1 AND email=$2', [WS_A, email]);
+    expect(sup.rowCount).toBe(1);
+    const sesUnsub = new CountingSes();
+    const obUnsub = await enqueueOutbox(pool, WS_A, pid, TPL_A, 'comp-unsub', {});
+    const rUnsub = await dispatchOutbox(dispatchDeps(pool, sesUnsub, new Date('2026-06-12T12:00:00Z')), obUnsub);
+    expect(rUnsub.result).toBe('skip'); // suppressed
+    expect(sesUnsub.sends).toHaveLength(0);
   });
 });

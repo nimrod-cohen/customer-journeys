@@ -1,0 +1,90 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "criteria": [
+            "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+            "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
+            "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
+          ],
+          "frontend": false,
+          "id": "phase14-hardening",
+          "scope": [
+            "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.",
+            "CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).",
+            "A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).",
+            "An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception)."
+          ],
+          "specSections": "§13 (security/tenancy), §14 (IaC: WAF, least-privilege IAM, alarms), §16 (observability, DLQ runbook), §18 (full acceptance criteria), §17 phase 14",
+          "title": "Hardening (acceptance suite, WAF, DLQ runbook, load)"
+        },
+        "score": 95
+      },
+      "instructions": [
+        "Run `git add -A`.",
+        "Commit with a clear conventional message describing the phase (Hardening (acceptance suite, WAF, DLQ runbook, load)), gate score (95), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Hardening (acceptance suite, WAF, DLQ runbook, load)\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTH1C343N25995VVDA1F194P/input.json",
+    "outputJsonPath": "tasks/01KTH1C343N25995VVDA1F194P/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "phase14-hardening"
+  ],
+  "title": "Commit: Hardening (acceptance suite, WAF, DLQ runbook, load)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTH1C343N25995VVDA1F194P",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/app-completion:S000028:commit-phase",
+  "stepId": "S000028",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "criteria": [
+        "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+        "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
+        "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
+      ],
+      "frontend": false,
+      "id": "phase14-hardening",
+      "scope": [
+        "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.",
+        "CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).",
+        "A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).",
+        "An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception)."
+      ],
+      "specSections": "§13 (security/tenancy), §14 (IaC: WAF, least-privilege IAM, alarms), §16 (observability, DLQ runbook), §18 (full acceptance criteria), §17 phase 14",
+      "title": "Hardening (acceptance suite, WAF, DLQ runbook, load)"
+    },
+    "score": 95
+  }
+}

@@ -1,0 +1,199 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KTH1Q3NXHK4FZM4AR9MXGC0R",
+  "taskId": "integration-gate",
+  "invocationKey": "cdp/app-completion:S000030:integration-gate",
+  "status": "ok",
+  "result": {
+    "allCriteriaVerified": true,
+    "browserVerified": true,
+    "coverage": [
+      {
+        "criterion": "Tenant isolation all paths + RLS backstop + same external_id separate",
+        "evidence": "spec18 isolation it() + RLS-backstop it() (SET LOCAL ROLE TEST_APP_ROLE, 0 WS_B rows, write blocked) + pen-test; real PG.",
+        "verified": true
+      },
+      {
+        "criterion": "Roles §3A server-side + system-admin audited",
+        "evidence": "real enforceRoute marketer/accounting/owner; handleAdminAccess writes admin_audit_log; browser 403 for marketer on /billing independent of UI.",
+        "verified": true
+      },
+      {
+        "criterion": "Ordering both orders converge",
+        "evidence": "created->progress and progress-first single profile, late attr preserved.",
+        "verified": true
+      },
+      {
+        "criterion": "No-loss retry/DLQ",
+        "evidence": "real makeProcessorHandler injected throw -> batchItemFailures, replay -> exactly 1 event.",
+        "verified": true
+      },
+      {
+        "criterion": "Idempotency",
+        "evidence": "same event_id twice -> events 1, total 1, monetary 40 not 80.",
+        "verified": true
+      },
+      {
+        "criterion": "Segmentation enter/exit + dynamic-vs-manual",
+        "evidence": "change_log ['entered','exited']; WS_B []; dynamic auto-updates while manual untouched; both resolveAudience.",
+        "verified": true
+      },
+      {
+        "criterion": "Suppression scoping A!=B + global hard-bounce",
+        "evidence": "unsubscribe A only; B still sends; hard bounce writes global_hard_bounces.",
+        "verified": true
+      },
+      {
+        "criterion": "Reputation auto-suspend isolates offender",
+        "evidence": "60 sent + 4 bounces -> WS_REP suspended, peer active.",
+        "verified": true
+      },
+      {
+        "criterion": "Sending gated on verification",
+        "evidence": "PENDING stays onboarding; SUCCESS+DNS activates -> send with config set; non-active -> refuse SES 0.",
+        "verified": true
+      },
+      {
+        "criterion": "Broadcasts send-once dedupe",
+        "evidence": "runBroadcast sent 1 outbox; replay skipped still 1.",
+        "verified": true
+      },
+      {
+        "criterion": "Campaigns advance + idempotent through Dispatcher",
+        "evidence": "enroll idempotent; trigger->wait->condition->action send via dispatchOutbox; re-run terminal skipped, messages_log 1.",
+        "verified": true
+      },
+      {
+        "criterion": "Cost sums to total",
+        "evidence": "computeAllWorkspaceCosts Σ cents===direct+fixed, fixed $40, IP fee only upgraded.",
+        "verified": true
+      },
+      {
+        "criterion": "IP strategy advisor + upgrade/warmup $24.95 only upgraded",
+        "evidence": "default shared; advisor true on sustained 3 months false on spike; upgradeIp warming + jsonb merge preserves verified; computeDirectCost delta 24.95 only upgraded.",
+        "verified": true
+      },
+      {
+        "criterion": "Multi-workspace switch re-scope no cross-bleed",
+        "evidence": "switchActiveWorkspace WS_A sees sw-a only, WS_B sw-b only, non-member throws; browser switch spec confirms.",
+        "verified": true
+      },
+      {
+        "criterion": "Frequency-cap/quiet-hours/one-click-unsubscribe",
+        "evidence": "dispatcher skip(cap)/defer(quiet 23:30)/skip(unsubscribe), SES 0 each.",
+        "verified": true
+      },
+      {
+        "criterion": "WAF + least-privilege IAM no wildcards + alarms via CDK synth",
+        "evidence": "infra assertions 11 pass: WAFv2+association, scans every IAM::Policy 0 wildcards (>=10), >=13 fns own role, FIFO DLQ redrive, SES 3%/5%+0.1%+per-workspace+DLQ-depth+Errors+queue-age alarms, no plaintext secret; cdk synth exit 0 (2126 lines).",
+        "verified": true
+      }
+    ],
+    "criticalIssues": [],
+    "fullSuiteGreen": true,
+    "recommendations": [
+      "Wire the processor FIFO-LocalStack e2e to run in CI when LocalStack SQS-FIFO available so ordering/no-loss is exercised against a real queue end-to-end (currently the single intentional skip).",
+      "Cross-reference the CDK security assertions from the §18 gate file so all 16 bullets are discoverable from one place.",
+      "Add a negative-DNS activate() case (required record missing -> not active) to harden the verification gate."
+    ],
+    "score": 96,
+    "usesRealPostgres": true
+  },
+  "startedAt": "2026-06-07T12:46:56.809Z",
+  "finishedAt": "2026-06-07T12:46:56.809Z",
+  "value": {
+    "allCriteriaVerified": true,
+    "browserVerified": true,
+    "coverage": [
+      {
+        "criterion": "Tenant isolation all paths + RLS backstop + same external_id separate",
+        "evidence": "spec18 isolation it() + RLS-backstop it() (SET LOCAL ROLE TEST_APP_ROLE, 0 WS_B rows, write blocked) + pen-test; real PG.",
+        "verified": true
+      },
+      {
+        "criterion": "Roles §3A server-side + system-admin audited",
+        "evidence": "real enforceRoute marketer/accounting/owner; handleAdminAccess writes admin_audit_log; browser 403 for marketer on /billing independent of UI.",
+        "verified": true
+      },
+      {
+        "criterion": "Ordering both orders converge",
+        "evidence": "created->progress and progress-first single profile, late attr preserved.",
+        "verified": true
+      },
+      {
+        "criterion": "No-loss retry/DLQ",
+        "evidence": "real makeProcessorHandler injected throw -> batchItemFailures, replay -> exactly 1 event.",
+        "verified": true
+      },
+      {
+        "criterion": "Idempotency",
+        "evidence": "same event_id twice -> events 1, total 1, monetary 40 not 80.",
+        "verified": true
+      },
+      {
+        "criterion": "Segmentation enter/exit + dynamic-vs-manual",
+        "evidence": "change_log ['entered','exited']; WS_B []; dynamic auto-updates while manual untouched; both resolveAudience.",
+        "verified": true
+      },
+      {
+        "criterion": "Suppression scoping A!=B + global hard-bounce",
+        "evidence": "unsubscribe A only; B still sends; hard bounce writes global_hard_bounces.",
+        "verified": true
+      },
+      {
+        "criterion": "Reputation auto-suspend isolates offender",
+        "evidence": "60 sent + 4 bounces -> WS_REP suspended, peer active.",
+        "verified": true
+      },
+      {
+        "criterion": "Sending gated on verification",
+        "evidence": "PENDING stays onboarding; SUCCESS+DNS activates -> send with config set; non-active -> refuse SES 0.",
+        "verified": true
+      },
+      {
+        "criterion": "Broadcasts send-once dedupe",
+        "evidence": "runBroadcast sent 1 outbox; replay skipped still 1.",
+        "verified": true
+      },
+      {
+        "criterion": "Campaigns advance + idempotent through Dispatcher",
+        "evidence": "enroll idempotent; trigger->wait->condition->action send via dispatchOutbox; re-run terminal skipped, messages_log 1.",
+        "verified": true
+      },
+      {
+        "criterion": "Cost sums to total",
+        "evidence": "computeAllWorkspaceCosts Σ cents===direct+fixed, fixed $40, IP fee only upgraded.",
+        "verified": true
+      },
+      {
+        "criterion": "IP strategy advisor + upgrade/warmup $24.95 only upgraded",
+        "evidence": "default shared; advisor true on sustained 3 months false on spike; upgradeIp warming + jsonb merge preserves verified; computeDirectCost delta 24.95 only upgraded.",
+        "verified": true
+      },
+      {
+        "criterion": "Multi-workspace switch re-scope no cross-bleed",
+        "evidence": "switchActiveWorkspace WS_A sees sw-a only, WS_B sw-b only, non-member throws; browser switch spec confirms.",
+        "verified": true
+      },
+      {
+        "criterion": "Frequency-cap/quiet-hours/one-click-unsubscribe",
+        "evidence": "dispatcher skip(cap)/defer(quiet 23:30)/skip(unsubscribe), SES 0 each.",
+        "verified": true
+      },
+      {
+        "criterion": "WAF + least-privilege IAM no wildcards + alarms via CDK synth",
+        "evidence": "infra assertions 11 pass: WAFv2+association, scans every IAM::Policy 0 wildcards (>=10), >=13 fns own role, FIFO DLQ redrive, SES 3%/5%+0.1%+per-workspace+DLQ-depth+Errors+queue-age alarms, no plaintext secret; cdk synth exit 0 (2126 lines).",
+        "verified": true
+      }
+    ],
+    "criticalIssues": [],
+    "fullSuiteGreen": true,
+    "recommendations": [
+      "Wire the processor FIFO-LocalStack e2e to run in CI when LocalStack SQS-FIFO available so ordering/no-loss is exercised against a real queue end-to-end (currently the single intentional skip).",
+      "Cross-reference the CDK security assertions from the §18 gate file so all 16 bullets are discoverable from one place.",
+      "Add a negative-DNS activate() case (required record missing -> not active) to harden the verification gate."
+    ],
+    "score": 96,
+    "usesRealPostgres": true
+  }
+}

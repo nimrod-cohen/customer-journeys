@@ -1,0 +1,253 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "allPass": {
+          "type": "boolean"
+        },
+        "commandsRun": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "e2eSummary": {
+          "type": "string"
+        },
+        "entrypoint": {
+          "type": "string"
+        },
+        "filesCreated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filesModified": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "testSummary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "filesCreated",
+        "allPass"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "env": "Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp. Extend the existing /tests suites + pnpm test:integration.",
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
+          "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
+          "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
+          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
+          "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
+          "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no features beyond the spec. Keep the cost model EXACTLY as §20 (direct usage + even split of fixed costs)."
+        ],
+        "phaseCriteria": [
+          {
+            "criteria": [
+              "A broadcast to a segment or manual group sends once to the resolved audience; each recipient passes suppression/cap/quiet-hours (via the Dispatcher).",
+              "Retries do not double-send (dedupe per (broadcast_id, profile_id)).",
+              "Audience is resolved at send time from segment_memberships (works for both dynamic and manual segments); large audiences are enumerated in batches.",
+              "broadcasts.status transitions correctly (sending -> sent); scheduling at scheduled_at is honored; everything workspace-scoped."
+            ],
+            "id": "phase9-broadcasts"
+          },
+          {
+            "criteria": [
+              "An enrolled profile advances through trigger -> wait -> condition -> action -> exit.",
+              "A wait defers until next_run_at; a branch (condition) routes correctly using the §8 compiler against profile/features/membership.",
+              "The runner is idempotent (no double-advance on retry / concurrent sweep).",
+              "Campaign action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
+            ],
+            "id": "phase10-campaigns"
+          },
+          {
+            "criteria": [
+              "The Image Lambda issues a presigned S3 PUT URL under the workspace_id/ key prefix; uploaded image bytes are recorded in usage_counters; variants are produced by the sharp step. (Verified against LocalStack S3 / mocked S3.)",
+              "The GrapesJS+MJML editor renders in a real browser (Playwright), lets a user compose a template, and on save emits MJML that compiles to HTML stored in email_templates (workspace-scoped).",
+              "Image keys are workspace-prefixed; one workspace cannot read/overwrite another workspace prefix."
+            ],
+            "id": "phase11-image-wysiwyg"
+          },
+          {
+            "criteria": [
+              "Login (Supabase Auth) + a workspace switcher: a user in two workspaces sees only the active workspace; switching re-scopes all reads/writes (no cross-bleed). Verified in a real browser (Playwright).",
+              "Role-aware UI (§3A): marketer cannot see/use user/domain/billing admin; accounting sees billing but cannot edit segments/campaigns; owner can do both; system-admin sees the cross-company console. Verified in-browser per role.",
+              "The core screens work end-to-end against the local API: build a segment (dynamic + manual), compose+send a broadcast, build a campaign, view dashboards/suppressions/profiles — exercising the real phase 2–11 backends.",
+              "The API enforces role + workspace scope regardless of the UI (a forbidden action is rejected server-side, not just hidden)."
+            ],
+            "id": "phase12-frontend"
+          },
+          {
+            "criteria": [
+              "Per-workspace emails_sent / events_ingested reconcile with messages_log / events.",
+              "The cost view = direct usage cost + an equal share of fixed costs; per-workspace figures sum to the true total (worked example from §20 holds).",
+              "The IP-advisor recommends a dedicated IP only when sustained-volume + cadence + reputation criteria are all met; one-off spikes do not trigger it.",
+              "The upgrade-ip flow provisions a dedicated IP, warms it gradually (split routing), and tracks ip_mode/warmup_status; the $24.95 lands only on upgraded workspaces."
+            ],
+            "id": "phase13-metering"
+          },
+          {
+            "criteria": [
+              "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+              "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
+              "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
+            ],
+            "id": "phase14-hardening"
+          }
+        ],
+        "previousGateFeedback": null,
+        "spec": "CDP-BUILD-SPEC.md"
+      },
+      "instructions": [
+        "Read CDP-BUILD-SPEC.md §18 (all acceptance criteria) and §16A.",
+        "Assemble a consolidated §18 acceptance suite that exercises the real cores end-to-end: ingest->processor->features->segments->(broadcast & campaign)->outbox->Dispatcher->messages_log, plus feedback->suppression->reputation, plus metering/cost attribution — all workspace-scoped, against real Postgres. AWS mocked/LocalStack.",
+        "Add a thin Playwright browser smoke of the admin app (login -> workspace switch -> a core screen) against the local app + API, proving the UI is wired to the real backend.",
+        "Prove the headline cross-cutting guarantees one more time at the system level: tenant isolation across ALL paths, role enforcement server-side, all sends through the Dispatcher, idempotency, and the §20 cost figures summing to the true total.",
+        "Provide/extend `pnpm test:integration` (and a `pnpm test:e2e` for browser). Run until green (cold); report real output. Address previousGateFeedback if present. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { filesCreated: string[], filesModified: string[], allPass: boolean, testSummary: string, e2eSummary: string, entrypoint: string, commandsRun: string[], notes: string }",
+      "role": "senior engineer building the final full-system integration + §18 acceptance suite",
+      "task": "Extend /tests with a full-system acceptance pass proving the WHOLE CDP (phases 2–14) works together against real Postgres, with a browser e2e smoke of the admin app."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KTH1CA0WGZX721BJ58ZMGASZ/input.json",
+    "outputJsonPath": "tasks/01KTH1CA0WGZX721BJ58ZMGASZ/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "integration",
+    "iteration-1"
+  ],
+  "title": "Full-system integration + §18 acceptance (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KTH1CA0WGZX721BJ58ZMGASZ",
+  "taskId": "integration",
+  "invocationKey": "cdp/app-completion:S000029:integration",
+  "stepId": "S000029",
+  "inputs": {
+    "iteration": 1,
+    "phases": [
+      {
+        "criteria": [
+          "A broadcast to a segment or manual group sends once to the resolved audience; each recipient passes suppression/cap/quiet-hours (via the Dispatcher).",
+          "Retries do not double-send (dedupe per (broadcast_id, profile_id)).",
+          "Audience is resolved at send time from segment_memberships (works for both dynamic and manual segments); large audiences are enumerated in batches.",
+          "broadcasts.status transitions correctly (sending -> sent); scheduling at scheduled_at is honored; everything workspace-scoped."
+        ],
+        "frontend": false,
+        "id": "phase9-broadcasts",
+        "scope": [
+          "services/broadcast: a Broadcast Lambda (triggered on send / at scheduled_at via EventBridge) that RESOLVES the audience at send time from segment_memberships (dynamic OR manual segment) via @cdp/segments resolveAudience; snapshots the member set.",
+          "Enumerate in BATCHES (paginate; large audiences enqueued in chunks) -> insert outbox rows -> the existing Dispatcher (§9) handles per-recipient suppression/cap/quiet-hours and the actual send.",
+          "Update broadcasts.status (draft->scheduled->sending->sent / cancelled); record per-recipient sends in messages_log.",
+          "Idempotent dedupe_key per (broadcast_id, profile_id) prevents double-sends on retry."
+        ],
+        "specSections": "§9A (broadcast: resolve audience at send time, batched enumeration -> outbox, scheduling, status), §9 (Dispatcher), §6 (broadcasts, outbox, messages_log, segment_memberships)",
+        "title": "Broadcasts (one-off send)"
+      },
+      {
+        "criteria": [
+          "An enrolled profile advances through trigger -> wait -> condition -> action -> exit.",
+          "A wait defers until next_run_at; a branch (condition) routes correctly using the §8 compiler against profile/features/membership.",
+          "The runner is idempotent (no double-advance on retry / concurrent sweep).",
+          "Campaign action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
+        ],
+        "frontend": false,
+        "id": "phase10-campaigns",
+        "scope": [
+          "A campaign DSL: campaigns.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.",
+          "Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a campaign_enrollments row at the start node (UNIQUE (campaign_id, profile_id)).",
+          "services/campaign-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.",
+          "Idempotent advance (tolerate retries without double-advancing — use updated_at / optimistic checks). Define and implement the re-enrollment policy."
+        ],
+        "specSections": "§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log)",
+        "title": "Campaign workflow engine"
+      },
+      {
+        "criteria": [
+          "The Image Lambda issues a presigned S3 PUT URL under the workspace_id/ key prefix; uploaded image bytes are recorded in usage_counters; variants are produced by the sharp step. (Verified against LocalStack S3 / mocked S3.)",
+          "The GrapesJS+MJML editor renders in a real browser (Playwright), lets a user compose a template, and on save emits MJML that compiles to HTML stored in email_templates (workspace-scoped).",
+          "Image keys are workspace-prefixed; one workspace cannot read/overwrite another workspace prefix."
+        ],
+        "frontend": true,
+        "id": "phase11-image-wysiwyg",
+        "scope": [
+          "services/image: an Image Lambda that returns a presigned S3 PUT URL keyed under a workspace_id/ prefix (LocalStack S3); an S3-triggered Lambda that makes sharp variants; record bytes in usage_counters (image_storage_bytes). Mock/LocalStack S3.",
+          "Frontend (in /web): a GrapesJS + MJML-plugin email editor component (core GrapesJS, BSD-3, NOT the paid Studio SDK) that emits MJML; on save, MJML -> compiled HTML via the existing Template Lambda (@cdp/email compile) stored in email_templates. Images uploaded via the presigned URL flow.",
+          "The editor must OUTPUT MJML, not hand-rolled email HTML."
+        ],
+        "specSections": "§11 (presigned S3 PUT under workspace_id/ prefix, sharp variants via S3-triggered Lambda, CloudFront, GrapesJS+MJML editor emitting MJML), §6 (usage_counters image bytes)",
+        "title": "Image pipeline + WYSIWYG editor"
+      },
+      {
+        "criteria": [
+          "Login (Supabase Auth) + a workspace switcher: a user in two workspaces sees only the active workspace; switching re-scopes all reads/writes (no cross-bleed). Verified in a real browser (Playwright).",
+          "Role-aware UI (§3A): marketer cannot see/use user/domain/billing admin; accounting sees billing but cannot edit segments/campaigns; owner can do both; system-admin sees the cross-company console. Verified in-browser per role.",
+          "The core screens work end-to-end against the local API: build a segment (dynamic + manual), compose+send a broadcast, build a campaign, view dashboards/suppressions/profiles — exercising the real phase 2–11 backends.",
+          "The API enforces role + workspace scope regardless of the UI (a forbidden action is rejected server-side, not just hidden)."
+        ],
+        "frontend": true,
+        "id": "phase12-frontend",
+        "scope": [
+          "A Vite + Preact (or React) SPA in /web wired to the API Gateway REST API (via the Lambda handlers; stand up a LOCAL API — e.g. a thin adapter/serverless-offline + LocalStack — so the SPA + Playwright run end-to-end locally). Supabase Auth login + a workspace switcher that sets the active workspace_id claim and re-scopes the app.",
+          "Role-aware, workspace-scoped screens (§3A capability matrix): workspace onboarding wizard (§10A), workspace settings (members+roles, sending domain status), segment builder (dynamic rule-AST + manual hand-pick/CSV) with live size preview, broadcast composer, campaign/workflow visual builder (trigger/wait/condition/action/exit), email editor (GrapesJS+MJML from phase 11), dashboards (deliverability/segment sizes/send volume), suppression list, profile explorer, billing/usage view (owner+accounting), system-admin cross-company console (system-admin only).",
+          "The UI shows only what the role permits AND is scoped to the active workspace; the API still enforces roles + scope independently."
+        ],
+        "specSections": "§12 (Vite SPA, Supabase Auth, workspace switcher, role-aware + workspace-scoped UI, segment builder dynamic+manual, broadcast composer, campaign/workflow builder, email editor, dashboards, suppression list, profile explorer, billing/usage view, system-admin console), §3A (roles), §10A (onboarding wizard UI)",
+        "title": "Admin frontend (role-aware SPA)"
+      },
+      {
+        "criteria": [
+          "Per-workspace emails_sent / events_ingested reconcile with messages_log / events.",
+          "The cost view = direct usage cost + an equal share of fixed costs; per-workspace figures sum to the true total (worked example from §20 holds).",
+          "The IP-advisor recommends a dedicated IP only when sustained-volume + cadence + reputation criteria are all met; one-off spikes do not trigger it.",
+          "The upgrade-ip flow provisions a dedicated IP, warms it gradually (split routing), and tracks ip_mode/warmup_status; the $24.95 lands only on upgraded workspaces."
+        ],
+        "frontend": false,
+        "id": "phase13-metering",
+        "scope": [
+          "services/metering: a scheduled rollup job populating usage_counters (emails_sent from messages_log, events_ingested, image bytes) and a per-workspace monthly cost computation using the EXACT §20 hybrid policy: direct/variable costs attributed to the workspace (emails_sent x $0.0001, dedicated IP $24.95 if upgraded, image bytes) PLUS an EQUAL share of the fixed pool (fixed_total / active_workspace_count). Per-workspace figures must sum to the true total.",
+          "A monthly IP-advisor job that recommends a dedicated IP only when ALL hold: sustained volume (~100k/mo for 2-3 consecutive months), consistent cadence, healthy reputation. Surfaces a recommendation (no auto-upgrade).",
+          "An upgrade-ip flow: provision a dedicated IP/pool, gradual warmup (split routing), track ip_mode/warmup_status per workspace; ~$24.95/mo becomes a direct cost only for upgraded workspaces."
+        ],
+        "specSections": "§20 (metering into usage_counters, hybrid cost model: direct usage + even split of fixed costs; per-workspace cost view), §10 (dedicated-IP recommendation engine + upgrade-ip migration with warmup), §6 (usage_counters, messages_log, email_events)",
+        "title": "Usage metering + cost attribution + IP advisor"
+      },
+      {
+        "criteria": [
+          "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+          "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
+          "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
+        ],
+        "frontend": false,
+        "id": "phase14-hardening",
+        "scope": [
+          "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.",
+          "CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).",
+          "A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).",
+          "An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception)."
+        ],
+        "specSections": "§13 (security/tenancy), §14 (IaC: WAF, least-privilege IAM, alarms), §16 (observability, DLQ runbook), §18 (full acceptance criteria), §17 phase 14",
+        "title": "Hardening (acceptance suite, WAF, DLQ runbook, load)"
+      }
+    ],
+    "prevFeedback": null
+  }
+}
