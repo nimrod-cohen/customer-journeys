@@ -36,7 +36,7 @@ export function Login() {
                 <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
               </svg>
             </span>
-            <span class="font-display text-lg font-bold">CDP Console</span>
+            <span class="font-display text-lg font-bold">Customer Journeys</span>
           </div>
           <div>
             <h1 class="max-w-md font-display text-4xl font-bold leading-tight text-white">

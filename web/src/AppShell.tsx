@@ -71,8 +71,8 @@ export function AppShell(): JSX.Element {
             </svg>
           </span>
           <div class="leading-tight">
-            <div class="font-display text-[15px] font-bold text-white">CDP Console</div>
-            <div class="text-[11px] text-stone-400">Customer Journeys</div>
+            <div class="font-display text-[15px] font-bold text-white">Customer Journeys</div>
+            <div class="text-[11px] text-stone-400">Marketing CDP</div>
           </div>
         </div>
 
