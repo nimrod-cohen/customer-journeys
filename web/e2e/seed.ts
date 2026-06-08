@@ -153,6 +153,7 @@ export async function seed(): Promise<void> {
 
 export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void> {
   for (const ws of [WS_A, WS_B]) {
+    await pool.query('DELETE FROM segment_change_log WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM suppressions WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [ws]);

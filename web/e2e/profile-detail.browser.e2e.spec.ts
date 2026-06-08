@@ -114,7 +114,9 @@ test('manually add a profile (with attributes) via the drawer', async ({ page })
   // The column picker is reactive: the new attribute key is now selectable.
   await page.getByTestId('columns-button').click();
   await expect(page.locator('[data-testid="col-option"][data-col="walksource"]')).toHaveCount(1);
-  await page.getByTestId('columns-backdrop').click(); // close the menu
+  // Clicking outside the picker closes it.
+  await page.getByTestId('profile-search').click();
+  await expect(page.getByTestId('columns-menu')).toHaveCount(0);
 
   await page.getByTestId('profile-search').fill('walkin@acme.com');
   await expect(page.getByTestId('profile-row')).toHaveCount(1);

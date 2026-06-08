@@ -2,7 +2,7 @@
 // BillingUsageView. Each fetches its workspace-scoped data from the API (the
 // server scopes by the token's workspace_id) and renders a styled table/list.
 // (Visual redesign; all data-testid attributes preserved.)
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import {
@@ -151,6 +151,23 @@ export function ProfileExplorer() {
   const [cols, setCols] = useState<ColumnConfig>(loadCols);
   const [colsOpen, setColsOpen] = useState(false);
   const [colSearch, setColSearch] = useState('');
+  // Close the column picker on any click/escape outside its popover.
+  const colsRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!colsOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (colsRef.current && !colsRef.current.contains(e.target as Node)) setColsOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setColsOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [colsOpen]);
   const [allAttrKeys, setAllAttrKeys] = useState<string[]>([]);
   useEffect(() => {
     try {
@@ -366,7 +383,7 @@ export function ProfileExplorer() {
         </Select>
 
         {/* Column picker */}
-        <div class="relative ml-auto">
+        <div ref={colsRef} class="relative ml-auto">
           <Button
             data-testid="columns-button"
             variant="secondary"
@@ -376,13 +393,6 @@ export function ProfileExplorer() {
             ▥ Columns
           </Button>
           {colsOpen ? (
-            <>
-              <div
-                data-testid="columns-backdrop"
-                class="fixed inset-0 z-30"
-                onClick={() => setColsOpen(false)}
-                aria-hidden="true"
-              />
               <div
                 data-testid="columns-menu"
                 class="absolute right-0 z-40 mt-2 w-80 rounded-xl border border-stone-200 bg-white p-3 shadow-soft"
@@ -453,7 +463,6 @@ export function ProfileExplorer() {
                 </div>
                 <p class="mt-2 text-[11px] text-stone-400">Up to {MAX_ATTR_COLS} attribute columns.</p>
               </div>
-            </>
           ) : null}
         </div>
       </div>
