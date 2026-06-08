@@ -21,6 +21,7 @@ import {
   buildSuppressionUpsert,
   buildGlobalHardBounceUpsert,
   buildProfileEmailStatusUpdate,
+  buildMessagesLogMarkFailed,
   buildSoftBounceCountQuery,
   buildReputationRateQuery,
   buildWorkspaceSuspend,
@@ -101,14 +102,26 @@ export function buildFeedbackPlan(input: FeedbackPlanInput): SqlStatement[] {
 
   if (!email) return plan;
 
+  // A bounced/complained message is NEVER retried — just mark THAT send failed.
+  const markFailed = (status: string): void => {
+    if (classified.sesMessageId) {
+      plan.push(buildMessagesLogMarkFailed(workspaceId, classified.sesMessageId, status));
+    }
+  };
+
   if (classified.category === 'hard_bounce') {
     plan.push(buildSuppressionUpsert(workspaceId, email, 'hard_bounce', 'feedback'));
     plan.push(buildGlobalHardBounceUpsert(email));
     plan.push(buildProfileEmailStatusUpdate(workspaceId, email, 'bounced'));
+    markFailed('bounced');
   } else if (classified.category === 'complaint') {
     plan.push(buildSuppressionUpsert(workspaceId, email, 'complaint', 'feedback'));
     plan.push(buildProfileEmailStatusUpdate(workspaceId, email, 'complained'));
+    markFailed('complained');
   } else if (classified.category === 'soft_bounce') {
+    // Every soft bounce marks its own message failed (no retry); suppression +
+    // 'bounced' status only once the consecutive-soft-bounce threshold is crossed.
+    markFailed('bounced');
     if (shouldSuppressSoftBounce(input.priorSoftBounceCount)) {
       plan.push(buildSuppressionUpsert(workspaceId, email, 'soft_bounce', 'feedback'));
       plan.push(buildProfileEmailStatusUpdate(workspaceId, email, 'bounced'));

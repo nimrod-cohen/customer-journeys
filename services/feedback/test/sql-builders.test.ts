@@ -4,6 +4,7 @@ import {
   buildSuppressionUpsert,
   buildGlobalHardBounceUpsert,
   buildProfileEmailStatusUpdate,
+  buildMessagesLogMarkFailed,
   buildSoftBounceCountQuery,
   buildReputationRateQuery,
   buildWorkspaceSuspend,
@@ -66,14 +67,29 @@ describe('feedback SqlStatement builders', () => {
   });
 
   describe('buildSoftBounceCountQuery', () => {
-    it('counts prior soft bounces for an address, workspace-scoped', () => {
+    it('counts CONSECUTIVE soft bounces since the last delivery, workspace-scoped', () => {
       const s = buildSoftBounceCountQuery(WS, 'a@b.com');
       expect(s.text).toMatch(/FROM email_events/i);
       expect(s.text).toMatch(/workspace_id = \$1/);
+      // A delivery resets the window (the count only includes later soft bounces).
+      expect(s.text).toMatch(/type = 'delivery'/i);
+      expect(s.text).toMatch(/occurred_at >/i);
       expect(s.values[0]).toBe(WS);
     });
     it('throws on falsy workspaceId', () => {
       expect(() => buildSoftBounceCountQuery('', 'a@b.com')).toThrow(/workspace/i);
+    });
+  });
+
+  describe('buildMessagesLogMarkFailed', () => {
+    it('marks the message failed by ses_message_id, workspace-scoped', () => {
+      const s = buildMessagesLogMarkFailed(WS, 'ses-9', 'bounced');
+      expect(s.text).toMatch(/UPDATE messages_log SET status = \$3/i);
+      expect(s.text).toMatch(/workspace_id = \$1 AND ses_message_id = \$2/i);
+      expect(s.values).toEqual([WS, 'ses-9', 'bounced']);
+    });
+    it('throws on falsy workspaceId', () => {
+      expect(() => buildMessagesLogMarkFailed('', 'ses-9', 'bounced')).toThrow(/workspace/i);
     });
   });
 

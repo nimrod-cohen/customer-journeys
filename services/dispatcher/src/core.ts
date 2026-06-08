@@ -64,14 +64,28 @@ export interface DispatchContext {
   readonly recentSendCount: number;
   /** Whether the recipient is suppressed (per-workspace OR global hard bounce). */
   readonly isSuppressed: boolean;
+  /**
+   * Timestamp of the recipient's most recent soft bounce, if any. While within
+   * SOFT_BOUNCE_COOLDOWN_HOURS after it, the address is given time to recover and
+   * is NOT mailed (the send is deferred). Absent/null → no cooldown.
+   */
+  readonly lastSoftBounceAt?: Date | null;
   /** Injected clock for cap/quiet determinism. */
   readonly now: Date;
   /** Public base URL of the unsubscribe endpoint (§9 step 5). */
   readonly unsubscribeBaseUrl: string;
 }
 
+/** Hours to hold off mailing an address after a soft bounce (give it time to clear). */
+export const SOFT_BOUNCE_COOLDOWN_HOURS = 24;
+
 /** Where in the fixed guard pipeline a decision stopped. */
-export type GuardStage = 'gate' | 'suppression' | 'frequency-cap' | 'quiet-hours';
+export type GuardStage =
+  | 'gate'
+  | 'suppression'
+  | 'soft-bounce-cooldown'
+  | 'frequency-cap'
+  | 'quiet-hours';
 
 /** The outcome of the decision pipeline. */
 export interface DispatchDecision {
@@ -215,6 +229,21 @@ export function decideDispatch(ctx: DispatchContext): DispatchDecision {
   if (ctx.isSuppressed) {
     return { action: 'skip', reason: 'recipient suppressed', stoppedAt: 'suppression' };
   }
+  // 2b. soft-bounce cooldown — give a transiently-failing mailbox time to clear
+  //     before mailing it again (defer, don't drop).
+  if (ctx.lastSoftBounceAt) {
+    const eligibleAt = new Date(
+      ctx.lastSoftBounceAt.getTime() + SOFT_BOUNCE_COOLDOWN_HOURS * 60 * 60 * 1000,
+    );
+    if (ctx.now.getTime() < eligibleAt.getTime()) {
+      return {
+        action: 'defer',
+        reason: 'within soft-bounce cooldown',
+        stoppedAt: 'soft-bounce-cooldown',
+        deferUntil: eligibleAt,
+      };
+    }
+  }
   // 3. frequency cap
   if (isOverCap(ctx.recentSendCount, ctx.frequencyCapPerDays)) {
     return {
@@ -301,6 +330,21 @@ export function buildIsSuppressedQuery(workspaceId: string, email: string): SqlS
            ) OR EXISTS (
              SELECT 1 FROM global_hard_bounces WHERE email = $2
            ) AS suppressed`,
+    values: [workspaceId, email],
+  };
+}
+
+/**
+ * The recipient's most recent soft-bounce time, or null. Powers the 24h cooldown
+ * (don't re-mail a transiently-failing address immediately). workspace_id at $1.
+ */
+export function buildLastSoftBounceQuery(workspaceId: string, email: string): SqlStatement {
+  if (!workspaceId) throw new Error('buildLastSoftBounceQuery: workspaceId is required');
+  return {
+    text: `SELECT max(occurred_at) AS at
+           FROM email_events
+           WHERE workspace_id = $1 AND type = 'bounce' AND sub_type = 'Transient'
+             AND raw->>'recipient' = $2`,
     values: [workspaceId, email],
   };
 }

@@ -17,6 +17,7 @@ import {
   buildOutboxClaim,
   buildRecentSendCountQuery,
   buildIsSuppressedQuery,
+  buildLastSoftBounceQuery,
   buildMessagesLogInsert,
   buildUsageCounterIncrement,
   buildOutboxMarkSent,
@@ -157,10 +158,15 @@ export async function dispatchOutbox(
     // the gate would pass — but querying is cheap and side-effect-free; the
     // decision pipeline still enforces the ORDER (gate before suppression).
     let isSuppressed = false;
+    let lastSoftBounceAt: Date | null = null;
     if (profile.email) {
       const supp = buildIsSuppressedQuery(workspaceId, profile.email);
       const { rows } = await deps.reader.query<{ suppressed: boolean }>(supp.text, supp.values);
       isSuppressed = rows[0]?.suppressed === true;
+      // Soft-bounce cooldown input: the most recent soft bounce for this address.
+      const sb = buildLastSoftBounceQuery(workspaceId, profile.email);
+      const { rows: sbRows } = await deps.reader.query<{ at: string | null }>(sb.text, sb.values);
+      lastSoftBounceAt = sbRows[0]?.at ? new Date(sbRows[0].at) : null;
     }
 
     // recent-send count for the frequency cap window.
@@ -182,6 +188,7 @@ export async function dispatchOutbox(
       quietHours,
       recentSendCount,
       isSuppressed,
+      lastSoftBounceAt,
       now,
       unsubscribeBaseUrl: deps.unsubscribeBaseUrl,
     };

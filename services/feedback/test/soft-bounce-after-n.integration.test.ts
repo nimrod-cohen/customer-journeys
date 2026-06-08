@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '@cdp/db';
 import { runFeedbackStatementsInTx } from '../src/deps.js';
 import { handleNotification, type FeedbackDeps, type Reader } from '../src/feedback.js';
-import { SOFT_BOUNCE_THRESHOLD_N } from '../src/core.js';
+import { SOFT_BOUNCE_THRESHOLD_N, buildSoftBounceCountQuery } from '../src/core.js';
 
 // §10 "Soft bounce → count; suppress after N". N DISTINCT soft bounces (distinct
 // ses_message_id) suppress; a REPLAYED ses_message_id does NOT advance the count
@@ -76,6 +76,26 @@ describe.skipIf(!RUN)('feedback soft bounce after N (real Postgres)', () => {
     // The Nth distinct soft bounce crosses the threshold.
     await handleNotification(deps, softBounce(`soft-${SOFT_BOUNCE_THRESHOLD_N}`));
     expect(await suppressed(admin)).toBe(true);
+  });
+
+  it('a successful delivery RESETS the consecutive soft-bounce count', async () => {
+    // Three soft bounces, then a delivery, then one more soft bounce. The count
+    // query (consecutive-since-last-delivery) must report only the post-delivery 1.
+    const ins = async (type: string, subType: string | null, ses: string, at: string) =>
+      admin.query(
+        `INSERT INTO email_events (workspace_id, ses_message_id, type, sub_type, occurred_at, raw)
+         VALUES ($1,$2,$3,$4,$5::timestamptz, jsonb_build_object('recipient',$6::text))`,
+        [ws, ses, type, subType, at, email],
+      );
+    await ins('bounce', 'Transient', 's1', '2026-01-01T00:00:00Z');
+    await ins('bounce', 'Transient', 's2', '2026-01-02T00:00:00Z');
+    await ins('bounce', 'Transient', 's3', '2026-01-03T00:00:00Z');
+    await ins('delivery', null, 'd1', '2026-01-04T00:00:00Z'); // mailbox recovered
+    await ins('bounce', 'Transient', 's4', '2026-01-05T00:00:00Z');
+
+    const q = buildSoftBounceCountQuery(ws, email);
+    const r = await admin.query(q.text, q.values);
+    expect(r.rows[0].n).toBe(1); // only the soft bounce AFTER the delivery counts
   });
 
   it('a replayed ses_message_id does NOT advance the count', async () => {

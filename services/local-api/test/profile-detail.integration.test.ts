@@ -89,6 +89,7 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
 
   async function cleanup(): Promise<void> {
     for (const ws of [WS_A, WS_B]) {
+      await world.pool.query('DELETE FROM suppressions WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM segments WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
@@ -127,6 +128,30 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
       body: { email_status: 'nonsense' },
     });
     expect(r.status).toBe(400);
+  });
+
+  it('a manual edit reconciles the suppression list (acts like the pipeline)', async () => {
+    const supp = async (): Promise<{ reason: string; source: string } | null> => {
+      const r = await world.pool.query(
+        'SELECT reason, source FROM suppressions WHERE workspace_id = $1 AND email = $2',
+        [WS_A, 'a2@acme.com'],
+      );
+      return (r.rows[0] as { reason: string; source: string } | undefined) ?? null;
+    };
+    // Mark bounced → a manual suppression (hard_bounce) appears.
+    await call(world.env, 'PATCH', `/profiles/${P_A2}`, { token: tokA(), body: { email_status: 'bounced' } });
+    expect(await supp()).toEqual({ reason: 'hard_bounce', source: 'manual' });
+
+    // Back to active → the manual suppression is lifted.
+    await call(world.env, 'PATCH', `/profiles/${P_A2}`, { token: tokA(), body: { email_status: 'active' } });
+    expect(await supp()).toBeNull();
+
+    // Mark unsubscribed via the attribute → a manual suppression (unsubscribe).
+    await call(world.env, 'PATCH', `/profiles/${P_A2}`, {
+      token: tokA(),
+      body: { attributes: { tier: 'std', unsubscribed: true } },
+    });
+    expect(await supp()).toEqual({ reason: 'unsubscribe', source: 'manual' });
   });
 
   it('a cross-workspace profile id is NOT editable (404, tenant isolation)', async () => {

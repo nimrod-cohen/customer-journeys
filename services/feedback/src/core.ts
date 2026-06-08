@@ -179,8 +179,13 @@ export function resolveWorkspaceRef(n: SesNotification): WorkspaceRef | null {
 
 // ── soft-bounce threshold ─────────────────────────────────────────────────────
 
-/** Number of DISTINCT soft bounces after which an address is suppressed (§10). */
-export const SOFT_BOUNCE_THRESHOLD_N = 3;
+/**
+ * Number of CONSECUTIVE distinct soft bounces (since the last successful
+ * delivery) after which an address is finally considered bounced + suppressed
+ * (§10). Paired with the dispatcher's 24h soft-bounce cooldown, reaching this
+ * takes at least N days — giving a transient mailbox issue time to clear.
+ */
+export const SOFT_BOUNCE_THRESHOLD_N = 5;
 
 /**
  * Whether the CURRENT soft bounce crosses the suppression threshold, given the
@@ -343,10 +348,10 @@ export function buildProfileEmailStatusUpdate(
 }
 
 /**
- * Count PRIOR distinct soft bounces for an address in this workspace (from
- * email_events: type='bounce', sub_type='Transient'). The DISTINCT key is the
- * SES message id, so a replayed ses_message_id does NOT inflate the count.
- * workspace_id bound at $1.
+ * Count CONSECUTIVE distinct soft bounces for an address — i.e. those AFTER the
+ * last successful delivery. A positive delivery RESETS the count (a recovered
+ * mailbox starts fresh). The DISTINCT key is the SES message id, so a replayed
+ * ses_message_id does NOT inflate the count. workspace_id bound at $1.
  */
 export function buildSoftBounceCountQuery(workspaceId: string, email: string): SqlStatement {
   if (!workspaceId) throw new Error('buildSoftBounceCountQuery: workspaceId is required');
@@ -356,8 +361,30 @@ export function buildSoftBounceCountQuery(workspaceId: string, email: string): S
            WHERE workspace_id = $1
              AND type = 'bounce'
              AND sub_type = 'Transient'
-             AND raw->>'recipient' = $2`,
+             AND raw->>'recipient' = $2
+             AND occurred_at > COALESCE(
+               (SELECT max(occurred_at) FROM email_events
+                 WHERE workspace_id = $1 AND type = 'delivery' AND raw->>'recipient' = $2),
+               '-infinity'::timestamptz)`,
     values: [workspaceId, email],
+  };
+}
+
+/**
+ * Mark the specific sent message FAILED (bounced|complained) by its SES message
+ * id — "do not retry, just mark it failed". No-op if no matching send row.
+ * workspace_id bound at $1.
+ */
+export function buildMessagesLogMarkFailed(
+  workspaceId: string,
+  sesMessageId: string,
+  status: string,
+): SqlStatement {
+  if (!workspaceId) throw new Error('buildMessagesLogMarkFailed: workspaceId is required');
+  return {
+    text: `UPDATE messages_log SET status = $3
+           WHERE workspace_id = $1 AND ses_message_id = $2`,
+    values: [workspaceId, sesMessageId, status],
   };
 }
 

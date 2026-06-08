@@ -75,6 +75,26 @@ describe('decideDispatch — guard order + short-circuit', () => {
     expect(d.deferUntil?.toISOString()).toBe('2026-06-10T17:00:00.000Z');
   });
 
+  it('soft-bounce cooldown defers a send within 24h of the last soft bounce', () => {
+    // last soft bounce 12h ago → still in the 24h window → defer until +24h.
+    const d = decideDispatch(base({ lastSoftBounceAt: new Date('2026-06-10T00:00:00.000Z') }));
+    expect(d.action).toBe('defer');
+    expect(d.stoppedAt).toBe('soft-bounce-cooldown');
+    expect(d.deferUntil?.toISOString()).toBe('2026-06-11T00:00:00.000Z');
+  });
+
+  it('soft-bounce cooldown does NOT block once 24h have passed', () => {
+    const d = decideDispatch(base({ lastSoftBounceAt: new Date('2026-06-08T00:00:00.000Z') }));
+    expect(d.action).toBe('send');
+  });
+
+  it('suppression beats the cooldown (order)', () => {
+    const d = decideDispatch(
+      base({ isSuppressed: true, lastSoftBounceAt: new Date('2026-06-10T00:00:00.000Z') }),
+    );
+    expect(d.stoppedAt).toBe('suppression');
+  });
+
   it('is LAZY: later predicates are not evaluated once blocked (suppression beats a throwing cap)', () => {
     // recentSendCount is read as a number; to prove laziness we make the quiet
     // config something that would mis-evaluate if reached. Suppression stops

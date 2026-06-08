@@ -30,6 +30,8 @@ describe('buildFeedbackPlan', () => {
     expect(text).toMatch(/INSERT INTO suppressions/i);
     expect(text).toMatch(/INSERT INTO global_hard_bounces/i);
     expect(text).toMatch(/UPDATE profiles/i);
+    // The bounced message is marked failed (no retry).
+    expect(text).toMatch(/UPDATE messages_log SET status = \$3/i);
     // Every workspace-scoped statement binds WS at $1; the global one does not.
     for (const s of plan) {
       if (/global_hard_bounces/i.test(s.text)) {
@@ -59,7 +61,7 @@ describe('buildFeedbackPlan', () => {
       workspaceId: WS,
       classified: { category: 'soft_bounce', type: 'bounce', subType: 'Transient', sesMessageId: 'm3', recipients: ['s@b.com'] },
       profileId: PROFILE,
-      priorSoftBounceCount: 0, // 1st event, N=3
+      priorSoftBounceCount: 0, // 1st event, below N=5
       raw: {},
     });
     const text = plan.map((s) => s.text).join('\n');
@@ -72,7 +74,7 @@ describe('buildFeedbackPlan', () => {
       workspaceId: WS,
       classified: { category: 'soft_bounce', type: 'bounce', subType: 'Transient', sesMessageId: 'm4', recipients: ['s@b.com'] },
       profileId: PROFILE,
-      priorSoftBounceCount: 2, // 3rd event, N=3 → cross
+      priorSoftBounceCount: 4, // 5th consecutive event, N=5 → cross
       raw: {},
     });
     const text = plan.map((s) => s.text).join('\n');

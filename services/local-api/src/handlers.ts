@@ -564,6 +564,34 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
     [email, externalId, emailStatus, attributes, hasAttrs, id, ctx.workspaceId],
   );
   if (!rows[0]) return ok({ error: 'not found' }, 404);
+
+  // Act like the real pipelines: reconcile the suppression list to the profile's
+  // new state. A manual edit that marks the address bounced/complained or
+  // unsubscribed must put it on the do-not-send list (source='manual'); clearing
+  // those states removes the MANUAL suppression (never a pipeline-written one).
+  const updated = rows[0] as {
+    email: string | null;
+    email_status: string;
+    attributes: Record<string, unknown> | null;
+  };
+  if (updated.email) {
+    const unsub = updated.attributes?.unsubscribed === true || updated.attributes?.unsubscribed === 'true';
+    const reason =
+      unsub ? 'unsubscribe' : updated.email_status === 'bounced' ? 'hard_bounce' : updated.email_status === 'complained' ? 'complaint' : null;
+    if (reason) {
+      await pool.query(
+        `INSERT INTO suppressions (workspace_id, email, reason, source)
+         VALUES ($1, $2, $3, 'manual') ON CONFLICT (workspace_id, email) DO NOTHING`,
+        [ctx.workspaceId, updated.email, reason],
+      );
+    } else {
+      // Subscribed + deliverable again → lift the MANUAL suppression only.
+      await pool.query(
+        `DELETE FROM suppressions WHERE workspace_id = $1 AND email = $2 AND source = 'manual'`,
+        [ctx.workspaceId, updated.email],
+      );
+    }
+  }
   return ok({ profile: rows[0] });
 };
 
