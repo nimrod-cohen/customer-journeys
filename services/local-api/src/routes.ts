@@ -56,6 +56,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
 
   // --- profiles (manage_content) ---
   'GET /profiles': 'manage_content',
+  'POST /profiles': 'manage_content',
   'GET /profiles/:id': 'manage_content',
   'PATCH /profiles/:id': 'manage_content',
   'GET /profiles/:id/events': 'manage_content',

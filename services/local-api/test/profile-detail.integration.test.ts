@@ -100,6 +100,24 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     }
   }
 
+  it('POST /profiles manually creates a profile (seeds unsubscribed=false, listed)', async () => {
+    const c = await call(world.env, 'POST', '/profiles', {
+      token: tokA(),
+      body: { external_id: 'made-1', email: 'made1@acme.com' },
+    });
+    expect(c.status).toBe(201);
+    const list = await call(world.env, 'GET', '/profiles', { token: tokA() });
+    const row = (list.body as { profiles: { external_id: string; unsubscribed: boolean }[] }).profiles.find(
+      (p) => p.external_id === 'made-1',
+    );
+    expect(row?.unsubscribed).toBe(false);
+  });
+
+  it('POST /profiles requires external_id (400)', async () => {
+    const c = await call(world.env, 'POST', '/profiles', { token: tokA(), body: { email: 'x@acme.com' } });
+    expect(c.status).toBe(400);
+  });
+
   it('GET /profiles/:id returns the profile + rolling features', async () => {
     const r = await call(world.env, 'GET', `/profiles/${P_A}`, { token: tokA() });
     expect(r.status).toBe(200);

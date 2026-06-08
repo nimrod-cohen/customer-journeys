@@ -470,7 +470,8 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
       // structurally by the compiler — can never match another tenant).
       const where = compileWhere(ctx.workspaceId, definition);
       const { rows } = await pool.query(
-        `SELECT p.id, p.external_id, p.email, p.email_status
+        `SELECT p.id, p.external_id, p.email, p.email_status,
+                (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed
            FROM profiles p
            LEFT JOIN profile_features pf ON pf.profile_id = p.id
           WHERE ${where.text}
@@ -483,7 +484,8 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
 
     // Manual (no rule): the materialized membership rows.
     const { rows } = await pool.query(
-      `SELECT p.id, p.external_id, p.email, p.email_status
+      `SELECT p.id, p.external_id, p.email, p.email_status,
+              (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed
          FROM profiles p
          JOIN segment_memberships sm
            ON sm.profile_id = p.id AND sm.workspace_id = p.workspace_id
@@ -497,10 +499,47 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
   // Explicit workspace_id = $1 scoping (the token's workspace), since this query
   // carries ORDER BY/LIMIT that scopedQuery's WHERE-rewriter cannot wrap.
   const { rows } = await pool.query(
-    'SELECT id, external_id, email, email_status FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200',
+    `SELECT id, external_id, email, email_status,
+            (attributes ->> 'unsubscribed' = 'true') AS unsubscribed
+       FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200`,
     [ctx.workspaceId],
   );
   return ok({ profiles: rows });
+};
+
+/**
+ * POST /profiles — manually create (or upsert) a profile in the active workspace.
+ * external_id is the per-workspace unique key (required); email + attributes are
+ * optional. New profiles seed unsubscribed=false; a re-create merges. Scoped to
+ * the token's workspace in code (workspace_id NEVER from the body).
+ */
+export const createProfile: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const externalId = typeof b.external_id === 'string' ? b.external_id.trim() : '';
+  if (!externalId) return ok({ error: 'external_id required' }, 400);
+  const emailRaw = typeof b.email === 'string' ? b.email.trim() : '';
+  const email = emailRaw || null;
+  const attrs =
+    b.attributes && typeof b.attributes === 'object' && !Array.isArray(b.attributes)
+      ? (b.attributes as Record<string, unknown>)
+      : {};
+  const { rows } = await pool.query(
+    `INSERT INTO profiles (workspace_id, external_id, email, attributes)
+     VALUES ($1, $2, $3, '{"unsubscribed": false}'::jsonb || $4::jsonb)
+     ON CONFLICT (workspace_id, external_id)
+     DO UPDATE SET email = COALESCE($3, profiles.email),
+                   attributes = profiles.attributes || $4::jsonb,
+                   updated_at = now()
+     RETURNING id, external_id, email, email_status`,
+    [ctx.workspaceId, externalId, email, JSON.stringify(attrs)],
+  );
+  const profileId = (rows[0] as { id: string }).id;
+  await pool.query(
+    `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2)
+     ON CONFLICT (profile_id) DO NOTHING`,
+    [profileId, ctx.workspaceId],
+  );
+  return ok({ profile: rows[0] }, 201);
 };
 
 export const getProfile: Handler = async (ctx, pool, req) => {
@@ -832,6 +871,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /campaigns': createCampaign,
   'PUT /campaigns/:id': updateCampaign,
   'GET /profiles': listProfiles,
+  'POST /profiles': createProfile,
   'GET /profiles/:id': getProfile,
   'PATCH /profiles/:id': updateProfile,
   'GET /profiles/:id/events': listProfileEvents,

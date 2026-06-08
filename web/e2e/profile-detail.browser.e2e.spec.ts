@@ -49,6 +49,8 @@ test('filter the profiles list by manual and dynamic segments', async ({ page })
 
   // All three seeded A profiles are listed unfiltered.
   await expect(page.getByTestId('profile-row')).toHaveCount(3);
+  // a3 is unsubscribed → exactly one unsubscribed marker in the table.
+  await expect(page.getByTestId('profile-unsub')).toHaveCount(1);
 
   // MANUAL segment: uses materialized membership rows — a1 is the only member.
   await page.getByTestId('profile-segment-filter').selectOption({ label: 'Manual VIPs' });
@@ -65,4 +67,19 @@ test('filter the profiles list by manual and dynamic segments', async ({ page })
   // Clearing the filter restores the full list.
   await page.getByTestId('profile-segment-filter').selectOption({ label: 'All segments' });
   await expect(page.getByTestId('profile-row')).toHaveCount(3);
+});
+
+test('manually add a profile and land on its detail page', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+
+  await page.getByTestId('new-profile').click();
+  await page.getByTestId('new-profile-external').fill('walk-in-1');
+  await page.getByTestId('new-profile-email').fill('walkin@acme.com');
+  await page.getByTestId('create-profile').click();
+
+  // Lands on the new profile's detail page.
+  await page.getByTestId('profile-detail').waitFor();
+  await expect(page.getByTestId('profile-email')).toContainText('walkin@acme.com');
 });
