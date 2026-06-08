@@ -4,6 +4,7 @@
 // unchanged — the Playwright contract (data-testid selectors) is preserved.
 import type { ComponentChildren, JSX } from 'preact';
 import { createPortal } from 'preact/compat';
+import { useEffect, useState } from 'preact/hooks';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
@@ -139,10 +140,13 @@ export function Stat({
   );
 }
 
+/** Drawer slide/scrim transition duration (ms) — kept in sync with the CSS. */
+const DRAWER_ANIM_MS = 300;
+
 /**
- * A right-side sliding drawer with a scrim. Renders nothing when closed.
- * Backdrop click + the close button both call onClose. `footer` pins actions to
- * the bottom; `children` scroll.
+ * A right-side sliding drawer with a scrim. Animates IN and OUT: on close it
+ * plays the exit transition, then unmounts. Backdrop click + the close button
+ * both call onClose. `footer` pins actions to the bottom; `children` scroll.
  */
 export function Drawer({
   open,
@@ -161,17 +165,40 @@ export function Drawer({
   footer?: ComponentChildren;
   testId?: string;
 }): JSX.Element | null {
-  if (!open) return null;
+  // `mounted` keeps the DOM around during the exit animation; `visible` drives
+  // the in/out transition (translate + opacity). Opening: mount, then flip
+  // visible on the next frame so the transition runs. Closing: flip visible off,
+  // then unmount after the animation completes.
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(open);
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      const r = requestAnimationFrame(() => setVisible(true));
+      return () => cancelAnimationFrame(r);
+    }
+    setVisible(false);
+    const t = setTimeout(() => setMounted(false), DRAWER_ANIM_MS);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  if (!mounted) return null;
   // Portal to <body> so the overlay escapes any ancestor with a `transform`
   // (e.g. the page's animate-fade-up wrapper), which would otherwise become the
   // containing block for `position: fixed` and clip the drawer to the content.
   return createPortal(
     <div class="fixed inset-0 z-50 flex justify-end" data-testid={testId}>
-      <div class="absolute inset-0 bg-ink-950/40 animate-fade-in" onClick={onClose} aria-hidden="true" />
+      <div
+        class={`absolute inset-0 bg-ink-950/40 transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
       <aside
         role="dialog"
         aria-modal="true"
-        class="relative z-10 flex h-full w-full max-w-md flex-col bg-white shadow-soft animate-slide-in-right"
+        class={`relative z-10 flex h-full w-full max-w-4xl flex-col bg-white shadow-soft transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+          visible ? 'translate-x-0' : 'translate-x-full'
+        }`}
       >
         <header class="flex items-start justify-between gap-3 border-b border-stone-100 px-5 py-4">
           <div>
