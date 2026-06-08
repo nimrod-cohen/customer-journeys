@@ -10,7 +10,7 @@
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import type { Pool } from 'pg';
-import { DEV_USERS, type WorkspaceContext } from '@cdp/shared';
+import { DEV_USERS, OPEN_EVENT_TYPES, PURCHASE_EVENT_TYPES, type WorkspaceContext } from '@cdp/shared';
 import { scopedQuery } from '@cdp/db';
 
 // Resolve an app user's email from the dev credential fixture (in production this
@@ -32,6 +32,7 @@ import {
   validateAst,
   addManualMembers,
   removeManualMembers,
+  evaluateRealtimeSegmentsForProfile,
   type AstNode,
 } from '@cdp/segments';
 import { validateCampaignDefinition } from '@cdp/service-campaign-runner';
@@ -707,6 +708,149 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
   return ok({ profile: rows[0] });
 };
 
+/**
+ * POST /profiles/:id/merge — merge `secondary_id` INTO `:id` (the lead/survivor),
+ * then delete the secondary. In ONE workspace-scoped transaction:
+ *   - reassign every row that references the secondary (events, email_events,
+ *     messages_log, outbox, campaign_enrollments, segment_change_log) to the lead,
+ *   - move segment memberships to the lead (manual memberships now point at the
+ *     survivor; conflicts dropped),
+ *   - set the lead's attributes to the caller-resolved merged object,
+ *   - RECOMPUTE the lead's rolling features from the merged events,
+ *   - RE-EVALUATE the lead's dynamic_realtime segments (enter/exit + change_log),
+ *   - delete the secondary profile.
+ * Both ids must belong to the token's workspace (scoped in code).
+ */
+export const mergeProfiles: Handler = async (ctx, pool, req) => {
+  const lead = req.params.id!;
+  const b = asObject(req.body);
+  const secondary = typeof b.secondary_id === 'string' ? b.secondary_id : '';
+  if (!secondary || secondary === lead) return ok({ error: 'a different secondary_id is required' }, 400);
+  const attrs =
+    b.attributes && typeof b.attributes === 'object' && !Array.isArray(b.attributes)
+      ? (b.attributes as Record<string, unknown>)
+      : null;
+
+  const ws = ctx.workspaceId;
+  const client = await pool.connect();
+  try {
+    // Both profiles must exist in THIS workspace.
+    const { rows: present } = await client.query(
+      'SELECT id FROM profiles WHERE workspace_id = $1 AND id = ANY($2::uuid[])',
+      [ws, [lead, secondary]],
+    );
+    if (present.length !== 2) {
+      client.release();
+      return ok({ error: 'not found' }, 404);
+    }
+
+    await client.query('BEGIN');
+    const reassign = (table: string) =>
+      client.query(`UPDATE ${table} SET profile_id = $2 WHERE workspace_id = $1 AND profile_id = $3`, [
+        ws,
+        lead,
+        secondary,
+      ]);
+    // Plain reassigns (no per-profile uniqueness on these).
+    await reassign('events');
+    await reassign('email_events');
+    await reassign('messages_log');
+    await reassign('outbox');
+    await reassign('segment_change_log');
+    // Memberships: UNIQUE(segment_id, profile_id) — move missing, drop the rest.
+    await client.query(
+      `INSERT INTO segment_memberships (segment_id, profile_id, workspace_id, source, entered_at)
+       SELECT segment_id, $2, workspace_id, source, entered_at
+         FROM segment_memberships WHERE workspace_id = $1 AND profile_id = $3
+       ON CONFLICT (segment_id, profile_id) DO NOTHING`,
+      [ws, lead, secondary],
+    );
+    await client.query('DELETE FROM segment_memberships WHERE workspace_id = $1 AND profile_id = $2', [
+      ws,
+      secondary,
+    ]);
+    // Campaign enrollments: UNIQUE(campaign_id, profile_id) — move missing, drop rest.
+    await client.query(
+      `INSERT INTO campaign_enrollments
+         (workspace_id, campaign_id, profile_id, current_node, status, next_run_at, state, enrolled_at, updated_at)
+       SELECT workspace_id, campaign_id, $2, current_node, status, next_run_at, state, enrolled_at, now()
+         FROM campaign_enrollments WHERE workspace_id = $1 AND profile_id = $3
+       ON CONFLICT (campaign_id, profile_id) DO NOTHING`,
+      [ws, lead, secondary],
+    );
+    await client.query('DELETE FROM campaign_enrollments WHERE workspace_id = $1 AND profile_id = $2', [
+      ws,
+      secondary,
+    ]);
+
+    // Lead attributes = caller-resolved merged set (else keep the lead's).
+    if (attrs !== null) {
+      await client.query(
+        'UPDATE profiles SET attributes = $3::jsonb, updated_at = now() WHERE workspace_id = $1 AND id = $2',
+        [ws, lead, JSON.stringify(attrs)],
+      );
+    }
+
+    // Recompute the lead's rolling features from ALL its (now-merged) events,
+    // mirroring the processor's aggregates (§6).
+    await client.query(
+      `WITH agg AS (
+         SELECT count(*)::int AS total_events,
+                max(occurred_at) AS last_event_at,
+                max(occurred_at) FILTER (WHERE type = ANY($3::text[])) AS last_email_open_at,
+                COALESCE(sum((payload->>'amount')::numeric) FILTER (WHERE type = ANY($4::text[])), 0) AS monetary_total
+           FROM events WHERE workspace_id = $1 AND profile_id = $2
+       ),
+       cnt AS (
+         SELECT COALESCE(jsonb_object_agg(type, c), '{}'::jsonb) AS counters
+           FROM (SELECT type, count(*)::int c FROM events WHERE workspace_id = $1 AND profile_id = $2 GROUP BY type) t
+       )
+       INSERT INTO profile_features
+         (profile_id, workspace_id, total_events, last_event_at, last_email_open_at, counters, monetary_total, updated_at)
+       SELECT $2, $1, agg.total_events, agg.last_event_at, agg.last_email_open_at, cnt.counters, agg.monetary_total, now()
+         FROM agg, cnt
+       ON CONFLICT (profile_id) DO UPDATE SET
+         total_events = EXCLUDED.total_events,
+         last_event_at = EXCLUDED.last_event_at,
+         last_email_open_at = EXCLUDED.last_email_open_at,
+         counters = EXCLUDED.counters,
+         monetary_total = EXCLUDED.monetary_total,
+         updated_at = now()`,
+      [ws, lead, OPEN_EVENT_TYPES as readonly string[], PURCHASE_EVENT_TYPES as readonly string[]],
+    );
+
+    // Remove the secondary (features first — FK).
+    await client.query('DELETE FROM profile_features WHERE workspace_id = $1 AND profile_id = $2', [ws, secondary]);
+    await client.query('DELETE FROM profiles WHERE workspace_id = $1 AND id = $2', [ws, secondary]);
+
+    // Re-evaluate the lead's realtime segments against its merged features, in
+    // the SAME tx (membership diff + change_log via the shared evaluator).
+    await evaluateRealtimeSegmentsForProfile(
+      {
+        reader: { query: (text, values) => client.query(text, values) },
+        runInWorkspaceTx: async (_w, statements) => {
+          for (const s of statements) await client.query(s.text, s.values);
+        },
+      },
+      ws,
+      lead,
+    );
+
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    throw e;
+  }
+  client.release();
+
+  const { rows } = await pool.query(
+    'SELECT id, external_id, email, email_status, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ws, lead],
+  );
+  return ok({ profile: rows[0] });
+};
+
 /** GET /profiles/:id/events — this profile's event history, newest first (scoped). */
 export const listProfileEvents: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
@@ -950,6 +1094,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /profiles/attribute-keys': listAttributeKeys,
   'GET /profiles/:id': getProfile,
   'PATCH /profiles/:id': updateProfile,
+  'POST /profiles/:id/merge': mergeProfiles,
   'GET /profiles/:id/events': listProfileEvents,
   'GET /profiles/:id/segments': listProfileSegments,
   'GET /activity': listActivity,

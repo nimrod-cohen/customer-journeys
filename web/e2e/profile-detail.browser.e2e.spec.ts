@@ -127,3 +127,27 @@ test('manually add a profile (with attributes) via the drawer', async ({ page })
   await expect(page.getByTestId('attr-key').first()).toHaveValue('walksource');
   await expect(page.getByTestId('attr-value').first()).toHaveValue('storefront');
 });
+
+test('merge a secondary profile into the lead (survivor remains, secondary deleted)', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+
+  // Open the lead (a1) and start a merge with a2.
+  await page.getByTestId('profile-search').fill('a1@acme.com');
+  await page.getByTestId('profile-row').first().click();
+  await page.getByTestId('profile-detail').waitFor();
+  await page.getByTestId('merge-button').click();
+  await page.getByTestId('merge-drawer').waitFor();
+  await page.getByTestId('merge-secondary-select').selectOption({ label: 'a2@acme.com' });
+  await page.getByTestId('merge-confirm').click();
+
+  // The survivor (a1) remains; the drawer closes.
+  await expect(page.getByTestId('merge-drawer')).toHaveCount(0);
+  await expect(page.getByTestId('profile-email')).toContainText('a1@acme.com');
+
+  // The secondary (a2) is gone from the list.
+  await page.getByTestId('profile-back').click();
+  await page.getByTestId('profile-search').fill('a2@acme.com');
+  await expect(page.getByTestId('profile-row')).toHaveCount(0);
+});

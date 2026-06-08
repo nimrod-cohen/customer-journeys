@@ -9,6 +9,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Badge, Button, Card, EmptyState, Field, Input, Select, toneFor } from '../ui/kit.js';
+import { MergeProfileDrawer } from './MergeProfileDrawer.js';
 
 interface Profile {
   id: string;
@@ -79,6 +80,7 @@ export function ProfileDetail({ id }: { id: string }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [features, setFeatures] = useState<Features | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [merging, setMerging] = useState(false);
 
   const load = async () => {
     try {
@@ -109,13 +111,34 @@ export function ProfileDetail({ id }: { id: string }) {
 
   return (
     <section data-testid="profile-detail">
-      <button
-        data-testid="profile-back"
-        class="btn-ghost mb-4 btn-sm"
-        onClick={() => navigate('/profiles')}
-      >
-        ← Back to profiles
-      </button>
+      <div class="mb-4 flex items-center justify-between">
+        <button data-testid="profile-back" class="btn-ghost btn-sm" onClick={() => navigate('/profiles')}>
+          ← Back to profiles
+        </button>
+        {profile ? (
+          <Button data-testid="merge-button" variant="secondary" size="sm" onClick={() => setMerging(true)}>
+            Merge…
+          </Button>
+        ) : null}
+      </div>
+
+      {profile ? (
+        <MergeProfileDrawer
+          open={merging}
+          profile={{
+            id: profile.id,
+            email: profile.email,
+            external_id: profile.external_id,
+            attributes: profile.attributes ?? {},
+          }}
+          onClose={() => setMerging(false)}
+          onMerged={(survivingId) => {
+            setMerging(false);
+            if (survivingId === id) void load();
+            else navigate(`/profiles/${survivingId}`);
+          }}
+        />
+      ) : null}
 
       {/* Header */}
       <Card class="mb-5 flex flex-wrap items-center gap-4 p-5">
