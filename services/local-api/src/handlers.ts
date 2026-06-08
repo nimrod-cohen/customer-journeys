@@ -670,18 +670,27 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
     attributes = JSON.stringify(a);
   }
   // Explicit workspace_id in the WHERE (scopedQuery can't host a trailing
-  // RETURNING). NULLIF('') lets external_id be cleared to NULL from the UI.
-  const { rows } = await pool.query(
-    `UPDATE profiles SET
-       email = COALESCE($1, email),
-       external_id = COALESCE($2, external_id),
-       email_status = COALESCE($3, email_status),
-       attributes = CASE WHEN $5::boolean THEN $4::jsonb ELSE attributes END,
-       updated_at = now()
-     WHERE id = $6 AND workspace_id = $7
-     RETURNING id, external_id, email, email_status, attributes`,
-    [email, externalId, emailStatus, attributes, hasAttrs, id, ctx.workspaceId],
-  );
+  // RETURNING). Email is unique per workspace — changing it to one already in use
+  // surfaces a friendly 409 instead of the raw unique violation (Postgres 23505).
+  let rows: Array<Record<string, unknown>>;
+  try {
+    ({ rows } = await pool.query(
+      `UPDATE profiles SET
+         email = COALESCE($1, email),
+         external_id = COALESCE($2, external_id),
+         email_status = COALESCE($3, email_status),
+         attributes = CASE WHEN $5::boolean THEN $4::jsonb ELSE attributes END,
+         updated_at = now()
+       WHERE id = $6 AND workspace_id = $7
+       RETURNING id, external_id, email, email_status, attributes`,
+      [email, externalId, emailStatus, attributes, hasAttrs, id, ctx.workspaceId],
+    ));
+  } catch (e) {
+    if ((e as { code?: string }).code === '23505') {
+      return ok({ error: `A profile with email ${email} already exists.` }, 409);
+    }
+    throw e;
+  }
   if (!rows[0]) return ok({ error: 'not found' }, 404);
 
   // Act like the real pipelines: reconcile the suppression list to the profile's

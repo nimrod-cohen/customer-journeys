@@ -188,6 +188,17 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     expect(r.status).toBe(400);
   });
 
+  it('PATCH to an email already used by another profile is a friendly 409', async () => {
+    // P_A is lead@... no — P_A is a1@acme.com, P_A2 is a2@acme.com. Renaming P_A2
+    // to P_A's email collides on the per-workspace unique email index.
+    const r = await call(world.env, 'PATCH', `/profiles/${P_A2}`, {
+      token: tokA(),
+      body: { email: 'a1@acme.com' },
+    });
+    expect(r.status).toBe(409);
+    expect((r.body as { error: string }).error).toMatch(/already exists/i);
+  });
+
   it('a manual edit reconciles the suppression list (acts like the pipeline)', async () => {
     const supp = async (): Promise<{ reason: string; source: string } | null> => {
       const r = await world.pool.query(
