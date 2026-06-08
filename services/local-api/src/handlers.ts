@@ -523,16 +523,28 @@ export const createProfile: Handler = async (ctx, pool, req) => {
     b.attributes && typeof b.attributes === 'object' && !Array.isArray(b.attributes)
       ? (b.attributes as Record<string, unknown>)
       : {};
+  // Manual creation is a CREATE, not a silent merge: email is the identity key,
+  // so an existing email is a conflict the user must know about. INSERT ... ON
+  // CONFLICT DO NOTHING returns no row when the email already exists (race-safe
+  // against the unique index); we then surface a 409 with the existing id so the
+  // UI can offer to open it instead of silently overwriting.
   const { rows } = await pool.query(
     `INSERT INTO profiles (workspace_id, email, external_id, attributes)
      VALUES ($1, $2, $3, '{"unsubscribed": false}'::jsonb || $4::jsonb)
-     ON CONFLICT (workspace_id, email)
-     DO UPDATE SET external_id = COALESCE($3, profiles.external_id),
-                   attributes = profiles.attributes || $4::jsonb,
-                   updated_at = now()
+     ON CONFLICT (workspace_id, email) DO NOTHING
      RETURNING id, external_id, email, email_status`,
     [ctx.workspaceId, email, externalId, JSON.stringify(attrs)],
   );
+  if (!rows[0]) {
+    const existing = await pool.query('SELECT id FROM profiles WHERE workspace_id = $1 AND email = $2', [
+      ctx.workspaceId,
+      email,
+    ]);
+    return ok(
+      { error: `A profile with email ${email} already exists.`, profile_id: existing.rows[0]?.id ?? null },
+      409,
+    );
+  }
   const profileId = (rows[0] as { id: string }).id;
   await pool.query(
     `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2)

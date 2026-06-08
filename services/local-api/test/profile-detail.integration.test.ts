@@ -113,6 +113,28 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     expect(row?.unsubscribed).toBe(false);
   });
 
+  it('POST /profiles with an EXISTING email is a 409 conflict (no silent merge)', async () => {
+    const email = 'dupe@acme.com';
+    const first = await call(world.env, 'POST', '/profiles', {
+      token: tokA(),
+      body: { email, attributes: { tier: 'gold' } },
+    });
+    expect(first.status).toBe(201);
+    // A second create with the same email must NOT silently merge.
+    const second = await call(world.env, 'POST', '/profiles', {
+      token: tokA(),
+      body: { email, attributes: { tier: 'silver' } },
+    });
+    expect(second.status).toBe(409);
+    expect((second.body as { profile_id: string }).profile_id).toBeTruthy();
+    // The existing profile is untouched (still gold).
+    const { rows } = await world.pool.query(
+      "SELECT attributes->>'tier' AS tier FROM profiles WHERE workspace_id = $1 AND email = $2",
+      [WS_A, email],
+    );
+    expect(rows[0]?.tier).toBe('gold');
+  });
+
   it('POST /profiles requires a valid email — the identity key (400)', async () => {
     const noEmail = await call(world.env, 'POST', '/profiles', { token: tokA(), body: { external_id: 'x' } });
     expect(noEmail.status).toBe(400);
