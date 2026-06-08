@@ -132,11 +132,12 @@ export function ProfileExplorer() {
       if (k) attributes[k] = parseAttrValue(p.value);
     }
     try {
-      const r = await api.post<{ profile: { id: string } }>('/profiles', {
-        body: { email: newEmail.trim(), attributes },
-      });
-      // Land on the new profile so events/segments can be reviewed next.
-      navigate(`/profiles/${r.profile.id}`);
+      await api.post('/profiles', { body: { email: newEmail.trim(), attributes } });
+      // Stay on the list: close the drawer and refresh so the new row appears.
+      setAdding(false);
+      const opts = segmentId ? { query: { segment_id: segmentId } } : undefined;
+      const r = await api.get<{ profiles: Profile[] }>('/profiles', opts);
+      setProfiles(r.profiles);
     } catch (e) {
       setAddError((e as { error?: string })?.error ?? 'could not create profile');
     } finally {

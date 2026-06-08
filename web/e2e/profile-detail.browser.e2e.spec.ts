@@ -83,7 +83,13 @@ test('manually add a profile (with attributes) via the drawer', async ({ page })
   await page.getByTestId('new-attr-value').fill('pro');
   await page.getByTestId('create-profile').click();
 
-  // Lands on the new profile's detail page with the email + attribute set.
+  // The drawer closes and we STAY on the list, where the new profile now appears.
+  await expect(page.getByTestId('new-profile-drawer')).toHaveCount(0);
+  await page.getByTestId('profile-search').fill('walkin@acme.com');
+  await expect(page.getByTestId('profile-row')).toHaveCount(1);
+
+  // Open it to confirm the email + attribute were persisted.
+  await page.getByTestId('profile-row').first().click();
   await page.getByTestId('profile-detail').waitFor();
   await expect(page.getByTestId('profile-email')).toContainText('walkin@acme.com');
   await page.getByTestId('tab-attributes').click();
