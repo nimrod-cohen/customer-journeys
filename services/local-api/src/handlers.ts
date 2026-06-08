@@ -594,6 +594,23 @@ export const createProfile: Handler = async (ctx, pool, req) => {
   return ok({ profile: rows[0] }, 201);
 };
 
+/**
+ * GET /profiles/attribute-keys — the DISTINCT attribute keys across the
+ * workspace's profiles (powers the column picker exhaustively, not limited to a
+ * loaded page). Scoped to the token's workspace; excludes the internal
+ * `unsubscribed` flag.
+ */
+export const listAttributeKeys: Handler = async (ctx, pool) => {
+  const { rows } = await pool.query<{ key: string }>(
+    `SELECT DISTINCT key
+       FROM profiles p, jsonb_object_keys(p.attributes) AS key
+      WHERE p.workspace_id = $1
+      ORDER BY key`,
+    [ctx.workspaceId],
+  );
+  return ok({ keys: rows.map((r) => r.key).filter((k) => k !== 'unsubscribed') });
+};
+
 export const getProfile: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
@@ -930,6 +947,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /campaigns/:id': updateCampaign,
   'GET /profiles': listProfiles,
   'POST /profiles': createProfile,
+  'GET /profiles/attribute-keys': listAttributeKeys,
   'GET /profiles/:id': getProfile,
   'PATCH /profiles/:id': updateProfile,
   'GET /profiles/:id/events': listProfileEvents,

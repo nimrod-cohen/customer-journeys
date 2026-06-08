@@ -3,6 +3,7 @@
 // (Visual redesign; all data-testid attributes preserved.)
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
+import { navigate } from '../router.js';
 import { Badge, Button, Card, Field, Input, PageHeader, Select, EmptyState, toneFor } from '../ui/kit.js';
 
 interface Segment {
@@ -59,7 +60,15 @@ export function BroadcastComposer() {
 
   return (
     <section data-testid="broadcast-composer">
-      <PageHeader title="Broadcasts" subtitle="Send a one-off email to a segment or manual group." />
+      <PageHeader
+        title="Broadcasts"
+        subtitle="Send a one-off email to a segment or manual group."
+        actions={
+          <Button data-testid="design-email" variant="secondary" onClick={() => navigate('/editor')}>
+            Design email
+          </Button>
+        }
+      />
 
       <Card class="p-5">
         <div class="grid items-end gap-3 md:grid-cols-[1fr_1fr_1fr_auto]">

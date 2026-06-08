@@ -72,10 +72,16 @@ function fmtAttr(v: unknown): string {
   return typeof v === 'string' ? v : JSON.stringify(v);
 }
 
-/** Persisted profile-table column config (per browser). */
+// A configurable column id: the built-in External ID, or an attribute key.
+const EXT_COL = 'external_id';
+const ATTR_PREFIX = 'attr:';
+const isAttrCol = (id: string) => id.startsWith(ATTR_PREFIX);
+const attrKeyOf = (id: string) => id.slice(ATTR_PREFIX.length);
+const attrColCount = (order: readonly string[]) => order.filter(isAttrCol).length;
+
+/** Persisted profile-table column config (per browser): the enabled columns, in order. */
 interface ColumnConfig {
-  showExtId: boolean;
-  attrCols: string[]; // ordered, max 3
+  order: string[]; // e.g. ['external_id', 'attr:tier'] — order = display order
 }
 const COLS_KEY = 'cdp.profileColumns';
 const MAX_ATTR_COLS = 3;
@@ -83,13 +89,18 @@ function loadCols(): ColumnConfig {
   try {
     const raw = globalThis.localStorage?.getItem(COLS_KEY);
     if (raw) {
-      const c = JSON.parse(raw) as ColumnConfig;
-      return { showExtId: c.showExtId !== false, attrCols: (c.attrCols ?? []).slice(0, MAX_ATTR_COLS) };
+      const c = JSON.parse(raw) as Partial<ColumnConfig> & { showExtId?: boolean; attrCols?: string[] };
+      if (Array.isArray(c.order)) return { order: c.order };
+      // Migrate the previous {showExtId, attrCols} shape.
+      const order: string[] = [];
+      if (c.showExtId !== false) order.push(EXT_COL);
+      for (const k of (c.attrCols ?? []).slice(0, MAX_ATTR_COLS)) order.push(`${ATTR_PREFIX}${k}`);
+      return { order };
     }
   } catch {
     /* ignore */
   }
-  return { showExtId: true, attrCols: [] };
+  return { order: [EXT_COL] };
 }
 
 /** A small "unsubscribed" (bell with a slash) marker shown next to opted-out profiles. */
@@ -135,11 +146,12 @@ export function ProfileExplorer() {
     setAdding(true);
   };
 
-  // Configurable table columns (persisted): toggle external_id, plus up to 3
-  // attribute columns chosen from a searchable list, reorderable.
+  // Configurable, reorderable table columns (persisted): External ID + up to 3
+  // attribute columns, in a user-defined order.
   const [cols, setCols] = useState<ColumnConfig>(loadCols);
   const [colsOpen, setColsOpen] = useState(false);
   const [colSearch, setColSearch] = useState('');
+  const [allAttrKeys, setAllAttrKeys] = useState<string[]>([]);
   useEffect(() => {
     try {
       globalThis.localStorage?.setItem(COLS_KEY, JSON.stringify(cols));
@@ -147,31 +159,40 @@ export function ProfileExplorer() {
       /* ignore */
     }
   }, [cols]);
-  // Attribute keys present across the loaded profiles (the picker's options).
-  const availableAttrKeys = (() => {
-    const set = new Set<string>();
-    for (const p of profiles) for (const k of Object.keys(p.attributes ?? {})) if (k !== 'unsubscribed') set.add(k);
-    // Keep already-chosen keys even if no row currently has them.
-    for (const k of cols.attrCols) set.add(k);
-    return [...set].sort((a, b) => a.localeCompare(b));
-  })();
-  const toggleAttrCol = (key: string) =>
-    setCols((c) =>
-      c.attrCols.includes(key)
-        ? { ...c, attrCols: c.attrCols.filter((k) => k !== key) }
-        : c.attrCols.length >= MAX_ATTR_COLS
-          ? c
-          : { ...c, attrCols: [...c.attrCols, key] },
-    );
-  const moveAttrCol = (key: string, dir: -1 | 1) =>
+  // Exhaustive list of attribute keys in the workspace (server DISTINCT), so the
+  // picker isn't limited to the loaded page.
+  useEffect(() => {
+    void api
+      .get<{ keys: string[] }>('/profiles/attribute-keys')
+      .then((r) => setAllAttrKeys(r.keys))
+      .catch(() => setAllAttrKeys([]));
+  }, [segmentId]);
+
+  const enabledCol = (id: string) => cols.order.includes(id);
+  const toggleCol = (id: string) =>
     setCols((c) => {
-      const i = c.attrCols.indexOf(key);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= c.attrCols.length) return c;
-      const next = [...c.attrCols];
-      [next[i], next[j]] = [next[j]!, next[i]!];
-      return { ...c, attrCols: next };
+      if (c.order.includes(id)) return { order: c.order.filter((x) => x !== id) };
+      if (isAttrCol(id) && attrColCount(c.order) >= MAX_ATTR_COLS) return c;
+      return { order: [...c.order, id] };
     });
+  const moveCol = (id: string, dir: -1 | 1) =>
+    setCols((c) => {
+      const i = c.order.indexOf(id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= c.order.length) return c;
+      const next = [...c.order];
+      [next[i], next[j]] = [next[j]!, next[i]!];
+      return { order: next };
+    });
+  // Picker rows: enabled columns first (in their order, with reorder arrows),
+  // then the remaining available attribute keys. External ID is always offered.
+  const enabledIds = cols.order;
+  const remainingIds = [
+    ...(enabledCol(EXT_COL) ? [] : [EXT_COL]),
+    ...allAttrKeys.map((k) => `${ATTR_PREFIX}${k}`).filter((id) => !enabledCol(id)),
+  ];
+  const colLabel = (id: string) => (id === EXT_COL ? 'External ID' : attrKeyOf(id));
+  const colSearchMatch = (id: string) => colLabel(id).toLowerCase().includes(colSearch.trim().toLowerCase());
   const setAttr = (i: number, patch: Partial<AttrPair>) =>
     setNewAttrs((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const addAttr = () => setNewAttrs((rs) => [...rs, { key: '', value: '' }]);
@@ -363,62 +384,60 @@ export function ProfileExplorer() {
                   value={colSearch}
                   onInput={(e: Event) => setColSearch((e.target as HTMLInputElement).value)}
                 />
-                <label class="mt-3 flex items-center gap-2 text-sm text-ink-900">
-                  <input
-                    data-testid="col-external_id"
-                    type="checkbox"
-                    checked={cols.showExtId}
-                    onChange={() => setCols((c) => ({ ...c, showExtId: !c.showExtId }))}
-                  />
-                  External ID
-                </label>
-                <div class="mt-1 max-h-72 overflow-y-auto">
-                  {availableAttrKeys
-                    .filter((k) => k.toLowerCase().includes(colSearch.trim().toLowerCase()))
-                    .map((k) => {
-                      const selected = cols.attrCols.includes(k);
-                      const atMax = !selected && cols.attrCols.length >= MAX_ATTR_COLS;
-                      return (
-                        <div
-                          data-testid="col-option"
-                          data-col={k}
-                          key={k}
-                          class="flex items-center justify-between gap-2 py-1"
+                <div class="mt-2 max-h-72 overflow-y-auto pr-1">
+                  {[...enabledIds, ...remainingIds]
+                    .filter((id) => id === EXT_COL || colSearchMatch(id))
+                    .map((id) => {
+                    const on = enabledCol(id);
+                    const isExt = id === EXT_COL;
+                    const atMax = !on && isAttrCol(id) && attrColCount(cols.order) >= MAX_ATTR_COLS;
+                    return (
+                      <div
+                        data-testid="col-option"
+                        data-col={isExt ? 'external_id' : attrKeyOf(id)}
+                        key={id}
+                        class="flex h-9 items-center gap-2 rounded px-1 hover:bg-stone-50"
+                      >
+                        <input
+                          {...(isExt ? { 'data-testid': 'col-external_id' } : {})}
+                          type="checkbox"
+                          class="h-4 w-4 shrink-0 accent-brand-500"
+                          checked={on}
+                          disabled={atMax}
+                          onChange={() => toggleCol(id)}
+                        />
+                        <span
+                          class={`flex-1 truncate text-sm text-ink-900 ${isExt ? '' : 'font-mono'} ${
+                            atMax ? 'opacity-40' : ''
+                          }`}
                         >
-                          <label class={`flex flex-1 items-center gap-2 text-sm ${atMax ? 'opacity-40' : 'text-ink-900'}`}>
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              disabled={atMax}
-                              onChange={() => toggleAttrCol(k)}
-                            />
-                            <span class="truncate font-mono text-xs">{k}</span>
-                          </label>
-                          {selected ? (
-                            <span class="flex items-center gap-0.5">
-                              <button
-                                data-testid="col-up"
-                                class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-ink-900"
-                                aria-label={`Move ${k} up`}
-                                onClick={() => moveAttrCol(k, -1)}
-                              >
-                                ↑
-                              </button>
-                              <button
-                                data-testid="col-down"
-                                class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-ink-900"
-                                aria-label={`Move ${k} down`}
-                                onClick={() => moveAttrCol(k, 1)}
-                              >
-                                ↓
-                              </button>
-                            </span>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  {availableAttrKeys.length === 0 ? (
-                    <p class="py-2 text-xs text-stone-400">No attributes on these profiles yet.</p>
+                          {colLabel(id)}
+                        </span>
+                        {on ? (
+                          <span class="flex shrink-0 items-center">
+                            <button
+                              data-testid="col-up"
+                              class="rounded px-1 text-stone-400 hover:bg-stone-100 hover:text-ink-900"
+                              aria-label={`Move ${colLabel(id)} up`}
+                              onClick={() => moveCol(id, -1)}
+                            >
+                              ↑
+                            </button>
+                            <button
+                              data-testid="col-down"
+                              class="rounded px-1 text-stone-400 hover:bg-stone-100 hover:text-ink-900"
+                              aria-label={`Move ${colLabel(id)} down`}
+                              onClick={() => moveCol(id, 1)}
+                            >
+                              ↓
+                            </button>
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {enabledIds.length === 0 && remainingIds.length === 0 ? (
+                    <p class="py-2 text-xs text-stone-400">No attributes yet.</p>
                   ) : null}
                 </div>
                 <p class="mt-2 text-[11px] text-stone-400">Up to {MAX_ATTR_COLS} attribute columns.</p>
@@ -432,19 +451,19 @@ export function ProfileExplorer() {
           <thead class="border-b border-stone-200 bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
             <tr>
               <th class="w-8 px-2 py-2.5" />
-              {cols.showExtId ? (
-                <th data-testid="extid-col-header" class="px-4 py-2.5 font-semibold">
-                  External ID
-                </th>
-              ) : null}
               <th class="px-4 py-2.5 font-semibold">Email</th>
               <th class="px-4 py-2.5 font-semibold">Status</th>
-              {cols.attrCols.map((k) => (
-                <th data-testid="attr-col-header" key={k} class="px-4 py-2.5 font-semibold">
-                  {k}
-                </th>
-              ))}
-              <th class="px-4 py-2.5" />
+              {cols.order.map((id) =>
+                id === EXT_COL ? (
+                  <th data-testid="extid-col-header" key={id} class="px-4 py-2.5 font-semibold">
+                    External ID
+                  </th>
+                ) : (
+                  <th data-testid="attr-col-header" key={id} class="px-4 py-2.5 font-semibold">
+                    {attrKeyOf(id)}
+                  </th>
+                ),
+              )}
             </tr>
           </thead>
           <tbody class="divide-y divide-stone-100">
@@ -456,30 +475,21 @@ export function ProfileExplorer() {
                 class="cursor-pointer hover:bg-stone-50/70"
               >
                 <td class="px-2 py-2.5 text-center">{p.unsubscribed ? <UnsubscribedIcon /> : null}</td>
-                {cols.showExtId ? (
-                  <td class="px-4 py-2.5 font-mono text-xs text-stone-600">{p.external_id}</td>
-                ) : null}
                 <td class="px-4 py-2.5 text-ink-900">{p.email}</td>
                 <td class="px-4 py-2.5">
                   <Badge tone={toneFor(p.email_status)}>{p.email_status}</Badge>
                 </td>
-                {cols.attrCols.map((k) => (
-                  <td data-testid="attr-col-cell" key={k} class="px-4 py-2.5 text-stone-700">
-                    {fmtAttr(p.attributes?.[k])}
-                  </td>
-                ))}
-                <td class="px-4 py-2.5 text-right">
-                  <button
-                    data-testid="profile-open"
-                    class="btn-ghost btn-sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/profiles/${p.id}`);
-                    }}
-                  >
-                    View →
-                  </button>
-                </td>
+                {cols.order.map((id) =>
+                  id === EXT_COL ? (
+                    <td key={id} class="px-4 py-2.5 font-mono text-xs text-stone-600">
+                      {p.external_id}
+                    </td>
+                  ) : (
+                    <td data-testid="attr-col-cell" key={id} class="px-4 py-2.5 text-stone-700">
+                      {fmtAttr(p.attributes?.[attrKeyOf(id)])}
+                    </td>
+                  ),
+                )}
               </tr>
             ))}
           </tbody>

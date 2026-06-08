@@ -11,7 +11,9 @@ import { DEV_MKT } from './seed.js';
 // marketer, manage_content) and navigate to it before asserting.
 async function openEditor(page: import('@playwright/test').Page): Promise<void> {
   await loginAs(page, DEV_MKT);
-  await page.getByTestId('nav-editor').click();
+  // The editor lives in the context of Broadcasts/Campaigns (no standalone nav).
+  await page.getByTestId('nav-broadcasts').click();
+  await page.getByTestId('design-email').click();
 }
 
 test('the GrapesJS+MJML editor renders and emits MJML rooted at <mjml>', async ({ page }) => {

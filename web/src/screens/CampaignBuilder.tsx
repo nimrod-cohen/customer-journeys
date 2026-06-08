@@ -4,6 +4,7 @@
 // (Visual redesign; all data-testid attributes preserved.)
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
+import { navigate } from '../router.js';
 import { buildDefinition, starterNodes, type BuilderNode } from '../campaigns/builder.js';
 import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor } from '../ui/kit.js';
 
@@ -69,7 +70,15 @@ export function CampaignBuilder() {
 
   return (
     <section data-testid="campaign-builder">
-      <PageHeader title="Campaigns" subtitle="Design a multi-step journey: trigger → wait → branch → action." />
+      <PageHeader
+        title="Campaigns"
+        subtitle="Design a multi-step journey: trigger → wait → branch → action."
+        actions={
+          <Button data-testid="design-email" variant="secondary" onClick={() => navigate('/editor')}>
+            Design email
+          </Button>
+        }
+      />
 
       <Card class="p-5">
         <Field label="Campaign name" class="max-w-sm">

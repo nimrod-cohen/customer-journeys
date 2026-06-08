@@ -82,7 +82,10 @@ export function AppShell(): JSX.Element {
   // Land on a permitted screen: if the current route isn't in the role's nav
   // (e.g. a system-admin with no active workspace can't open /dashboards),
   // fall back to the first permitted item (the System Admin console for them).
-  const permitted = nav.some((n) => underNav(route, n.path));
+  // The email editor has no nav item (reached from Broadcasts/Campaigns), but is
+  // still permitted for anyone who can manage content (i.e. has those screens).
+  const canEditor = route === '/editor' && nav.some((n) => n.id === 'broadcasts');
+  const permitted = canEditor || nav.some((n) => underNav(route, n.path));
   const effectiveRoute = permitted ? route : (nav[0]?.path ?? route);
   useEffect(() => {
     if (!permitted && nav[0] && route !== nav[0].path) navigate(nav[0].path);

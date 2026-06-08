@@ -142,6 +142,14 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     expect(badEmail.status).toBe(400);
   });
 
+  it('GET /profiles/attribute-keys returns DISTINCT keys (excluding unsubscribed)', async () => {
+    const r = await call(world.env, 'GET', '/profiles/attribute-keys', { token: tokA() });
+    expect(r.status).toBe(200);
+    const keys = (r.body as { keys: string[] }).keys;
+    expect(keys).toContain('tier'); // P_A2 has attributes.tier
+    expect(keys).not.toContain('unsubscribed'); // internal flag is filtered out
+  });
+
   it('GET /profiles/:id returns the profile + rolling features', async () => {
     const r = await call(world.env, 'GET', `/profiles/${P_A}`, { token: tokA() });
     expect(r.status).toBe(200);
