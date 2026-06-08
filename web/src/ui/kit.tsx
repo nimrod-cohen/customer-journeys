@@ -3,6 +3,7 @@
 // underlying element so callers' `data-testid`/handlers/value flow through
 // unchanged — the Playwright contract (data-testid selectors) is preserved.
 import type { ComponentChildren, JSX } from 'preact';
+import { createPortal } from 'preact/compat';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
@@ -161,7 +162,10 @@ export function Drawer({
   testId?: string;
 }): JSX.Element | null {
   if (!open) return null;
-  return (
+  // Portal to <body> so the overlay escapes any ancestor with a `transform`
+  // (e.g. the page's animate-fade-up wrapper), which would otherwise become the
+  // containing block for `position: fixed` and clip the drawer to the content.
+  return createPortal(
     <div class="fixed inset-0 z-50 flex justify-end" data-testid={testId}>
       <div class="absolute inset-0 bg-ink-950/40 animate-fade-in" onClick={onClose} aria-hidden="true" />
       <aside
@@ -193,7 +197,8 @@ export function Drawer({
           </footer>
         ) : null}
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
