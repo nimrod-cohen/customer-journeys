@@ -169,6 +169,44 @@ export const updateMember: Handler = async (ctx, pool, req) => {
 };
 
 // ---------------------------------------------------------------------------
+// workspace settings (manage_workspace_users) — e.g. lowercase_emails
+// ---------------------------------------------------------------------------
+
+/** Whether this workspace enforces lowercase emails (default true when unset). */
+async function lowercaseEmailsEnabled(pool: Pool, workspaceId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    "SELECT settings->>'lowercase_emails' AS v FROM workspaces WHERE id = $1",
+    [workspaceId],
+  );
+  return rows[0]?.v !== 'false'; // default ON
+}
+
+/** Apply the workspace email-casing policy to an email (else return as-is). */
+function applyEmailPolicy(email: string, lowercase: boolean): string {
+  return lowercase ? email.toLowerCase() : email;
+}
+
+/** GET /workspace/settings — the active workspace's settings bag. */
+export const getWorkspaceSettings: Handler = async (ctx, pool) => {
+  const { rows } = await pool.query('SELECT settings FROM workspaces WHERE id = $1', [ctx.workspaceId]);
+  const settings = (rows[0]?.settings as Record<string, unknown>) ?? {};
+  return ok({ settings: { lowercase_emails: settings.lowercase_emails !== false, ...settings } });
+};
+
+/** PUT /workspace/settings — merge allowed settings (owner). */
+export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const patch: Record<string, unknown> = {};
+  if (b.lowercase_emails !== undefined) patch.lowercase_emails = Boolean(b.lowercase_emails);
+  if (Object.keys(patch).length === 0) return ok({ error: 'no recognized settings' }, 400);
+  const { rows } = await pool.query(
+    `UPDATE workspaces SET settings = settings || $2::jsonb WHERE id = $1 RETURNING settings`,
+    [ctx.workspaceId, JSON.stringify(patch)],
+  );
+  return ok({ settings: rows[0]?.settings ?? {} });
+};
+
+// ---------------------------------------------------------------------------
 // sending domain (manage_sending_domain) — onboarding cores, SES/DNS injected
 // ---------------------------------------------------------------------------
 
@@ -516,7 +554,9 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
 export const createProfile: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   // EMAIL is the identity key (§7) — required; external_id is optional metadata.
-  const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
+  // Casing follows the workspace's lowercase_emails policy.
+  const emailTrimmed = typeof b.email === 'string' ? b.email.trim() : '';
+  const email = applyEmailPolicy(emailTrimmed, await lowercaseEmailsEnabled(pool, ctx.workspaceId));
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return ok({ error: 'a valid email is required' }, 400);
   const externalId = typeof b.external_id === 'string' && b.external_id.trim() ? b.external_id.trim() : null;
   const attrs =
@@ -587,7 +627,11 @@ const EDITABLE_EMAIL_STATUS = new Set(['active', 'bounced', 'complained']);
 export const updateProfile: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
-  const email = b.email !== undefined ? String(b.email) : null;
+  // Email edits follow the workspace's lowercase_emails policy.
+  const email =
+    b.email !== undefined
+      ? applyEmailPolicy(String(b.email).trim(), await lowercaseEmailsEnabled(pool, ctx.workspaceId))
+      : null;
   const externalId = b.external_id !== undefined ? String(b.external_id) : null;
   const emailStatus = b.email_status !== undefined ? String(b.email_status) : null;
   if (emailStatus !== null && !EDITABLE_EMAIL_STATUS.has(emailStatus))
@@ -863,6 +907,8 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /workspace/members': listMembers,
   'POST /workspace/members': addMember,
   'PATCH /workspace/members': updateMember,
+  'GET /workspace/settings': getWorkspaceSettings,
+  'PUT /workspace/settings': updateWorkspaceSettings,
   'POST /sending-domain/start': sendingDomainStart,
   'POST /sending-domain/check': sendingDomainCheck,
   'POST /sending-domain/activate': sendingDomainActivate,

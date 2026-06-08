@@ -20,6 +20,7 @@ export function WorkspaceSettings() {
   const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState('marketer');
   const [addError, setAddError] = useState('');
+  const [lowercaseEmails, setLowercaseEmails] = useState(true);
 
   const reload = async () => {
     const r = await api.get<{ members: Member[] }>('/workspace/members');
@@ -27,7 +28,20 @@ export function WorkspaceSettings() {
   };
   useEffect(() => {
     void reload();
+    void api
+      .get<{ settings: { lowercase_emails?: boolean } }>('/workspace/settings')
+      .then((r) => setLowercaseEmails(r.settings.lowercase_emails !== false));
   }, []);
+
+  const toggleLowercase = async () => {
+    const next = !lowercaseEmails;
+    setLowercaseEmails(next); // optimistic
+    try {
+      await api.put('/workspace/settings', { body: { lowercase_emails: next } });
+    } catch {
+      setLowercaseEmails(!next); // revert on failure
+    }
+  };
 
   const add = async () => {
     setAddError('');
@@ -113,6 +127,31 @@ export function WorkspaceSettings() {
         {addError ? (
           <p class="border-t border-stone-100 bg-rose-50 px-5 py-2 text-sm text-rose-700">{addError}</p>
         ) : null}
+      </Card>
+
+      <Card class="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
+        <div>
+          <h2 class="text-base font-bold text-ink-900">Lowercase emails</h2>
+          <p class="mt-1 text-sm text-stone-500">
+            Store every customer email in lowercase (applied on ingestion and manual edits).
+          </p>
+        </div>
+        <button
+          data-testid="toggle-lowercase-emails"
+          type="button"
+          role="switch"
+          aria-checked={lowercaseEmails}
+          onClick={toggleLowercase}
+          class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+            lowercaseEmails ? 'bg-brand-500' : 'bg-stone-300'
+          }`}
+        >
+          <span
+            class={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+              lowercaseEmails ? 'translate-x-5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
       </Card>
 
       <Card class="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">

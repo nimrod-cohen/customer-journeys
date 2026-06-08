@@ -134,6 +134,8 @@ export interface WorkspaceApiKeyRow {
   readonly api_key_id: string;
   readonly workspace_id: string;
   readonly label?: string | null;
+  /** The workspace's lowercase_emails policy (default true) — joined at lookup. */
+  readonly lowercase_emails?: boolean;
 }
 
 /**

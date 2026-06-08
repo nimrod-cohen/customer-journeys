@@ -65,9 +65,12 @@ export function makeIngestHandler(deps: IngestDeps) {
     // 3. Resolve the workspace from the API key (never the payload).
     const apiKeyId = readApiKeyId(event);
     let workspaceId: string;
+    // The workspace's lowercase_emails policy (default ON) rides on the key row.
+    let lowercaseEmails = true;
     try {
       const row = apiKeyId ? await deps.lookupApiKey(apiKeyId) : null;
       workspaceId = resolveWorkspaceId(apiKeyId ?? '', row);
+      lowercaseEmails = row?.lowercase_emails !== false;
     } catch {
       // Unknown / missing key → forbidden. Never reveal which check failed.
       return json(403, { error: 'forbidden' });
@@ -77,14 +80,19 @@ export function makeIngestHandler(deps: IngestDeps) {
     // A failure of EITHER must yield a non-2xx so the producer retries with the
     // same event_id — the durable boundary holds at SQS acceptance.
     try {
+      // Apply the workspace's lowercase_emails policy to the casing of the
+      // identity email — consistently for BOTH the profile upsert and the SQS
+      // envelope the processor consumes.
+      const email = lowercaseEmails ? envelope.email.toLowerCase() : envelope.email;
+      const scopedEnvelope = email === envelope.email ? envelope : { ...envelope, email };
       const profileId = await deps.upsertProfile(
         workspaceId,
-        envelope.email,
+        email,
         envelope.type === 'profile_created' ? (envelope.attributes ?? {}) : {},
         envelope.external_id ?? null,
       );
       // 200 is returned ONLY after this resolves.
-      await deps.sqs.send(buildSqsMessage(workspaceId, profileId, envelope, deps.queueUrl));
+      await deps.sqs.send(buildSqsMessage(workspaceId, profileId, scopedEnvelope, deps.queueUrl));
       return json(200, { ok: true, event_id: envelope.event_id });
     } catch {
       return json(503, { error: 'temporarily unavailable, retry' });

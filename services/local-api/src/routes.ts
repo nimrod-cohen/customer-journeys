@@ -24,6 +24,8 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /workspace/members': 'manage_workspace_users',
   'POST /workspace/members': 'manage_workspace_users',
   'PATCH /workspace/members': 'manage_workspace_users',
+  'GET /workspace/settings': 'manage_workspace_users',
+  'PUT /workspace/settings': 'manage_workspace_users',
 
   // --- sending domain (manage_sending_domain) ---
   'POST /sending-domain/start': 'manage_sending_domain',

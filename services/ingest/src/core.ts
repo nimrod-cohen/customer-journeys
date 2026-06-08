@@ -50,12 +50,11 @@ export function validateEnvelope(input: unknown): ValidationResult {
     return { ok: false, error: 'event_id must be a uuid' };
   }
   // EMAIL is the identity key (§7): required, and the per-workspace merge key.
-  // Normalize (trim + lowercase) BEFORE validating so casing/whitespace from
-  // different source systems still resolve to one person.
-  const normalizedEmail = isNonEmptyString(input['email'])
-    ? input['email'].trim().toLowerCase()
-    : '';
-  if (!EMAIL_RE.test(normalizedEmail)) {
+  // Trim here; the lowercase_emails CASING policy is applied per-workspace in the
+  // handler (after the API key resolves the workspace). citext already matches
+  // case-insensitively, so identity is unaffected either way.
+  const trimmedEmail = isNonEmptyString(input['email']) ? input['email'].trim() : '';
+  if (!EMAIL_RE.test(trimmedEmail)) {
     return { ok: false, error: 'email is required' };
   }
   if (input['external_id'] !== undefined && typeof input['external_id'] !== 'string') {
@@ -73,10 +72,10 @@ export function validateEnvelope(input: unknown): ValidationResult {
   }
   // Reconstruct from trusted fields ONLY — never spread `input` (would leak
   // a client-supplied workspace_id into the validated value). Email is
-  // normalized (trim + lowercase) so it matches consistently across systems.
+  // trimmed; per-workspace casing policy is applied in the handler.
   const value: EventEnvelope = {
     event_id: input['event_id'],
-    email: normalizedEmail,
+    email: trimmedEmail,
     ...(isNonEmptyString(input['external_id']) ? { external_id: input['external_id'] } : {}),
     type: input['type'],
     occurred_at: input['occurred_at'],

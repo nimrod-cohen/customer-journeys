@@ -30,8 +30,14 @@ export async function lookupApiKeyRow(
   db: Queryable,
   apiKeyId: string,
 ): Promise<WorkspaceApiKeyRow | null> {
+  // Join the workspace's lowercase_emails policy so the handler can normalize
+  // the email casing per workspace without a second round-trip.
   const { rows } = await db.query<WorkspaceApiKeyRow>(
-    'SELECT api_key_id, workspace_id, label FROM workspace_api_keys WHERE api_key_id = $1',
+    `SELECT k.api_key_id, k.workspace_id, k.label,
+            COALESCE((w.settings->>'lowercase_emails')::boolean, true) AS lowercase_emails
+       FROM workspace_api_keys k
+       JOIN workspaces w ON w.id = k.workspace_id
+      WHERE k.api_key_id = $1`,
     [apiKeyId],
   );
   return rows[0] ?? null;

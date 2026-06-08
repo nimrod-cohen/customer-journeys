@@ -31,9 +31,9 @@ describe('validateEnvelope (AC1/AC4)', () => {
     }
   });
 
-  it('normalizes email (trim + lowercase) — the identity key', () => {
+  it('trims the email (casing is applied per-workspace in the handler)', () => {
     const r = validateEnvelope({ ...good, email: '  Cust-1@ACME.com ' });
-    expect(r.ok && r.value.email).toBe('cust-1@acme.com');
+    expect(r.ok && r.value.email).toBe('Cust-1@ACME.com');
   });
 
   it('defaults attributes to an empty object when omitted', () => {
