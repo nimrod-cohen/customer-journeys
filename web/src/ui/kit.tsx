@@ -138,6 +138,65 @@ export function Stat({
   );
 }
 
+/**
+ * A right-side sliding drawer with a scrim. Renders nothing when closed.
+ * Backdrop click + the close button both call onClose. `footer` pins actions to
+ * the bottom; `children` scroll.
+ */
+export function Drawer({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+  footer,
+  testId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  children: ComponentChildren;
+  footer?: ComponentChildren;
+  testId?: string;
+}): JSX.Element | null {
+  if (!open) return null;
+  return (
+    <div class="fixed inset-0 z-50 flex justify-end" data-testid={testId}>
+      <div class="absolute inset-0 bg-ink-950/40 animate-fade-in" onClick={onClose} aria-hidden="true" />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        class="relative z-10 flex h-full w-full max-w-md flex-col bg-white shadow-soft animate-slide-in-right"
+      >
+        <header class="flex items-start justify-between gap-3 border-b border-stone-100 px-5 py-4">
+          <div>
+            <h2 class="text-base font-bold text-ink-900">{title}</h2>
+            {subtitle ? <p class="mt-0.5 text-sm text-stone-500">{subtitle}</p> : null}
+          </div>
+          <button
+            data-testid="drawer-close"
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            class="-mr-1 rounded-lg p-1.5 text-stone-400 transition hover:bg-stone-100 hover:text-ink-900"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5">
+              <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+            </svg>
+          </button>
+        </header>
+        <div class="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer ? (
+          <footer class="flex items-center justify-end gap-2 border-t border-stone-100 bg-stone-50/60 px-5 py-4">
+            {footer}
+          </footer>
+        ) : null}
+      </aside>
+    </div>
+  );
+}
+
 export function EmptyState({ children }: { children: ComponentChildren }): JSX.Element {
   return (
     <div class="rounded-xl border border-dashed border-stone-300 bg-white/50 px-6 py-10 text-center text-sm text-stone-400">

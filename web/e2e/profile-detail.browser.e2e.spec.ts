@@ -69,17 +69,25 @@ test('filter the profiles list by manual and dynamic segments', async ({ page })
   await expect(page.getByTestId('profile-row')).toHaveCount(3);
 });
 
-test('manually add a profile and land on its detail page', async ({ page }) => {
+test('manually add a profile (with attributes) via the drawer', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-profiles').click();
   await page.getByTestId('profile-explorer').waitFor();
 
+  // Open the sliding drawer and fill email + an attribute.
   await page.getByTestId('new-profile').click();
+  await page.getByTestId('new-profile-drawer').waitFor();
   await page.getByTestId('new-profile-external').fill('walk-in-1');
   await page.getByTestId('new-profile-email').fill('walkin@acme.com');
+  await page.getByTestId('new-attr-add').click();
+  await page.getByTestId('new-attr-key').fill('plan');
+  await page.getByTestId('new-attr-value').fill('pro');
   await page.getByTestId('create-profile').click();
 
-  // Lands on the new profile's detail page.
+  // Lands on the new profile's detail page with the email + attribute set.
   await page.getByTestId('profile-detail').waitFor();
   await expect(page.getByTestId('profile-email')).toContainText('walkin@acme.com');
+  await page.getByTestId('tab-attributes').click();
+  await expect(page.getByTestId('attr-key').first()).toHaveValue('plan');
+  await expect(page.getByTestId('attr-value').first()).toHaveValue('pro');
 });

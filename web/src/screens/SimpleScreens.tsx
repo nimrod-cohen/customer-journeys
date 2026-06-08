@@ -5,7 +5,35 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { Badge, Button, Card, EmptyState, Field, Input, PageHeader, Select, Stat, toneFor } from '../ui/kit.js';
+import {
+  Badge,
+  Button,
+  Card,
+  Drawer,
+  EmptyState,
+  Field,
+  Input,
+  PageHeader,
+  Select,
+  Stat,
+  toneFor,
+} from '../ui/kit.js';
+
+/** A key/value attribute row in the new-profile drawer. */
+interface AttrPair {
+  key: string;
+  value: string;
+}
+/** Parse an edited value: try JSON (numbers/bools/arrays), else keep the string. */
+function parseAttrValue(s: string): unknown {
+  const t = s.trim();
+  if (t === '') return '';
+  try {
+    return JSON.parse(t) as unknown;
+  } catch {
+    return s;
+  }
+}
 
 export function Dashboards() {
   const [s, setS] = useState<Record<string, number> | null>(null);
@@ -65,11 +93,25 @@ export function ProfileExplorer() {
   const [segments, setSegments] = useState<SegmentOption[]>([]);
   const [segmentId, setSegmentId] = useState('');
   const [q, setQ] = useState('');
-  // Manual "add profile" form state.
+  // Manual "add profile" drawer state.
   const [adding, setAdding] = useState(false);
   const [newExt, setNewExt] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [newAttrs, setNewAttrs] = useState<AttrPair[]>([]);
   const [addError, setAddError] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const openDrawer = () => {
+    setNewExt('');
+    setNewEmail('');
+    setNewAttrs([]);
+    setAddError('');
+    setAdding(true);
+  };
+  const setAttr = (i: number, patch: Partial<AttrPair>) =>
+    setNewAttrs((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const addAttr = () => setNewAttrs((rs) => [...rs, { key: '', value: '' }]);
+  const removeAttr = (i: number) => setNewAttrs((rs) => rs.filter((_, j) => j !== i));
   // The segment list populates the filter dropdown.
   useEffect(() => {
     void api.get<{ segments: SegmentOption[] }>('/segments').then((r) => setSegments(r.segments));
@@ -83,14 +125,23 @@ export function ProfileExplorer() {
 
   const createProfile = async () => {
     setAddError('');
+    setCreating(true);
+    // Build the attributes object from non-empty keys (last write wins on dups).
+    const attributes: Record<string, unknown> = {};
+    for (const p of newAttrs) {
+      const k = p.key.trim();
+      if (k) attributes[k] = parseAttrValue(p.value);
+    }
     try {
       const r = await api.post<{ profile: { id: string } }>('/profiles', {
-        body: { external_id: newExt.trim(), email: newEmail.trim() },
+        body: { external_id: newExt.trim(), email: newEmail.trim(), attributes },
       });
-      // Land on the new profile so attributes/events can be added next.
+      // Land on the new profile so events/segments can be reviewed next.
       navigate(`/profiles/${r.profile.id}`);
     } catch (e) {
       setAddError((e as { error?: string })?.error ?? 'could not create profile');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -108,45 +159,98 @@ export function ProfileExplorer() {
         title="Profiles"
         subtitle="Unified customer profiles in this workspace."
         actions={
-          <Button data-testid="new-profile" onClick={() => setAdding((v) => !v)}>
+          <Button data-testid="new-profile" onClick={openDrawer}>
             + New profile
           </Button>
         }
       />
-      {adding ? (
-        <Card class="mb-4 p-4">
-          <div class="flex flex-wrap items-end gap-3">
-            <Field label="External ID" hint="Your system's id for this customer (required)." class="min-w-[14rem] flex-1">
-              <Input
-                data-testid="new-profile-external"
-                placeholder="e.g. cust-1024"
-                value={newExt}
-                onInput={(e: Event) => setNewExt((e.target as HTMLInputElement).value)}
-              />
-            </Field>
-            <Field label="Email" class="min-w-[14rem] flex-1">
-              <Input
-                data-testid="new-profile-email"
-                type="email"
-                placeholder="person@company.com"
-                value={newEmail}
-                onInput={(e: Event) => setNewEmail((e.target as HTMLInputElement).value)}
-              />
-            </Field>
-            <Button data-testid="create-profile" onClick={createProfile} disabled={!newExt.trim()}>
-              Create
-            </Button>
+
+      <Drawer
+        open={adding}
+        onClose={() => setAdding(false)}
+        title="New profile"
+        subtitle="Create a customer profile and set its attributes."
+        testId="new-profile-drawer"
+        footer={
+          <>
             <Button variant="ghost" onClick={() => setAdding(false)}>
               Cancel
             </Button>
+            <Button data-testid="create-profile" onClick={createProfile} disabled={!newExt.trim() || creating}>
+              {creating ? 'Creating…' : 'Create profile'}
+            </Button>
+          </>
+        }
+      >
+        <div class="space-y-4">
+          <Field label="External ID" hint="Your system's id for this customer (required).">
+            <Input
+              data-testid="new-profile-external"
+              placeholder="e.g. cust-1024"
+              value={newExt}
+              onInput={(e: Event) => setNewExt((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Field label="Email">
+            <Input
+              data-testid="new-profile-email"
+              type="email"
+              placeholder="person@company.com"
+              value={newEmail}
+              onInput={(e: Event) => setNewEmail((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+
+          <div>
+            <span class="label">Attributes</span>
+            <div class="mt-1 space-y-2">
+              {newAttrs.length === 0 ? (
+                <p class="text-xs text-stone-400">No attributes yet — add key/value pairs below.</p>
+              ) : null}
+              {newAttrs.map((p, i) => (
+                <div data-testid="new-attr-row" key={i} class="flex items-center gap-2">
+                  <Input
+                    data-testid="new-attr-key"
+                    class="w-1/3"
+                    placeholder="key"
+                    value={p.key}
+                    onInput={(e: Event) => setAttr(i, { key: (e.target as HTMLInputElement).value })}
+                  />
+                  <Input
+                    data-testid="new-attr-value"
+                    class="flex-1"
+                    placeholder="value"
+                    value={p.value}
+                    onInput={(e: Event) => setAttr(i, { value: (e.target as HTMLInputElement).value })}
+                  />
+                  <Button
+                    data-testid="new-attr-remove"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Remove attribute ${p.key || i}`}
+                    onClick={() => removeAttr(i)}
+                  >
+                    ✕
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button data-testid="new-attr-add" variant="secondary" size="sm" class="mt-2" onClick={addAttr}>
+              + Add attribute
+            </Button>
+            <p class="mt-2 text-xs text-stone-400">
+              Values are stored as text; valid JSON (e.g. <code>42</code>, <code>true</code>) is kept typed.
+            </p>
           </div>
+
           {addError ? (
-            <p data-testid="new-profile-error" class="mt-2 text-sm text-rose-600">
+            <p data-testid="new-profile-error" class="text-sm text-rose-600">
               {addError}
             </p>
           ) : null}
-        </Card>
-      ) : null}
+        </div>
+      </Drawer>
+
       <div class="mb-4 flex flex-wrap items-center gap-3">
         <Input
           data-testid="profile-search"

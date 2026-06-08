@@ -42,8 +42,20 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(6px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
+        'fade-in': {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        'slide-in-right': {
+          '0%': { transform: 'translateX(100%)' },
+          '100%': { transform: 'translateX(0)' },
+        },
       },
-      animation: { 'fade-up': 'fade-up 0.32s cubic-bezier(0.16,1,0.3,1) both' },
+      animation: {
+        'fade-up': 'fade-up 0.32s cubic-bezier(0.16,1,0.3,1) both',
+        'fade-in': 'fade-in 0.2s ease-out both',
+        'slide-in-right': 'slide-in-right 0.28s cubic-bezier(0.16,1,0.3,1) both',
+      },
     },
   },
   plugins: [],
