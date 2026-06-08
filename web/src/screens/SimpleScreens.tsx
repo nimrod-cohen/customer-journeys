@@ -93,16 +93,15 @@ export function ProfileExplorer() {
   const [segments, setSegments] = useState<SegmentOption[]>([]);
   const [segmentId, setSegmentId] = useState('');
   const [q, setQ] = useState('');
-  // Manual "add profile" drawer state.
+  // Manual "add profile" drawer state. Email is the identity key (required);
+  // any other id (e.g. external_id) is just another attribute.
   const [adding, setAdding] = useState(false);
-  const [newExt, setNewExt] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newAttrs, setNewAttrs] = useState<AttrPair[]>([]);
   const [addError, setAddError] = useState('');
   const [creating, setCreating] = useState(false);
 
   const openDrawer = () => {
-    setNewExt('');
     setNewEmail('');
     setNewAttrs([]);
     setAddError('');
@@ -134,7 +133,7 @@ export function ProfileExplorer() {
     }
     try {
       const r = await api.post<{ profile: { id: string } }>('/profiles', {
-        body: { external_id: newExt.trim(), email: newEmail.trim(), attributes },
+        body: { email: newEmail.trim(), attributes },
       });
       // Land on the new profile so events/segments can be reviewed next.
       navigate(`/profiles/${r.profile.id}`);
@@ -176,22 +175,21 @@ export function ProfileExplorer() {
             <Button variant="ghost" onClick={() => setAdding(false)}>
               Cancel
             </Button>
-            <Button data-testid="create-profile" onClick={createProfile} disabled={!newExt.trim() || creating}>
+            <Button
+              data-testid="create-profile"
+              onClick={createProfile}
+              disabled={!newEmail.trim() || creating}
+            >
               {creating ? 'Creating…' : 'Create profile'}
             </Button>
           </>
         }
       >
         <div class="space-y-4">
-          <Field label="External ID" hint="Your system's id for this customer (required).">
-            <Input
-              data-testid="new-profile-external"
-              placeholder="e.g. cust-1024"
-              value={newExt}
-              onInput={(e: Event) => setNewExt((e.target as HTMLInputElement).value)}
-            />
-          </Field>
-          <Field label="Email">
+          <Field
+            label="Email"
+            hint="The identity key — events from any source are stitched to this person by email (required)."
+          >
             <Input
               data-testid="new-profile-email"
               type="email"

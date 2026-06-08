@@ -13,7 +13,7 @@ import type { EventEnvelope } from '@cdp/shared';
 
 const good: EventEnvelope = {
   event_id: '00000000-0000-0000-0000-000000000001',
-  external_id: 'cust-1',
+  email: 'cust-1@acme.com',
   type: 'profile_created',
   occurred_at: '2026-06-06T00:00:00.000Z',
   attributes: { plan: 'pro' },
@@ -25,10 +25,15 @@ describe('validateEnvelope (AC1/AC4)', () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.value.event_id).toBe(good.event_id);
-      expect(r.value.external_id).toBe('cust-1');
+      expect(r.value.email).toBe('cust-1@acme.com');
       expect(r.value.type).toBe('profile_created');
       expect(r.value.attributes).toEqual({ plan: 'pro' });
     }
+  });
+
+  it('normalizes email (trim + lowercase) — the identity key', () => {
+    const r = validateEnvelope({ ...good, email: '  Cust-1@ACME.com ' });
+    expect(r.ok && r.value.email).toBe('cust-1@acme.com');
   });
 
   it('defaults attributes to an empty object when omitted', () => {
@@ -49,9 +54,16 @@ describe('validateEnvelope (AC1/AC4)', () => {
     expect(validateEnvelope({ ...good, event_id: 'not-a-uuid' }).ok).toBe(false);
   });
 
-  it('rejects a missing/empty external_id', () => {
-    expect(validateEnvelope({ ...good, external_id: '' }).ok).toBe(false);
-    expect(validateEnvelope({ ...good, external_id: undefined }).ok).toBe(false);
+  it('rejects a missing/invalid email (the identity key)', () => {
+    expect(validateEnvelope({ ...good, email: '' }).ok).toBe(false);
+    expect(validateEnvelope({ ...good, email: undefined }).ok).toBe(false);
+    expect(validateEnvelope({ ...good, email: 'not-an-email' }).ok).toBe(false);
+  });
+
+  it('treats external_id as OPTIONAL metadata (absent is fine)', () => {
+    const { external_id: _omit, ...rest } = good as EventEnvelope & { external_id?: string };
+    void _omit;
+    expect(validateEnvelope(rest).ok).toBe(true);
   });
 
   it('rejects a missing/empty type', () => {
@@ -74,20 +86,20 @@ describe('validateEnvelope (AC1/AC4)', () => {
 });
 
 describe('buildProfileUpsert (AC5)', () => {
-  it('upserts by (workspace_id, external_id) and merges attributes, scoped to the workspace', () => {
-    const q = buildProfileUpsert('ws-1', 'cust-1', { plan: 'pro' });
+  it('upserts by (workspace_id, email) — the identity key — scoped to the workspace', () => {
+    const q = buildProfileUpsert('ws-1', 'cust-1@acme.com', { plan: 'pro' });
     // workspace_id must be a bound parameter, present in values.
     expect(q.values[0]).toBe('ws-1');
-    expect(q.values).toContain('cust-1');
+    expect(q.values).toContain('cust-1@acme.com');
     expect(q.text).toMatch(/INSERT INTO profiles/i);
-    expect(q.text).toMatch(/ON CONFLICT\s*\(\s*workspace_id\s*,\s*external_id\s*\)/i);
+    expect(q.text).toMatch(/ON CONFLICT\s*\(\s*workspace_id\s*,\s*email\s*\)/i);
     expect(q.text).toMatch(/RETURNING id/i);
     // no string interpolation of the workspace id
     expect(q.text).not.toContain('ws-1');
   });
 
   it('seeds unsubscribed=false on INSERT, and merges only provided attrs on UPDATE', () => {
-    const q = buildProfileUpsert('ws-1', 'cust-1', { plan: 'pro' });
+    const q = buildProfileUpsert('ws-1', 'cust-1@acme.com', { plan: 'pro' });
     // New profile starts subscribed (default merged UNDER provided attrs).
     expect(q.text).toContain(`'{"unsubscribed": false}'::jsonb || $3::jsonb`);
     // On conflict we merge ONLY $3 (not the default) so an existing

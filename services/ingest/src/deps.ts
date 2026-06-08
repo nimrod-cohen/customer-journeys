@@ -37,14 +37,15 @@ export async function lookupApiKeyRow(
   return rows[0] ?? null;
 }
 
-/** Upsert a profile by (workspace_id, external_id), returning its id. */
+/** Upsert a profile by (workspace_id, email) — the identity key — returning its id. */
 export async function upsertProfileForKey(
   db: Queryable,
   workspaceId: string,
-  externalId: string,
+  email: string,
   attributes: Record<string, unknown>,
+  externalId: string | null = null,
 ): Promise<string> {
-  const q = buildProfileUpsert(workspaceId, externalId, attributes);
+  const q = buildProfileUpsert(workspaceId, email, attributes, externalId);
   const { rows } = await db.query<{ id: string }>(q.text, q.values);
   if (!rows[0]) throw new Error('upsertProfileForKey: no id returned');
   return rows[0].id;
@@ -59,6 +60,6 @@ export function makeProdDeps(): IngestDeps {
     sqs,
     queueUrl,
     lookupApiKey: (apiKeyId) => lookupApiKeyRow(pool, apiKeyId),
-    upsertProfile: (ws, ext, attrs) => upsertProfileForKey(pool, ws, ext, attrs),
+    upsertProfile: (ws, email, attrs, ext) => upsertProfileForKey(pool, ws, email, attrs, ext ?? null),
   };
 }

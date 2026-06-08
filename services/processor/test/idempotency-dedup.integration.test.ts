@@ -20,7 +20,7 @@ function msg(eventId: string): ProcessorMessage {
     profile_id: '', // resolved by upsert; not used directly here
     envelope: {
       event_id: eventId,
-      external_id: 'dedup-cust',
+      email: 'dedup-cust@acme.com',
       type: 'progress',
       occurred_at: '2026-06-06T00:00:00.000Z',
       attributes: { n: 1 },
@@ -62,10 +62,10 @@ describe.skipIf(!RUN)('processor idempotency on real Postgres (AC4)', () => {
     expect(rows[0].n).toBe(1);
   });
 
-  it('and exactly one profile exists for the external_id', async () => {
+  it('and exactly one profile exists for the email', async () => {
     const { rows } = await admin.query(
-      'SELECT count(*)::int AS n FROM profiles WHERE workspace_id = $1 AND external_id = $2',
-      [ws, 'dedup-cust'],
+      'SELECT count(*)::int AS n FROM profiles WHERE workspace_id = $1 AND email = $2',
+      [ws, 'dedup-cust@acme.com'],
     );
     expect(rows[0].n).toBe(1);
   });

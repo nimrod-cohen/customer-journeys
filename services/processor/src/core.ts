@@ -38,13 +38,13 @@ export interface SqlStatement {
  */
 export interface SegmentReeval {
   readonly workspaceId: string;
-  readonly profileExternalId: string;
+  readonly profileEmail: string;
 }
 
 /** The ordered, workspace-scoped work to apply for one message, in one tx. */
 export interface ProcessingPlan {
   readonly workspaceId: string;
-  readonly profileExternalId: string;
+  readonly profileEmail: string;
   readonly statements: readonly SqlStatement[];
   /**
    * Phase 5: when present, deps.ts runs realtime segment re-eval for the changed
@@ -82,7 +82,7 @@ export function parseProcessorMessage(body: string): ProcessorMessage {
     throw new Error('parseProcessorMessage: profile_id is required');
   }
   const env = parsed['envelope'];
-  if (!isRecord(env) || !isNonEmptyString(env['event_id']) || !isNonEmptyString(env['external_id'])) {
+  if (!isRecord(env) || !isNonEmptyString(env['event_id']) || !isNonEmptyString(env['email'])) {
     throw new Error('parseProcessorMessage: invalid envelope');
   }
   return {
@@ -90,7 +90,8 @@ export function parseProcessorMessage(body: string): ProcessorMessage {
     profile_id: parsed['profile_id'],
     envelope: {
       event_id: env['event_id'] as string,
-      external_id: env['external_id'] as string,
+      email: env['email'] as string,
+      ...(isNonEmptyString(env['external_id']) ? { external_id: env['external_id'] as string } : {}),
       type: isNonEmptyString(env['type']) ? env['type'] : 'unknown',
       occurred_at: isNonEmptyString(env['occurred_at'])
         ? env['occurred_at']
@@ -112,12 +113,12 @@ export function buildEventInsert(msg: ProcessorMessage): SqlStatement {
     text: `INSERT INTO events (event_id, workspace_id, profile_id, type, occurred_at, payload)
            SELECT $1, $2, p.id, $4, $5::timestamptz, $6::jsonb
            FROM profiles p
-           WHERE p.workspace_id = $2 AND p.external_id = $3
+           WHERE p.workspace_id = $2 AND p.email = $3
            ON CONFLICT (event_id) DO NOTHING`,
     values: [
       e.event_id,
       msg.workspace_id,
-      e.external_id,
+      e.email,
       e.type,
       e.occurred_at,
       JSON.stringify(e.attributes ?? {}),
@@ -210,14 +211,14 @@ export function buildFeatureUpsert(msg: ProcessorMessage): SqlStatement {
   const e = msg.envelope;
   const openTs = isEmailOpenType(e.type) ? e.occurred_at : null;
   const amount = isPurchaseLike(e.type) ? extractAmount(e.attributes) : 0;
-  // $1 workspace_id, $2 event_id, $3 external_id, $4 type, $5 occurred_at,
+  // $1 workspace_id, $2 event_id, $3 email (identity key), $4 type, $5 occurred_at,
   // $6 payload(jsonb), $7 open_ts (nullable), $8 amount(numeric)
   return {
     text: `WITH ins AS (
              INSERT INTO events (event_id, workspace_id, profile_id, type, occurred_at, payload)
              SELECT $2, $1, p.id, $4, $5::timestamptz, $6::jsonb
              FROM profiles p
-             WHERE p.workspace_id = $1 AND p.external_id = $3
+             WHERE p.workspace_id = $1 AND p.email = $3
              ON CONFLICT (event_id) DO NOTHING
              RETURNING event_id
            )
@@ -228,7 +229,7 @@ export function buildFeatureUpsert(msg: ProcessorMessage): SqlStatement {
            SELECT p.id, $1, 1, $5::timestamptz, $7::timestamptz,
                   jsonb_build_object($4::text, 1), $8::numeric, now()
            FROM profiles p
-           WHERE p.workspace_id = $1 AND p.external_id = $3
+           WHERE p.workspace_id = $1 AND p.email = $3
              AND EXISTS (SELECT 1 FROM ins)
            ON CONFLICT (profile_id) DO UPDATE SET
              total_events = profile_features.total_events + 1,
@@ -241,7 +242,7 @@ export function buildFeatureUpsert(msg: ProcessorMessage): SqlStatement {
     values: [
       msg.workspace_id,
       e.event_id,
-      e.external_id,
+      e.email,
       e.type,
       e.occurred_at,
       JSON.stringify(e.attributes ?? {}),
@@ -260,13 +261,17 @@ export function buildProcessorProfileUpsert(msg: ProcessorMessage): SqlStatement
   const e = msg.envelope;
   // Only profile_created contributes attributes; other events upsert a stub.
   const attrs = e.type === 'profile_created' ? (e.attributes ?? {}) : {};
+  // Keyed on EMAIL (the identity key). New profiles seed unsubscribed=false;
+  // UPDATE merges ONLY the provided attrs ($3) so an existing unsubscribed=true
+  // is never reset. external_id ($4) is optional metadata, set when first seen.
   return {
-    text: `INSERT INTO profiles (workspace_id, external_id, attributes)
-           VALUES ($1, $2, $3::jsonb)
-           ON CONFLICT (workspace_id, external_id)
-           DO UPDATE SET attributes = profiles.attributes || EXCLUDED.attributes,
+    text: `INSERT INTO profiles (workspace_id, email, external_id, attributes)
+           VALUES ($1, $2, $4, '{"unsubscribed": false}'::jsonb || $3::jsonb)
+           ON CONFLICT (workspace_id, email)
+           DO UPDATE SET attributes = profiles.attributes || $3::jsonb,
+                         external_id = COALESCE($4, profiles.external_id),
                          updated_at = now()`,
-    values: [msg.workspace_id, e.external_id, JSON.stringify(attrs)],
+    values: [msg.workspace_id, e.email, JSON.stringify(attrs), e.external_id ?? null],
   };
 }
 
@@ -291,11 +296,11 @@ export function buildProcessorProfileUpsert(msg: ProcessorMessage): SqlStatement
 export function planProcessing(msg: ProcessorMessage): ProcessingPlan {
   return {
     workspaceId: msg.workspace_id,
-    profileExternalId: msg.envelope.external_id,
+    profileEmail: msg.envelope.email,
     statements: [buildProcessorProfileUpsert(msg), buildFeatureUpsert(msg)],
     segmentReeval: {
       workspaceId: msg.workspace_id,
-      profileExternalId: msg.envelope.external_id,
+      profileEmail: msg.envelope.email,
     },
   };
 }

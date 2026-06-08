@@ -75,8 +75,8 @@ async function runSegmentReevalInTx(
   reeval: NonNullable<ProcessingPlan['segmentReeval']>,
 ): Promise<void> {
   const { rows } = await client.query(
-    'SELECT id FROM profiles WHERE workspace_id = $1 AND external_id = $2',
-    [reeval.workspaceId, reeval.profileExternalId],
+    'SELECT id FROM profiles WHERE workspace_id = $1 AND email = $2',
+    [reeval.workspaceId, reeval.profileEmail],
   );
   const profileId = rows[0]?.id as string | undefined;
   if (!profileId) return;

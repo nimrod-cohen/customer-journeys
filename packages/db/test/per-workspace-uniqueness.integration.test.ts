@@ -3,8 +3,9 @@ import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '../src/index.js';
 
 // AC2 — Per-workspace uniqueness (§3, §6, §18):
-// `profiles UNIQUE(workspace_id, external_id)` — two workspaces may each have a
-// customer with the SAME external_id; a single workspace may not.
+// EMAIL is the identity key — `profiles` is UNIQUE(workspace_id, email). Two
+// workspaces may each have a customer with the SAME email; a single workspace
+// may not (events from any source merge onto one profile by email).
 const RUN = hasDatabaseUrl();
 
 describe.skipIf(!RUN)('per-workspace uniqueness (AC2)', () => {
@@ -27,21 +28,21 @@ describe.skipIf(!RUN)('per-workspace uniqueness (AC2)', () => {
     }
   });
 
-  it('two workspaces can share the same external_id', async () => {
+  it('two workspaces can share the same email', async () => {
     await admin.query(
-      "INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'shared-id')",
+      "INSERT INTO profiles (workspace_id, email) VALUES ($1,'shared@acme.com')",
       [wsA],
     );
     await expect(
-      admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'shared-id')", [
+      admin.query("INSERT INTO profiles (workspace_id, email) VALUES ($1,'shared@acme.com')", [
         wsB,
       ]),
     ).resolves.toBeTruthy();
   });
 
-  it('the same external_id twice in ONE workspace violates the unique constraint', async () => {
+  it('the same email twice in ONE workspace violates the unique constraint', async () => {
     await expect(
-      admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'shared-id')", [
+      admin.query("INSERT INTO profiles (workspace_id, email) VALUES ($1,'shared@acme.com')", [
         wsA,
       ]),
     ).rejects.toThrow(/duplicate key|unique/i);

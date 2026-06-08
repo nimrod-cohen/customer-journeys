@@ -54,7 +54,7 @@ async function ingestThenProcess(
   // --- INGEST (real core) ---
   const envelope: EventEnvelope = {
     event_id: eventId,
-    external_id: externalId,
+    email: externalId,
     type,
     occurred_at: occurredAt,
     attributes,
@@ -76,7 +76,7 @@ async function features(pool: Pool, ws: string, externalId: string) {
     `SELECT pf.total_events, pf.monetary_total, pf.counters
        FROM profile_features pf
        JOIN profiles p ON p.id = pf.profile_id
-      WHERE p.workspace_id = $1 AND p.external_id = $2`,
+      WHERE p.workspace_id = $1 AND p.email = $2`,
     [ws, externalId],
   );
   return rows[0];
@@ -84,7 +84,7 @@ async function features(pool: Pool, ws: string, externalId: string) {
 
 async function profileCount(pool: Pool, ws: string, externalId: string): Promise<number> {
   const { rows } = await pool.query(
-    'SELECT count(*)::int AS n FROM profiles WHERE workspace_id = $1 AND external_id = $2',
+    'SELECT count(*)::int AS n FROM profiles WHERE workspace_id = $1 AND email = $2',
     [ws, externalId],
   );
   return rows[0].n;
@@ -95,7 +95,7 @@ async function changeLog(pool: Pool, ws: string, externalId: string): Promise<st
     `SELECT scl.action
        FROM segment_change_log scl
        JOIN profiles p ON p.id = scl.profile_id
-      WHERE scl.workspace_id = $1 AND p.external_id = $2
+      WHERE scl.workspace_id = $1 AND p.email = $2
       ORDER BY scl.occurred_at, scl.id`,
     [ws, externalId],
   );
@@ -107,7 +107,7 @@ async function membershipCount(pool: Pool, ws: string, externalId: string): Prom
     `SELECT count(*)::int AS n
        FROM segment_memberships sm
        JOIN profiles p ON p.id = sm.profile_id
-      WHERE sm.workspace_id = $1 AND p.external_id = $2`,
+      WHERE sm.workspace_id = $1 AND p.email = $2`,
     [ws, externalId],
   );
   return rows[0].n;
@@ -177,14 +177,14 @@ describeMaybe('foundation pipeline (ingest -> processor -> features -> segments)
 
     // A's attributes are A's, B's are B's.
     const aPlan = (
-      await pool.query('SELECT attributes->>$2 AS plan FROM profiles WHERE workspace_id=$1 AND external_id=$3', [
+      await pool.query('SELECT attributes->>$2 AS plan FROM profiles WHERE workspace_id=$1 AND email=$3', [
         WS_A,
         'plan',
         ext,
       ])
     ).rows[0].plan;
     const bPlan = (
-      await pool.query('SELECT attributes->>$2 AS plan FROM profiles WHERE workspace_id=$1 AND external_id=$3', [
+      await pool.query('SELECT attributes->>$2 AS plan FROM profiles WHERE workspace_id=$1 AND email=$3', [
         WS_B,
         'plan',
         ext,
@@ -209,7 +209,7 @@ describeMaybe('foundation pipeline (ingest -> processor -> features -> segments)
     expect(await profileCount(pool, WS_A, e2)).toBe(1);
     expect((await features(pool, WS_A, e2)).total_events).toBe(2);
     const plan = (
-      await pool.query('SELECT attributes->>$2 AS k FROM profiles WHERE workspace_id=$1 AND external_id=$3', [
+      await pool.query('SELECT attributes->>$2 AS k FROM profiles WHERE workspace_id=$1 AND email=$3', [
         WS_A,
         'k',
         e2,

@@ -15,7 +15,7 @@ const RUN = hasDatabaseUrl();
 
 // Unique fixture namespace for THIS file (cold-cache cross-file determinism).
 const ws = 'f4f4f4f4-0000-0000-0000-000000000001';
-const externalId = 'feat-cust';
+const externalId = 'feat-cust@acme.com';
 
 function ev(
   eventId: string,
@@ -26,7 +26,7 @@ function ev(
   return {
     workspace_id: ws,
     profile_id: '',
-    envelope: { event_id: eventId, external_id: externalId, type, occurred_at: occurredAt, attributes },
+    envelope: { event_id: eventId, email: externalId, type, occurred_at: occurredAt, attributes },
   };
 }
 
@@ -57,7 +57,7 @@ describe.skipIf(!RUN)('profile_features aggregation on real Postgres (AC1 + repl
     const { rows } = await admin.query(
       `SELECT pf.* FROM profile_features pf
        JOIN profiles p ON p.id = pf.profile_id
-       WHERE p.workspace_id = $1 AND p.external_id = $2`,
+       WHERE p.workspace_id = $1 AND p.email = $2`,
       [ws, externalId],
     );
     return rows[0];

@@ -193,7 +193,7 @@ describeMaybe('penetration: tenant isolation across every service entry path', (
     // The SQS message body the ingest enqueues carries the KEY-derived workspace.
     const sqs = buildSqsMessage(ws, '00000000-0000-4000-8000-0000000000aa', {
       event_id: 'bee18000-0000-4000-8000-000000000aaa',
-      external_id: 'x',
+      email: 'pen-x@a.example',
       type: 'progress',
       occurred_at: '2026-01-01T00:00:00Z',
       attributes: { workspace_id: WS_B }, // attacker-planted — must be ignored
@@ -207,11 +207,11 @@ describeMaybe('penetration: tenant isolation across every service entry path', (
     // from the key). We construct the message exactly as ingest would for WS-A,
     // then prove the event lands ONLY in WS-A even though WS-B exists.
     const ws = resolveWorkspaceId(KEY_A, KEY_ROWS[KEY_A]);
-    const upsert = buildProfileUpsert(ws, 'pen-proc', {});
+    const upsert = buildProfileUpsert(ws, 'pen-proc@a.example', {});
     const { rows } = await pool.query(upsert.text, upsert.values);
     const sqs = buildSqsMessage(ws, rows[0].id as string, {
       event_id: 'bee18000-0000-4000-8000-000000000bbb',
-      external_id: 'pen-proc',
+      email: 'pen-proc@a.example',
       type: 'purchase',
       occurred_at: '2026-01-01T00:00:00Z',
       attributes: { amount: 5 },

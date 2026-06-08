@@ -22,6 +22,8 @@ export type ValidationResult =
   | { readonly ok: false; readonly error: string };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A pragmatic email shape check (something@something.tld). */
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -47,8 +49,17 @@ export function validateEnvelope(input: unknown): ValidationResult {
   if (!isNonEmptyString(input['event_id']) || !UUID_RE.test(input['event_id'])) {
     return { ok: false, error: 'event_id must be a uuid' };
   }
-  if (!isNonEmptyString(input['external_id'])) {
-    return { ok: false, error: 'external_id is required' };
+  // EMAIL is the identity key (§7): required, and the per-workspace merge key.
+  // Normalize (trim + lowercase) BEFORE validating so casing/whitespace from
+  // different source systems still resolve to one person.
+  const normalizedEmail = isNonEmptyString(input['email'])
+    ? input['email'].trim().toLowerCase()
+    : '';
+  if (!EMAIL_RE.test(normalizedEmail)) {
+    return { ok: false, error: 'email is required' };
+  }
+  if (input['external_id'] !== undefined && typeof input['external_id'] !== 'string') {
+    return { ok: false, error: 'external_id must be a string' };
   }
   if (!isNonEmptyString(input['type'])) {
     return { ok: false, error: 'type is required' };
@@ -61,10 +72,12 @@ export function validateEnvelope(input: unknown): ValidationResult {
     return { ok: false, error: 'attributes must be an object' };
   }
   // Reconstruct from trusted fields ONLY — never spread `input` (would leak
-  // a client-supplied workspace_id into the validated value).
+  // a client-supplied workspace_id into the validated value). Email is
+  // normalized (trim + lowercase) so it matches consistently across systems.
   const value: EventEnvelope = {
     event_id: input['event_id'],
-    external_id: input['external_id'],
+    email: normalizedEmail,
+    ...(isNonEmptyString(input['external_id']) ? { external_id: input['external_id'] } : {}),
     type: input['type'],
     occurred_at: input['occurred_at'],
     attributes: isRecord(attrs) ? attrs : {},
@@ -103,22 +116,28 @@ export function resolveWorkspaceId(
  */
 export function buildProfileUpsert(
   workspaceId: string,
-  externalId: string,
+  email: string,
   attributes: Record<string, unknown>,
+  externalId: string | null = null,
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildProfileUpsert: workspaceId is required');
-  // New profiles seed `unsubscribed = false` (so "unsubscribed = false" segments
-  // match the subscribed); any provided attribute of the same name overrides it.
-  // On UPDATE we merge ONLY the provided attrs ($3) — NOT the default — so an
-  // existing `unsubscribed = true` (set by the unsubscribe flow) is never reset.
+  if (!email) throw new Error('buildProfileUpsert: email is required (identity key)');
+  // EMAIL is the per-workspace identity key (§7) — events from any source merge
+  // onto one profile by email. New profiles seed `unsubscribed = false` (so
+  // "unsubscribed = false" segments match the subscribed); a provided attribute
+  // of the same name overrides it. On UPDATE we merge ONLY the provided attrs
+  // ($3) — NOT the default — so an existing `unsubscribed = true` (set by the
+  // unsubscribe flow) is never reset; external_id is optional metadata, set when
+  // first provided.
   return {
-    text: `INSERT INTO profiles (workspace_id, external_id, attributes)
-           VALUES ($1, $2, '{"unsubscribed": false}'::jsonb || $3::jsonb)
-           ON CONFLICT (workspace_id, external_id)
+    text: `INSERT INTO profiles (workspace_id, email, external_id, attributes)
+           VALUES ($1, $2, $4, '{"unsubscribed": false}'::jsonb || $3::jsonb)
+           ON CONFLICT (workspace_id, email)
            DO UPDATE SET attributes = profiles.attributes || $3::jsonb,
+                         external_id = COALESCE($4, profiles.external_id),
                          updated_at = now()
            RETURNING id`,
-    values: [workspaceId, externalId, JSON.stringify(attributes ?? {})],
+    values: [workspaceId, email, JSON.stringify(attributes ?? {}), externalId],
   };
 }
 

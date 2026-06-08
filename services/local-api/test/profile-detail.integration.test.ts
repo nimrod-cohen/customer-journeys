@@ -113,9 +113,11 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     expect(row?.unsubscribed).toBe(false);
   });
 
-  it('POST /profiles requires external_id (400)', async () => {
-    const c = await call(world.env, 'POST', '/profiles', { token: tokA(), body: { email: 'x@acme.com' } });
-    expect(c.status).toBe(400);
+  it('POST /profiles requires a valid email — the identity key (400)', async () => {
+    const noEmail = await call(world.env, 'POST', '/profiles', { token: tokA(), body: { external_id: 'x' } });
+    expect(noEmail.status).toBe(400);
+    const badEmail = await call(world.env, 'POST', '/profiles', { token: tokA(), body: { email: 'not-an-email' } });
+    expect(badEmail.status).toBe(400);
   });
 
   it('GET /profiles/:id returns the profile + rolling features', async () => {

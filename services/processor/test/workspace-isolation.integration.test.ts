@@ -17,13 +17,13 @@ const RUN = hasDatabaseUrl();
 // Unique fixture namespace for THIS file.
 const wsA = 'd3d3d3d3-0000-0000-0000-00000000000a';
 const wsB = 'd3d3d3d3-0000-0000-0000-00000000000b';
-const externalId = 'shared-cust';
+const externalId = 'shared-cust@acme.com';
 
 function ev(ws: string, eventId: string): ProcessorMessage {
   return {
     workspace_id: ws,
     profile_id: '',
-    envelope: { event_id: eventId, external_id: externalId, type: 'profile_created', occurred_at: '2026-06-06T00:00:00.000Z', attributes: { ws } },
+    envelope: { event_id: eventId, email: externalId, type: 'profile_created', occurred_at: '2026-06-06T00:00:00.000Z', attributes: { ws } },
   };
 }
 
@@ -59,8 +59,8 @@ describe.skipIf(!RUN)('processor in-code workspace isolation (AC5)', () => {
     await runPlanInWorkspaceTx(admin, wsA, planProcessing(ev(wsA, 'fa000001-0000-0000-0000-000000000001')));
     await runPlanInWorkspaceTx(admin, wsB, planProcessing(ev(wsB, 'fb000001-0000-0000-0000-000000000001')));
 
-    const a = await admin.query('SELECT id, attributes->>$2 AS w FROM profiles WHERE workspace_id = $1 AND external_id = $3', [wsA, 'ws', externalId]);
-    const b = await admin.query('SELECT id, attributes->>$2 AS w FROM profiles WHERE workspace_id = $1 AND external_id = $3', [wsB, 'ws', externalId]);
+    const a = await admin.query('SELECT id, attributes->>$2 AS w FROM profiles WHERE workspace_id = $1 AND email = $3', [wsA, 'ws', externalId]);
+    const b = await admin.query('SELECT id, attributes->>$2 AS w FROM profiles WHERE workspace_id = $1 AND email = $3', [wsB, 'ws', externalId]);
     expect(a.rows).toHaveLength(1);
     expect(b.rows).toHaveLength(1);
     expect(a.rows[0].id).not.toBe(b.rows[0].id);

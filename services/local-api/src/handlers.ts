@@ -515,23 +515,23 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
  */
 export const createProfile: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
-  const externalId = typeof b.external_id === 'string' ? b.external_id.trim() : '';
-  if (!externalId) return ok({ error: 'external_id required' }, 400);
-  const emailRaw = typeof b.email === 'string' ? b.email.trim() : '';
-  const email = emailRaw || null;
+  // EMAIL is the identity key (§7) — required; external_id is optional metadata.
+  const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return ok({ error: 'a valid email is required' }, 400);
+  const externalId = typeof b.external_id === 'string' && b.external_id.trim() ? b.external_id.trim() : null;
   const attrs =
     b.attributes && typeof b.attributes === 'object' && !Array.isArray(b.attributes)
       ? (b.attributes as Record<string, unknown>)
       : {};
   const { rows } = await pool.query(
-    `INSERT INTO profiles (workspace_id, external_id, email, attributes)
+    `INSERT INTO profiles (workspace_id, email, external_id, attributes)
      VALUES ($1, $2, $3, '{"unsubscribed": false}'::jsonb || $4::jsonb)
-     ON CONFLICT (workspace_id, external_id)
-     DO UPDATE SET email = COALESCE($3, profiles.email),
+     ON CONFLICT (workspace_id, email)
+     DO UPDATE SET external_id = COALESCE($3, profiles.external_id),
                    attributes = profiles.attributes || $4::jsonb,
                    updated_at = now()
      RETURNING id, external_id, email, email_status`,
-    [ctx.workspaceId, externalId, email, JSON.stringify(attrs)],
+    [ctx.workspaceId, email, externalId, JSON.stringify(attrs)],
   );
   const profileId = (rows[0] as { id: string }).id;
   await pool.query(

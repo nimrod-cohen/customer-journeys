@@ -16,13 +16,13 @@ const RUN = hasDatabaseUrl();
 // Unique fixture namespace for THIS file.
 const wsA = 'f5f5f5f5-0000-0000-0000-00000000000a';
 const wsB = 'f5f5f5f5-0000-0000-0000-00000000000b';
-const externalId = 'shared-feat-cust';
+const externalId = 'shared-feat-cust@acme.com';
 
 function ev(ws: string, eventId: string, type: string, attributes: Record<string, unknown> = {}): ProcessorMessage {
   return {
     workspace_id: ws,
     profile_id: '',
-    envelope: { event_id: eventId, external_id: externalId, type, occurred_at: '2026-06-06T00:00:00.000Z', attributes },
+    envelope: { event_id: eventId, email: externalId, type, occurred_at: '2026-06-06T00:00:00.000Z', attributes },
   };
 }
 
@@ -55,7 +55,7 @@ describe.skipIf(!RUN)('profile_features in-code workspace scoping (AC2)', () => 
     const { rows } = await admin.query(
       `SELECT pf.* FROM profile_features pf
        JOIN profiles p ON p.id = pf.profile_id
-       WHERE pf.workspace_id = $1 AND p.workspace_id = $1 AND p.external_id = $2`,
+       WHERE pf.workspace_id = $1 AND p.workspace_id = $1 AND p.email = $2`,
       [ws, externalId],
     );
     return rows[0];

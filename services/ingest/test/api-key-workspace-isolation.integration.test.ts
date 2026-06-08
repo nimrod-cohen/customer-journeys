@@ -56,11 +56,11 @@ describe.skipIf(!RUN)('ingest API-key → workspace isolation (AC5)', () => {
     expect(() => resolveWorkspaceId('no-such-key', row)).toThrow();
   });
 
-  it('key A only ever creates a profile in workspace A (same external_id stays separate)', async () => {
+  it('key A only ever creates a profile in workspace A (same email stays separate)', async () => {
     const rowA = await lookupApiKeyRow(admin, keyA);
     const rowB = await lookupApiKeyRow(admin, keyB);
-    const idA = await upsertProfileForKey(admin, resolveWorkspaceId(keyA, rowA), 'dup-ext', {});
-    const idB = await upsertProfileForKey(admin, resolveWorkspaceId(keyB, rowB), 'dup-ext', {});
+    const idA = await upsertProfileForKey(admin, resolveWorkspaceId(keyA, rowA), 'dup@acme.com', {});
+    const idB = await upsertProfileForKey(admin, resolveWorkspaceId(keyB, rowB), 'dup@acme.com', {});
     expect(idA).not.toBe(idB);
 
     const a = await admin.query('SELECT workspace_id FROM profiles WHERE id = $1', [idA]);

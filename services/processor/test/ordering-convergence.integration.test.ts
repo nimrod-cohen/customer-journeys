@@ -14,13 +14,13 @@ const RUN = hasDatabaseUrl();
 
 // Unique fixture namespace for THIS file.
 const ws = 'd2d2d2d2-0000-0000-0000-000000000002';
-const externalId = 'order-cust';
+const externalId = 'order-cust@acme.com';
 
 function ev(type: string, eventId: string, attributes: Record<string, unknown>): ProcessorMessage {
   return {
     workspace_id: ws,
     profile_id: '',
-    envelope: { event_id: eventId, external_id: externalId, type, occurred_at: '2026-06-06T00:00:00.000Z', attributes },
+    envelope: { event_id: eventId, email: externalId, type, occurred_at: '2026-06-06T00:00:00.000Z', attributes },
   };
 }
 
@@ -56,7 +56,7 @@ describe.skipIf(!RUN)('processor order convergence on real Postgres (AC1/AC2)', 
     await runPlanInWorkspaceTx(admin, ws, planProcessing(progress()));
 
     const p = await admin.query(
-      'SELECT count(*)::int AS n FROM profiles WHERE workspace_id = $1 AND external_id = $2',
+      'SELECT count(*)::int AS n FROM profiles WHERE workspace_id = $1 AND email = $2',
       [ws, externalId],
     );
     expect(p.rows[0].n).toBe(1);
@@ -69,7 +69,7 @@ describe.skipIf(!RUN)('processor order convergence on real Postgres (AC1/AC2)', 
     await runPlanInWorkspaceTx(admin, ws, planProcessing(created()));
 
     const p = await admin.query(
-      'SELECT count(*)::int AS n, max(attributes->>$2) AS plan FROM profiles WHERE workspace_id = $1 AND external_id = $3',
+      'SELECT count(*)::int AS n, max(attributes->>$2) AS plan FROM profiles WHERE workspace_id = $1 AND email = $3',
       [ws, 'plan', externalId],
     );
     expect(p.rows[0].n).toBe(1);

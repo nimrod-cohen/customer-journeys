@@ -18,7 +18,7 @@ const msg: ProcessorMessage = {
   profile_id: 'profile-1',
   envelope: {
     event_id: '00000000-0000-0000-0000-0000000000aa',
-    external_id: 'cust-1',
+    email: 'cust-1@acme.com',
     type: 'progress',
     occurred_at: '2026-06-06T00:00:00.000Z',
     attributes: { step: 2 },
@@ -56,22 +56,22 @@ describe('buildEventInsert (AC4 idempotency)', () => {
     expect(q.values).toContain('ws-1');
     expect(q.values).toContain(msg.envelope.event_id);
     expect(q.values).toContain(msg.envelope.type);
-    // profile_id is resolved by a (workspace_id, external_id) subquery — it links
+    // profile_id is resolved by a (workspace_id, email) subquery — it links
     // to the SAME profile the upsert created in this tx, never a client value.
     expect(q.text).toMatch(/FROM profiles/i);
-    expect(q.values).toContain(msg.envelope.external_id);
+    expect(q.values).toContain(msg.envelope.email);
     // no interpolation
     expect(q.text).not.toContain('ws-1');
   });
 });
 
 describe('buildProcessorProfileUpsert (AC2 ordering)', () => {
-  it('upserts by (workspace_id, external_id); progress-first creates a stub', () => {
+  it('upserts by (workspace_id, email); progress-first creates a stub', () => {
     const q = buildProcessorProfileUpsert(msg);
     expect(q.text).toMatch(/INSERT INTO profiles/i);
-    expect(q.text).toMatch(/ON CONFLICT\s*\(\s*workspace_id\s*,\s*external_id\s*\)/i);
+    expect(q.text).toMatch(/ON CONFLICT\s*\(\s*workspace_id\s*,\s*email\s*\)/i);
     expect(q.values[0]).toBe('ws-1');
-    expect(q.values).toContain('cust-1');
+    expect(q.values).toContain('cust-1@acme.com');
   });
 
   it('merges attributes on profile_created (not just stub)', () => {

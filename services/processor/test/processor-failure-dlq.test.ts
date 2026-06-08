@@ -14,7 +14,7 @@ function msg(id: string, profileId = 'p1'): ProcessorMessage {
     profile_id: profileId,
     envelope: {
       event_id: id,
-      external_id: 'cust-1',
+      email: 'cust-1@acme.com',
       type: 'progress',
       occurred_at: '2026-06-06T00:00:00.000Z',
       attributes: {},

@@ -29,11 +29,12 @@ export interface IngestDeps {
   readonly queueUrl: string;
   /** Look up the workspace_api_keys row for the request's api_key_id. */
   lookupApiKey(apiKeyId: string): Promise<WorkspaceApiKeyRow | null>;
-  /** Upsert the profile by (workspace_id, external_id), returning its id. */
+  /** Upsert the profile by (workspace_id, email) — the identity key — returning its id. */
   upsertProfile(
     workspaceId: string,
-    externalId: string,
+    email: string,
     attributes: Record<string, unknown>,
+    externalId?: string | null,
   ): Promise<string>;
 }
 
@@ -78,8 +79,9 @@ export function makeIngestHandler(deps: IngestDeps) {
     try {
       const profileId = await deps.upsertProfile(
         workspaceId,
-        envelope.external_id,
+        envelope.email,
         envelope.type === 'profile_created' ? (envelope.attributes ?? {}) : {},
+        envelope.external_id ?? null,
       );
       // 200 is returned ONLY after this resolves.
       await deps.sqs.send(buildSqsMessage(workspaceId, profileId, envelope, deps.queueUrl));

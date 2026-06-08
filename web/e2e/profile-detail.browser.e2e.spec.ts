@@ -74,10 +74,9 @@ test('manually add a profile (with attributes) via the drawer', async ({ page })
   await page.getByTestId('nav-profiles').click();
   await page.getByTestId('profile-explorer').waitFor();
 
-  // Open the sliding drawer and fill email + an attribute.
+  // Open the sliding drawer and fill the email (identity key) + an attribute.
   await page.getByTestId('new-profile').click();
   await page.getByTestId('new-profile-drawer').waitFor();
-  await page.getByTestId('new-profile-external').fill('walk-in-1');
   await page.getByTestId('new-profile-email').fill('walkin@acme.com');
   await page.getByTestId('new-attr-add').click();
   await page.getByTestId('new-attr-key').fill('plan');

@@ -15,7 +15,7 @@ function msg(type = 'purchase'): ProcessorMessage {
     profile_id: 'profile-1',
     envelope: {
       event_id: '00000000-0000-0000-0000-0000000000aa',
-      external_id: 'cust-1',
+      email: 'cust-1@acme.com',
       type,
       occurred_at: '2026-06-06T00:00:00.000Z',
       attributes: { amount: 10 },
@@ -37,9 +37,9 @@ describe('planProcessing — Phase 5 segment re-eval extension', () => {
   it('appends a realtime segment re-eval marker scoped to the changed profile', () => {
     const plan = planProcessing(msg());
     expect(plan.segmentReeval).toBeDefined();
-    // re-eval is keyed by the changed profile's external_id (the processor resolves
+    // re-eval is keyed by the changed profile's email (the processor resolves
     // its concrete id inside the tx) and is workspace-scoped.
-    expect(plan.segmentReeval!.profileExternalId).toBe('cust-1');
+    expect(plan.segmentReeval!.profileEmail).toBe('cust-1@acme.com');
     expect(plan.workspaceId).toBe('ws-1');
   });
 

@@ -10,17 +10,17 @@ import { buildProfileUpsert } from '../src/core.js';
 
 const RUN = hasDatabaseUrl();
 const WS = 'ab200000-0000-0000-0000-0000000000a1';
-const EXT = 'unsub-lifecycle';
+const EMAIL = 'unsub-lifecycle@acme.com'; // the identity key
 
 async function attr(pool: Pool, key: string): Promise<string | null> {
   const r = await pool.query(
-    'SELECT attributes->>$3 AS v FROM profiles WHERE workspace_id = $1 AND external_id = $2',
-    [WS, EXT, key],
+    'SELECT attributes->>$3 AS v FROM profiles WHERE workspace_id = $1 AND email = $2',
+    [WS, EMAIL, key],
   );
   return (r.rows[0]?.v as string | undefined) ?? null;
 }
 async function upsert(pool: Pool, attrs: Record<string, unknown>): Promise<void> {
-  const q = buildProfileUpsert(WS, EXT, attrs);
+  const q = buildProfileUpsert(WS, EMAIL, attrs);
   await pool.query(q.text, q.values);
 }
 
@@ -52,8 +52,8 @@ describe.skipIf(!RUN)('profile upsert × unsubscribed attribute (real Postgres)'
     // Simulate the unsubscribe flow flipping the attribute to true.
     await pool.query(
       `UPDATE profiles SET attributes = attributes || '{"unsubscribed": true}'::jsonb
-        WHERE workspace_id = $1 AND external_id = $2`,
-      [WS, EXT],
+        WHERE workspace_id = $1 AND email = $2`,
+      [WS, EMAIL],
     );
     expect(await attr(pool, 'unsubscribed')).toBe('true');
 

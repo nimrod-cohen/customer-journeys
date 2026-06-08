@@ -22,7 +22,7 @@ function msg(
     profile_id: 'profile-1',
     envelope: {
       event_id: '00000000-0000-0000-0000-0000000000aa',
-      external_id: 'cust-1',
+      email: 'cust-1@acme.com',
       type,
       occurred_at: occurredAt,
       attributes,
@@ -132,12 +132,12 @@ describe('buildFeatureUpsert (single combined CTE; SQL mirrors applyEventToFeatu
     expect(q.text).toMatch(/EXISTS\s*\(\s*SELECT 1 FROM ins\s*\)/i);
   });
 
-  it('resolves profile_id via the (workspace_id, external_id) subquery, never the client', () => {
+  it('resolves profile_id via the (workspace_id, email) subquery, never the client', () => {
     const q = buildFeatureUpsert(msg('progress'));
     expect(q.text).toMatch(/FROM profiles/i);
     // workspace_id bound at $1
     expect(q.values[0]).toBe('ws-1');
-    expect(q.values).toContain('cust-1');
+    expect(q.values).toContain('cust-1@acme.com');
     // no interpolation of the workspace id
     expect(q.text).not.toContain('ws-1');
   });

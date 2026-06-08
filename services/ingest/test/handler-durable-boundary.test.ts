@@ -11,7 +11,7 @@ import type { EventEnvelope, WorkspaceApiKeyRow } from '@cdp/shared';
 
 const envelope: EventEnvelope = {
   event_id: '00000000-0000-0000-0000-000000000099',
-  external_id: 'cust-7',
+  email: 'cust-7@acme.com',
   type: 'progress',
   occurred_at: '2026-06-06T00:00:00.000Z',
   attributes: {},
@@ -127,7 +127,8 @@ describe('ingest handler durable boundary (AC3)', () => {
 
     await handler(makeEvent('key-1', { ...envelope, workspace_id: 'attacker-ws' }));
     // profile upsert + SQS body must use the key-derived ws-1, not attacker-ws.
-    expect(upsertProfile).toHaveBeenCalledWith('ws-1', envelope.external_id, expect.anything());
+    // The profile is keyed by EMAIL (the identity key), never the body workspace.
+    expect(upsertProfile).toHaveBeenCalledWith('ws-1', envelope.email, expect.anything(), null);
     const body = JSON.parse(sqsMock.commandCalls(SendMessageCommand)[0]!.args[0].input.MessageBody!);
     expect(body.workspace_id).toBe('ws-1');
     sqsMock.restore();

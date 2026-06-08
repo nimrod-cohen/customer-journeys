@@ -25,7 +25,7 @@ export function makeWorkspaceTxRunner(pool: Pool) {
   ): Promise<void> => {
     await runPlanInWorkspaceTx(pool, workspaceId, {
       workspaceId,
-      profileExternalId: '',
+      profileEmail: '',
       statements,
     });
   };

@@ -70,8 +70,14 @@ export interface WorkspaceContext {
 export interface EventEnvelope {
   /** Producer-supplied idempotency / dedupe key (§7). */
   readonly event_id: string;
-  /** The company's own customer id; unique per workspace (§6). */
-  readonly external_id: string;
+  /**
+   * The customer's EMAIL — the IDENTITY KEY (§6/§7). Events arrive from many
+   * source systems; email is the one identifier that stitches a person's events
+   * together, so it is REQUIRED and is the per-workspace merge key for profiles.
+   */
+  readonly email: string;
+  /** Optional company-side id; stored as profile metadata, NOT the identity key. */
+  readonly external_id?: string;
   /** Event type, e.g. `profile_created | progress | purchase`. */
   readonly type: string;
   /** ISO-8601 timestamp the event occurred. */

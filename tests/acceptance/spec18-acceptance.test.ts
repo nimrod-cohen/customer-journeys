@@ -281,7 +281,7 @@ async function ingestThenProcess(
   attributes: Record<string, unknown> = {},
   eventId = evId(),
 ): Promise<void> {
-  const envelope: EventEnvelope = { event_id: eventId, external_id: externalId, type, occurred_at: occurredAt, attributes };
+  const envelope: EventEnvelope = { event_id: eventId, email: externalId, type, occurred_at: occurredAt, attributes };
   const workspaceId = resolveWorkspaceId(apiKeyId, KEY_ROWS[apiKeyId]);
   const upsert = buildProfileUpsert(workspaceId, externalId, type === 'profile_created' ? attributes : {});
   const { rows } = await pool.query(upsert.text, upsert.values);
@@ -321,7 +321,7 @@ async function statusOf(pool: Pool, ws: string): Promise<string> {
 async function changeLog(pool: Pool, ws: string, ext: string, segmentId?: string): Promise<string[]> {
   const { rows } = await pool.query(
     `SELECT scl.action FROM segment_change_log scl JOIN profiles p ON p.id=scl.profile_id
-      WHERE scl.workspace_id=$1 AND p.external_id=$2 ${segmentId ? 'AND scl.segment_id=$3' : ''}
+      WHERE scl.workspace_id=$1 AND p.email=$2 ${segmentId ? 'AND scl.segment_id=$3' : ''}
       ORDER BY scl.occurred_at, scl.id`,
     segmentId ? [ws, ext, segmentId] : [ws, ext],
   );
@@ -413,8 +413,8 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
     await ingestThenProcess(pool, KEY_B, ext, 'profile_created', t, { email: 'iso@acc18.example', plan: 'silver' });
     await ingestThenProcess(pool, KEY_A, ext, 'progress', '2026-01-01T01:00:00Z');
 
-    const a = await pool.query("SELECT total_events, (SELECT attributes->>'plan' FROM profiles p WHERE p.id=pf.profile_id) plan FROM profile_features pf JOIN profiles p ON p.id=pf.profile_id WHERE p.workspace_id=$1 AND p.external_id=$2", [WS_A, ext]);
-    const b = await pool.query("SELECT total_events, (SELECT attributes->>'plan' FROM profiles p WHERE p.id=pf.profile_id) plan FROM profile_features pf JOIN profiles p ON p.id=pf.profile_id WHERE p.workspace_id=$1 AND p.external_id=$2", [WS_B, ext]);
+    const a = await pool.query("SELECT total_events, (SELECT attributes->>'plan' FROM profiles p WHERE p.id=pf.profile_id) plan FROM profile_features pf JOIN profiles p ON p.id=pf.profile_id WHERE p.workspace_id=$1 AND p.email=$2", [WS_A, ext]);
+    const b = await pool.query("SELECT total_events, (SELECT attributes->>'plan' FROM profiles p WHERE p.id=pf.profile_id) plan FROM profile_features pf JOIN profiles p ON p.id=pf.profile_id WHERE p.workspace_id=$1 AND p.email=$2", [WS_B, ext]);
     expect(a.rows[0].total_events).toBe(2);
     expect(b.rows[0].total_events).toBe(1);
     expect(a.rows[0].plan).toBe('gold');
@@ -484,13 +484,13 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
     const e1 = 'ord-created-first';
     await ingestThenProcess(pool, KEY_A, e1, 'profile_created', '2026-02-01T00:00:00Z', { email: 'o1@acc18.example' });
     await ingestThenProcess(pool, KEY_A, e1, 'progress', '2026-02-01T01:00:00Z');
-    const c1 = await pool.query('SELECT count(*)::int n FROM profiles WHERE workspace_id=$1 AND external_id=$2', [WS_A, e1]);
+    const c1 = await pool.query('SELECT count(*)::int n FROM profiles WHERE workspace_id=$1 AND email=$2', [WS_A, e1]);
     expect(c1.rows[0].n).toBe(1);
 
     const e2 = 'ord-progress-first';
     await ingestThenProcess(pool, KEY_A, e2, 'progress', '2026-02-02T01:00:00Z');
     await ingestThenProcess(pool, KEY_A, e2, 'profile_created', '2026-02-02T00:00:00Z', { email: 'o2@acc18.example', k: 'late' });
-    const c2 = await pool.query("SELECT count(*)::int n, max(attributes->>'k') k FROM profiles WHERE workspace_id=$1 AND external_id=$2", [WS_A, e2]);
+    const c2 = await pool.query("SELECT count(*)::int n, max(attributes->>'k') k FROM profiles WHERE workspace_id=$1 AND email=$2", [WS_A, e2]);
     expect(c2.rows[0].n).toBe(1);
     expect(c2.rows[0].k).toBe('late');
   });
@@ -501,7 +501,7 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
     const wsId = resolveWorkspaceId(KEY_A, KEY_ROWS[KEY_A]);
     const upsert = buildProfileUpsert(wsId, ext, {});
     const { rows } = await pool.query(upsert.text, upsert.values);
-    const sqs = buildSqsMessage(wsId, rows[0].id as string, { event_id: eventId, external_id: ext, type: 'purchase', occurred_at: '2026-03-01T00:00:00Z', attributes: { amount: 10 } }, 'https://sqs.local/q.fifo');
+    const sqs = buildSqsMessage(wsId, rows[0].id as string, { event_id: eventId, email: ext, type: 'purchase', occurred_at: '2026-03-01T00:00:00Z', attributes: { amount: 10 } }, 'https://sqs.local/q.fifo');
     const body = sqs.input.MessageBody as string;
 
     // Real processor handler with an injected tx that FAILS once → record is NOT
@@ -533,7 +533,7 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
     await ingestThenProcess(pool, KEY_A, ext, 'purchase', '2026-03-02T00:00:00Z', { amount: 40 }, fixed);
     const ev = await pool.query('SELECT count(*)::int n FROM events WHERE workspace_id=$1 AND event_id=$2', [WS_A, fixed]);
     expect(ev.rows[0].n).toBe(1);
-    const pf = await pool.query('SELECT pf.total_events, pf.monetary_total FROM profile_features pf JOIN profiles p ON p.id=pf.profile_id WHERE p.workspace_id=$1 AND p.external_id=$2', [WS_A, ext]);
+    const pf = await pool.query('SELECT pf.total_events, pf.monetary_total FROM profile_features pf JOIN profiles p ON p.id=pf.profile_id WHERE p.workspace_id=$1 AND p.email=$2', [WS_A, ext]);
     expect(pf.rows[0].total_events).toBe(1);
     expect(Number(pf.rows[0].monetary_total)).toBe(40);
   });
