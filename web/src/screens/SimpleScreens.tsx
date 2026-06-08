@@ -63,6 +63,33 @@ interface Profile {
   email: string;
   email_status: string;
   unsubscribed?: boolean;
+  attributes?: Record<string, unknown>;
+}
+
+/** Render an attribute value for a table cell. */
+function fmtAttr(v: unknown): string {
+  if (v === undefined || v === null) return '';
+  return typeof v === 'string' ? v : JSON.stringify(v);
+}
+
+/** Persisted profile-table column config (per browser). */
+interface ColumnConfig {
+  showExtId: boolean;
+  attrCols: string[]; // ordered, max 3
+}
+const COLS_KEY = 'cdp.profileColumns';
+const MAX_ATTR_COLS = 3;
+function loadCols(): ColumnConfig {
+  try {
+    const raw = globalThis.localStorage?.getItem(COLS_KEY);
+    if (raw) {
+      const c = JSON.parse(raw) as ColumnConfig;
+      return { showExtId: c.showExtId !== false, attrCols: (c.attrCols ?? []).slice(0, MAX_ATTR_COLS) };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { showExtId: true, attrCols: [] };
 }
 
 /** A small "unsubscribed" (bell with a slash) marker shown next to opted-out profiles. */
@@ -107,6 +134,44 @@ export function ProfileExplorer() {
     setAddError('');
     setAdding(true);
   };
+
+  // Configurable table columns (persisted): toggle external_id, plus up to 3
+  // attribute columns chosen from a searchable list, reorderable.
+  const [cols, setCols] = useState<ColumnConfig>(loadCols);
+  const [colsOpen, setColsOpen] = useState(false);
+  const [colSearch, setColSearch] = useState('');
+  useEffect(() => {
+    try {
+      globalThis.localStorage?.setItem(COLS_KEY, JSON.stringify(cols));
+    } catch {
+      /* ignore */
+    }
+  }, [cols]);
+  // Attribute keys present across the loaded profiles (the picker's options).
+  const availableAttrKeys = (() => {
+    const set = new Set<string>();
+    for (const p of profiles) for (const k of Object.keys(p.attributes ?? {})) if (k !== 'unsubscribed') set.add(k);
+    // Keep already-chosen keys even if no row currently has them.
+    for (const k of cols.attrCols) set.add(k);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  })();
+  const toggleAttrCol = (key: string) =>
+    setCols((c) =>
+      c.attrCols.includes(key)
+        ? { ...c, attrCols: c.attrCols.filter((k) => k !== key) }
+        : c.attrCols.length >= MAX_ATTR_COLS
+          ? c
+          : { ...c, attrCols: [...c.attrCols, key] },
+    );
+  const moveAttrCol = (key: string, dir: -1 | 1) =>
+    setCols((c) => {
+      const i = c.attrCols.indexOf(key);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= c.attrCols.length) return c;
+      const next = [...c.attrCols];
+      [next[i], next[j]] = [next[j]!, next[i]!];
+      return { ...c, attrCols: next };
+    });
   const setAttr = (i: number, patch: Partial<AttrPair>) =>
     setNewAttrs((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const addAttr = () => setNewAttrs((rs) => [...rs, { key: '', value: '' }]);
@@ -272,15 +337,113 @@ export function ProfileExplorer() {
             </option>
           ))}
         </Select>
+
+        {/* Column picker */}
+        <div class="relative ml-auto">
+          <Button
+            data-testid="columns-button"
+            variant="secondary"
+            onClick={() => setColsOpen((v) => !v)}
+            aria-label="Configure columns"
+          >
+            ▥ Columns
+          </Button>
+          {colsOpen ? (
+            <>
+              <div class="fixed inset-0 z-30" onClick={() => setColsOpen(false)} aria-hidden="true" />
+              <div
+                data-testid="columns-menu"
+                class="absolute right-0 z-40 mt-2 w-80 rounded-xl border border-stone-200 bg-white p-3 shadow-soft"
+              >
+                <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Columns</p>
+                <Input
+                  data-testid="columns-search"
+                  type="search"
+                  placeholder="Search attributes…"
+                  value={colSearch}
+                  onInput={(e: Event) => setColSearch((e.target as HTMLInputElement).value)}
+                />
+                <label class="mt-3 flex items-center gap-2 text-sm text-ink-900">
+                  <input
+                    data-testid="col-external_id"
+                    type="checkbox"
+                    checked={cols.showExtId}
+                    onChange={() => setCols((c) => ({ ...c, showExtId: !c.showExtId }))}
+                  />
+                  External ID
+                </label>
+                <div class="mt-1 max-h-72 overflow-y-auto">
+                  {availableAttrKeys
+                    .filter((k) => k.toLowerCase().includes(colSearch.trim().toLowerCase()))
+                    .map((k) => {
+                      const selected = cols.attrCols.includes(k);
+                      const atMax = !selected && cols.attrCols.length >= MAX_ATTR_COLS;
+                      return (
+                        <div
+                          data-testid="col-option"
+                          data-col={k}
+                          key={k}
+                          class="flex items-center justify-between gap-2 py-1"
+                        >
+                          <label class={`flex flex-1 items-center gap-2 text-sm ${atMax ? 'opacity-40' : 'text-ink-900'}`}>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              disabled={atMax}
+                              onChange={() => toggleAttrCol(k)}
+                            />
+                            <span class="truncate font-mono text-xs">{k}</span>
+                          </label>
+                          {selected ? (
+                            <span class="flex items-center gap-0.5">
+                              <button
+                                data-testid="col-up"
+                                class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-ink-900"
+                                aria-label={`Move ${k} up`}
+                                onClick={() => moveAttrCol(k, -1)}
+                              >
+                                ↑
+                              </button>
+                              <button
+                                data-testid="col-down"
+                                class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-ink-900"
+                                aria-label={`Move ${k} down`}
+                                onClick={() => moveAttrCol(k, 1)}
+                              >
+                                ↓
+                              </button>
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  {availableAttrKeys.length === 0 ? (
+                    <p class="py-2 text-xs text-stone-400">No attributes on these profiles yet.</p>
+                  ) : null}
+                </div>
+                <p class="mt-2 text-[11px] text-stone-400">Up to {MAX_ATTR_COLS} attribute columns.</p>
+              </div>
+            </>
+          ) : null}
+        </div>
       </div>
       <Card class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="border-b border-stone-200 bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
             <tr>
               <th class="w-8 px-2 py-2.5" />
-              <th class="px-4 py-2.5 font-semibold">External ID</th>
+              {cols.showExtId ? (
+                <th data-testid="extid-col-header" class="px-4 py-2.5 font-semibold">
+                  External ID
+                </th>
+              ) : null}
               <th class="px-4 py-2.5 font-semibold">Email</th>
               <th class="px-4 py-2.5 font-semibold">Status</th>
+              {cols.attrCols.map((k) => (
+                <th data-testid="attr-col-header" key={k} class="px-4 py-2.5 font-semibold">
+                  {k}
+                </th>
+              ))}
               <th class="px-4 py-2.5" />
             </tr>
           </thead>
@@ -293,11 +456,18 @@ export function ProfileExplorer() {
                 class="cursor-pointer hover:bg-stone-50/70"
               >
                 <td class="px-2 py-2.5 text-center">{p.unsubscribed ? <UnsubscribedIcon /> : null}</td>
-                <td class="px-4 py-2.5 font-mono text-xs text-stone-600">{p.external_id}</td>
+                {cols.showExtId ? (
+                  <td class="px-4 py-2.5 font-mono text-xs text-stone-600">{p.external_id}</td>
+                ) : null}
                 <td class="px-4 py-2.5 text-ink-900">{p.email}</td>
                 <td class="px-4 py-2.5">
                   <Badge tone={toneFor(p.email_status)}>{p.email_status}</Badge>
                 </td>
+                {cols.attrCols.map((k) => (
+                  <td data-testid="attr-col-cell" key={k} class="px-4 py-2.5 text-stone-700">
+                    {fmtAttr(p.attributes?.[k])}
+                  </td>
+                ))}
                 <td class="px-4 py-2.5 text-right">
                   <button
                     data-testid="profile-open"

@@ -69,6 +69,31 @@ test('filter the profiles list by manual and dynamic segments', async ({ page })
   await expect(page.getByTestId('profile-row')).toHaveCount(3);
 });
 
+test('configure profile table columns: add an attribute column, toggle external_id', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+
+  // External ID column is shown by default; no attribute columns yet.
+  await expect(page.getByTestId('extid-col-header')).toBeVisible();
+  await expect(page.getByTestId('attr-col-header')).toHaveCount(0);
+
+  // Open the column picker and add the `tier` attribute as a column.
+  await page.getByTestId('columns-button').click();
+  await page.getByTestId('columns-menu').waitFor();
+  await page.getByTestId('columns-search').fill('tier');
+  await page.locator('[data-testid="col-option"][data-col="tier"] input[type="checkbox"]').check();
+  // The new column appears with the seeded values (a1/a2 are 'vip').
+  await expect(page.getByTestId('attr-col-header')).toHaveCount(1);
+  await expect(page.getByTestId('attr-col-header').first()).toHaveText('tier');
+  // The tier column renders the seeded values (a1/a2 are 'vip').
+  await expect(page.getByTestId('attr-col-cell').filter({ hasText: 'vip' }).first()).toBeVisible();
+
+  // Hide the External ID column.
+  await page.getByTestId('col-external_id').uncheck();
+  await expect(page.getByTestId('extid-col-header')).toHaveCount(0);
+});
+
 test('manually add a profile (with attributes) via the drawer', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-profiles').click();
