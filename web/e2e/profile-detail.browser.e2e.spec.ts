@@ -144,6 +144,24 @@ test('manually add a profile (with attributes) via the drawer', async ({ page })
   await expect(page.getByTestId('attr-value').first()).toHaveValue('storefront');
 });
 
+test('bulk import profiles from a CSV', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+
+  await page.getByTestId('import-csv').click();
+  await page.getByTestId('import-drawer').waitFor();
+  await page.getByTestId('import-textarea').fill('email,tier,plan\nbulk1@acme.com,gold,pro\nbulk2@acme.com,silver,');
+  await expect(page.getByTestId('import-parse-status')).toContainText('2 profiles ready');
+  await page.getByTestId('import-submit').click();
+  await expect(page.getByTestId('import-result')).toContainText('2 created');
+  await page.getByTestId('import-close').click();
+
+  // The imported profile is now in the list.
+  await page.getByTestId('profile-search').fill('bulk1@acme.com');
+  await expect(page.getByTestId('profile-row')).toHaveCount(1);
+});
+
 test('merge a secondary profile into the lead (survivor remains, secondary deleted)', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-profiles').click();

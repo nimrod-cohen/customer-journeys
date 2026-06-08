@@ -18,6 +18,7 @@ import {
   Stat,
   toneFor,
 } from '../ui/kit.js';
+import { ImportProfilesDrawer } from './ImportProfilesDrawer.js';
 
 /** A key/value attribute row in the new-profile drawer. */
 interface AttrPair {
@@ -254,11 +255,17 @@ export function ProfileExplorer() {
   useEffect(() => {
     void api.get<{ segments: SegmentOption[] }>('/segments').then((r) => setSegments(r.segments));
   }, []);
+  const [importing, setImporting] = useState(false);
+  const reloadProfiles = async () => {
+    const opts = segmentId ? { query: { segment_id: segmentId } } : undefined;
+    const r = await api.get<{ profiles: Profile[] }>('/profiles', opts);
+    setProfiles(r.profiles);
+  };
   // Reload profiles whenever the segment filter changes (server-side membership
   // filter; text search stays client-side on top of the result).
   useEffect(() => {
-    const opts = segmentId ? { query: { segment_id: segmentId } } : undefined;
-    void api.get<{ profiles: Profile[] }>('/profiles', opts).then((r) => setProfiles(r.profiles));
+    void reloadProfiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segmentId]);
 
   const createProfile = async () => {
@@ -300,10 +307,24 @@ export function ProfileExplorer() {
         title="Profiles"
         subtitle="Unified customer profiles in this workspace."
         actions={
-          <Button data-testid="new-profile" onClick={openDrawer}>
-            + New profile
-          </Button>
+          <div class="flex items-center gap-2">
+            <Button data-testid="import-csv" variant="secondary" onClick={() => setImporting(true)}>
+              Import CSV
+            </Button>
+            <Button data-testid="new-profile" onClick={openDrawer}>
+              + New profile
+            </Button>
+          </div>
         }
+      />
+
+      <ImportProfilesDrawer
+        open={importing}
+        onClose={() => setImporting(false)}
+        onImported={() => {
+          void reloadProfiles();
+          void reloadAttrKeys();
+        }}
       />
 
       <Drawer

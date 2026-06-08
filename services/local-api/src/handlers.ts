@@ -599,6 +599,66 @@ export const createProfile: Handler = async (ctx, pool, req) => {
 };
 
 /**
+ * POST /profiles/import-csv — bulk upsert profiles parsed from a CSV (the client
+ * splits the file; we receive typed rows). Email is the identity key (§7), so we
+ * UPSERT on (workspace_id, email): a new email is created (seeded
+ * unsubscribed=false), an existing one has its attributes MERGED (the existing
+ * `unsubscribed` flag is preserved unless the CSV supplies it). Casing follows
+ * the workspace lowercase_emails policy. Returns per-outcome counts + row errors.
+ */
+const IMPORT_ROW_CAP = 10000;
+export const importProfilesCsv: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const rows = Array.isArray(b.rows) ? (b.rows as unknown[]) : [];
+  if (rows.length === 0) return ok({ error: 'no rows to import' }, 400);
+  if (rows.length > IMPORT_ROW_CAP) return ok({ error: `too many rows (max ${IMPORT_ROW_CAP})` }, 400);
+  const lowercase = await lowercaseEmailsEnabled(pool, ctx.workspaceId);
+
+  let created = 0;
+  let updated = 0;
+  const errors: Array<{ row: number; email: string; error: string }> = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = asObject(rows[i]);
+    const email = applyEmailPolicy(typeof r.email === 'string' ? r.email.trim() : '', lowercase);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      errors.push({ row: i + 1, email, error: 'invalid or missing email' });
+      continue;
+    }
+    const externalId = typeof r.external_id === 'string' && r.external_id.trim() ? r.external_id.trim() : '';
+    const attrs =
+      r.attributes && typeof r.attributes === 'object' && !Array.isArray(r.attributes)
+        ? (r.attributes as Record<string, unknown>)
+        : {};
+    try {
+      const res = await pool.query<{ inserted: boolean; id: string }>(
+        `INSERT INTO profiles (workspace_id, email, external_id, attributes)
+         VALUES ($1, $2, NULLIF($3,''), '{"unsubscribed": false}'::jsonb || $4::jsonb)
+         ON CONFLICT (workspace_id, email) DO UPDATE SET
+           attributes = profiles.attributes || $4::jsonb,
+           external_id = COALESCE(NULLIF($3,''), profiles.external_id),
+           updated_at = now()
+         RETURNING (xmax = 0) AS inserted, id`,
+        [ctx.workspaceId, email, externalId, JSON.stringify(attrs)],
+      );
+      const row = res.rows[0]!;
+      if (row.inserted) {
+        created++;
+        await pool.query(
+          `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2)
+           ON CONFLICT (profile_id) DO NOTHING`,
+          [row.id, ctx.workspaceId],
+        );
+      } else {
+        updated++;
+      }
+    } catch (e) {
+      errors.push({ row: i + 1, email, error: (e as { message?: string }).message ?? 'insert failed' });
+    }
+  }
+  return ok({ created, updated, skipped: errors.length, total: rows.length, errors: errors.slice(0, 50) });
+};
+
+/**
  * GET /profiles/attribute-keys — the DISTINCT attribute keys across the
  * workspace's profiles (powers the column picker exhaustively, not limited to a
  * loaded page). Scoped to the token's workspace; excludes the internal
@@ -1106,6 +1166,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /campaigns/:id': updateCampaign,
   'GET /profiles': listProfiles,
   'POST /profiles': createProfile,
+  'POST /profiles/import-csv': importProfilesCsv,
   'GET /profiles/attribute-keys': listAttributeKeys,
   'GET /profiles/:id': getProfile,
   'PATCH /profiles/:id': updateProfile,
