@@ -306,6 +306,21 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
     setPairs((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   const remove = (i: number) => setPairs((ps) => ps.filter((_, j) => j !== i));
   const add = () => setPairs((ps) => [...ps, { key: '', value: '' }]);
+  // Quick-add: append a row pre-filled with an existing workspace attribute key.
+  const addKey = (k: string) =>
+    setPairs((ps) => (ps.some((p) => p.key === k) ? ps : [...ps, { key: k, value: '' }]));
+
+  // The exhaustive set of attribute keys used across the workspace, minus the
+  // ones already on this profile — offered as one-click chips.
+  const [allKeys, setAllKeys] = useState<string[]>([]);
+  useEffect(() => {
+    void api
+      .get<{ keys: string[] }>('/profiles/attribute-keys')
+      .then((r) => setAllKeys(r.keys))
+      .catch(() => setAllKeys([]));
+  }, []);
+  const used = new Set(pairs.map((p) => p.key.trim()).filter(Boolean));
+  const unused = allKeys.filter((k) => !used.has(k));
 
   const save = async () => {
     setState('saving');
@@ -327,7 +342,8 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
   };
 
   return (
-    <Card class="max-w-2xl p-5">
+    <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
+    <Card class="max-w-2xl flex-1 p-5">
       <div class="space-y-2.5">
         {pairs.length === 0 ? (
           <p class="text-sm text-stone-500">No attributes yet — add one below.</p>
@@ -383,6 +399,34 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
         ) : null}
       </div>
     </Card>
+
+      {/* Quick-add: existing workspace attribute keys not yet on this profile. */}
+      <Card data-testid="unused-attrs" class="w-full p-4 lg:w-64 lg:shrink-0">
+        <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-stone-500">Add attribute</p>
+        <p class="mb-3 text-xs text-stone-400">Existing keys in this workspace — click to add.</p>
+        {unused.length === 0 ? (
+          <p class="text-xs text-stone-400">
+            {allKeys.length === 0 ? 'No attributes in this workspace yet.' : 'All keys are already on this profile.'}
+          </p>
+        ) : (
+          <div class="flex flex-wrap gap-1.5">
+            {unused.map((k) => (
+              <button
+                key={k}
+                data-testid="unused-attr"
+                data-key={k}
+                onClick={() => addKey(k)}
+                aria-label={`Add attribute ${k}`}
+                class="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-white px-2.5 py-1 font-mono text-xs text-ink-800 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-400/40"
+              >
+                <span class="text-stone-400">+</span>
+                {k}
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
   );
 }
 

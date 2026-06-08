@@ -106,6 +106,13 @@ export async function seed(): Promise<void> {
         WHERE workspace_id = $1 AND external_id = 'a3'`,
       [WS_A],
     );
+    // a2 carries an extra "plan" key so the workspace has >1 attribute key — lets
+    // the profile "quick-add" panel offer a key not yet on another profile.
+    await pool.query(
+      `UPDATE profiles SET attributes = attributes || '{"plan": "pro"}'::jsonb
+        WHERE workspace_id = $1 AND external_id = 'a2'`,
+      [WS_A],
+    );
     // Give the first profile (a1) past events + a manual segment membership so the
     // Profile detail screen's Events/Segments tabs render live data in the e2e.
     await pool.query('UPDATE profile_features SET total_events = 2 WHERE profile_id = $1', [

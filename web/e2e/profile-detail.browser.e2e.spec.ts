@@ -24,10 +24,11 @@ test('open a profile, edit it, add an attribute, view events and segments', asyn
   await page.getByTestId('profile-save').click();
   await expect(page.getByTestId('profile-save-status')).toContainText('Saved');
 
-  // Attributes tab: add a new key/value and save.
+  // Attributes tab: quick-add an existing workspace key ('plan', used by a2 but
+  // not a1) from the right-hand panel, fill the value, and save.
   await page.getByTestId('tab-attributes').click();
-  await page.getByTestId('attr-add').click();
-  await page.getByTestId('attr-key').last().fill('plan');
+  await page.locator('[data-testid="unused-attr"][data-key="plan"]').click();
+  await expect(page.getByTestId('attr-key').last()).toHaveValue('plan');
   await page.getByTestId('attr-value').last().fill('pro');
   await page.getByTestId('attrs-save').click();
   await expect(page.getByTestId('attrs-save-status')).toContainText('Saved');
