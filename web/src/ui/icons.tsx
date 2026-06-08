@@ -56,6 +56,7 @@ export const ICONS: Record<string, JSX.Element> = {
       <path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />
     </I>
   ),
+  activity: <I d="M3 12h4l3 8 4-16 3 8h4" />,
   onboarding: <I d="M4 7h16M4 12h16M4 17h10M19 15l2 2-2 2" />,
   admin: <I d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4Z" />,
   help: (

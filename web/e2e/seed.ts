@@ -123,6 +123,20 @@ export async function seed(): Promise<void> {
       "INSERT INTO segment_memberships (segment_id, profile_id, workspace_id, source) VALUES ($1,$2,$3,'manual')",
       [SEG_A, firstProfileId, WS_A],
     );
+    // Delivery activity for a1 — a successful delivery, a failed bounce, and a
+    // send — so the Activity log has email + send rows with success/failure.
+    await pool.query(
+      "INSERT INTO email_events (workspace_id, profile_id, type, occurred_at) VALUES ($1,$2,'delivery','2026-02-02T10:00:00Z')",
+      [WS_A, firstProfileId],
+    );
+    await pool.query(
+      "INSERT INTO email_events (workspace_id, profile_id, type, sub_type, occurred_at) VALUES ($1,$2,'bounce','Transient','2026-02-03T10:00:00Z')",
+      [WS_A, firstProfileId],
+    );
+    await pool.query(
+      "INSERT INTO messages_log (workspace_id, profile_id, status, sent_at) VALUES ($1,$2,'sent','2026-02-04T10:00:00Z')",
+      [WS_A, firstProfileId],
+    );
     // One profile in WS_B (must never appear in WS_A views).
     const { rows: pb } = await pool.query<{ id: string }>(
       'INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,$2,$3) RETURNING id',
@@ -140,6 +154,8 @@ export async function seed(): Promise<void> {
 export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void> {
   for (const ws of [WS_A, WS_B]) {
     await pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM email_events WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM outbox WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM broadcasts WHERE workspace_id = $1', [ws]);

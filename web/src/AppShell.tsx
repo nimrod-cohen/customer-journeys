@@ -24,6 +24,7 @@ import {
 } from './screens/SimpleScreens.js';
 import { ProfileDetail } from './screens/ProfileDetail.js';
 import { Help } from './screens/Help.js';
+import { Activity } from './screens/Activity.js';
 import { EmailEditor } from './EmailEditor.js';
 import type { JSX } from 'preact';
 
@@ -65,6 +66,8 @@ function screenFor(path: string): JSX.Element {
       return <SystemAdminConsole />;
     case '/help':
       return <Help />;
+    case '/activity':
+      return <Activity />;
     case '/dashboards':
     default:
       return <Dashboards />;

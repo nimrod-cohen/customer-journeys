@@ -598,6 +598,58 @@ export const listProfileSegments: Handler = async (ctx, pool, req) => {
 };
 
 // ---------------------------------------------------------------------------
+// activity log (manage_content) — unified, filterable feed
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /activity — a unified activity feed across the workspace: behavioural
+ * events, email/delivery events, and sends, time-ordered newest-first. Filters:
+ * from/to (datetime), type, outcome (success|failure|info), source. Each source
+ * subquery is scoped to the token's workspace (workspace_id = $1) IN CODE, so the
+ * feed can never include another tenant's activity. Outcome is DERIVED:
+ * delivery/open/click + sent = success; bounce/complaint + non-sent = failure;
+ * behavioural events = info.
+ */
+export const listActivity: Handler = async (ctx, pool, req) => {
+  const q = req.query;
+  const from = q.from || null;
+  const to = q.to || null;
+  const type = q.type || null;
+  const outcome = q.outcome || null;
+  const source = q.source || null;
+  const { rows } = await pool.query(
+    `SELECT a.at, a.source, a.type, a.outcome, a.profile_id, a.detail, p.email
+       FROM (
+         SELECT occurred_at AS at, 'event'::text AS source, type,
+                'info'::text AS outcome, profile_id, payload::text AS detail
+           FROM events WHERE workspace_id = $1
+         UNION ALL
+         SELECT occurred_at, 'email', type,
+                CASE WHEN type IN ('delivery','open','click') THEN 'success'
+                     WHEN type IN ('bounce','complaint') THEN 'failure'
+                     ELSE 'info' END,
+                profile_id, coalesce(sub_type, '')
+           FROM email_events WHERE workspace_id = $1
+         UNION ALL
+         SELECT sent_at, 'send', 'send',
+                CASE WHEN status = 'sent' THEN 'success' ELSE 'failure' END,
+                profile_id, status
+           FROM messages_log WHERE workspace_id = $1
+       ) a
+       LEFT JOIN profiles p ON p.id = a.profile_id AND p.workspace_id = $1
+      WHERE ($2::timestamptz IS NULL OR a.at >= $2::timestamptz)
+        AND ($3::timestamptz IS NULL OR a.at <= $3::timestamptz)
+        AND ($4::text IS NULL OR a.type = $4)
+        AND ($5::text IS NULL OR a.outcome = $5)
+        AND ($6::text IS NULL OR a.source = $6)
+      ORDER BY a.at DESC
+      LIMIT 200`,
+    [ctx.workspaceId, from, to, type, outcome, source],
+  );
+  return ok({ activity: rows });
+};
+
+// ---------------------------------------------------------------------------
 // dashboards (manage_content)
 // ---------------------------------------------------------------------------
 
@@ -756,6 +808,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PATCH /profiles/:id': updateProfile,
   'GET /profiles/:id/events': listProfileEvents,
   'GET /profiles/:id/segments': listProfileSegments,
+  'GET /activity': listActivity,
   'GET /dashboards/summary': dashboardSummary,
   'GET /suppressions': listSuppressions,
   'GET /billing/usage': billingUsage,
