@@ -509,7 +509,8 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
       // structurally by the compiler — can never match another tenant).
       const where = compileWhere(ctx.workspaceId, definition);
       const { rows } = await pool.query(
-        `SELECT p.id, p.external_id, p.email, p.email_status, p.created_at, p.attributes,
+        `SELECT p.id, p.external_id, p.email, p.email_status, p.created_at,
+                floor(extract(epoch from p.created_at) * 1000)::double precision AS created_at_unix, p.attributes,
                 (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed
            FROM profiles p
            LEFT JOIN profile_features pf ON pf.profile_id = p.id
@@ -523,7 +524,8 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
 
     // Manual (no rule): the materialized membership rows.
     const { rows } = await pool.query(
-      `SELECT p.id, p.external_id, p.email, p.email_status, p.created_at, p.attributes,
+      `SELECT p.id, p.external_id, p.email, p.email_status, p.created_at,
+                floor(extract(epoch from p.created_at) * 1000)::double precision AS created_at_unix, p.attributes,
               (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed
          FROM profiles p
          JOIN segment_memberships sm
@@ -538,7 +540,8 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
   // Explicit workspace_id = $1 scoping (the token's workspace), since this query
   // carries ORDER BY/LIMIT that scopedQuery's WHERE-rewriter cannot wrap.
   const { rows } = await pool.query(
-    `SELECT id, external_id, email, email_status, created_at, attributes,
+    `SELECT id, external_id, email, email_status, created_at,
+            floor(extract(epoch from created_at) * 1000)::double precision AS created_at_unix, attributes,
             (attributes ->> 'unsubscribed' = 'true') AS unsubscribed
        FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200`,
     [ctx.workspaceId],
@@ -616,7 +619,10 @@ export const getProfile: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, external_id, email, email_status, attributes, created_at, updated_at FROM profiles WHERE id = $1',
+    `SELECT id, external_id, email, email_status, attributes, created_at, updated_at,
+            floor(extract(epoch from created_at) * 1000)::double precision AS created_at_unix,
+            floor(extract(epoch from updated_at) * 1000)::double precision AS updated_at_unix
+       FROM profiles WHERE id = $1`,
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);

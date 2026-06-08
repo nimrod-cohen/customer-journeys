@@ -17,6 +17,7 @@ interface Profile {
   email: string | null;
   email_status: string;
   created_at?: string;
+  created_at_unix?: number;
   attributes: Record<string, unknown>;
 }
 interface Features {
@@ -70,10 +71,10 @@ function stringToValue(s: string): unknown {
     return s;
   }
 }
-function fmt(ts: string | null): string {
-  if (!ts) return '—';
+function fmt(ts: number | string | null | undefined): string {
+  if (ts === null || ts === undefined || ts === '') return '—';
   const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? ts : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
 }
 
 export function ProfileDetail({ id }: { id: string }) {
@@ -131,6 +132,7 @@ export function ProfileDetail({ id }: { id: string }) {
             email: profile.email,
             external_id: profile.external_id,
             ...(profile.created_at ? { created_at: profile.created_at } : {}),
+            ...(profile.created_at_unix ? { created_at_unix: profile.created_at_unix } : {}),
             attributes: profile.attributes ?? {},
           }}
           onClose={() => setMerging(false)}
@@ -154,9 +156,9 @@ export function ProfileDetail({ id }: { id: string }) {
           <p class="mt-0.5 font-mono text-xs text-stone-500">
             {profile?.external_id ? `ext: ${profile.external_id}` : 'no external id'}
           </p>
-          {profile?.created_at ? (
+          {profile?.created_at || profile?.created_at_unix ? (
             <p data-testid="profile-created" class="mt-0.5 text-xs text-stone-400">
-              Created {fmt(profile.created_at)}
+              Created {fmt(profile.created_at_unix ?? profile.created_at)}
             </p>
           ) : null}
         </div>

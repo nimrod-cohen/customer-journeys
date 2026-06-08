@@ -64,6 +64,8 @@ interface Profile {
   email_status: string;
   unsubscribed?: boolean;
   created_at?: string;
+  /** Unix epoch ms (UTC) — the API also exposes this numeric form. */
+  created_at_unix?: number;
   attributes?: Record<string, unknown>;
 }
 
@@ -72,11 +74,11 @@ function fmtAttr(v: unknown): string {
   if (v === undefined || v === null) return '';
   return typeof v === 'string' ? v : JSON.stringify(v);
 }
-/** Format an ISO datetime for display (local), or '—'. */
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+/** Format a datetime (Unix epoch ms number OR ISO string) for display (local), or '—'. */
+function fmtDate(v: number | string | null | undefined): string {
+  if (v === null || v === undefined || v === '') return '—';
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
 }
 
 // Configurable column ids: built-in External ID / Created, or an attribute key.
@@ -523,7 +525,7 @@ export function ProfileExplorer() {
                     </td>
                   ) : id === CREATED_COL ? (
                     <td key={id} class="whitespace-nowrap px-4 py-2.5 text-xs text-stone-500">
-                      {fmtDate(p.created_at)}
+                      {fmtDate(p.created_at_unix ?? p.created_at)}
                     </td>
                   ) : (
                     <td data-testid="attr-col-cell" key={id} class="px-4 py-2.5 text-stone-700">

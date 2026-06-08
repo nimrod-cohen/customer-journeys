@@ -150,6 +150,14 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     expect(keys).not.toContain('unsubscribed'); // internal flag is filtered out
   });
 
+  it('exposes created_at as a Unix epoch-ms NUMBER (created_at_unix) alongside the ISO string', async () => {
+    const r = await call(world.env, 'GET', `/profiles/${P_A}`, { token: tokA() });
+    const p = (r.body as { profile: { created_at: string; created_at_unix: number } }).profile;
+    expect(typeof p.created_at_unix).toBe('number');
+    // The epoch number matches the ISO timestamp.
+    expect(p.created_at_unix).toBe(new Date(p.created_at).getTime());
+  });
+
   it('GET /profiles/:id returns the profile + rolling features', async () => {
     const r = await call(world.env, 'GET', `/profiles/${P_A}`, { token: tokA() });
     expect(r.status).toBe(200);

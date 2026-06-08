@@ -13,6 +13,7 @@ interface P {
   email: string | null;
   external_id: string | null;
   created_at?: string;
+  created_at_unix?: number;
   attributes: Record<string, unknown>;
 }
 interface Candidate {
@@ -20,6 +21,7 @@ interface Candidate {
   email: string | null;
   external_id: string | null;
   created_at?: string;
+  created_at_unix?: number;
   attributes?: Record<string, unknown>;
 }
 
@@ -27,10 +29,10 @@ function fmt(v: unknown): string {
   if (v === undefined) return '—';
   return typeof v === 'string' ? v : JSON.stringify(v);
 }
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+function fmtDate(v: number | string | null | undefined): string {
+  if (v === null || v === undefined || v === '') return '—';
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
 }
 
 export function MergeProfileDrawer({
@@ -104,7 +106,7 @@ export function MergeProfileDrawer({
       <Badge tone={tone}>{label}</Badge>
       <p class="mt-2 truncate font-semibold text-ink-900">{p?.email ?? '—'}</p>
       <p class="font-mono text-xs text-stone-500">{p?.external_id ? `ext: ${p.external_id}` : 'no external id'}</p>
-      <p class="mt-1 text-xs text-stone-400">Created {fmtDate(p?.created_at)}</p>
+      <p class="mt-1 text-xs text-stone-400">Created {fmtDate(p?.created_at_unix ?? p?.created_at)}</p>
     </div>
   );
 
