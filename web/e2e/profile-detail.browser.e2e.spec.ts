@@ -74,9 +74,18 @@ test('configure profile table columns: add an attribute column, toggle external_
   await page.getByTestId('nav-profiles').click();
   await page.getByTestId('profile-explorer').waitFor();
 
-  // External ID column is shown by default; no attribute columns yet.
+  // Status + External ID columns are shown by default; no attribute columns yet.
+  await expect(page.getByTestId('status-col-header')).toBeVisible();
   await expect(page.getByTestId('extid-col-header')).toBeVisible();
   await expect(page.getByTestId('attr-col-header')).toHaveCount(0);
+
+  // Status is now a configurable column — it can be hidden too.
+  await page.getByTestId('columns-button').click();
+  await page.getByTestId('col-email_status').uncheck();
+  await expect(page.getByTestId('status-col-header')).toHaveCount(0);
+  await page.getByTestId('col-email_status').check();
+  await expect(page.getByTestId('status-col-header')).toBeVisible();
+  await page.getByTestId('profile-search').click(); // close picker
 
   // Open the column picker and add the `tier` attribute as a column.
   await page.getByTestId('columns-button').click();

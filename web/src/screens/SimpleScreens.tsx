@@ -81,39 +81,57 @@ function fmtDate(v: number | string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
 }
 
-// Configurable column ids: built-in External ID / Created, or an attribute key.
+// Configurable column ids: built-ins (Status / External ID / Created) or an
+// attribute key. Email is the identity anchor and stays fixed (not configurable).
+const STATUS_COL = 'email_status';
 const EXT_COL = 'external_id';
 const CREATED_COL = 'created_at';
+const BUILTIN_COLS = [STATUS_COL, EXT_COL, CREATED_COL];
 const ATTR_PREFIX = 'attr:';
 const attrKeyOf = (id: string) => id.slice(ATTR_PREFIX.length);
-const isBuiltinCol = (id: string) => id === EXT_COL || id === CREATED_COL;
+const isBuiltinCol = (id: string) => BUILTIN_COLS.includes(id);
 const colLabelFor = (id: string) =>
-  id === EXT_COL ? 'External ID' : id === CREATED_COL ? 'Created' : attrKeyOf(id);
+  id === STATUS_COL
+    ? 'Status'
+    : id === EXT_COL
+      ? 'External ID'
+      : id === CREATED_COL
+        ? 'Created'
+        : attrKeyOf(id);
 
 /** Persisted profile-table column config (per browser): the enabled columns, in order. */
 interface ColumnConfig {
-  order: string[]; // e.g. ['external_id', 'attr:tier'] — order = display order
+  v?: number; // schema version (see loadCols migration)
+  order: string[]; // e.g. ['email_status', 'external_id', 'attr:tier'] — order = display order
 }
 const COLS_KEY = 'cdp.profileColumns';
-// Total configurable columns (External ID + attribute columns) share one budget,
-// so hiding External ID frees a slot for another attribute, and vice-versa.
-const MAX_COLS = 4;
+const COLS_VERSION = 2; // bumped when Status became a configurable column
+// All configurable columns (Status, External ID, Created, attributes) share one
+// budget, so hiding one frees a slot for another.
+const MAX_COLS = 6;
+const DEFAULT_ORDER = [STATUS_COL, EXT_COL];
 function loadCols(): ColumnConfig {
   try {
     const raw = globalThis.localStorage?.getItem(COLS_KEY);
     if (raw) {
       const c = JSON.parse(raw) as Partial<ColumnConfig> & { showExtId?: boolean; attrCols?: string[] };
-      if (Array.isArray(c.order)) return { order: c.order };
-      // Migrate the previous {showExtId, attrCols} shape.
-      const order: string[] = [];
+      if (Array.isArray(c.order)) {
+        // v1 configs predate Status being configurable (it was always shown) —
+        // prepend it once so it isn't silently dropped; v2+ is respected as-is.
+        if (c.v === COLS_VERSION) return { v: COLS_VERSION, order: c.order };
+        const order = c.order.includes(STATUS_COL) ? c.order : [STATUS_COL, ...c.order];
+        return { v: COLS_VERSION, order };
+      }
+      // Migrate the very first {showExtId, attrCols} shape.
+      const order: string[] = [STATUS_COL];
       if (c.showExtId !== false) order.push(EXT_COL);
       for (const k of (c.attrCols ?? []).slice(0, MAX_COLS)) order.push(`${ATTR_PREFIX}${k}`);
-      return { order };
+      return { v: COLS_VERSION, order };
     }
   } catch {
     /* ignore */
   }
-  return { order: [EXT_COL] };
+  return { v: COLS_VERSION, order: [...DEFAULT_ORDER] };
 }
 
 /** A small "unsubscribed" (bell with a slash) marker shown next to opted-out profiles. */
@@ -184,7 +202,7 @@ export function ProfileExplorer() {
   const [allAttrKeys, setAllAttrKeys] = useState<string[]>([]);
   useEffect(() => {
     try {
-      globalThis.localStorage?.setItem(COLS_KEY, JSON.stringify(cols));
+      globalThis.localStorage?.setItem(COLS_KEY, JSON.stringify({ v: COLS_VERSION, order: cols.order }));
     } catch {
       /* ignore */
     }
@@ -223,7 +241,7 @@ export function ProfileExplorer() {
   // then the remaining available attribute keys. External ID is always offered.
   const enabledIds = cols.order;
   const remainingIds = [
-    ...[EXT_COL, CREATED_COL].filter((id) => !enabledCol(id)),
+    ...BUILTIN_COLS.filter((id) => !enabledCol(id)),
     ...allAttrKeys.map((k) => `${ATTR_PREFIX}${k}`).filter((id) => !enabledCol(id)),
   ];
   const colLabel = colLabelFor;
@@ -429,13 +447,12 @@ export function ProfileExplorer() {
                     return (
                       <div
                         data-testid="col-option"
-                        data-col={id === EXT_COL ? 'external_id' : id === CREATED_COL ? 'created_at' : attrKeyOf(id)}
+                        data-col={isBuiltinCol(id) ? id : attrKeyOf(id)}
                         key={id}
                         class="flex h-9 items-center gap-2 rounded px-1 hover:bg-stone-50"
                       >
                         <input
-                          {...(id === EXT_COL ? { 'data-testid': 'col-external_id' } : {})}
-                          {...(id === CREATED_COL ? { 'data-testid': 'col-created_at' } : {})}
+                          {...(isBuiltinCol(id) ? { 'data-testid': `col-${id}` } : {})}
                           type="checkbox"
                           class="h-4 w-4 shrink-0 accent-brand-500"
                           checked={on}
@@ -476,7 +493,7 @@ export function ProfileExplorer() {
                     <p class="py-2 text-xs text-stone-400">No attributes yet.</p>
                   ) : null}
                 </div>
-                <p class="mt-2 text-[11px] text-stone-400">Up to {MAX_COLS} columns (incl. External ID).</p>
+                <p class="mt-2 text-[11px] text-stone-400">Up to {MAX_COLS} columns (Email is always shown).</p>
               </div>
           ) : null}
         </div>
@@ -487,9 +504,12 @@ export function ProfileExplorer() {
             <tr>
               <th class="w-8 px-2 py-2.5" />
               <th class="px-4 py-2.5 font-semibold">Email</th>
-              <th class="px-4 py-2.5 font-semibold">Status</th>
               {cols.order.map((id) =>
-                id === EXT_COL ? (
+                id === STATUS_COL ? (
+                  <th data-testid="status-col-header" key={id} class="px-4 py-2.5 font-semibold">
+                    Status
+                  </th>
+                ) : id === EXT_COL ? (
                   <th data-testid="extid-col-header" key={id} class="px-4 py-2.5 font-semibold">
                     External ID
                   </th>
@@ -515,11 +535,12 @@ export function ProfileExplorer() {
               >
                 <td class="px-2 py-2.5 text-center">{p.unsubscribed ? <UnsubscribedIcon /> : null}</td>
                 <td class="px-4 py-2.5 text-ink-900">{p.email}</td>
-                <td class="px-4 py-2.5">
-                  <Badge tone={toneFor(p.email_status)}>{p.email_status}</Badge>
-                </td>
                 {cols.order.map((id) =>
-                  id === EXT_COL ? (
+                  id === STATUS_COL ? (
+                    <td key={id} class="px-4 py-2.5">
+                      <Badge tone={toneFor(p.email_status)}>{p.email_status}</Badge>
+                    </td>
+                  ) : id === EXT_COL ? (
                     <td key={id} class="px-4 py-2.5 font-mono text-xs text-stone-600">
                       {p.external_id}
                     </td>
