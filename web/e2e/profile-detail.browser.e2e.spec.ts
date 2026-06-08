@@ -92,6 +92,10 @@ test('configure profile table columns: add an attribute column, toggle external_
   // Hide the External ID column.
   await page.getByTestId('col-external_id').uncheck();
   await expect(page.getByTestId('extid-col-header')).toHaveCount(0);
+
+  // The built-in "Created" column can be added too.
+  await page.getByTestId('col-created_at').check();
+  await expect(page.getByTestId('created-col-header')).toHaveCount(1);
 });
 
 test('manually add a profile (with attributes) via the drawer', async ({ page }) => {

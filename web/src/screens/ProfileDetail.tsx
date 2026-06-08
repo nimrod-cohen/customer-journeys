@@ -16,6 +16,7 @@ interface Profile {
   external_id: string | null;
   email: string | null;
   email_status: string;
+  created_at?: string;
   attributes: Record<string, unknown>;
 }
 interface Features {
@@ -129,6 +130,7 @@ export function ProfileDetail({ id }: { id: string }) {
             id: profile.id,
             email: profile.email,
             external_id: profile.external_id,
+            ...(profile.created_at ? { created_at: profile.created_at } : {}),
             attributes: profile.attributes ?? {},
           }}
           onClose={() => setMerging(false)}
@@ -152,6 +154,11 @@ export function ProfileDetail({ id }: { id: string }) {
           <p class="mt-0.5 font-mono text-xs text-stone-500">
             {profile?.external_id ? `ext: ${profile.external_id}` : 'no external id'}
           </p>
+          {profile?.created_at ? (
+            <p data-testid="profile-created" class="mt-0.5 text-xs text-stone-400">
+              Created {fmt(profile.created_at)}
+            </p>
+          ) : null}
         </div>
         {profile ? <Badge tone={toneFor(profile.email_status)}>{profile.email_status}</Badge> : null}
         <div class="flex gap-6 border-l border-stone-200 pl-5 text-center">

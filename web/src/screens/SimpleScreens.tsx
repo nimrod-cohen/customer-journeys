@@ -63,6 +63,7 @@ interface Profile {
   email: string;
   email_status: string;
   unsubscribed?: boolean;
+  created_at?: string;
   attributes?: Record<string, unknown>;
 }
 
@@ -71,11 +72,21 @@ function fmtAttr(v: unknown): string {
   if (v === undefined || v === null) return '';
   return typeof v === 'string' ? v : JSON.stringify(v);
 }
+/** Format an ISO datetime for display (local), or '—'. */
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+}
 
-// A configurable column id: the built-in External ID, or an attribute key.
+// Configurable column ids: built-in External ID / Created, or an attribute key.
 const EXT_COL = 'external_id';
+const CREATED_COL = 'created_at';
 const ATTR_PREFIX = 'attr:';
 const attrKeyOf = (id: string) => id.slice(ATTR_PREFIX.length);
+const isBuiltinCol = (id: string) => id === EXT_COL || id === CREATED_COL;
+const colLabelFor = (id: string) =>
+  id === EXT_COL ? 'External ID' : id === CREATED_COL ? 'Created' : attrKeyOf(id);
 
 /** Persisted profile-table column config (per browser): the enabled columns, in order. */
 interface ColumnConfig {
@@ -210,10 +221,10 @@ export function ProfileExplorer() {
   // then the remaining available attribute keys. External ID is always offered.
   const enabledIds = cols.order;
   const remainingIds = [
-    ...(enabledCol(EXT_COL) ? [] : [EXT_COL]),
+    ...[EXT_COL, CREATED_COL].filter((id) => !enabledCol(id)),
     ...allAttrKeys.map((k) => `${ATTR_PREFIX}${k}`).filter((id) => !enabledCol(id)),
   ];
-  const colLabel = (id: string) => (id === EXT_COL ? 'External ID' : attrKeyOf(id));
+  const colLabel = colLabelFor;
   const colSearchMatch = (id: string) => colLabel(id).toLowerCase().includes(colSearch.trim().toLowerCase());
   const setAttr = (i: number, patch: Partial<AttrPair>) =>
     setNewAttrs((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
@@ -408,20 +419,21 @@ export function ProfileExplorer() {
                 />
                 <div class="mt-2 max-h-72 overflow-y-auto pr-1">
                   {[...enabledIds, ...remainingIds]
-                    .filter((id) => id === EXT_COL || colSearchMatch(id))
+                    .filter((id) => isBuiltinCol(id) || colSearchMatch(id))
                     .map((id) => {
                     const on = enabledCol(id);
-                    const isExt = id === EXT_COL;
+                    const builtin = isBuiltinCol(id);
                     const atMax = !on && cols.order.length >= MAX_COLS;
                     return (
                       <div
                         data-testid="col-option"
-                        data-col={isExt ? 'external_id' : attrKeyOf(id)}
+                        data-col={id === EXT_COL ? 'external_id' : id === CREATED_COL ? 'created_at' : attrKeyOf(id)}
                         key={id}
                         class="flex h-9 items-center gap-2 rounded px-1 hover:bg-stone-50"
                       >
                         <input
-                          {...(isExt ? { 'data-testid': 'col-external_id' } : {})}
+                          {...(id === EXT_COL ? { 'data-testid': 'col-external_id' } : {})}
+                          {...(id === CREATED_COL ? { 'data-testid': 'col-created_at' } : {})}
                           type="checkbox"
                           class="h-4 w-4 shrink-0 accent-brand-500"
                           checked={on}
@@ -429,7 +441,7 @@ export function ProfileExplorer() {
                           onChange={() => toggleCol(id)}
                         />
                         <span
-                          class={`flex-1 truncate text-sm text-ink-900 ${isExt ? '' : 'font-mono'} ${
+                          class={`flex-1 truncate text-sm text-ink-900 ${builtin ? '' : 'font-mono'} ${
                             atMax ? 'opacity-40' : ''
                           }`}
                         >
@@ -479,6 +491,10 @@ export function ProfileExplorer() {
                   <th data-testid="extid-col-header" key={id} class="px-4 py-2.5 font-semibold">
                     External ID
                   </th>
+                ) : id === CREATED_COL ? (
+                  <th data-testid="created-col-header" key={id} class="px-4 py-2.5 font-semibold">
+                    Created
+                  </th>
                 ) : (
                   <th data-testid="attr-col-header" key={id} class="px-4 py-2.5 font-semibold">
                     {attrKeyOf(id)}
@@ -504,6 +520,10 @@ export function ProfileExplorer() {
                   id === EXT_COL ? (
                     <td key={id} class="px-4 py-2.5 font-mono text-xs text-stone-600">
                       {p.external_id}
+                    </td>
+                  ) : id === CREATED_COL ? (
+                    <td key={id} class="whitespace-nowrap px-4 py-2.5 text-xs text-stone-500">
+                      {fmtDate(p.created_at)}
                     </td>
                   ) : (
                     <td data-testid="attr-col-cell" key={id} class="px-4 py-2.5 text-stone-700">

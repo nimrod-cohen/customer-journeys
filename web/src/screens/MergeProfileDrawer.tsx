@@ -12,18 +12,25 @@ interface P {
   id: string;
   email: string | null;
   external_id: string | null;
+  created_at?: string;
   attributes: Record<string, unknown>;
 }
 interface Candidate {
   id: string;
   email: string | null;
   external_id: string | null;
+  created_at?: string;
   attributes?: Record<string, unknown>;
 }
 
 function fmt(v: unknown): string {
   if (v === undefined) return '—';
   return typeof v === 'string' ? v : JSON.stringify(v);
+}
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
 }
 
 export function MergeProfileDrawer({
@@ -97,6 +104,7 @@ export function MergeProfileDrawer({
       <Badge tone={tone}>{label}</Badge>
       <p class="mt-2 truncate font-semibold text-ink-900">{p?.email ?? '—'}</p>
       <p class="font-mono text-xs text-stone-500">{p?.external_id ? `ext: ${p.external_id}` : 'no external id'}</p>
+      <p class="mt-1 text-xs text-stone-400">Created {fmtDate(p?.created_at)}</p>
     </div>
   );
 

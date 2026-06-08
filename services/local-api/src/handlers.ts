@@ -509,7 +509,7 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
       // structurally by the compiler — can never match another tenant).
       const where = compileWhere(ctx.workspaceId, definition);
       const { rows } = await pool.query(
-        `SELECT p.id, p.external_id, p.email, p.email_status, p.attributes,
+        `SELECT p.id, p.external_id, p.email, p.email_status, p.created_at, p.attributes,
                 (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed
            FROM profiles p
            LEFT JOIN profile_features pf ON pf.profile_id = p.id
@@ -523,7 +523,7 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
 
     // Manual (no rule): the materialized membership rows.
     const { rows } = await pool.query(
-      `SELECT p.id, p.external_id, p.email, p.email_status, p.attributes,
+      `SELECT p.id, p.external_id, p.email, p.email_status, p.created_at, p.attributes,
               (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed
          FROM profiles p
          JOIN segment_memberships sm
@@ -538,7 +538,7 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
   // Explicit workspace_id = $1 scoping (the token's workspace), since this query
   // carries ORDER BY/LIMIT that scopedQuery's WHERE-rewriter cannot wrap.
   const { rows } = await pool.query(
-    `SELECT id, external_id, email, email_status, attributes,
+    `SELECT id, external_id, email, email_status, created_at, attributes,
             (attributes ->> 'unsubscribed' = 'true') AS unsubscribed
        FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200`,
     [ctx.workspaceId],
