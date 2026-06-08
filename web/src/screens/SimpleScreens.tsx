@@ -75,16 +75,16 @@ function fmtAttr(v: unknown): string {
 // A configurable column id: the built-in External ID, or an attribute key.
 const EXT_COL = 'external_id';
 const ATTR_PREFIX = 'attr:';
-const isAttrCol = (id: string) => id.startsWith(ATTR_PREFIX);
 const attrKeyOf = (id: string) => id.slice(ATTR_PREFIX.length);
-const attrColCount = (order: readonly string[]) => order.filter(isAttrCol).length;
 
 /** Persisted profile-table column config (per browser): the enabled columns, in order. */
 interface ColumnConfig {
   order: string[]; // e.g. ['external_id', 'attr:tier'] — order = display order
 }
 const COLS_KEY = 'cdp.profileColumns';
-const MAX_ATTR_COLS = 3;
+// Total configurable columns (External ID + attribute columns) share one budget,
+// so hiding External ID frees a slot for another attribute, and vice-versa.
+const MAX_COLS = 4;
 function loadCols(): ColumnConfig {
   try {
     const raw = globalThis.localStorage?.getItem(COLS_KEY);
@@ -94,7 +94,7 @@ function loadCols(): ColumnConfig {
       // Migrate the previous {showExtId, attrCols} shape.
       const order: string[] = [];
       if (c.showExtId !== false) order.push(EXT_COL);
-      for (const k of (c.attrCols ?? []).slice(0, MAX_ATTR_COLS)) order.push(`${ATTR_PREFIX}${k}`);
+      for (const k of (c.attrCols ?? []).slice(0, MAX_COLS)) order.push(`${ATTR_PREFIX}${k}`);
       return { order };
     }
   } catch {
@@ -193,7 +193,8 @@ export function ProfileExplorer() {
   const toggleCol = (id: string) =>
     setCols((c) => {
       if (c.order.includes(id)) return { order: c.order.filter((x) => x !== id) };
-      if (isAttrCol(id) && attrColCount(c.order) >= MAX_ATTR_COLS) return c;
+      if (c.order.length >= MAX_COLS) return c; // shared total-column budget
+
       return { order: [...c.order, id] };
     });
   const moveCol = (id: string, dir: -1 | 1) =>
@@ -411,7 +412,7 @@ export function ProfileExplorer() {
                     .map((id) => {
                     const on = enabledCol(id);
                     const isExt = id === EXT_COL;
-                    const atMax = !on && isAttrCol(id) && attrColCount(cols.order) >= MAX_ATTR_COLS;
+                    const atMax = !on && cols.order.length >= MAX_COLS;
                     return (
                       <div
                         data-testid="col-option"
@@ -461,7 +462,7 @@ export function ProfileExplorer() {
                     <p class="py-2 text-xs text-stone-400">No attributes yet.</p>
                   ) : null}
                 </div>
-                <p class="mt-2 text-[11px] text-stone-400">Up to {MAX_ATTR_COLS} attribute columns.</p>
+                <p class="mt-2 text-[11px] text-stone-400">Up to {MAX_COLS} columns (incl. External ID).</p>
               </div>
           ) : null}
         </div>
