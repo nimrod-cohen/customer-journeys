@@ -160,12 +160,16 @@ export function ProfileExplorer() {
     }
   }, [cols]);
   // Exhaustive list of attribute keys in the workspace (server DISTINCT), so the
-  // picker isn't limited to the loaded page.
-  useEffect(() => {
-    void api
+  // picker isn't limited to the loaded page. Reloadable so a newly-created
+  // profile's attribute keys appear in the picker without a page refresh.
+  const reloadAttrKeys = () =>
+    api
       .get<{ keys: string[] }>('/profiles/attribute-keys')
       .then((r) => setAllAttrKeys(r.keys))
       .catch(() => setAllAttrKeys([]));
+  useEffect(() => {
+    void reloadAttrKeys();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segmentId]);
 
   const enabledCol = (id: string) => cols.order.includes(id);
@@ -219,11 +223,13 @@ export function ProfileExplorer() {
     }
     try {
       await api.post('/profiles', { body: { email: newEmail.trim(), attributes } });
-      // Stay on the list: close the drawer and refresh so the new row appears.
+      // Stay on the list: close the drawer and refresh so the new row appears,
+      // and refresh the attribute-key picker (a new attribute may have been added).
       setAdding(false);
       const opts = segmentId ? { query: { segment_id: segmentId } } : undefined;
       const r = await api.get<{ profiles: Profile[] }>('/profiles', opts);
       setProfiles(r.profiles);
+      void reloadAttrKeys();
     } catch (e) {
       setAddError((e as { error?: string })?.error ?? 'could not create profile');
     } finally {
@@ -371,7 +377,12 @@ export function ProfileExplorer() {
           </Button>
           {colsOpen ? (
             <>
-              <div class="fixed inset-0 z-30" onClick={() => setColsOpen(false)} aria-hidden="true" />
+              <div
+                data-testid="columns-backdrop"
+                class="fixed inset-0 z-30"
+                onClick={() => setColsOpen(false)}
+                aria-hidden="true"
+              />
               <div
                 data-testid="columns-menu"
                 class="absolute right-0 z-40 mt-2 w-80 rounded-xl border border-stone-200 bg-white p-3 shadow-soft"

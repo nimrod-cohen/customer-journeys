@@ -104,12 +104,18 @@ test('manually add a profile (with attributes) via the drawer', async ({ page })
   await page.getByTestId('new-profile-drawer').waitFor();
   await page.getByTestId('new-profile-email').fill('walkin@acme.com');
   await page.getByTestId('new-attr-add').click();
-  await page.getByTestId('new-attr-key').fill('plan');
-  await page.getByTestId('new-attr-value').fill('pro');
+  await page.getByTestId('new-attr-key').fill('walksource'); // a brand-new attribute key
+  await page.getByTestId('new-attr-value').fill('storefront');
   await page.getByTestId('create-profile').click();
 
   // The drawer closes and we STAY on the list, where the new profile now appears.
   await expect(page.getByTestId('new-profile-drawer')).toHaveCount(0);
+
+  // The column picker is reactive: the new attribute key is now selectable.
+  await page.getByTestId('columns-button').click();
+  await expect(page.locator('[data-testid="col-option"][data-col="walksource"]')).toHaveCount(1);
+  await page.getByTestId('columns-backdrop').click(); // close the menu
+
   await page.getByTestId('profile-search').fill('walkin@acme.com');
   await expect(page.getByTestId('profile-row')).toHaveCount(1);
 
@@ -118,6 +124,6 @@ test('manually add a profile (with attributes) via the drawer', async ({ page })
   await page.getByTestId('profile-detail').waitFor();
   await expect(page.getByTestId('profile-email')).toContainText('walkin@acme.com');
   await page.getByTestId('tab-attributes').click();
-  await expect(page.getByTestId('attr-key').first()).toHaveValue('plan');
-  await expect(page.getByTestId('attr-value').first()).toHaveValue('pro');
+  await expect(page.getByTestId('attr-key').first()).toHaveValue('walksource');
+  await expect(page.getByTestId('attr-value').first()).toHaveValue('storefront');
 });
