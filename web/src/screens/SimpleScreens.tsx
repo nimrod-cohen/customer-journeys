@@ -174,6 +174,7 @@ export function ProfileExplorer() {
         <table class="w-full text-sm">
           <thead class="border-b border-stone-200 bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
             <tr>
+              <th class="w-8 px-2 py-2.5" />
               <th class="px-4 py-2.5 font-semibold">External ID</th>
               <th class="px-4 py-2.5 font-semibold">Email</th>
               <th class="px-4 py-2.5 font-semibold">Status</th>
@@ -188,13 +189,9 @@ export function ProfileExplorer() {
                 onClick={() => navigate(`/profiles/${p.id}`)}
                 class="cursor-pointer hover:bg-stone-50/70"
               >
+                <td class="px-2 py-2.5 text-center">{p.unsubscribed ? <UnsubscribedIcon /> : null}</td>
                 <td class="px-4 py-2.5 font-mono text-xs text-stone-600">{p.external_id}</td>
-                <td class="px-4 py-2.5 text-ink-900">
-                  <span class="inline-flex items-center gap-1.5">
-                    {p.email}
-                    {p.unsubscribed ? <UnsubscribedIcon /> : null}
-                  </span>
-                </td>
+                <td class="px-4 py-2.5 text-ink-900">{p.email}</td>
                 <td class="px-4 py-2.5">
                   <Badge tone={toneFor(p.email_status)}>{p.email_status}</Badge>
                 </td>
