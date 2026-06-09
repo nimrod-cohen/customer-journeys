@@ -291,7 +291,7 @@ function CompanyWorkspacePicker(): JSX.Element {
     <div ref={ref} data-testid="company-picker" class="space-y-2 px-2 pb-2">
       <div class="relative">
         <label class="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone-500">
-          Viewing company
+          Company
         </label>
         <button
           data-testid="company-current"
