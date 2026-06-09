@@ -163,7 +163,10 @@ export function AppShell(): JSX.Element {
       </aside>
 
       <main data-testid="app-body" class="flex-1 overflow-x-hidden px-8 py-8">
-        <div key={effectiveRoute} class="mx-auto max-w-6xl animate-fade-up">
+        {/* Key by route AND active workspace so switching company/workspace
+            remounts the screen and re-fetches its (now re-scoped) data, even when
+            the route is unchanged (e.g. switching while already on Dashboards). */}
+        <div key={`${effectiveRoute}:${session.workspaceId ?? ''}`} class="mx-auto max-w-6xl animate-fade-up">
           {screenFor(effectiveRoute)}
         </div>
       </main>

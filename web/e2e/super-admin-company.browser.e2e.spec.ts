@@ -28,6 +28,32 @@ test('super admin picks a company then a workspace, and sees its profiles', asyn
   await expect(page.getByTestId('company-current')).toContainText('Acme');
 });
 
+test('switching company re-scopes the main content (no stale data)', async ({ page }) => {
+  await loginAs(page, DEV_ADMIN);
+
+  // Enter Acme → Acme (A) and confirm its profile shows.
+  await page.getByTestId('company-current').click();
+  await page.getByTestId('company-search').fill('Acme');
+  await page.locator('[data-testid="company-option"]').first().click();
+  await page.getByTestId('admin-workspace-select').selectOption({ label: 'Acme (A)' });
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+  await page.getByTestId('profile-search').fill('a1@acme.com');
+  await expect(page.getByTestId('profile-row')).toHaveCount(1);
+
+  // Switch to Beta (one workspace → enters directly); the Profiles screen must
+  // re-scope: Beta's profile appears and Acme's is gone.
+  await page.getByTestId('company-current').click();
+  await page.getByTestId('company-search').fill('Beta');
+  await page.locator('[data-testid="company-option"]').first().click();
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+  await page.getByTestId('profile-search').fill('b1@beta.com');
+  await expect(page.getByTestId('profile-row')).toHaveCount(1);
+  await page.getByTestId('profile-search').fill('a1@acme.com');
+  await expect(page.getByTestId('profile-row')).toHaveCount(0);
+});
+
 test('super admin creates a company and moves a workspace into it', async ({ page }) => {
   await loginAs(page, DEV_ADMIN);
   await page.getByTestId('nav-admin').click();
