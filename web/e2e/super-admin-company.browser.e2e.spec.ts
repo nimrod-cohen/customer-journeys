@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
-import { DEV_ADMIN } from './seed.js';
+import { DEV_ADMIN, WS_B } from './seed.js';
 
 // §3A: a platform admin has no workspace membership, but picks a COMPANY from a
 // searchable selector, then a WORKSPACE within it — and then sees exactly what
@@ -26,4 +26,27 @@ test('super admin picks a company then a workspace, and sees its profiles', asyn
 
   // The picker reflects the company being viewed.
   await expect(page.getByTestId('company-current')).toContainText('Acme');
+});
+
+test('super admin creates a company and moves a workspace into it', async ({ page }) => {
+  await loginAs(page, DEV_ADMIN);
+  await page.getByTestId('nav-admin').click();
+  await page.getByTestId('system-admin-console').waitFor();
+
+  // Seeded companies are listed.
+  await expect(page.getByTestId('admin-company-name').filter({ hasText: /^Acme$/ })).toHaveCount(1);
+
+  // Create a new company.
+  await page.getByTestId('company-name').fill('Globex');
+  await page.getByTestId('create-company').click();
+  await expect(page.getByTestId('admin-company-name').filter({ hasText: /^Globex$/ })).toHaveCount(1);
+
+  // Move "Beta (B)" into Globex.
+  await page.locator(`[data-testid="assign-company-select"][data-ws="${WS_B}"]`).selectOption({ label: 'Globex' });
+
+  // The Globex company card now contains that workspace.
+  const globexCard = page
+    .locator('[data-testid="admin-company"]')
+    .filter({ has: page.getByTestId('admin-company-name').filter({ hasText: /^Globex$/ }) });
+  await expect(globexCard.getByText('Beta (B)')).toBeVisible();
 });

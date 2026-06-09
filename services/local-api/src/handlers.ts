@@ -1148,6 +1148,55 @@ export const adminListCompanies: Handler = async (ctx, pool) => {
   return ok({ companies: rows });
 };
 
+/** POST /admin/companies — create a company (platform admin; audited). */
+export const adminCreateCompany: Handler = async (ctx, pool, req) => {
+  const name = typeof asObject(req.body).name === 'string' ? String(asObject(req.body).name).trim() : '';
+  if (!name) return ok({ error: 'name required' }, 400);
+  const { rows } = await pool.query('INSERT INTO companies (name) VALUES ($1) RETURNING id, name, status', [name]);
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.create_company', { company_id: rows[0].id, name }),
+  );
+  return ok({ company: rows[0] }, 201);
+};
+
+/** PATCH /admin/companies/:id — rename a company (platform admin; audited). */
+export const adminRenameCompany: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const name = typeof asObject(req.body).name === 'string' ? String(asObject(req.body).name).trim() : '';
+  if (!name) return ok({ error: 'name required' }, 400);
+  const { rows } = await pool.query('UPDATE companies SET name = $2 WHERE id = $1 RETURNING id, name, status', [id, name]);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.rename_company', { company_id: id, name }),
+  );
+  return ok({ company: rows[0] });
+};
+
+/**
+ * PATCH /admin/workspaces/:id — move a workspace into a company (platform admin;
+ * audited). Reassigns the parent only; tenant data stays workspace-scoped.
+ */
+export const adminAssignWorkspaceCompany: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const companyId = typeof asObject(req.body).company_id === 'string' ? String(asObject(req.body).company_id) : '';
+  if (!companyId) return ok({ error: 'company_id required' }, 400);
+  const c = await pool.query('SELECT 1 FROM companies WHERE id = $1', [companyId]);
+  if (!c.rows[0]) return ok({ error: 'company not found' }, 404);
+  const { rows } = await pool.query(
+    'UPDATE workspaces SET company_id = $2 WHERE id = $1 RETURNING id, name, company_id',
+    [id, companyId],
+  );
+  if (!rows[0]) return ok({ error: 'workspace not found' }, 404);
+  await handleAdminAccess(
+    ctx,
+    id,
+    'admin.assign_workspace_company',
+    { workspace_id: id, company_id: companyId },
+    writeAuditEntry,
+  );
+  return ok({ workspace: rows[0] });
+};
+
 export const adminListWorkspaces: Handler = async (ctx, pool) => {
   const { rows } = await pool.query(
     'SELECT id, name, status, created_at FROM workspaces ORDER BY created_at',
@@ -1222,6 +1271,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /suppressions': listSuppressions,
   'GET /billing/usage': billingUsage,
   'GET /admin/companies': adminListCompanies,
+  'POST /admin/companies': adminCreateCompany,
+  'PATCH /admin/companies/:id': adminRenameCompany,
+  'PATCH /admin/workspaces/:id': adminAssignWorkspaceCompany,
   'GET /admin/workspaces': adminListWorkspaces,
   'GET /admin/workspaces/:id': adminGetWorkspace,
 };

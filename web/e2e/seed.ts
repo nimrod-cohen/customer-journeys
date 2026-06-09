@@ -188,8 +188,11 @@ export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void>
     await pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
   }
-  // Companies are the parent of workspaces — delete after the workspaces (FK).
-  await pool.query('DELETE FROM companies WHERE id = ANY($1::uuid[])', [[CO_ACME, CO_BETA]]);
+  // Companies are the parent of workspaces — after the seed's workspaces are gone
+  // (loop above), drop any company with no remaining workspaces. This clears the
+  // seeded companies, the admin-console test's 'Globex', AND any stale companies
+  // left by an earlier migration backfill — keeping the e2e db clean.
+  await pool.query('DELETE FROM companies WHERE id NOT IN (SELECT company_id FROM workspaces)');
   await pool.query('DELETE FROM admin_audit_log WHERE user_id = $1', [USER_ADMIN]);
   await pool.query('DELETE FROM platform_admins WHERE user_id = $1', [USER_ADMIN]);
 }

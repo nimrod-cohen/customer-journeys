@@ -48,6 +48,7 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
       await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
     }
+    await world.pool.query("DELETE FROM companies WHERE name = 'NewCo'");
   }
 
   async function auditCount(): Promise<number> {
@@ -108,6 +109,33 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
 
   it('a non-admin member is 403 on /admin/companies', async () => {
     const r = await call(world.env, 'GET', '/admin/companies', { token: tokenFor(MEMBER, WS_A) });
+    expect(r.status).toBe(403);
+  });
+
+  it('creates a company and reassigns a workspace into it (platform admin)', async () => {
+    const t = tokenFor(ADMIN, WS_A);
+    const create = await call(world.env, 'POST', '/admin/companies', { token: t, body: { name: 'NewCo' } });
+    expect(create.status).toBe(201);
+    const companyId = (create.body as { company: { id: string } }).company.id;
+
+    const assign = await call(world.env, 'PATCH', `/admin/workspaces/${WS_B}`, {
+      token: t,
+      body: { company_id: companyId },
+    });
+    expect(assign.status).toBe(200);
+
+    const { rows } = await world.pool.query<{ company_id: string }>(
+      'SELECT company_id FROM workspaces WHERE id = $1',
+      [WS_B],
+    );
+    expect(rows[0]?.company_id).toBe(companyId);
+  });
+
+  it('a non-admin member is 403 creating a company', async () => {
+    const r = await call(world.env, 'POST', '/admin/companies', {
+      token: tokenFor(MEMBER, WS_A),
+      body: { name: 'Nope' },
+    });
     expect(r.status).toBe(403);
   });
 });
