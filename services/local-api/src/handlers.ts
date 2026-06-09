@@ -168,6 +168,20 @@ export const addMember: Handler = async (ctx, pool, req) => {
   if (!userId) {
     return ok({ error: email ? `no user with email ${email}` : 'email required' }, 400);
   }
+  // A user belongs to ONE company: reject adding them here if they already have a
+  // membership in a workspace owned by a DIFFERENT company than this workspace's.
+  const conflict = await pool.query(
+    `SELECT 1
+       FROM workspace_users wu
+       JOIN workspaces w ON w.id = wu.workspace_id
+      WHERE wu.user_id = $1
+        AND w.company_id <> (SELECT company_id FROM workspaces WHERE id = $2)
+      LIMIT 1`,
+    [userId, ctx.workspaceId],
+  );
+  if ((conflict.rowCount ?? 0) > 0) {
+    return ok({ error: 'user already belongs to another company' }, 409);
+  }
   await pool.query(
     `INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role`,

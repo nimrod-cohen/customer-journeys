@@ -27,9 +27,13 @@ export const TPL_A = '0e2efe00-0000-4000-8000-0000000000c1';
 export const SEG_A = '0e2efe00-0000-4000-8000-0000000000c2';
 export const SEG_B = '0e2efe00-0000-4000-8000-0000000000c3';
 export const SEG_DYN_A = '0e2efe00-0000-4000-8000-0000000000c4'; // dynamic: attributes.tier = vip
+export const SEG_A2 = '0e2efe00-0000-4000-8000-0000000000c5'; // segment in the 2nd Acme workspace
 
-/** A-only and B-only segment names — asserted present/absent after switching. */
+/** Segment names — asserted present/absent after switching workspaces. WS_A and
+ * WS_A2 are BOTH in the Acme company (a user belongs to ONE company, which may
+ * own several workspaces), so the switch test moves between two Acme workspaces. */
 export const SEG_A_NAME = 'Manual VIPs';
+export const SEG_A2_NAME = 'Acme West Club';
 export const SEG_B_NAME = 'Beta Loyalty Club';
 /** A dynamic (rule-based) segment in A — has NO materialized memberships. */
 export const SEG_DYN_A_NAME = 'VIP (dynamic)';
@@ -59,14 +63,15 @@ export async function seed(): Promise<void> {
         company,
       ]);
     }
-    // Memberships.
+    // Memberships. The multi-workspace user belongs to ONE company (Acme) and is
+    // an owner of BOTH its workspaces (WS_A + WS_A2) — never another company's.
     await pool.query(
       "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')",
       [WS_A, USER_MULTI],
     );
     await pool.query(
       "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')",
-      [WS_B, USER_MULTI],
+      [WS_A2, USER_MULTI],
     );
     await pool.query(
       "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'marketer')",
@@ -83,7 +88,13 @@ export async function seed(): Promise<void> {
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
       [SEG_A, WS_A, SEG_A_NAME, 'manual'],
     );
-    // A B-only segment so switching A→B surfaces B's data and drops A's.
+    // A segment in the 2nd Acme workspace so switching WS_A→WS_A2 surfaces its
+    // data and drops WS_A's (the same-company switch).
+    await pool.query(
+      'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
+      [SEG_A2, WS_A2, SEG_A2_NAME, 'manual'],
+    );
+    // A Beta-only segment so the Beta company/workspace isn't empty (admin view).
     await pool.query(
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
       [SEG_B, WS_B, SEG_B_NAME, 'manual'],
