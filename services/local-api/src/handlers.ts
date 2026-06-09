@@ -111,10 +111,19 @@ export const getMe: Handler = async (ctx, pool) => {
       ORDER BY w.name`,
     [ctx.userId ?? ''],
   );
+  // Resolve the ACTIVE workspace's name even when it isn't one of the user's
+  // memberships (a platform admin viewing into a company) — so the UI can show
+  // the company name, never a raw id.
+  let workspaceName: string | null = null;
+  if (ctx.workspaceId) {
+    const wn = await pool.query('SELECT name FROM workspaces WHERE id = $1', [ctx.workspaceId]);
+    workspaceName = wn.rows[0]?.name ?? null;
+  }
   return ok({
     sub: ctx.userId,
     email: emailForUser(ctx.userId),
     workspace_id: ctx.workspaceId || null,
+    workspace_name: workspaceName,
     role: ctx.role ?? null,
     is_platform_admin: ctx.isPlatformAdmin,
     memberships: rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role, name: r.name })),

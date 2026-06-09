@@ -111,7 +111,11 @@ export function AppShell(): JSX.Element {
           </div>
         </div>
 
-        {session.isPlatformAdmin ? <CompanyViewPicker /> : <WorkspaceSwitcher />}
+        {/* Platform admins choose the company from a searchable selector; the
+            standard workspace switcher then follows (what the company admin sees)
+            once a company is active. Everyone else just gets the switcher. */}
+        {session.isPlatformAdmin ? <CompanyViewPicker /> : null}
+        {!session.isPlatformAdmin || session.workspaceId ? <WorkspaceSwitcher /> : null}
 
         <nav class="mt-1 flex flex-1 flex-col gap-0.5 overflow-y-auto">
           {nav.map((item) => {
@@ -198,7 +202,7 @@ function WorkspaceSwitcher(): JSX.Element {
           ))}
           {adminExtra ? (
             <option value={session.workspaceId ?? ''} class="text-ink-900">
-              {shortWs(session.workspaceId ?? '')} · admin
+              {session.workspaceName ?? shortWs(session.workspaceId ?? '')} · admin
             </option>
           ) : null}
         </select>

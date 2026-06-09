@@ -21,6 +21,8 @@ export interface Session {
   /** The signed-in user's email (shown instead of the internal user id). */
   readonly email: string | null;
   readonly workspaceId: string | null;
+  /** Human-friendly name of the ACTIVE workspace (even if not a membership). */
+  readonly workspaceName: string | null;
   /** The effective role for capability checks: workspace role or 'system-admin'. */
   readonly role: Role | null;
   readonly isPlatformAdmin: boolean;
@@ -32,6 +34,7 @@ const EMPTY: Session = {
   sub: null,
   email: null,
   workspaceId: null,
+  workspaceName: null,
   role: null,
   isPlatformAdmin: false,
   memberships: [],
@@ -105,6 +108,7 @@ interface MeResponse {
   sub: string;
   email: string;
   workspace_id: string;
+  workspace_name: string | null;
   role: WorkspaceRole | null;
   is_platform_admin: boolean;
   memberships: Membership[];
@@ -137,6 +141,7 @@ export async function refreshMe(): Promise<void> {
     sub: me.sub,
     email: me.email,
     workspaceId: me.workspace_id,
+    workspaceName: me.workspace_name ?? null,
     role: effectiveRole(me.role, me.is_platform_admin),
     isPlatformAdmin: me.is_platform_admin,
     memberships: me.memberships,

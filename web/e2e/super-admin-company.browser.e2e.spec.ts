@@ -10,9 +10,15 @@ test('super admin picks a company from the searchable selector and sees its prof
 
   // The platform-admin company picker is in the sidebar (not the membership switcher).
   await page.getByTestId('company-picker').waitFor();
+  // Before a company is picked there's no workspace switcher yet.
+  await expect(page.getByTestId('workspace-switcher')).toHaveCount(0);
   await page.getByTestId('company-current').click();
   await page.getByTestId('company-search').fill('Acme');
   await page.locator('[data-testid="company-option"]').first().click();
+
+  // The standard workspace switcher now follows, naming the active company.
+  await expect(page.getByTestId('workspace-switcher')).toBeVisible();
+  await expect(page.getByTestId('workspace-select')).toContainText('Acme');
 
   // Now scoped into Acme — its profiles are visible (a company-admin view).
   await page.getByTestId('nav-profiles').click();
