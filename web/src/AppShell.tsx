@@ -3,9 +3,9 @@
 // the routed screen body. The Nav shows only what the active role permits; the
 // switcher re-scopes the whole app by swapping the token. (Visual redesign:
 // Tailwind, dark "ink" sidebar; all data-testid attributes preserved.)
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useStore } from './store/store.js';
-import { sessionStore, switchWorkspace, logout } from './store/session.js';
+import { sessionStore, switchWorkspace, logout, api } from './store/session.js';
 import { routeStore, navigate } from './router.js';
 import { buildNav } from './nav/nav.js';
 import { ICONS } from './ui/icons.js';
@@ -111,7 +111,7 @@ export function AppShell(): JSX.Element {
           </div>
         </div>
 
-        <WorkspaceSwitcher />
+        {session.isPlatformAdmin ? <CompanyViewPicker /> : <WorkspaceSwitcher />}
 
         <nav class="mt-1 flex flex-1 flex-col gap-0.5 overflow-y-auto">
           {nav.map((item) => {
@@ -212,6 +212,103 @@ function WorkspaceSwitcher(): JSX.Element {
           <path d="M6 8l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </div>
+    </div>
+  );
+}
+
+interface AdminWorkspace {
+  id: string;
+  name: string;
+  status: string;
+}
+
+/**
+ * Platform-admin company selector: a SEARCHABLE list of ALL workspaces (from
+ * /admin/workspaces, audited). Picking one switches the active workspace so the
+ * super-admin sees exactly what that company's admin sees (the system-admin role
+ * carries every workspace capability, so all company screens are available).
+ */
+function CompanyViewPicker(): JSX.Element {
+  const session = useStore(sessionStore);
+  const [companies, setCompanies] = useState<AdminWorkspace[]>([]);
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    void api
+      .get<{ workspaces: AdminWorkspace[] }>('/admin/workspaces')
+      .then((r) => setCompanies(r.workspaces))
+      .catch(() => setCompanies([]));
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const current = companies.find((c) => c.id === session.workspaceId);
+  const needle = q.trim().toLowerCase();
+  const filtered = needle ? companies.filter((c) => c.name.toLowerCase().includes(needle)) : companies;
+  const choose = (id: string) => {
+    setOpen(false);
+    setQ('');
+    void switchWorkspace(id).then(() => navigate('/dashboards'));
+  };
+
+  return (
+    <div ref={ref} data-testid="company-picker" class="relative px-2 pb-2">
+      <label class="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+        Viewing company
+      </label>
+      <button
+        data-testid="company-current"
+        onClick={() => setOpen((v) => !v)}
+        class="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-left text-sm font-medium text-white outline-none transition hover:bg-white/10 focus:border-brand-400 focus:ring-2 focus:ring-brand-400/30"
+      >
+        <span class="truncate">{current?.name ?? 'Select a company…'}</span>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" class="ml-2 h-4 w-4 shrink-0 text-stone-400">
+          <path d="M6 8l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          data-testid="company-menu"
+          class="absolute left-2 right-2 z-40 mt-1 rounded-lg border border-stone-200 bg-white p-2 shadow-soft"
+        >
+          <input
+            data-testid="company-search"
+            type="search"
+            autofocus
+            value={q}
+            onInput={(e: Event) => setQ((e.target as HTMLInputElement).value)}
+            placeholder="Search companies…"
+            class="w-full rounded-md border border-stone-200 px-2.5 py-1.5 text-sm text-ink-900 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-400/30"
+          />
+          <div class="mt-1 max-h-64 overflow-y-auto">
+            {filtered.map((c) => (
+              <button
+                key={c.id}
+                data-testid="company-option"
+                data-id={c.id}
+                onClick={() => choose(c.id)}
+                class="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm text-ink-800 hover:bg-stone-100"
+              >
+                <span class="truncate">{c.name}</span>
+                {c.id === session.workspaceId ? (
+                  <span class="shrink-0 text-xs font-medium text-brand-600">current</span>
+                ) : (
+                  <span class="shrink-0 text-[10px] uppercase tracking-wide text-stone-400">{c.status}</span>
+                )}
+              </button>
+            ))}
+            {filtered.length === 0 ? <p class="px-2 py-2 text-xs text-stone-400">No companies match.</p> : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

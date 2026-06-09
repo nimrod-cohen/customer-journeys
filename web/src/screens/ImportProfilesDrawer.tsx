@@ -130,6 +130,23 @@ export function ImportProfilesDrawer({
     setError('');
   };
 
+  // Offer a ready-made example so the expected shape is one click away.
+  const SAMPLE_CSV =
+    'email,external_id,tier,plan,lifetime_value,vip\n' +
+    'jane@acme.com,CRM-001,gold,pro,1250.50,true\n' +
+    'john@acme.com,,silver,,0,false\n';
+  const downloadSample = () => {
+    const blob = new Blob([SAMPLE_CSV], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'profiles-sample.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const onFile = (e: Event) => {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) return;
@@ -190,6 +207,20 @@ export function ImportProfilesDrawer({
       }
     >
       <div class="space-y-4">
+        <div class="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2">
+          <p class="text-xs text-stone-500">
+            First row must be headers including an <code>email</code> column.
+          </p>
+          <button
+            data-testid="import-sample"
+            type="button"
+            onClick={downloadSample}
+            class="shrink-0 text-xs font-medium text-brand-600 underline-offset-2 hover:underline"
+          >
+            Download sample CSV
+          </button>
+        </div>
+
         <div>
           <span class="label">Upload a .csv file</span>
           <input

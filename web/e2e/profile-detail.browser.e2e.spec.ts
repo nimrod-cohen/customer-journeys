@@ -151,6 +151,14 @@ test('bulk import profiles from a CSV', async ({ page }) => {
 
   await page.getByTestId('import-csv').click();
   await page.getByTestId('import-drawer').waitFor();
+
+  // A sample CSV is downloadable from the drawer.
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('import-sample').click(),
+  ]);
+  expect(download.suggestedFilename()).toBe('profiles-sample.csv');
+
   await page.getByTestId('import-textarea').fill('email,tier,plan\nbulk1@acme.com,gold,pro\nbulk2@acme.com,silver,');
   await expect(page.getByTestId('import-parse-status')).toContainText('2 profiles ready');
   await page.getByTestId('import-submit').click();

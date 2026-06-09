@@ -10,4 +10,6 @@ test('Help is in the nav and explains email status vs consent vs suppression', a
   await page.getByTestId('help').waitFor();
   await expect(page.getByTestId('help')).toContainText('Email status, consent');
   await expect(page.getByTestId('help')).toContainText('soft-bounce');
+  // The CSV-import behaviour is documented too.
+  await expect(page.getByTestId('help-import')).toContainText('import an existing profile');
 });

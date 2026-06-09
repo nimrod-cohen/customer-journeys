@@ -153,6 +153,48 @@ export function Help() {
           “delivery health” view is a natural next addition if you want it visible in-app.
         </p>
       </Card>
+
+      {/* CSV import: existing profiles */}
+      <Card data-testid="help-import" class="mt-6 p-6">
+        <h2 class="text-lg font-bold text-ink-950">What happens if I import an existing profile?</h2>
+        <p class="mt-2 text-sm text-stone-600">
+          Bulk CSV import (<b>Profiles → Import CSV</b>) is an <b>upsert</b> keyed on{' '}
+          <Code>email</Code>: a row whose email already exists is <b>not</b> rejected and does{' '}
+          <b>not</b> create a duplicate — it’s counted as <b>updated</b> (not “created”) in the
+          result summary. This is deliberately different from the single <b>New profile</b> form,
+          which treats a duplicate email as a conflict; bulk import assumes you’re{' '}
+          <i>refreshing / enriching</i>, so it merges. For an existing email:
+        </p>
+        <ul class="mt-3 space-y-1.5 text-sm text-stone-700">
+          <li>
+            • <b>Attributes are shallow-merged</b> (<Code>existing || csv</Code>): a column in the
+            CSV overwrites the same-named attribute; attributes <b>not</b> in the CSV are left
+            untouched. Importing <Code>email,tier</Code> changes only <Code>tier</Code>.
+          </li>
+          <li>
+            • <Code>unsubscribed</Code> is <b>preserved</b> unless your CSV has an explicit{' '}
+            <Code>unsubscribed</Code> column — a re-import won’t silently re-subscribe someone who
+            opted out.
+          </li>
+          <li>
+            • <Code>external_id</Code> is set only if the CSV supplies a non-empty one; it won’t wipe
+            an existing value.
+          </li>
+          <li>
+            • <Code>email_status</Code>, suppressions, events, segment memberships and rolling
+            features are <b>not</b> touched — only <Code>attributes</Code> / <Code>external_id</Code>{' '}
+            / <Code>updated_at</Code>.
+          </li>
+        </ul>
+        <p class="mt-3 text-sm text-stone-500">
+          Two caveats: the merge is <b>shallow</b> — a JSON-object attribute value is replaced
+          wholesale, not deep-merged; and “existing” is per-workspace and{' '}
+          <b>case-normalised</b> by the workspace’s lowercase-emails policy, so{' '}
+          <Code>Jane@Acme.com</Code> and <Code>jane@acme.com</Code> are the same profile when that
+          policy is on. The mental model: bulk import = <b>“create or enrich”</b>, never
+          overwrite-the-whole-record and never duplicate.
+        </p>
+      </Card>
     </section>
   );
 }
