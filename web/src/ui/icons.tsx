@@ -50,6 +50,12 @@ export const ICONS: Record<string, JSX.Element> = {
     </I>
   ),
   billing: <I d="M3 7h18v10H3V7Zm0 4h18M7 15h3" />,
+  company: (
+    <I>
+      <path d="M3 21h18M5 21V6l7-3 7 3v15" />
+      <path d="M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01" />
+    </I>
+  ),
   settings: (
     <I>
       <circle cx="12" cy="12" r="3" />

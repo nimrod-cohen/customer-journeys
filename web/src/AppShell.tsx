@@ -14,6 +14,7 @@ import { SegmentsList } from './screens/SegmentsList.js';
 import { BroadcastComposer } from './screens/BroadcastComposer.js';
 import { CampaignBuilder } from './screens/CampaignBuilder.js';
 import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
+import { CompanySettings } from './screens/CompanySettings.js';
 import { OnboardingWizard } from './screens/OnboardingWizard.js';
 import { SystemAdminConsole } from './screens/SystemAdminConsole.js';
 import {
@@ -60,6 +61,8 @@ function screenFor(path: string): JSX.Element {
       return <BillingUsageView />;
     case '/settings':
       return <WorkspaceSettings />;
+    case '/company':
+      return <CompanySettings />;
     case '/onboarding':
       return <OnboardingWizard />;
     case '/admin':

@@ -2,10 +2,10 @@ import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_ADMIN, DEV_OWNER, WS_B } from './seed.js';
 
-test('an owner adds a workspace to their company from Workspace settings', async ({ page }) => {
+test('an owner adds a workspace to their company from Company settings', async ({ page }) => {
   await loginAs(page, DEV_OWNER);
-  await page.getByTestId('nav-settings').click();
-  await page.getByTestId('workspace-settings').waitFor();
+  await page.getByTestId('nav-company').click();
+  await page.getByTestId('company-settings').waitFor();
 
   // Owner starts in Acme, which already owns two workspaces (they're owner of both).
   const rows = page.getByTestId('ws-row');

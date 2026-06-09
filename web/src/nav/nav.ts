@@ -27,6 +27,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'profiles', label: 'Profiles', path: '/profiles', capability: 'manage_content' },
   { id: 'suppressions', label: 'Suppressions', path: '/suppressions', capability: 'manage_content' },
   { id: 'billing', label: 'Billing & usage', path: '/billing', capability: 'view_billing' },
+  { id: 'company', label: 'Company settings', path: '/company', capability: 'manage_workspace_users' },
   { id: 'settings', label: 'Workspace settings', path: '/settings', capability: 'manage_workspace_users' },
   { id: 'onboarding', label: 'Domain onboarding', path: '/onboarding', capability: 'manage_sending_domain' },
   { id: 'admin', label: 'System admin', path: '/admin', capability: 'view_all_workspaces' },
