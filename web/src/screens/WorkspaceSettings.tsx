@@ -32,6 +32,21 @@ export function WorkspaceSettings() {
   const [delBusy, setDelBusy] = useState(false);
   const [delErr, setDelErr] = useState('');
 
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState('');
+  const saveRename = async (id: string) => {
+    const name = renameText.trim();
+    if (!name) return;
+    setWsError('');
+    try {
+      await api.patch(`/workspaces/${id}`, { body: { name } });
+      setRenameId(null);
+      await refreshMe();
+    } catch (e) {
+      setWsError((e as { error?: string })?.error ?? 'could not rename workspace');
+    }
+  };
+
   const deleteWorkspace = async () => {
     if (!delTarget) return;
     setDelBusy(true);
@@ -208,41 +223,72 @@ export function WorkspaceSettings() {
             <li
               data-testid="ws-row"
               key={m.workspaceId}
-              class="flex items-center justify-between px-3 py-2 text-sm"
+              class="flex items-center justify-between gap-2 px-3 py-2 text-sm"
             >
-              <span class="text-ink-900">
-                {m.name ?? m.workspaceId}
-                {m.workspaceId === session.workspaceId ? (
-                  <span class="ml-2 text-[11px] uppercase tracking-wide text-brand-600">active</span>
-                ) : null}
-              </span>
-              {m.workspaceId !== session.workspaceId ? (
-                <span class="flex items-center gap-1">
-                  <Button
-                    data-testid="ws-open"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void switchWorkspace(m.workspaceId)}
-                  >
-                    Open
+              {renameId === m.workspaceId ? (
+                <span class="flex flex-1 items-center gap-2">
+                  <Input
+                    data-testid="rename-input"
+                    class="max-w-xs"
+                    value={renameText}
+                    onInput={(e: Event) => setRenameText((e.target as HTMLInputElement).value)}
+                  />
+                  <Button data-testid="rename-save" size="sm" onClick={() => void saveRename(m.workspaceId)}>
+                    Save
                   </Button>
-                  <Button
-                    data-testid="delete-workspace"
-                    data-ws={m.workspaceId}
-                    variant="ghost"
-                    size="sm"
-                    class="text-rose-600 hover:bg-rose-50"
-                    onClick={() => {
-                      setDelTarget({ id: m.workspaceId, name: m.name ?? m.workspaceId });
-                      setDelConfirm('');
-                      setDelErr('');
-                    }}
-                  >
-                    Delete
+                  <Button variant="ghost" size="sm" onClick={() => setRenameId(null)}>
+                    Cancel
                   </Button>
                 </span>
               ) : (
-                <span class="text-[11px] text-stone-400">switch away to delete</span>
+                <>
+                  <span class="text-ink-900">
+                    {m.name ?? m.workspaceId}
+                    {m.workspaceId === session.workspaceId ? (
+                      <span class="ml-2 text-[11px] uppercase tracking-wide text-brand-600">active</span>
+                    ) : null}
+                  </span>
+                  <span class="flex items-center gap-1">
+                    <Button
+                      data-testid="rename-workspace"
+                      data-ws={m.workspaceId}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setRenameId(m.workspaceId);
+                        setRenameText(m.name ?? '');
+                      }}
+                    >
+                      Rename
+                    </Button>
+                    {m.workspaceId !== session.workspaceId ? (
+                      <>
+                        <Button
+                          data-testid="ws-open"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void switchWorkspace(m.workspaceId)}
+                        >
+                          Open
+                        </Button>
+                        <Button
+                          data-testid="delete-workspace"
+                          data-ws={m.workspaceId}
+                          variant="ghost"
+                          size="sm"
+                          class="text-rose-600 hover:bg-rose-50"
+                          onClick={() => {
+                            setDelTarget({ id: m.workspaceId, name: m.name ?? m.workspaceId });
+                            setDelConfirm('');
+                            setDelErr('');
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </>
+                    ) : null}
+                  </span>
+                </>
               )}
             </li>
           ))}

@@ -1215,25 +1215,31 @@ export const adminRenameCompany: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * PATCH /admin/workspaces/:id — move a workspace into a company (platform admin;
- * audited). Reassigns the parent only; tenant data stays workspace-scoped.
+ * PATCH /admin/workspaces/:id — platform admin updates a workspace: move it into
+ * a company (`company_id`) and/or rename it (`name`). Audited. Reassigns/renames
+ * only; tenant data stays workspace-scoped.
  */
-export const adminAssignWorkspaceCompany: Handler = async (ctx, pool, req) => {
+export const adminUpdateWorkspace: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  const companyId = typeof asObject(req.body).company_id === 'string' ? String(asObject(req.body).company_id) : '';
-  if (!companyId) return ok({ error: 'company_id required' }, 400);
-  const c = await pool.query('SELECT 1 FROM companies WHERE id = $1', [companyId]);
-  if (!c.rows[0]) return ok({ error: 'company not found' }, 404);
+  const b = asObject(req.body);
+  const companyId = typeof b.company_id === 'string' ? b.company_id : '';
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  if (!companyId && !name) return ok({ error: 'name or company_id required' }, 400);
+  if (companyId) {
+    const c = await pool.query('SELECT 1 FROM companies WHERE id = $1', [companyId]);
+    if (!c.rows[0]) return ok({ error: 'company not found' }, 404);
+  }
   const { rows } = await pool.query(
-    'UPDATE workspaces SET company_id = $2 WHERE id = $1 RETURNING id, name, company_id',
-    [id, companyId],
+    `UPDATE workspaces SET company_id = COALESCE($2, company_id), name = COALESCE($3, name)
+       WHERE id = $1 RETURNING id, name, company_id`,
+    [id, companyId || null, name || null],
   );
   if (!rows[0]) return ok({ error: 'workspace not found' }, 404);
   await handleAdminAccess(
     ctx,
     id,
-    'admin.assign_workspace_company',
-    { workspace_id: id, company_id: companyId },
+    'admin.update_workspace',
+    { workspace_id: id, ...(companyId ? { company_id: companyId } : {}), ...(name ? { name } : {}) },
     writeAuditEntry,
   );
   return ok({ workspace: rows[0] });
@@ -1279,6 +1285,26 @@ async function purgeWorkspace(pool: Pool, id: string): Promise<void> {
   }
   client.release();
 }
+
+/**
+ * PATCH /workspaces/:id — an OWNER renames a workspace IN THEIR OWN company.
+ */
+export const renameWorkspace: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const name = typeof asObject(req.body).name === 'string' ? String(asObject(req.body).name).trim() : '';
+  if (!name) return ok({ error: 'name required' }, 400);
+  const w = await pool.query<{ same_company: boolean }>(
+    `SELECT (company_id = (SELECT company_id FROM workspaces WHERE id = $2)) AS same_company
+       FROM workspaces WHERE id = $1`,
+    [id, ctx.workspaceId],
+  );
+  if (!w.rows[0] || !w.rows[0].same_company) return ok({ error: 'not found' }, 404);
+  const { rows } = await pool.query('UPDATE workspaces SET name = $2 WHERE id = $1 RETURNING id, name, status', [
+    id,
+    name,
+  ]);
+  return ok({ workspace: rows[0] });
+};
 
 /**
  * DELETE /workspaces/:id — an OWNER (company admin) permanently deletes a
@@ -1366,6 +1392,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /me': getMe,
   'GET /workspace/members': listMembers,
   'POST /workspaces': createWorkspace,
+  'PATCH /workspaces/:id': renameWorkspace,
   'DELETE /workspaces/:id': deleteWorkspace,
   'POST /workspace/members': addMember,
   'PATCH /workspace/members': updateMember,
@@ -1406,7 +1433,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /admin/companies': adminListCompanies,
   'POST /admin/companies': adminCreateCompany,
   'PATCH /admin/companies/:id': adminRenameCompany,
-  'PATCH /admin/workspaces/:id': adminAssignWorkspaceCompany,
+  'PATCH /admin/workspaces/:id': adminUpdateWorkspace,
   'DELETE /admin/workspaces/:id': adminDeleteWorkspace,
   'GET /admin/workspaces': adminListWorkspaces,
   'GET /admin/workspaces/:id': adminGetWorkspace,

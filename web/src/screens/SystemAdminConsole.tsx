@@ -30,6 +30,20 @@ export function SystemAdminConsole() {
   const [confirmText, setConfirmText] = useState('');
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState('');
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState('');
+  const saveRename = async (id: string) => {
+    const name = renameText.trim();
+    if (!name) return;
+    setErr('');
+    try {
+      await api.patch(`/admin/workspaces/${id}`, { body: { name } });
+      setRenameId(null);
+      await load();
+    } catch (e) {
+      setErr((e as { error?: string })?.error ?? 'could not rename workspace');
+    }
+  };
 
   const load = () => api.get<{ companies: AdminCompany[] }>('/admin/companies').then((r) => setCompanies(r.companies));
   useEffect(() => {
@@ -124,7 +138,26 @@ export function SystemAdminConsole() {
                 <tbody class="divide-y divide-stone-100">
                   {c.workspaces.map((w) => (
                     <tr data-testid="admin-workspace-row" key={w.id} class="hover:bg-stone-50/70">
-                      <td class="px-4 py-2.5 font-medium text-ink-900">{w.name}</td>
+                      <td class="px-4 py-2.5 font-medium text-ink-900">
+                        {renameId === w.id ? (
+                          <span class="flex items-center gap-2">
+                            <Input
+                              data-testid="rename-input"
+                              class="max-w-[12rem]"
+                              value={renameText}
+                              onInput={(e: Event) => setRenameText((e.target as HTMLInputElement).value)}
+                            />
+                            <Button data-testid="rename-save" size="sm" onClick={() => void saveRename(w.id)}>
+                              Save
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => setRenameId(null)}>
+                              Cancel
+                            </Button>
+                          </span>
+                        ) : (
+                          w.name
+                        )}
+                      </td>
                       <td class="px-4 py-2.5">
                         <Badge tone={toneFor(w.status)}>{w.status}</Badge>
                       </td>
@@ -144,6 +177,18 @@ export function SystemAdminConsole() {
                         </Select>
                       </td>
                       <td class="px-4 py-2.5 text-right">
+                        <Button
+                          data-testid="rename-workspace"
+                          data-ws={w.id}
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setRenameId(w.id);
+                            setRenameText(w.name);
+                          }}
+                        >
+                          Rename
+                        </Button>
                         <Button
                           data-testid="admin-open-workspace"
                           variant="ghost"

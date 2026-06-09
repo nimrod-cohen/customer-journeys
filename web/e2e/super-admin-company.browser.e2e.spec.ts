@@ -20,13 +20,20 @@ test('an owner adds a workspace to their company from Workspace settings', async
   // It's now selectable in the sidebar workspace switcher too.
   await expect(page.getByTestId('workspace-select')).toContainText('Acme – North');
 
-  // The owner can delete that workspace (type-the-name confirm); it's gone after.
+  // The owner can RENAME that workspace inline.
   const northRow = page.getByTestId('ws-row').filter({ hasText: 'Acme – North' });
-  await northRow.getByTestId('delete-workspace').click();
+  await northRow.getByTestId('rename-workspace').click();
+  await page.getByTestId('rename-input').fill('Acme – Northwest');
+  await page.getByTestId('rename-save').click();
+  await expect(page.getByTestId('company-workspaces')).toContainText('Acme – Northwest');
+
+  // …and delete it (type-the-name confirm uses the NEW name); gone after.
+  const nwRow = page.getByTestId('ws-row').filter({ hasText: 'Acme – Northwest' });
+  await nwRow.getByTestId('delete-workspace').click();
   await page.getByTestId('delete-workspace-modal').waitFor();
   const confirmBtn = page.getByTestId('confirm-delete-workspace');
   await expect(confirmBtn).toBeDisabled();
-  await page.getByTestId('delete-confirm-input').fill('Acme – North');
+  await page.getByTestId('delete-confirm-input').fill('Acme – Northwest');
   await confirmBtn.click();
   await expect(page.getByTestId('ws-row')).toHaveCount(2);
   await expect(page.getByTestId('company-workspaces')).not.toContainText('Acme – North');
