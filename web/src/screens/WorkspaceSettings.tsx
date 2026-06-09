@@ -3,7 +3,8 @@
 // status links to the OnboardingWizard. All scoped server-side to the token.
 // (Visual redesign; all data-testid attributes preserved.)
 import { useEffect, useState } from 'preact/hooks';
-import { api } from '../store/session.js';
+import { useStore } from '../store/store.js';
+import { api, sessionStore, refreshMe, switchWorkspace } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader, Select } from '../ui/kit.js';
 
@@ -16,11 +17,30 @@ interface Member {
 const ROLES = ['owner', 'marketer', 'accounting'];
 
 export function WorkspaceSettings() {
+  const session = useStore(sessionStore);
   const [members, setMembers] = useState<Member[]>([]);
   const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState('marketer');
   const [addError, setAddError] = useState('');
   const [lowercaseEmails, setLowercaseEmails] = useState(true);
+  const [newWsName, setNewWsName] = useState('');
+  const [wsError, setWsError] = useState('');
+
+  // Create a new workspace IN THIS COMPANY (owner only). The server scopes it to
+  // the active workspace's company and makes the creator an owner; refreshMe then
+  // pulls the new membership so the switcher and list update.
+  const createWorkspace = async () => {
+    const name = newWsName.trim();
+    if (!name) return;
+    setWsError('');
+    try {
+      await api.post('/workspaces', { body: { name } });
+      setNewWsName('');
+      await refreshMe();
+    } catch (e) {
+      setWsError((e as { error?: string })?.error ?? 'could not create workspace');
+    }
+  };
 
   const reload = async () => {
     const r = await api.get<{ members: Member[] }>('/workspace/members');
@@ -152,6 +172,55 @@ export function WorkspaceSettings() {
             }`}
           />
         </button>
+      </Card>
+
+      <Card data-testid="company-workspaces" class="mt-6 p-5">
+        <h2 class="text-base font-bold text-ink-900">
+          Workspaces{session.companyName ? ` in ${session.companyName}` : ''}
+        </h2>
+        <p class="mt-1 text-sm text-stone-500">
+          A company can own several workspaces. As an owner you can add another one here.
+        </p>
+        <ul class="mt-3 divide-y divide-stone-100 overflow-hidden rounded-lg border border-stone-200">
+          {session.memberships.map((m) => (
+            <li
+              data-testid="ws-row"
+              key={m.workspaceId}
+              class="flex items-center justify-between px-3 py-2 text-sm"
+            >
+              <span class="text-ink-900">
+                {m.name ?? m.workspaceId}
+                {m.workspaceId === session.workspaceId ? (
+                  <span class="ml-2 text-[11px] uppercase tracking-wide text-brand-600">active</span>
+                ) : null}
+              </span>
+              {m.workspaceId !== session.workspaceId ? (
+                <Button
+                  data-testid="ws-open"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void switchWorkspace(m.workspaceId)}
+                >
+                  Open
+                </Button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+        <div class="mt-3 flex flex-wrap items-end gap-3">
+          <Field label="New workspace" class="min-w-[16rem] flex-1">
+            <Input
+              data-testid="new-workspace-name"
+              placeholder="e.g. Acme – West"
+              value={newWsName}
+              onInput={(e: Event) => setNewWsName((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Button data-testid="create-workspace" onClick={createWorkspace} disabled={!newWsName.trim()}>
+            Add workspace
+          </Button>
+        </div>
+        {wsError ? <p data-testid="workspace-error" class="mt-2 text-sm text-rose-600">{wsError}</p> : null}
       </Card>
 
       <Card class="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">

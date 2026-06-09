@@ -190,6 +190,34 @@ export const addMember: Handler = async (ctx, pool, req) => {
   return ok({ workspaceId: ctx.workspaceId, userId, email: emailForUser(userId), role }, 201);
 };
 
+/**
+ * POST /workspaces — an owner (manage_workspace_users) creates a new workspace IN
+ * THEIR OWN company. The company is derived from the active workspace (never the
+ * body — CLAUDE.md inv.2); the creator becomes an owner of the new workspace
+ * (same company, so the one-company-per-user rule holds).
+ */
+export const createWorkspace: Handler = async (ctx, pool, req) => {
+  const name = typeof asObject(req.body).name === 'string' ? String(asObject(req.body).name).trim() : '';
+  if (!name) return ok({ error: 'name required' }, 400);
+  const c = await pool.query<{ company_id: string }>('SELECT company_id FROM workspaces WHERE id = $1', [
+    ctx.workspaceId,
+  ]);
+  const companyId = c.rows[0]?.company_id;
+  if (!companyId) return ok({ error: 'no active company' }, 400);
+  const { rows } = await pool.query<{ id: string; name: string; status: string }>(
+    "INSERT INTO workspaces (name, status, company_id) VALUES ($1, 'active', $2) RETURNING id, name, status",
+    [name, companyId],
+  );
+  const wsId = rows[0]!.id;
+  if (ctx.userId) {
+    await pool.query(
+      "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT DO NOTHING",
+      [wsId, ctx.userId],
+    );
+  }
+  return ok({ workspace: rows[0] }, 201);
+};
+
 /** PATCH /workspace/members — change a member's role in the active workspace. */
 export const updateMember: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
@@ -1248,6 +1276,7 @@ export const adminGetWorkspace: Handler = async (ctx, pool, req) => {
 export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /me': getMe,
   'GET /workspace/members': listMembers,
+  'POST /workspaces': createWorkspace,
   'POST /workspace/members': addMember,
   'PATCH /workspace/members': updateMember,
   'GET /workspace/settings': getWorkspaceSettings,

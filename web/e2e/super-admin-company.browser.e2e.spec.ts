@@ -1,6 +1,25 @@
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
-import { DEV_ADMIN, WS_B } from './seed.js';
+import { DEV_ADMIN, DEV_OWNER, WS_B } from './seed.js';
+
+test('an owner adds a workspace to their company from Workspace settings', async ({ page }) => {
+  await loginAs(page, DEV_OWNER);
+  await page.getByTestId('nav-settings').click();
+  await page.getByTestId('workspace-settings').waitFor();
+
+  // Owner starts in Acme, which already owns two workspaces (they're owner of both).
+  const rows = page.getByTestId('ws-row');
+  await expect(rows).toHaveCount(2);
+
+  // Add a third workspace to the company.
+  await page.getByTestId('new-workspace-name').fill('Acme – North');
+  await page.getByTestId('create-workspace').click();
+  await expect(page.getByTestId('ws-row')).toHaveCount(3);
+  await expect(page.getByTestId('company-workspaces')).toContainText('Acme – North');
+
+  // It's now selectable in the sidebar workspace switcher too.
+  await expect(page.getByTestId('workspace-select')).toContainText('Acme – North');
+});
 
 // §3A: a platform admin has no workspace membership, but picks a COMPANY from a
 // searchable selector, then a WORKSPACE within it — and then sees exactly what

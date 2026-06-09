@@ -21,6 +21,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /workspace/switch': null,
 
   // --- workspace users + roles (manage_workspace_users) ---
+  'POST /workspaces': 'manage_workspace_users',
   'GET /workspace/members': 'manage_workspace_users',
   'POST /workspace/members': 'manage_workspace_users',
   'PATCH /workspace/members': 'manage_workspace_users',
