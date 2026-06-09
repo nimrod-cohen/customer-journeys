@@ -111,19 +111,30 @@ export const getMe: Handler = async (ctx, pool) => {
       ORDER BY w.name`,
     [ctx.userId ?? ''],
   );
-  // Resolve the ACTIVE workspace's name even when it isn't one of the user's
-  // memberships (a platform admin viewing into a company) — so the UI can show
-  // the company name, never a raw id.
+  // Resolve the ACTIVE workspace's name + its parent company (even when it isn't
+  // one of the user's memberships — a platform admin viewing into a company) so
+  // the UI can show friendly names, never raw ids.
   let workspaceName: string | null = null;
+  let companyId: string | null = null;
+  let companyName: string | null = null;
   if (ctx.workspaceId) {
-    const wn = await pool.query('SELECT name FROM workspaces WHERE id = $1', [ctx.workspaceId]);
-    workspaceName = wn.rows[0]?.name ?? null;
+    const wn = await pool.query(
+      `SELECT w.name AS wname, w.company_id, c.name AS cname
+         FROM workspaces w JOIN companies c ON c.id = w.company_id
+        WHERE w.id = $1`,
+      [ctx.workspaceId],
+    );
+    workspaceName = wn.rows[0]?.wname ?? null;
+    companyId = wn.rows[0]?.company_id ?? null;
+    companyName = wn.rows[0]?.cname ?? null;
   }
   return ok({
     sub: ctx.userId,
     email: emailForUser(ctx.userId),
     workspace_id: ctx.workspaceId || null,
     workspace_name: workspaceName,
+    company_id: companyId,
+    company_name: companyName,
     role: ctx.role ?? null,
     is_platform_admin: ctx.isPlatformAdmin,
     memberships: rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role, name: r.name })),
@@ -1113,6 +1124,30 @@ export const billingUsage: Handler = async (ctx, pool) => {
 // ---------------------------------------------------------------------------
 
 /** GET /admin/workspaces — cross-company list (system-admin only). Audited. */
+/**
+ * GET /admin/companies — every company with its workspaces (cross-tenant; only a
+ * platform admin reaches this, gated by view_all_workspaces). Powers the
+ * super-admin company → workspace picker. Always audited.
+ */
+export const adminListCompanies: Handler = async (ctx, pool) => {
+  const { rows } = await pool.query(
+    `SELECT c.id, c.name, c.status,
+            COALESCE(
+              json_agg(json_build_object('id', w.id, 'name', w.name, 'status', w.status)
+                       ORDER BY w.name) FILTER (WHERE w.id IS NOT NULL),
+              '[]'
+            ) AS workspaces
+       FROM companies c
+       LEFT JOIN workspaces w ON w.company_id = c.id
+      GROUP BY c.id, c.name, c.status
+      ORDER BY c.name`,
+  );
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.list_companies', { count: rows.length }),
+  );
+  return ok({ companies: rows });
+};
+
 export const adminListWorkspaces: Handler = async (ctx, pool) => {
   const { rows } = await pool.query(
     'SELECT id, name, status, created_at FROM workspaces ORDER BY created_at',
@@ -1186,6 +1221,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /dashboards/summary': dashboardSummary,
   'GET /suppressions': listSuppressions,
   'GET /billing/usage': billingUsage,
+  'GET /admin/companies': adminListCompanies,
   'GET /admin/workspaces': adminListWorkspaces,
   'GET /admin/workspaces/:id': adminGetWorkspace,
 };

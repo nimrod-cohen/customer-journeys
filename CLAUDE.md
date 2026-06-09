@@ -111,6 +111,8 @@ Workspace layout: packages are `@cdp/<name>` (shared, db, segments, email, tenan
 
 ### Status of scaffolding
 
+**Company → Workspace hierarchy (extends spec §6):** a `companies` table groups workspaces — every `workspace` has `company_id NOT NULL` (migration `0012`). Tenant **isolation is unchanged**: it stays at the workspace level (every tenant row carries `workspace_id`; RLS still keys on `workspace_id`). A company is purely the organizational parent so a platform admin can pick a company → a workspace within it (sidebar `CompanyWorkspacePicker`, fed by `GET /admin/companies`). A BEFORE-INSERT trigger auto-creates a company (named after the workspace) when `company_id` is omitted, so existing workspace INSERTs (tests/seeds) keep working.
+
 **Identity key (overrides spec §6/§7):** a profile's per-workspace identity/merge key is **`email`**, NOT `external_id`. Events arrive from many source systems; email is the only identifier that stitches a person's events together, so ingestion requires `email`, profiles are `UNIQUE(workspace_id, email)` (migration `0010`), and the ingest/processor upserts + the manual `POST /profiles` all merge on `(workspace_id, email)`. `external_id` is optional metadata (the spec's original dedupe-by-external_id design is superseded).
 
 Phase-1 scaffolding only — no business/feature logic yet. The full §6 schema (all tables, RLS enabled with the `workspace_id` policy + narrow `is_platform_admin` exception, `workspace_id`-leading indexes) is encoded in `packages/db/supabase/migrations/0001..0010`. Foundation services (authorizer/ingest/processor) have thin handler shells; later-phase services are placeholders. `packages/db/src/client.ts` is a pooled `pg` connection helper (no queries).

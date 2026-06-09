@@ -7,7 +7,11 @@
 import { adminPool, applyMigrations } from '@cdp/db';
 
 // Stable UUIDs (unique namespace for the SPA e2e).
+// Two companies: "Acme" owns TWO workspaces (A + A-West); "Beta" owns one.
+export const CO_ACME = '0e2efe00-0000-4000-8000-0000000000f1';
+export const CO_BETA = '0e2efe00-0000-4000-8000-0000000000f2';
 export const WS_A = '0e2efe00-0000-4000-8000-000000000a01';
+export const WS_A2 = '0e2efe00-0000-4000-8000-000000000a03'; // 2nd Acme workspace
 export const WS_B = '0e2efe00-0000-4000-8000-000000000a02';
 export const USER_MULTI = '0e2efe00-0000-4000-8000-0000000000b1'; // owner of A + B
 export const USER_MKT = '0e2efe00-0000-4000-8000-0000000000b2'; // marketer of A
@@ -41,11 +45,19 @@ export async function seed(): Promise<void> {
 
     await cleanup(pool);
 
-    for (const [ws, name] of [
-      [WS_A, 'Acme (A)'],
-      [WS_B, 'Beta (B)'],
+    // Companies (the parent of workspaces).
+    await pool.query("INSERT INTO companies (id, name, status) VALUES ($1,'Acme','active')", [CO_ACME]);
+    await pool.query("INSERT INTO companies (id, name, status) VALUES ($1,'Beta','active')", [CO_BETA]);
+    for (const [ws, name, company] of [
+      [WS_A, 'Acme (A)', CO_ACME],
+      [WS_A2, 'Acme (A) — West', CO_ACME],
+      [WS_B, 'Beta (B)', CO_BETA],
     ] as const) {
-      await pool.query("INSERT INTO workspaces (id, name, status) VALUES ($1,$2,'active')", [ws, name]);
+      await pool.query("INSERT INTO workspaces (id, name, status, company_id) VALUES ($1,$2,'active',$3)", [
+        ws,
+        name,
+        company,
+      ]);
     }
     // Memberships.
     await pool.query(
@@ -159,7 +171,7 @@ export async function seed(): Promise<void> {
 }
 
 export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void> {
-  for (const ws of [WS_A, WS_B]) {
+  for (const ws of [WS_A, WS_A2, WS_B]) {
     await pool.query('DELETE FROM segment_change_log WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM suppressions WHERE workspace_id = $1', [ws]);
@@ -176,6 +188,8 @@ export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void>
     await pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
   }
+  // Companies are the parent of workspaces — delete after the workspaces (FK).
+  await pool.query('DELETE FROM companies WHERE id = ANY($1::uuid[])', [[CO_ACME, CO_BETA]]);
   await pool.query('DELETE FROM admin_audit_log WHERE user_id = $1', [USER_ADMIN]);
   await pool.query('DELETE FROM platform_admins WHERE user_id = $1', [USER_ADMIN]);
 }

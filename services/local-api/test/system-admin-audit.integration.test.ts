@@ -90,4 +90,24 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
     expect(r.status).toBe(403);
     expect(await auditCount()).toBe(before);
   });
+
+  it('lists companies with their workspaces (audited); /me carries the active company', async () => {
+    const t = tokenFor(ADMIN, WS_A);
+    const before = await auditCount();
+    const r = await call(world.env, 'GET', '/admin/companies', { token: t });
+    expect(r.status).toBe(200);
+    const companies = (r.body as { companies: Array<{ id: string; workspaces: Array<{ id: string }> }> }).companies;
+    // WS_A's (auto-created) parent company contains WS_A.
+    expect(companies.some((c) => c.workspaces.some((w) => w.id === WS_A))).toBe(true);
+    expect(await auditCount()).toBe(before + 1); // cross-tenant read is audited
+
+    const me = await call(world.env, 'GET', '/me', { token: t });
+    expect((me.body as { company_id: string | null }).company_id).toBeTruthy();
+    expect((me.body as { company_name: string | null }).company_name).toBeTruthy();
+  });
+
+  it('a non-admin member is 403 on /admin/companies', async () => {
+    const r = await call(world.env, 'GET', '/admin/companies', { token: tokenFor(MEMBER, WS_A) });
+    expect(r.status).toBe(403);
+  });
 });

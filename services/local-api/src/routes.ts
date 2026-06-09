@@ -80,6 +80,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /billing/usage': 'view_billing',
 
   // --- system-admin cross-tenant console (view_all_workspaces, audited) ---
+  'GET /admin/companies': 'view_all_workspaces',
   'GET /admin/workspaces': 'view_all_workspaces',
   'GET /admin/workspaces/:id': 'view_all_workspaces',
 };
