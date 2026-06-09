@@ -1262,21 +1262,8 @@ const WORKSPACE_CHILD_TABLES = [
   'workspace_api_keys',
 ] as const;
 
-/**
- * DELETE /admin/workspaces/:id — permanently delete a workspace and ALL its data
- * (platform admin only; audited). Destructive and irreversible, so the caller must
- * pass `confirm_name` exactly matching the workspace's name. Purges every
- * tenant-scoped table in FK order, then the workspace row, in one transaction.
- */
-export const adminDeleteWorkspace: Handler = async (ctx, pool, req) => {
-  const id = req.params.id!;
-  const confirm = typeof asObject(req.body).confirm_name === 'string' ? String(asObject(req.body).confirm_name) : '';
-  const w = await pool.query<{ name: string }>('SELECT name FROM workspaces WHERE id = $1', [id]);
-  if (!w.rows[0]) return ok({ error: 'not found' }, 404);
-  const name = w.rows[0].name;
-  if (confirm.trim() !== name) {
-    return ok({ error: 'workspace name confirmation does not match' }, 400);
-  }
+/** Purge a workspace and ALL its tenant data in FK order, in one transaction. */
+async function purgeWorkspace(pool: Pool, id: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1291,6 +1278,50 @@ export const adminDeleteWorkspace: Handler = async (ctx, pool, req) => {
     throw e;
   }
   client.release();
+}
+
+/**
+ * DELETE /workspaces/:id — an OWNER (company admin) permanently deletes a
+ * workspace IN THEIR OWN company and ALL its data. Destructive + irreversible, so
+ * the body must carry `confirm_name` matching the workspace's exact name. You
+ * cannot delete the workspace you're currently in (switch away first).
+ */
+export const deleteWorkspace: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const confirm = typeof asObject(req.body).confirm_name === 'string' ? String(asObject(req.body).confirm_name) : '';
+  // Target must belong to the SAME company as the caller's active workspace.
+  const w = await pool.query<{ name: string; same_company: boolean }>(
+    `SELECT w.name,
+            (w.company_id = (SELECT company_id FROM workspaces WHERE id = $2)) AS same_company
+       FROM workspaces w WHERE w.id = $1`,
+    [id, ctx.workspaceId],
+  );
+  if (!w.rows[0] || !w.rows[0].same_company) return ok({ error: 'not found' }, 404);
+  if (id === ctx.workspaceId) {
+    return ok({ error: 'switch to another workspace before deleting this one' }, 400);
+  }
+  if (confirm.trim() !== w.rows[0].name) {
+    return ok({ error: 'workspace name confirmation does not match' }, 400);
+  }
+  await purgeWorkspace(pool, id);
+  return ok({ deleted: true });
+};
+
+/**
+ * DELETE /admin/workspaces/:id — a PLATFORM admin deletes ANY workspace and ALL
+ * its data (audited). Same name-confirmation guard; cross-tenant, so no company
+ * scoping.
+ */
+export const adminDeleteWorkspace: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const confirm = typeof asObject(req.body).confirm_name === 'string' ? String(asObject(req.body).confirm_name) : '';
+  const w = await pool.query<{ name: string }>('SELECT name FROM workspaces WHERE id = $1', [id]);
+  if (!w.rows[0]) return ok({ error: 'not found' }, 404);
+  const name = w.rows[0].name;
+  if (confirm.trim() !== name) {
+    return ok({ error: 'workspace name confirmation does not match' }, 400);
+  }
+  await purgeWorkspace(pool, id);
   await writeAuditEntry(
     recordCrossTenantAccess(ctx.userId ?? '', id, 'admin.delete_workspace', { workspace_id: id, name }),
   );
@@ -1335,6 +1366,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /me': getMe,
   'GET /workspace/members': listMembers,
   'POST /workspaces': createWorkspace,
+  'DELETE /workspaces/:id': deleteWorkspace,
   'POST /workspace/members': addMember,
   'PATCH /workspace/members': updateMember,
   'GET /workspace/settings': getWorkspaceSettings,

@@ -3,6 +3,7 @@
 // status links to the OnboardingWizard. All scoped server-side to the token.
 // (Visual redesign; all data-testid attributes preserved.)
 import { useEffect, useState } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 import { useStore } from '../store/store.js';
 import { api, sessionStore, refreshMe, switchWorkspace } from '../store/session.js';
 import { navigate } from '../router.js';
@@ -25,6 +26,27 @@ export function WorkspaceSettings() {
   const [lowercaseEmails, setLowercaseEmails] = useState(true);
   const [newWsName, setNewWsName] = useState('');
   const [wsError, setWsError] = useState('');
+  // Type-the-name confirmation for the destructive workspace delete.
+  const [delTarget, setDelTarget] = useState<{ id: string; name: string } | null>(null);
+  const [delConfirm, setDelConfirm] = useState('');
+  const [delBusy, setDelBusy] = useState(false);
+  const [delErr, setDelErr] = useState('');
+
+  const deleteWorkspace = async () => {
+    if (!delTarget) return;
+    setDelBusy(true);
+    setDelErr('');
+    try {
+      await api.del(`/workspaces/${delTarget.id}`, { body: { confirm_name: delConfirm.trim() } });
+      setDelTarget(null);
+      setDelConfirm('');
+      await refreshMe();
+    } catch (e) {
+      setDelErr((e as { error?: string })?.error ?? 'could not delete workspace');
+    } finally {
+      setDelBusy(false);
+    }
+  };
 
   // Create a new workspace IN THIS COMPANY (owner only). The server scopes it to
   // the active workspace's company and makes the creator an owner; refreshMe then
@@ -195,15 +217,33 @@ export function WorkspaceSettings() {
                 ) : null}
               </span>
               {m.workspaceId !== session.workspaceId ? (
-                <Button
-                  data-testid="ws-open"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void switchWorkspace(m.workspaceId)}
-                >
-                  Open
-                </Button>
-              ) : null}
+                <span class="flex items-center gap-1">
+                  <Button
+                    data-testid="ws-open"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void switchWorkspace(m.workspaceId)}
+                  >
+                    Open
+                  </Button>
+                  <Button
+                    data-testid="delete-workspace"
+                    data-ws={m.workspaceId}
+                    variant="ghost"
+                    size="sm"
+                    class="text-rose-600 hover:bg-rose-50"
+                    onClick={() => {
+                      setDelTarget({ id: m.workspaceId, name: m.name ?? m.workspaceId });
+                      setDelConfirm('');
+                      setDelErr('');
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </span>
+              ) : (
+                <span class="text-[11px] text-stone-400">switch away to delete</span>
+              )}
             </li>
           ))}
         </ul>
@@ -234,6 +274,57 @@ export function WorkspaceSettings() {
           Configure sending domain
         </Button>
       </Card>
+
+      {delTarget
+        ? createPortal(
+            <div
+              data-testid="delete-workspace-modal"
+              class="fixed inset-0 z-50 grid place-items-center bg-ink-950/50 p-4"
+              onClick={() => setDelTarget(null)}
+            >
+              <div
+                class="w-full max-w-md rounded-xl bg-white p-5 shadow-soft"
+                onClick={(e: Event) => e.stopPropagation()}
+              >
+                <h3 class="text-lg font-bold text-ink-950">Delete workspace</h3>
+                <p class="mt-2 text-sm text-stone-600">
+                  This permanently deletes <b>{delTarget.name}</b> and <b>all of its data</b> —
+                  profiles, events, segments, campaigns, broadcasts, suppressions and members. This
+                  cannot be undone.
+                </p>
+                <p class="mt-3 text-sm text-stone-600">
+                  Type <span class="font-mono font-semibold text-ink-900">{delTarget.name}</span> to
+                  confirm:
+                </p>
+                <Input
+                  data-testid="delete-confirm-input"
+                  class="mt-1"
+                  value={delConfirm}
+                  onInput={(e: Event) => setDelConfirm((e.target as HTMLInputElement).value)}
+                />
+                {delErr ? (
+                  <p data-testid="delete-workspace-error" class="mt-2 text-sm text-rose-600">
+                    {delErr}
+                  </p>
+                ) : null}
+                <div class="mt-4 flex justify-end gap-2">
+                  <Button variant="ghost" onClick={() => setDelTarget(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    data-testid="confirm-delete-workspace"
+                    variant="danger"
+                    disabled={delConfirm.trim() !== delTarget.name || delBusy}
+                    onClick={deleteWorkspace}
+                  >
+                    {delBusy ? 'Deleting…' : 'Delete workspace'}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }
