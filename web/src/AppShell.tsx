@@ -198,7 +198,7 @@ function WorkspaceSwitcher(): JSX.Element {
         >
           {session.memberships.map((m) => (
             <option key={m.workspaceId} value={m.workspaceId} class="text-ink-900">
-              {m.name ?? shortWs(m.workspaceId)} · {m.role}
+              {m.name ?? shortWs(m.workspaceId)}
             </option>
           ))}
           {adminExtra ? (
