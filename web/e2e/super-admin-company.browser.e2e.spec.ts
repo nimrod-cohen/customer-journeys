@@ -73,6 +73,29 @@ test('switching company re-scopes the main content (no stale data)', async ({ pa
   await expect(page.getByTestId('profile-row')).toHaveCount(0);
 });
 
+test('deleting a workspace requires typing its exact name (admin only)', async ({ page }) => {
+  await loginAs(page, DEV_ADMIN);
+  await page.getByTestId('nav-admin').click();
+  await page.getByTestId('system-admin-console').waitFor();
+
+  // Open the delete confirm for Beta (B).
+  await page.locator(`[data-testid="delete-workspace"][data-ws="${WS_B}"]`).click();
+  await page.getByTestId('delete-workspace-modal').waitFor();
+
+  // The confirm button is disabled until the exact name is typed.
+  const confirmBtn = page.getByTestId('confirm-delete-workspace');
+  await expect(confirmBtn).toBeDisabled();
+  await page.getByTestId('delete-confirm-input').fill('wrong name');
+  await expect(confirmBtn).toBeDisabled();
+  await page.getByTestId('delete-confirm-input').fill('Beta (B)');
+  await expect(confirmBtn).toBeEnabled();
+
+  // Cancel — the workspace is still there (non-destructive check).
+  await page.getByText('Cancel', { exact: true }).click();
+  await expect(page.getByTestId('delete-workspace-modal')).toHaveCount(0);
+  await expect(page.getByTestId('admin-company-name').filter({ hasText: /^Beta$/ })).toHaveCount(1);
+});
+
 test('super admin creates a company and moves a workspace into it', async ({ page }) => {
   await loginAs(page, DEV_ADMIN);
   await page.getByTestId('nav-admin').click();

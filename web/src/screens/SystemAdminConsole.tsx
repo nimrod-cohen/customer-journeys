@@ -3,6 +3,7 @@
 // action the server writes to admin_audit_log (§3A). The nav only shows this to
 // system-admin; the server independently 403s non-admins. data-testid preserved.
 import { useEffect, useState } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 import { api } from '../store/session.js';
 import { Badge, Button, Card, Field, Input, PageHeader, Select, toneFor } from '../ui/kit.js';
 
@@ -24,6 +25,11 @@ export function SystemAdminConsole() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+  // Destructive delete needs an explicit type-the-name confirmation.
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [confirmText, setConfirmText] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteErr, setDeleteErr] = useState('');
 
   const load = () => api.get<{ companies: AdminCompany[] }>('/admin/companies').then((r) => setCompanies(r.companies));
   useEffect(() => {
@@ -55,6 +61,22 @@ export function SystemAdminConsole() {
   const open = async (id: string) => {
     const r = await api.get<{ workspace: Record<string, unknown> }>(`/admin/workspaces/${id}`);
     setSelected(r.workspace);
+  };
+
+  const doDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    setDeleteErr('');
+    try {
+      await api.del(`/admin/workspaces/${deleteTarget.id}`, { body: { confirm_name: confirmText.trim() } });
+      setDeleteTarget(null);
+      setConfirmText('');
+      await load();
+    } catch (e) {
+      setDeleteErr((e as { error?: string })?.error ?? 'could not delete workspace');
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   return (
@@ -130,6 +152,20 @@ export function SystemAdminConsole() {
                         >
                           Open
                         </Button>
+                        <Button
+                          data-testid="delete-workspace"
+                          data-ws={w.id}
+                          variant="ghost"
+                          size="sm"
+                          class="text-rose-600 hover:bg-rose-50"
+                          onClick={() => {
+                            setDeleteTarget({ id: w.id, name: w.name });
+                            setConfirmText('');
+                            setDeleteErr('');
+                          }}
+                        >
+                          Delete
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -147,6 +183,58 @@ export function SystemAdminConsole() {
           </pre>
         </Card>
       ) : null}
+
+      {/* Destructive delete: type the exact name to confirm. */}
+      {deleteTarget
+        ? createPortal(
+            <div
+              data-testid="delete-workspace-modal"
+              class="fixed inset-0 z-50 grid place-items-center bg-ink-950/50 p-4"
+              onClick={() => setDeleteTarget(null)}
+            >
+              <div
+                class="w-full max-w-md rounded-xl bg-white p-5 shadow-soft"
+                onClick={(e: Event) => e.stopPropagation()}
+              >
+                <h3 class="text-lg font-bold text-ink-950">Delete workspace</h3>
+                <p class="mt-2 text-sm text-stone-600">
+                  This permanently deletes <b>{deleteTarget.name}</b> and <b>all of its data</b> —
+                  profiles, events, segments, campaigns, broadcasts, suppressions and members. This
+                  cannot be undone.
+                </p>
+                <p class="mt-3 text-sm text-stone-600">
+                  Type <span class="font-mono font-semibold text-ink-900">{deleteTarget.name}</span> to
+                  confirm:
+                </p>
+                <Input
+                  data-testid="delete-confirm-input"
+                  class="mt-1"
+                  value={confirmText}
+                  onInput={(e: Event) => setConfirmText((e.target as HTMLInputElement).value)}
+                />
+                {deleteErr ? (
+                  <p data-testid="delete-workspace-error" class="mt-2 text-sm text-rose-600">
+                    {deleteErr}
+                  </p>
+                ) : null}
+                <div class="mt-4 flex justify-end gap-2">
+                  <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    data-testid="confirm-delete-workspace"
+                    variant="danger"
+                    disabled={confirmText.trim() !== deleteTarget.name || deleteBusy}
+                    onClick={doDelete}
+                  >
+                    {deleteBusy ? 'Deleting…' : 'Delete workspace'}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }

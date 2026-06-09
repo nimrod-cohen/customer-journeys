@@ -1239,6 +1239,64 @@ export const adminAssignWorkspaceCompany: Handler = async (ctx, pool, req) => {
   return ok({ workspace: rows[0] });
 };
 
+// Tenant tables to purge when deleting a workspace, ordered children → parents so
+// foreign keys are satisfied. admin_audit_log is intentionally NOT here (keep the
+// audit trail; its workspace_id has no FK).
+const WORKSPACE_CHILD_TABLES = [
+  'segment_change_log',
+  'segment_memberships',
+  'campaign_enrollments',
+  'messages_log',
+  'email_events',
+  'outbox',
+  'events',
+  'profile_features',
+  'usage_counters',
+  'broadcasts',
+  'campaigns',
+  'segments',
+  'email_templates',
+  'suppressions',
+  'profiles',
+  'workspace_users',
+  'workspace_api_keys',
+] as const;
+
+/**
+ * DELETE /admin/workspaces/:id — permanently delete a workspace and ALL its data
+ * (platform admin only; audited). Destructive and irreversible, so the caller must
+ * pass `confirm_name` exactly matching the workspace's name. Purges every
+ * tenant-scoped table in FK order, then the workspace row, in one transaction.
+ */
+export const adminDeleteWorkspace: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const confirm = typeof asObject(req.body).confirm_name === 'string' ? String(asObject(req.body).confirm_name) : '';
+  const w = await pool.query<{ name: string }>('SELECT name FROM workspaces WHERE id = $1', [id]);
+  if (!w.rows[0]) return ok({ error: 'not found' }, 404);
+  const name = w.rows[0].name;
+  if (confirm.trim() !== name) {
+    return ok({ error: 'workspace name confirmation does not match' }, 400);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const t of WORKSPACE_CHILD_TABLES) {
+      await client.query(`DELETE FROM ${t} WHERE workspace_id = $1`, [id]);
+    }
+    await client.query('DELETE FROM workspaces WHERE id = $1', [id]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    throw e;
+  }
+  client.release();
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', id, 'admin.delete_workspace', { workspace_id: id, name }),
+  );
+  return ok({ deleted: true });
+};
+
 export const adminListWorkspaces: Handler = async (ctx, pool) => {
   const { rows } = await pool.query(
     'SELECT id, name, status, created_at FROM workspaces ORDER BY created_at',
@@ -1317,6 +1375,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /admin/companies': adminCreateCompany,
   'PATCH /admin/companies/:id': adminRenameCompany,
   'PATCH /admin/workspaces/:id': adminAssignWorkspaceCompany,
+  'DELETE /admin/workspaces/:id': adminDeleteWorkspace,
   'GET /admin/workspaces': adminListWorkspaces,
   'GET /admin/workspaces/:id': adminGetWorkspace,
 };
