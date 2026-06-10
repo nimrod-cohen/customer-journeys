@@ -7,6 +7,17 @@ test('an owner adds a workspace to their company from Company settings', async (
   await page.getByTestId('nav-company').click();
   await page.getByTestId('company-settings').waitFor();
 
+  // Rename the company, then rename it back (keeps shared seed data stable).
+  await expect(page.getByTestId('company-name')).toContainText('Acme');
+  await page.getByTestId('rename-company').click();
+  await page.getByTestId('company-name-input').fill('Acme Inc');
+  await page.getByTestId('company-rename-save').click();
+  await expect(page.getByTestId('company-name')).toHaveText('Acme Inc');
+  await page.getByTestId('rename-company').click();
+  await page.getByTestId('company-name-input').fill('Acme');
+  await page.getByTestId('company-rename-save').click();
+  await expect(page.getByTestId('company-name')).toHaveText('Acme');
+
   // Owner starts in Acme, which already owns two workspaces (they're owner of both).
   const rows = page.getByTestId('ws-row');
   await expect(rows).toHaveCount(2);

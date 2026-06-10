@@ -69,4 +69,24 @@ describeMaybe('rename workspace (real Postgres)', () => {
     expect(r.status).toBe(200);
     expect(await name(WS_OTHER)).toBe('Admin Renamed');
   });
+
+  const companyName = async (id: string) =>
+    (await world.pool.query<{ name: string }>('SELECT name FROM companies WHERE id = $1', [id])).rows[0]?.name;
+
+  it('an owner renames their own company via /company', async () => {
+    const r = await call(world.env, 'PATCH', '/company', { token: tokenFor(OWNER, WS), body: { name: 'Owner Co' } });
+    expect(r.status).toBe(200);
+    expect(await companyName(CO)).toBe('Owner Co');
+  });
+
+  it('a marketer cannot rename the company (403)', async () => {
+    const r = await call(world.env, 'PATCH', '/company', { token: tokenFor(MKT, WS), body: { name: 'Nope' } });
+    expect(r.status).toBe(403);
+  });
+
+  it('a platform admin renames any company via /admin/companies/:id', async () => {
+    const r = await call(world.env, 'PATCH', `/admin/companies/${CO2}`, { token: tokenFor(ADMIN, WS), body: { name: 'Admin Co' } });
+    expect(r.status).toBe(200);
+    expect(await companyName(CO2)).toBe('Admin Co');
+  });
 });

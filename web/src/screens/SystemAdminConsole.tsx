@@ -44,6 +44,20 @@ export function SystemAdminConsole() {
       setErr((e as { error?: string })?.error ?? 'could not rename workspace');
     }
   };
+  const [coRenameId, setCoRenameId] = useState<string | null>(null);
+  const [coRenameText, setCoRenameText] = useState('');
+  const saveCompanyRename = async (id: string) => {
+    const name = coRenameText.trim();
+    if (!name) return;
+    setErr('');
+    try {
+      await api.patch(`/admin/companies/${id}`, { body: { name } });
+      setCoRenameId(null);
+      await load();
+    } catch (e) {
+      setErr((e as { error?: string })?.error ?? 'could not rename company');
+    }
+  };
 
   const load = () => api.get<{ companies: AdminCompany[] }>('/admin/companies').then((r) => setCompanies(r.companies));
   useEffect(() => {
@@ -124,9 +138,40 @@ export function SystemAdminConsole() {
         {companies.map((c) => (
           <Card data-testid="admin-company" data-id={c.id} key={c.id} class="overflow-hidden">
             <div class="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-2.5">
-              <span data-testid="admin-company-name" class="font-semibold text-ink-900">
-                {c.name}
-              </span>
+              {coRenameId === c.id ? (
+                <span class="flex items-center gap-2">
+                  <Input
+                    data-testid="company-rename-input"
+                    class="max-w-[14rem]"
+                    value={coRenameText}
+                    onInput={(e: Event) => setCoRenameText((e.target as HTMLInputElement).value)}
+                  />
+                  <Button data-testid="company-rename-save" size="sm" onClick={() => void saveCompanyRename(c.id)}>
+                    Save
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setCoRenameId(null)}>
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <span class="flex items-center gap-2">
+                  <span data-testid="admin-company-name" class="font-semibold text-ink-900">
+                    {c.name}
+                  </span>
+                  <Button
+                    data-testid="rename-company"
+                    data-id={c.id}
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setCoRenameId(c.id);
+                      setCoRenameText(c.name);
+                    }}
+                  >
+                    Rename
+                  </Button>
+                </span>
+              )}
               <span class="text-xs text-stone-500">
                 {c.workspaces.length} {c.workspaces.length === 1 ? 'workspace' : 'workspaces'}
               </span>

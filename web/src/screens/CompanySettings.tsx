@@ -18,6 +18,22 @@ export function CompanySettings() {
   const [delErr, setDelErr] = useState('');
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
+  // Rename the company itself.
+  const [editingCompany, setEditingCompany] = useState(false);
+  const [companyNameText, setCompanyNameText] = useState('');
+  const [companyErr, setCompanyErr] = useState('');
+  const saveCompanyName = async () => {
+    const name = companyNameText.trim();
+    if (!name) return;
+    setCompanyErr('');
+    try {
+      await api.patch('/company', { body: { name } });
+      setEditingCompany(false);
+      await refreshMe();
+    } catch (e) {
+      setCompanyErr((e as { error?: string })?.error ?? 'could not rename company');
+    }
+  };
 
   const createWorkspace = async () => {
     const name = newWsName.trim();
@@ -67,6 +83,45 @@ export function CompanySettings() {
         title={session.companyName ? `${session.companyName} — company settings` : 'Company settings'}
         subtitle="Workspaces owned by this company."
       />
+
+      <Card class="mb-6 p-5">
+        <h2 class="text-base font-bold text-ink-900">Company name</h2>
+        {editingCompany ? (
+          <div class="mt-2 flex flex-wrap items-end gap-2">
+            <Input
+              data-testid="company-name-input"
+              class="max-w-sm flex-1"
+              value={companyNameText}
+              onInput={(e: Event) => setCompanyNameText((e.target as HTMLInputElement).value)}
+            />
+            <Button data-testid="company-rename-save" onClick={saveCompanyName} disabled={!companyNameText.trim()}>
+              Save
+            </Button>
+            <Button variant="ghost" onClick={() => setEditingCompany(false)}>
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <div class="mt-2 flex items-center justify-between gap-3">
+            <span data-testid="company-name" class="text-lg font-semibold text-ink-950">
+              {session.companyName ?? '—'}
+            </span>
+            <Button
+              data-testid="rename-company"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setEditingCompany(true);
+                setCompanyNameText(session.companyName ?? '');
+                setCompanyErr('');
+              }}
+            >
+              Rename
+            </Button>
+          </div>
+        )}
+        {companyErr ? <p data-testid="company-error" class="mt-2 text-sm text-rose-600">{companyErr}</p> : null}
+      </Card>
 
       <Card data-testid="company-workspaces" class="p-5">
         <h2 class="text-base font-bold text-ink-900">Workspaces</h2>

@@ -1286,6 +1286,22 @@ async function purgeWorkspace(pool: Pool, id: string): Promise<void> {
   client.release();
 }
 
+/** PATCH /company — an OWNER renames their OWN company (derived from the active workspace). */
+export const renameCompany: Handler = async (ctx, pool, req) => {
+  const name = typeof asObject(req.body).name === 'string' ? String(asObject(req.body).name).trim() : '';
+  if (!name) return ok({ error: 'name required' }, 400);
+  const c = await pool.query<{ company_id: string }>('SELECT company_id FROM workspaces WHERE id = $1', [
+    ctx.workspaceId,
+  ]);
+  const companyId = c.rows[0]?.company_id;
+  if (!companyId) return ok({ error: 'no active company' }, 400);
+  const { rows } = await pool.query('UPDATE companies SET name = $2 WHERE id = $1 RETURNING id, name, status', [
+    companyId,
+    name,
+  ]);
+  return ok({ company: rows[0] });
+};
+
 /**
  * PATCH /workspaces/:id — an OWNER renames a workspace IN THEIR OWN company.
  */
@@ -1392,6 +1408,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /me': getMe,
   'GET /workspace/members': listMembers,
   'POST /workspaces': createWorkspace,
+  'PATCH /company': renameCompany,
   'PATCH /workspaces/:id': renameWorkspace,
   'DELETE /workspaces/:id': deleteWorkspace,
   'POST /workspace/members': addMember,
