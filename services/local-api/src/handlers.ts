@@ -33,6 +33,12 @@ import {
   addManualMembers,
   removeManualMembers,
   evaluateRealtimeSegmentsForProfile,
+  buildSegmentMatch,
+  selectEvaluatorMembership,
+  buildInsertMemberships,
+  buildDeleteMemberships,
+  buildChangeLog,
+  diffMembership,
   type AstNode,
 } from '@cdp/segments';
 import { validateCampaignDefinition } from '@cdp/service-campaign-runner';
@@ -328,6 +334,46 @@ export const getSegment: Handler = async (ctx, pool, req) => {
   return ok({ segment: rows[0] });
 };
 
+/**
+ * Backfill a dynamic segment's evaluator membership to match its rule NOW, so the
+ * membership table (and a profile's Segments tab) is consistent the moment the
+ * segment is saved — not only after the next event/batch sweep. Diffs the rule's
+ * matches against the current source='evaluator' rows; manual rows are untouched.
+ * A null AST (draft) matches no one → all evaluator rows are removed. The same
+ * @cdp/segments builders the evaluator uses, so the source discipline and
+ * workspace scoping are identical. Workspace-scoped in code (service role).
+ */
+async function materializeSegment(
+  pool: Pool,
+  workspaceId: string,
+  segmentId: string,
+  ast: AstNode | null,
+): Promise<void> {
+  let matched: string[] = [];
+  if (ast !== null) {
+    const q = buildSegmentMatch(workspaceId, ast);
+    const { rows } = await pool.query<{ id: string }>(q.text, q.values);
+    matched = rows.map((r) => r.id);
+  }
+  const memQ = selectEvaluatorMembership(workspaceId, segmentId);
+  const current = (await pool.query<{ profile_id: string }>(memQ.text, memQ.values)).rows.map(
+    (r) => r.profile_id,
+  );
+  const { entered, exited } = diffMembership(current, matched);
+  if (entered.length > 0) {
+    const ins = buildInsertMemberships(workspaceId, segmentId, entered);
+    await pool.query(ins.text, ins.values);
+    const cl = buildChangeLog(workspaceId, segmentId, entered, 'entered');
+    await pool.query(cl.text, cl.values);
+  }
+  if (exited.length > 0) {
+    const del = buildDeleteMemberships(workspaceId, segmentId, exited);
+    await pool.query(del.text, del.values);
+    const cl = buildChangeLog(workspaceId, segmentId, exited, 'exited');
+    await pool.query(cl.text, cl.values);
+  }
+}
+
 export const createSegment: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const name = String(b.name ?? '');
@@ -338,11 +384,16 @@ export const createSegment: Handler = async (ctx, pool, req) => {
   // A dynamic segment with NO rules is an inactive DRAFT (never evaluated, so it
   // never accidentally matches everyone). Manual lists are always active.
   const status = kind === 'dynamic_realtime' && definition === null ? 'draft' : 'active';
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<{ id: string; name: string; kind: string; status: string }>(
     `INSERT INTO segments (workspace_id, name, kind, status, definition)
      VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id, name, kind, status`,
     [ctx.workspaceId, name, kind, status, definition === null ? null : JSON.stringify(definition)],
   );
+  // A dynamic segment materializes its membership immediately so it's consistent
+  // with its rule right away (manual lists are populated via import-csv instead).
+  if (kind === 'dynamic_realtime' && rows[0]) {
+    await materializeSegment(pool, ctx.workspaceId, rows[0].id, definition);
+  }
   return ok({ segment: rows[0] }, 201);
 };
 
@@ -370,6 +421,12 @@ export const updateSegment: Handler = async (ctx, pool, req) => {
     ],
   );
   const { rowCount } = await pool.query(q.text, q.values);
+  // Re-materialize when the rules were (re)set. A rename-only update (definition
+  // undefined — the manual path) leaves membership untouched. An emptied rule set
+  // (definition null → draft) removes the evaluator rows; otherwise re-diff.
+  if (definition !== undefined && (rowCount ?? 0) > 0) {
+    await materializeSegment(pool, ctx.workspaceId, id, definition ?? null);
+  }
   return ok({ updated: rowCount ?? 0 });
 };
 

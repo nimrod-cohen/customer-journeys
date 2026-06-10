@@ -33,6 +33,16 @@ test('create a dynamic segment, save, and see its members + the list', async ({ 
   await page.getByTestId('segments-back').click();
   await page.getByTestId('segments-list').waitFor();
   await expect(page.getByTestId('segment-list')).toContainText('VIP members');
+
+  // The membership is materialized: a1 (a VIP) now shows 'VIP members' on its
+  // profile's Segments tab — consistent with the builder's members panel.
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+  await page.getByTestId('profile-search').fill('a1@acme.com');
+  await page.getByTestId('profile-row').first().click();
+  await page.getByTestId('profile-detail').waitFor();
+  await page.getByTestId('tab-segments').click();
+  await expect(page.getByTestId('profile-segment-row').filter({ hasText: 'VIP members' })).toHaveCount(1);
 });
 
 test('segment by the unsubscribed attribute and by an event (count refreshes on save)', async ({ page }) => {
