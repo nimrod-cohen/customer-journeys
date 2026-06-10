@@ -54,29 +54,32 @@ function ValueAutosuggest({
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  const onInput = (v: string) => {
-    onChange(v);
-    if (timer.current) clearTimeout(timer.current);
-    // Only an attribute field, and only after 2+ chars, debounced.
-    if (!attrKey || v.trim().length < 2) {
+  // Fetch matching existing values for the attribute. Empty q (on focus) returns
+  // the top values; otherwise it's a substring filter.
+  const doFetch = async (q: string) => {
+    if (!attrKey) {
       setSuggestions([]);
       setOpen(false);
       return;
     }
-    timer.current = setTimeout(() => {
-      void api
-        .get<{ values: string[] }>('/profiles/attribute-values', { query: { key: attrKey, q: v.trim() } })
-        .then((r) => {
-          // Don't suggest the exact value already typed.
-          const vals = r.values.filter((s) => s !== v);
-          setSuggestions(vals);
-          setOpen(vals.length > 0);
-        })
-        .catch(() => {
-          setSuggestions([]);
-          setOpen(false);
-        });
-    }, 250);
+    try {
+      const r = await api.get<{ values: string[] }>('/profiles/attribute-values', {
+        query: { key: attrKey, q: q.trim() },
+      });
+      const vals = r.values.filter((s) => s !== q); // don't suggest the exact value already typed
+      setSuggestions(vals);
+      setOpen(vals.length > 0);
+    } catch {
+      setSuggestions([]);
+      setOpen(false);
+    }
+  };
+
+  const onInput = (v: string) => {
+    onChange(v);
+    if (timer.current) clearTimeout(timer.current);
+    // Filter as you type — debounced so we only fetch once you pause.
+    timer.current = setTimeout(() => void doFetch(v), 250);
   };
 
   return (
@@ -87,9 +90,7 @@ function ValueAutosuggest({
         placeholder="value"
         value={value}
         onInput={(e: Event) => onInput((e.target as HTMLInputElement).value)}
-        onFocus={() => {
-          if (suggestions.length) setOpen(true);
-        }}
+        onFocus={() => void doFetch(value)}
       />
       {open ? (
         <div

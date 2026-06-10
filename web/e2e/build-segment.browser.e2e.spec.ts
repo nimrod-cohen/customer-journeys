@@ -20,9 +20,9 @@ test('create a dynamic segment from the list, preview size, and see it appear', 
   await page.getByTestId('segment-name').fill('VIP members');
   await page.getByTestId('rule-field').first().fill('attributes.tier');
   await page.getByTestId('rule-operator').first().selectOption('=');
-  // The value box autosuggests EXISTING attribute values (debounced, ≥2 chars):
-  // typing "vi" surfaces "vip" from the seeded profiles; pick it.
-  await page.getByTestId('rule-value').first().fill('vi');
+  // The value box autosuggests EXISTING attribute values: just focusing it shows
+  // the seeded values ("vip", "std"); pick "vip".
+  await page.getByTestId('rule-value').first().click();
   await page.getByTestId('value-suggestion').filter({ hasText: 'vip' }).first().click();
   await expect(page.getByTestId('rule-value').first()).toHaveValue('vip');
 

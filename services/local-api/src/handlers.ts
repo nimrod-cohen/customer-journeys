@@ -733,7 +733,7 @@ export const importProfilesCsv: Handler = async (ctx, pool, req) => {
 /**
  * GET /profiles/attribute-values?key=&q= — DISTINCT values for one attribute key
  * across the workspace's profiles, optionally filtered by a substring (q). Powers
- * the segment editor's value autosuggest. Workspace-scoped; capped at 20.
+ * the segment editor's value autosuggest. Workspace-scoped; capped at 30.
  */
 export const listAttributeValues: Handler = async (ctx, pool, req) => {
   const key = String(req.query.key ?? '').trim();
@@ -744,7 +744,7 @@ export const listAttributeValues: Handler = async (ctx, pool, req) => {
        FROM profiles
       WHERE workspace_id = $1 AND attributes ->> $2 ILIKE $3
       ORDER BY v
-      LIMIT 20`,
+      LIMIT 30`,
     [ctx.workspaceId, key, `%${q}%`],
   );
   return ok({ values: rows.map((r) => r.v).filter((v): v is string => v != null) });
