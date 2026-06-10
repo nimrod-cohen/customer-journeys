@@ -145,6 +145,39 @@ export function buildAst(rows: readonly RuleRow[], combinator: Combinator): AstN
   return { op: combinator, conditions: nodes };
 }
 
+/**
+ * A boolean GROUP in the builder: a combinator over leaf rules and (for the root)
+ * nested sub-groups. The hierarchy is at most 2 levels — the root group may hold
+ * sub-groups, but sub-groups hold only rules (no deeper nesting).
+ */
+export interface RuleGroup {
+  combinator: Combinator;
+  rows: RuleRow[];
+  /** Nested sub-groups (root only; leaf groups keep this empty). */
+  groups: RuleGroup[];
+}
+
+/** A fresh group with one blank field rule. */
+export function emptyGroup(): RuleGroup {
+  return { combinator: 'and', rows: [emptyRow()], groups: [] };
+}
+
+/**
+ * Build a §8 AST from a (possibly nested) group. Empty → null. A single effective
+ * node returns bare (no needless wrapper). Otherwise wraps children in the
+ * group's and/or. Sub-groups compile recursively.
+ */
+export function buildAstFromGroup(group: RuleGroup): AstNode | null {
+  const ruleNodes = group.rows.map(rowToNode).filter((n): n is AstNode => n !== null);
+  const groupNodes = (group.groups ?? [])
+    .map(buildAstFromGroup)
+    .filter((n): n is AstNode => n !== null);
+  const all = [...ruleNodes, ...groupNodes];
+  if (all.length === 0) return null;
+  if (all.length === 1) return all[0]!;
+  return { op: group.combinator, conditions: all };
+}
+
 function isCondition(n: AstNode): n is ConditionNode {
   return (n as ConditionNode).field !== undefined;
 }
@@ -213,4 +246,40 @@ export function rowsFromAst(ast: AstNode | null | undefined): {
     rows: leaves.length ? leaves.map(leafToRow) : [emptyRow()],
     combinator,
   };
+}
+
+/**
+ * Reverse of buildAstFromGroup: hydrate a stored §8 AST into the editable group
+ * tree (root rules + sub-groups). A bare leaf → a root group with one rule. A
+ * group node → its leaf conditions become root rules and its group conditions
+ * become sub-groups (each holding that sub-group's leaves; any nesting deeper
+ * than 2 levels is flattened into the sub-group's rules).
+ */
+export function groupFromAst(ast: AstNode | null | undefined): RuleGroup {
+  if (!ast) return emptyGroup();
+  if (isCondition(ast) || isEvent(ast)) return { combinator: 'and', rows: [leafToRow(ast)], groups: [] };
+  const combinator: Combinator = ast.op === 'or' ? 'or' : 'and';
+  const rows: RuleRow[] = [];
+  const groups: RuleGroup[] = [];
+  const leavesOf = (n: AstNode): AstNode[] => {
+    const out: AstNode[] = [];
+    const walk = (x: AstNode): void => {
+      if (isCondition(x) || isEvent(x)) out.push(x);
+      else x.conditions.forEach(walk);
+    };
+    walk(n);
+    return out;
+  };
+  for (const c of ast.conditions) {
+    if (isCondition(c) || isEvent(c)) {
+      rows.push(leafToRow(c));
+    } else {
+      groups.push({
+        combinator: c.op === 'or' ? 'or' : 'and',
+        rows: leavesOf(c).map(leafToRow),
+        groups: [],
+      });
+    }
+  }
+  return { combinator, rows, groups };
 }

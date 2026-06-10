@@ -3,7 +3,15 @@
 // parsing per operator, and that the result validates against the REAL backend
 // compiler (compileWhere) — proving the UI emits exactly what the server accepts.
 import { describe, it, expect } from 'vitest';
-import { buildAst, parseValue, rowsFromAst, type RuleRow } from '../src/segments/ast-builder.js';
+import {
+  buildAst,
+  parseValue,
+  rowsFromAst,
+  buildAstFromGroup,
+  groupFromAst,
+  type RuleRow,
+  type RuleGroup,
+} from '../src/segments/ast-builder.js';
 import { compileWhere } from '@cdp/segments';
 
 const WS = '00000000-0000-4000-8000-000000000001';
@@ -152,5 +160,76 @@ describe('segment AST builder', () => {
     expect(ast).toEqual({ field: 'attributes.tier', operator: 'exists' });
     const sql = compileWhere(WS, ast as never);
     expect(sql.text).toContain('IS NOT NULL');
+  });
+
+  describe('nested groups (2-level hierarchy)', () => {
+    it('compiles root rules AND a sub-group with its own combinator', () => {
+      const root: RuleGroup = {
+        combinator: 'and',
+        rows: [{ kind: 'field', field: 'attributes.tier', operator: '=', value: 'vip' }],
+        groups: [
+          {
+            combinator: 'or',
+            rows: [
+              { kind: 'field', field: 'attributes.source', operator: '=', value: 'fb' },
+              { kind: 'field', field: 'attributes.source', operator: '=', value: 'google' },
+            ],
+            groups: [],
+          },
+        ],
+      };
+      const ast = buildAstFromGroup(root);
+      expect(ast).toEqual({
+        op: 'and',
+        conditions: [
+          { field: 'attributes.tier', operator: '=', value: 'vip' },
+          {
+            op: 'or',
+            conditions: [
+              { field: 'attributes.source', operator: '=', value: 'fb' },
+              { field: 'attributes.source', operator: '=', value: 'google' },
+            ],
+          },
+        ],
+      });
+      // The nested AST validates against the REAL backend compiler.
+      const sql = compileWhere(WS, ast as never);
+      expect(sql.text).toMatch(/AND/);
+      expect(sql.text).toMatch(/OR/);
+    });
+
+    it('round-trips an AST with a sub-group back into root rules + a sub-group', () => {
+      const ast = {
+        op: 'and' as const,
+        conditions: [
+          { field: 'attributes.tier', operator: '=', value: 'vip' },
+          {
+            op: 'or' as const,
+            conditions: [
+              { field: 'attributes.source', operator: '=', value: 'fb' },
+              { field: 'attributes.source', operator: '=', value: 'google' },
+            ],
+          },
+        ],
+      };
+      const g = groupFromAst(ast as never);
+      expect(g.combinator).toBe('and');
+      expect(g.rows).toHaveLength(1);
+      expect(g.rows[0]).toMatchObject({ field: 'attributes.tier', value: 'vip' });
+      expect(g.groups).toHaveLength(1);
+      expect(g.groups[0]!.combinator).toBe('or');
+      expect(g.groups[0]!.rows).toHaveLength(2);
+      // Re-compiling the hydrated group reproduces the AST.
+      expect(buildAstFromGroup(g)).toEqual(ast);
+    });
+
+    it('a group with a single effective node does not add a needless wrapper', () => {
+      const root: RuleGroup = {
+        combinator: 'and',
+        rows: [{ kind: 'field', field: 'attributes.tier', operator: '=', value: 'vip' }],
+        groups: [],
+      };
+      expect(buildAstFromGroup(root)).toEqual({ field: 'attributes.tier', operator: '=', value: 'vip' });
+    });
   });
 });

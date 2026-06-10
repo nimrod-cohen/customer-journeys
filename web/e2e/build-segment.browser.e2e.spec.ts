@@ -80,6 +80,41 @@ test('segment by the unsubscribed attribute and by an event', async ({ page }) =
   await expect(page.getByTestId('segment-size')).toContainText('0');
 });
 
+test('build a segment with a nested AND/OR group', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+  await page.getByTestId('segment-name').fill('Nested group');
+
+  // Root (AND): attributes.tier = vip  (matches a1, a2).
+  await page.getByTestId('rule-field').first().fill('attributes.tier');
+  await page.getByTestId('rule-operator').first().selectOption('=');
+  await page.getByTestId('rule-value').first().fill('vip');
+  await page.getByTestId('segment-combinator').selectOption('and');
+
+  // Add a sub-group (OR): attributes.plan = pro  OR  attributes.tier = std.
+  await page.getByTestId('add-group').click();
+  const group = page.getByTestId('rule-group');
+  await group.getByTestId('group-combinator').selectOption('or');
+  await group.getByTestId('rule-field').first().fill('attributes.plan');
+  await group.getByTestId('rule-operator').first().selectOption('=');
+  await group.getByTestId('rule-value').first().fill('pro');
+  await group.getByTestId('add-rule').click();
+  await group.getByTestId('rule-field').nth(1).fill('attributes.tier');
+  await group.getByTestId('rule-operator').nth(1).selectOption('=');
+  await group.getByTestId('rule-value').nth(1).fill('std');
+
+  // tier=vip AND (plan=pro OR tier=std) → only a2 matches.
+  await page.getByTestId('preview-size').click();
+  await expect(page.getByTestId('segment-size')).toContainText('1');
+
+  await page.getByTestId('save-segment').click();
+  await page.getByTestId('segments-list').waitFor();
+  await expect(page.getByTestId('segment-list')).toContainText('Nested group');
+});
+
 test('edit a segment from the list: builder hydrates and the rename reflects', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();
