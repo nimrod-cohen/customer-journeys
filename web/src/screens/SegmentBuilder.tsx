@@ -24,7 +24,7 @@ import {
   type BuilderOperator,
   type Combinator,
 } from '../segments/ast-builder.js';
-import { Badge, Button, Card, Field, Input, PageHeader, Select, Textarea } from '../ui/kit.js';
+import { Button, Card, Field, Input, PageHeader, Select, Textarea } from '../ui/kit.js';
 
 // Fetchers for the autosuggest boxes — each returns the existing distinct values
 // matching `q` (workspace-scoped, capped server-side). A null fetcher = plain box.
@@ -363,19 +363,21 @@ export function SegmentBuilder({ id }: { id?: string }) {
   const [groups, setGroups] = useState<RuleGroup[]>([]);
   const [size, setSize] = useState<number | null>(null);
   const [name, setName] = useState('');
-  // The id of the segment being edited or just-created (enables CSV import).
+  // A segment is EITHER dynamic (rule-based) OR manual (uploaded list) — never
+  // both. Chosen on create; fixed thereafter.
+  const [segmentKind, setSegmentKind] = useState<'dynamic_realtime' | 'manual'>('dynamic_realtime');
   const [savedId, setSavedId] = useState<string | null>(id ?? null);
   const [saving, setSaving] = useState(false);
   const [csv, setCsv] = useState('');
-  const [imported, setImported] = useState<number | null>(null);
 
-  // Edit mode: load the existing segment and hydrate the builder from its AST.
+  // Edit mode: load the existing segment, set its type, and hydrate the editor.
   useEffect(() => {
     if (!id) return;
     void api
       .get<{ segment: { name: string; kind: string; definition: AstNode | null } }>(`/segments/${id}`)
       .then((res) => {
         setName(res.segment.name);
+        setSegmentKind(res.segment.kind === 'manual' ? 'manual' : 'dynamic_realtime');
         const g = groupFromAst(res.segment.definition);
         setRows(g.rows);
         setCombinator(g.combinator);
@@ -399,30 +401,44 @@ export function SegmentBuilder({ id }: { id?: string }) {
   const save = async () => {
     setSaving(true);
     try {
+      const segName = name || 'Untitled segment';
+      if (segmentKind === 'manual') {
+        // Manual: create (or rename) the segment, then import the pasted emails.
+        const emails = csv
+          .split(/[\n,]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        let sid = savedId;
+        if (editing && id) {
+          await api.put(`/segments/${id}`, { body: { name: segName } });
+          sid = id;
+        } else {
+          const res = await api.post<{ segment: { id: string } }>('/segments', {
+            body: { name: segName, kind: 'manual', definition: null },
+          });
+          sid = res.segment.id;
+          setSavedId(sid);
+        }
+        if (sid && emails.length) {
+          await api.post(`/segments/${sid}/import-csv`, { body: { emails } });
+        }
+        navigate('/segments');
+        return;
+      }
+      // Dynamic: compile the rule group into the §8 AST.
       const ast = buildAstFromGroup(rootGroup());
       if (editing && id) {
-        await api.put(`/segments/${id}`, { body: { name: name || 'Untitled segment', definition: ast } });
+        await api.put(`/segments/${id}`, { body: { name: segName, definition: ast } });
       } else {
         const res = await api.post<{ segment: { id: string } }>('/segments', {
-          body: { name: name || 'Untitled segment', kind: 'dynamic_realtime', definition: ast },
+          body: { name: segName, kind: 'dynamic_realtime', definition: ast },
         });
         setSavedId(res.segment.id);
       }
-      // Return to the list, which re-fetches on mount and shows the change.
       navigate('/segments');
     } finally {
       setSaving(false);
     }
-  };
-
-  const importCsv = async () => {
-    if (!savedId) return;
-    const emails = csv
-      .split(/[\n,]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const res = await api.post<{ added: number }>(`/segments/${savedId}/import-csv`, { body: { emails } });
-    setImported(res.added);
   };
 
   return (
@@ -452,27 +468,47 @@ export function SegmentBuilder({ id }: { id?: string }) {
                   onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
                 />
               </Field>
-              <Field label="Match">
-                <Select
-                  data-testid="segment-combinator"
-                  value={combinator}
-                  onChange={(e: Event) =>
-                    setCombinator((e.target as HTMLSelectElement).value as Combinator)
-                  }
-                >
-                  <option value="and">all (AND)</option>
-                  <option value="or">any (OR)</option>
-                </Select>
+              <Field label="Type">
+                {editing ? (
+                  <span data-testid="segment-type" class="inline-block py-2 text-sm font-medium capitalize text-stone-700">
+                    {segmentKind === 'manual' ? 'Manual (uploaded list)' : 'Dynamic (rule-based)'}
+                  </span>
+                ) : (
+                  <Select
+                    data-testid="segment-type"
+                    value={segmentKind}
+                    onChange={(e: Event) =>
+                      setSegmentKind((e.target as HTMLSelectElement).value as 'dynamic_realtime' | 'manual')
+                    }
+                  >
+                    <option value="dynamic_realtime">Dynamic (rule-based)</option>
+                    <option value="manual">Manual (uploaded list)</option>
+                  </Select>
+                )}
               </Field>
+              {segmentKind === 'dynamic_realtime' ? (
+                <Field label="Match">
+                  <Select
+                    data-testid="segment-combinator"
+                    value={combinator}
+                    onChange={(e: Event) => setCombinator((e.target as HTMLSelectElement).value as Combinator)}
+                  >
+                    <option value="and">all (AND)</option>
+                    <option value="or">any (OR)</option>
+                  </Select>
+                </Field>
+              ) : null}
             </div>
 
+            {segmentKind === 'dynamic_realtime' ? (
+            <>
             <datalist id="field-suggestions">
               {FIELD_SUGGESTIONS.map((f) => (
                 <option key={f} value={f} />
               ))}
             </datalist>
 
-                        <div class="mt-5 space-y-3">
+            <div class="mt-5 space-y-3">
               <span class="label">Rules</span>
               <RuleListEditor rows={rows} onChange={setRows} />
 
@@ -536,33 +572,29 @@ export function SegmentBuilder({ id }: { id?: string }) {
                 </span>
               ) : null}
             </div>
-          </Card>
-
-          {/* Manual members */}
-          <Card class="p-5">
-            <h2 class="text-base font-bold text-ink-900">Manual members (CSV)</h2>
-            <p class="mt-1 text-sm text-stone-500">
-              Paste comma- or newline-separated emails. Save the segment first.
-            </p>
-            <div class="mt-3">
-              <Textarea
-                data-testid="csv-input"
-                value={csv}
-                onInput={(e: Event) => setCsv((e.target as HTMLTextAreaElement).value)}
-                placeholder="alice@acme.com, bob@acme.com"
-                class="font-mono text-xs"
-              />
-            </div>
-            <div class="mt-3 flex items-center gap-3">
-              <Button data-testid="import-csv" variant="secondary" onClick={importCsv} disabled={!savedId}>
-                Import CSV
-              </Button>
-              {imported !== null ? (
-                <Badge data-testid="csv-imported" tone="success">
-                  Imported {imported}
-                </Badge>
-              ) : null}
-            </div>
+            </>
+            ) : (
+              /* Manual: a hand-curated list uploaded as CSV. */
+              <div class="mt-5 space-y-3">
+                <span class="label">Members (CSV)</span>
+                <p class="text-sm text-stone-500">
+                  Paste comma- or newline-separated emails. Matching profiles in this workspace
+                  become members; saving creates the segment and imports them.
+                </p>
+                <Textarea
+                  data-testid="csv-input"
+                  value={csv}
+                  onInput={(e: Event) => setCsv((e.target as HTMLTextAreaElement).value)}
+                  placeholder="alice@acme.com, bob@acme.com"
+                  class="font-mono text-xs"
+                />
+                <div class="mt-2 flex items-center gap-3 border-t border-stone-100 pt-4">
+                  <Button data-testid="save-segment" onClick={save} disabled={saving}>
+                    {saving ? 'Saving…' : editing ? 'Save changes' : 'Create segment'}
+                  </Button>
+                </div>
+              </div>
+            )}
           </Card>
         </div>
       </div>

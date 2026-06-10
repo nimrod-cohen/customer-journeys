@@ -45,9 +45,10 @@ test('open a profile, edit it, add an attribute, view events and segments', asyn
   await expect(page.getByTestId('event-row')).toHaveCount(2);
   await expect(page.getByTestId('event-row').first()).toContainText('purchase');
 
-  // Segments tab: the manual VIPs membership is listed.
+  // Segments tab: the manual VIPs membership is listed (robust to a1 being in
+  // other segments too — other specs may add it to one).
   await page.getByTestId('tab-segments').click();
-  await expect(page.getByTestId('profile-segment-row')).toContainText('Manual VIPs');
+  await expect(page.getByTestId('profile-segment-row').filter({ hasText: 'Manual VIPs' })).toHaveCount(1);
 });
 
 test('filter the profiles list by manual and dynamic segments', async ({ page }) => {

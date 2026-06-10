@@ -115,6 +115,32 @@ test('build a segment with a nested AND/OR group', async ({ page }) => {
   await expect(page.getByTestId('segment-list')).toContainText('Nested group');
 });
 
+test('create a MANUAL segment (CSV list) — no rule builder', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+
+  await page.getByTestId('segment-name').fill('Hand picked');
+  // Switch type to manual → the rule builder disappears, CSV box appears.
+  await page.getByTestId('segment-type').selectOption('manual');
+  await expect(page.getByTestId('rule-field')).toHaveCount(0);
+  await expect(page.getByTestId('segment-combinator')).toHaveCount(0);
+  await expect(page.getByTestId('csv-input')).toBeVisible();
+
+  await page.getByTestId('csv-input').fill('a1@acme.com, a2@acme.com');
+  await page.getByTestId('save-segment').click();
+  await page.getByTestId('segments-list').waitFor();
+  await expect(page.getByTestId('segment-list')).toContainText('Hand picked');
+
+  // The two emails resolved to members.
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+  await page.getByTestId('profile-segment-filter').selectOption({ label: 'Hand picked' });
+  await expect(page.getByTestId('profile-row')).toHaveCount(2);
+});
+
 test('edit a segment from the list: builder hydrates and the rename reflects', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();
