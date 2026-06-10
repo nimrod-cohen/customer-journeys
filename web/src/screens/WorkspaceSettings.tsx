@@ -2,7 +2,8 @@
 // lowercase-emails policy, and a link to sending-domain onboarding. Company-level
 // workspace management lives on the Company settings page. Scoped to the token.
 import { useEffect, useState } from 'preact/hooks';
-import { api } from '../store/session.js';
+import { useStore } from '../store/store.js';
+import { api, sessionStore } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader, Select } from '../ui/kit.js';
 
@@ -15,6 +16,7 @@ interface Member {
 const ROLES = ['owner', 'marketer', 'accounting'];
 
 export function WorkspaceSettings() {
+  const session = useStore(sessionStore);
   const [members, setMembers] = useState<Member[]>([]);
   const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState('marketer');
@@ -76,20 +78,32 @@ export function WorkspaceSettings() {
           <tbody class="divide-y divide-stone-100">
             {members.map((m) => (
               <tr data-testid="member-row" key={m.user_id} class="hover:bg-stone-50/70">
-                <td class="px-5 py-2.5 text-sm text-ink-900">{m.email}</td>
+                <td class="px-5 py-2.5 text-sm text-ink-900">
+                  {m.email}
+                  {m.user_id === session.sub ? (
+                    <span class="ml-2 text-[11px] uppercase tracking-wide text-stone-400">you</span>
+                  ) : null}
+                </td>
                 <td class="px-5 py-2.5">
-                  <Select
-                    data-testid="member-role"
-                    class="w-40"
-                    value={m.role}
-                    onChange={(e: Event) => changeRole(m.user_id, (e.target as HTMLSelectElement).value)}
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </Select>
+                  {m.user_id === session.sub ? (
+                    // You can't change your OWN role — only another owner can.
+                    <span data-testid="member-role-self" class="inline-block w-40 text-sm capitalize text-stone-500">
+                      {m.role}
+                    </span>
+                  ) : (
+                    <Select
+                      data-testid="member-role"
+                      class="w-40"
+                      value={m.role}
+                      onChange={(e: Event) => changeRole(m.user_id, (e.target as HTMLSelectElement).value)}
+                    >
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
                 </td>
               </tr>
             ))}

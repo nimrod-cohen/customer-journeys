@@ -168,6 +168,10 @@ export const addMember: Handler = async (ctx, pool, req) => {
   if (!userId) {
     return ok({ error: email ? `no user with email ${email}` : 'email required' }, 400);
   }
+  // Can't change your OWN role (addMember upserts the role on conflict).
+  if (userId === ctx.userId) {
+    return ok({ error: 'you cannot change your own role — ask another owner' }, 403);
+  }
   // A user belongs to ONE company: reject adding them here if they already have a
   // membership in a workspace owned by a DIFFERENT company than this workspace's.
   const conflict = await pool.query(
@@ -224,6 +228,12 @@ export const updateMember: Handler = async (ctx, pool, req) => {
   const userId = String(b.user_id ?? '');
   const role = String(b.role ?? '');
   if (!userId || !role) return ok({ error: 'user_id and role required' }, 400);
+  // A user cannot change their OWN role (no self-demotion) — only another owner
+  // can change someone's role. Prevents an owner accidentally locking themselves
+  // out of ownership.
+  if (userId === ctx.userId) {
+    return ok({ error: 'you cannot change your own role — ask another owner' }, 403);
+  }
   const { rowCount } = await pool.query(
     'UPDATE workspace_users SET role = $3 WHERE workspace_id = $1 AND user_id = $2',
     [ctx.workspaceId, userId, role],
