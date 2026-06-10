@@ -187,7 +187,7 @@ function RuleListEditor({ rows, onChange }: { rows: RuleRow[]; onChange: (rows: 
             <div class="mb-2 flex items-center gap-2">
               <Select
                 data-testid="rule-kind"
-                class="w-32"
+                class="w-48"
                 value={kind}
                 onChange={(e: Event) => setKind(i, (e.target as HTMLSelectElement).value as RuleKind)}
               >
