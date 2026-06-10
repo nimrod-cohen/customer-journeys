@@ -48,6 +48,7 @@ interface AttrPair {
 const TABS = [
   { id: 'details', label: 'Details' },
   { id: 'attributes', label: 'Attributes' },
+  { id: 'delivery', label: 'Delivery' },
   { id: 'events', label: 'Events' },
   { id: 'segments', label: 'Segments' },
 ] as const;
@@ -205,6 +206,8 @@ export function ProfileDetail({ id }: { id: string }) {
         <DetailsTab profile={profile} onSaved={load} />
       ) : tab === 'attributes' ? (
         <AttributesTab profile={profile} onSaved={load} />
+      ) : tab === 'delivery' ? (
+        <DeliveryTab id={id} />
       ) : tab === 'events' ? (
         <EventsTab id={id} />
       ) : (
@@ -424,6 +427,89 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
               </button>
             ))}
           </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// --- Delivery tab: deliverability health -----------------------------------
+
+interface DeliveryInfo {
+  email_status: string;
+  suppressed: { reason: string; source: string | null; created_at: string } | null;
+  soft_bounce_days: number;
+  events: Array<{ type: string; sub_type: string | null; occurred_at: string }>;
+}
+
+const SOFT_BOUNCE_DAYS_LIMIT = 3;
+
+function DeliveryTab({ id }: { id: string }) {
+  const [info, setInfo] = useState<DeliveryInfo | null>(null);
+  useEffect(() => {
+    void api.get<DeliveryInfo>(`/profiles/${id}/delivery`).then(setInfo);
+  }, [id]);
+
+  if (!info) return <p class="text-sm text-stone-500">Loading…</p>;
+
+  return (
+    <div data-testid="delivery-tab" class="space-y-5">
+      <Card class="p-5">
+        <h2 class="text-base font-bold text-ink-900">Deliverability</h2>
+        <dl class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <dt class="text-[11px] uppercase tracking-wide text-stone-500">Email status</dt>
+            <dd class="mt-1">
+              <Badge data-testid="delivery-status" tone={toneFor(info.email_status)}>
+                {info.email_status}
+              </Badge>
+            </dd>
+          </div>
+          <div>
+            <dt class="text-[11px] uppercase tracking-wide text-stone-500">Suppressed</dt>
+            <dd data-testid="delivery-suppression" class="mt-1">
+              {info.suppressed ? (
+                <span class="text-sm text-ink-900">
+                  <Badge tone="danger">{info.suppressed.reason}</Badge>
+                  <span class="ml-2 text-xs text-stone-500">
+                    {info.suppressed.source ? `via ${info.suppressed.source} · ` : ''}
+                    {fmt(info.suppressed.created_at)}
+                  </span>
+                </span>
+              ) : (
+                <Badge tone="success">not suppressed</Badge>
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-[11px] uppercase tracking-wide text-stone-500">Soft-bounce days</dt>
+            <dd data-testid="delivery-soft-days" class="mt-1 text-sm font-semibold text-ink-900">
+              {info.soft_bounce_days} / {SOFT_BOUNCE_DAYS_LIMIT}
+              <span class="ml-2 text-xs font-normal text-stone-500">
+                distinct days since last delivery{' '}
+                {info.soft_bounce_days >= SOFT_BOUNCE_DAYS_LIMIT ? '(permanent)' : ''}
+              </span>
+            </dd>
+          </div>
+        </dl>
+      </Card>
+
+      <Card class="p-5">
+        <h2 class="text-base font-bold text-ink-900">Recent delivery events</h2>
+        {info.events.length === 0 ? (
+          <p class="mt-2 text-sm text-stone-400">No delivery events (deliveries, bounces, complaints) yet.</p>
+        ) : (
+          <ul class="mt-3 divide-y divide-stone-100">
+            {info.events.map((ev, i) => (
+              <li data-testid="delivery-event-row" key={i} class="flex items-center justify-between py-2 text-sm">
+                <span class="flex items-center gap-2">
+                  <Badge tone={toneFor(ev.type === 'delivery' ? 'success' : ev.type)}>{ev.type}</Badge>
+                  {ev.sub_type ? <span class="text-xs text-stone-500">{ev.sub_type}</span> : null}
+                </span>
+                <span class="text-xs text-stone-500">{fmt(ev.occurred_at)}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
     </div>

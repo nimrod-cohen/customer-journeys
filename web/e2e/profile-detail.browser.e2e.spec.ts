@@ -33,6 +33,13 @@ test('open a profile, edit it, add an attribute, view events and segments', asyn
   await page.getByTestId('attrs-save').click();
   await expect(page.getByTestId('attrs-save-status')).toContainText('Saved');
 
+  // Delivery tab: deliverability health + recent delivery events (a1 has a
+  // seeded delivery + a soft bounce).
+  await page.getByTestId('tab-delivery').click();
+  await page.getByTestId('delivery-tab').waitFor();
+  await expect(page.getByTestId('delivery-status')).toBeVisible();
+  await expect(page.getByTestId('delivery-event-row')).toHaveCount(2);
+
   // Events tab: the seeded history shows newest-first.
   await page.getByTestId('tab-events').click();
   await expect(page.getByTestId('event-row')).toHaveCount(2);

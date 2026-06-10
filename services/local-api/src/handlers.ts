@@ -1084,6 +1084,61 @@ export const listProfileEvents: Handler = async (ctx, pool, req) => {
   return ok({ events: rows });
 };
 
+/**
+ * GET /profiles/:id/delivery — deliverability health for a profile (scoped):
+ * email_status, current suppression (if any), the distinct-day soft-bounce count
+ * since the last delivery, and recent delivery events (delivery/bounce/complaint).
+ */
+export const getProfileDelivery: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const p = await pool.query<{ email: string | null; email_status: string }>(
+    'SELECT email, email_status FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ctx.workspaceId, id],
+  );
+  if (!p.rows[0]) return ok({ error: 'not found' }, 404);
+  const email = p.rows[0].email;
+
+  const supp = email
+    ? await pool.query<{ reason: string; source: string | null; created_at: string }>(
+        'SELECT reason, source, created_at FROM suppressions WHERE workspace_id = $1 AND email = $2',
+        [ctx.workspaceId, email],
+      )
+    : { rows: [] as Array<{ reason: string; source: string | null; created_at: string }> };
+
+  // Distinct UTC days with a soft bounce since the last successful delivery.
+  const days = email
+    ? await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM (
+           SELECT DISTINCT (occurred_at AT TIME ZONE 'UTC')::date
+             FROM email_events
+            WHERE workspace_id = $1 AND type = 'bounce' AND sub_type = 'Transient'
+              AND raw->>'recipient' = $2
+              AND occurred_at > COALESCE(
+                (SELECT max(occurred_at) FROM email_events
+                  WHERE workspace_id = $1 AND type = 'delivery' AND raw->>'recipient' = $2),
+                '-infinity'::timestamptz)
+         ) t`,
+        [ctx.workspaceId, email],
+      )
+    : { rows: [{ n: 0 }] };
+
+  const events = await pool.query<{ type: string; sub_type: string | null; occurred_at: string }>(
+    `SELECT type, sub_type, occurred_at
+       FROM email_events
+      WHERE workspace_id = $1 AND (profile_id = $2 OR raw->>'recipient' = $3)
+      ORDER BY occurred_at DESC
+      LIMIT 20`,
+    [ctx.workspaceId, id, email],
+  );
+
+  return ok({
+    email_status: p.rows[0].email_status,
+    suppressed: supp.rows[0] ?? null,
+    soft_bounce_days: days.rows[0]?.n ?? 0,
+    events: events.rows,
+  });
+};
+
 /** GET /profiles/:id/segments — segments this profile currently belongs to (scoped). */
 export const listProfileSegments: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
@@ -1534,6 +1589,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PATCH /profiles/:id': updateProfile,
   'POST /profiles/:id/merge': mergeProfiles,
   'GET /profiles/:id/events': listProfileEvents,
+  'GET /profiles/:id/delivery': getProfileDelivery,
   'GET /profiles/:id/segments': listProfileSegments,
   'GET /activity': listActivity,
   'GET /dashboards/summary': dashboardSummary,
