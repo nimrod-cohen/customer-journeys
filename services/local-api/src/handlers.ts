@@ -1243,33 +1243,19 @@ export const adminRenameCompany: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * PATCH /admin/workspaces/:id — platform admin updates a workspace: move it into
- * a company (`company_id`) and/or rename it (`name`). Audited. Reassigns/renames
- * only; tenant data stays workspace-scoped.
+ * PATCH /admin/workspaces/:id — platform admin renames a workspace (audited). A
+ * workspace's company is fixed once created (no moving between companies).
  */
 export const adminUpdateWorkspace: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  const b = asObject(req.body);
-  const companyId = typeof b.company_id === 'string' ? b.company_id : '';
-  const name = typeof b.name === 'string' ? b.name.trim() : '';
-  if (!companyId && !name) return ok({ error: 'name or company_id required' }, 400);
-  if (companyId) {
-    const c = await pool.query('SELECT 1 FROM companies WHERE id = $1', [companyId]);
-    if (!c.rows[0]) return ok({ error: 'company not found' }, 404);
-  }
-  const { rows } = await pool.query(
-    `UPDATE workspaces SET company_id = COALESCE($2, company_id), name = COALESCE($3, name)
-       WHERE id = $1 RETURNING id, name, company_id`,
-    [id, companyId || null, name || null],
-  );
-  if (!rows[0]) return ok({ error: 'workspace not found' }, 404);
-  await handleAdminAccess(
-    ctx,
+  const name = typeof asObject(req.body).name === 'string' ? String(asObject(req.body).name).trim() : '';
+  if (!name) return ok({ error: 'name required' }, 400);
+  const { rows } = await pool.query('UPDATE workspaces SET name = $2 WHERE id = $1 RETURNING id, name, company_id', [
     id,
-    'admin.update_workspace',
-    { workspace_id: id, ...(companyId ? { company_id: companyId } : {}), ...(name ? { name } : {}) },
-    writeAuditEntry,
-  );
+    name,
+  ]);
+  if (!rows[0]) return ok({ error: 'workspace not found' }, 404);
+  await handleAdminAccess(ctx, id, 'admin.update_workspace', { workspace_id: id, name }, writeAuditEntry);
   return ok({ workspace: rows[0] });
 };
 

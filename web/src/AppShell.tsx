@@ -253,13 +253,16 @@ function CompanyWorkspacePicker(): JSX.Element {
   // company, and follows the admin's company selection.
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
+  // Re-fetch on navigation so the picker stays in sync with the System Admin
+  // screen (where companies/workspaces are created, renamed, deleted).
+  const route = useStore(routeStore);
 
   useEffect(() => {
     void api
       .get<{ companies: AdminCompany[] }>('/admin/companies')
       .then((r) => setCompanies(r.companies))
       .catch(() => setCompanies([]));
-  }, []);
+  }, [route]);
   useEffect(() => {
     if (session.companyId) setSelectedCompanyId(session.companyId);
   }, [session.companyId]);

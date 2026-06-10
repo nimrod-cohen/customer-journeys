@@ -125,7 +125,7 @@ test('deleting a workspace requires typing its exact name (admin only)', async (
   await expect(page.getByTestId('admin-company-name').filter({ hasText: /^Beta$/ })).toHaveCount(1);
 });
 
-test('super admin creates a company and moves a workspace into it', async ({ page }) => {
+test('super admin creates a company (and it has no workspaces yet)', async ({ page }) => {
   await loginAs(page, DEV_ADMIN);
   await page.getByTestId('nav-admin').click();
   await page.getByTestId('system-admin-console').waitFor();
@@ -133,19 +133,14 @@ test('super admin creates a company and moves a workspace into it', async ({ pag
   // Seeded companies are listed.
   await expect(page.getByTestId('admin-company-name').filter({ hasText: /^Acme$/ })).toHaveCount(1);
 
-  // Create a new company.
+  // Create a new company — it starts empty.
   await page.getByTestId('company-name').fill('Globex');
   await page.getByTestId('create-company').click();
-  await expect(page.getByTestId('admin-company-name').filter({ hasText: /^Globex$/ })).toHaveCount(1);
-
-  // Move "Beta (B)" into Globex.
-  await page.locator(`[data-testid="assign-company-select"][data-ws="${WS_B}"]`).selectOption({ label: 'Globex' });
-
-  // The Globex company card now contains that workspace.
   const globexCard = page
     .locator('[data-testid="admin-company"]')
     .filter({ has: page.getByTestId('admin-company-name').filter({ hasText: /^Globex$/ }) });
-  await expect(globexCard.getByText('Beta (B)')).toBeVisible();
+  await expect(globexCard).toHaveCount(1);
+  await expect(globexCard).toContainText('No workspaces in this company.');
 });
 
 test('super admin deletes an EMPTY company (button only shows when it has no workspaces)', async ({ page }) => {

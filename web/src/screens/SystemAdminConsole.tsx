@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { api } from '../store/session.js';
-import { Badge, Button, Card, Field, Input, PageHeader, Select, toneFor } from '../ui/kit.js';
+import { Badge, Button, Card, Field, Input, PageHeader, toneFor } from '../ui/kit.js';
 
 interface AdminWorkspace {
   id: string;
@@ -87,12 +87,6 @@ export function SystemAdminConsole() {
     } finally {
       setBusy(false);
     }
-  };
-
-  const assign = async (workspaceId: string, companyId: string) => {
-    if (!companyId) return;
-    await api.patch(`/admin/workspaces/${workspaceId}`, { body: { company_id: companyId } });
-    await load();
   };
 
   const open = async (id: string) => {
@@ -228,21 +222,6 @@ export function SystemAdminConsole() {
                       </td>
                       <td class="px-4 py-2.5">
                         <Badge tone={toneFor(w.status)}>{w.status}</Badge>
-                      </td>
-                      <td class="px-4 py-2.5">
-                        <Select
-                          data-testid="assign-company-select"
-                          data-ws={w.id}
-                          value={c.id}
-                          class="w-48"
-                          onChange={(e: Event) => void assign(w.id, (e.target as HTMLSelectElement).value)}
-                        >
-                          {companies.map((opt) => (
-                            <option key={opt.id} value={opt.id}>
-                              {opt.name}
-                            </option>
-                          ))}
-                        </Select>
                       </td>
                       <td class="px-4 py-2.5 text-right">
                         <Button
