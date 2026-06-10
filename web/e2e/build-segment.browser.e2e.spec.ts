@@ -52,17 +52,25 @@ test('segment by the unsubscribed attribute and by an event', async ({ page }) =
   await page.getByTestId('preview-size').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
-  // (2) Switch the row to an EVENT rule: did 'purchase' (a1 has one).
+  // (2) Switch to an EVENT rule and AUTOSUGGEST the event name: typing "pur"
+  // surfaces "purchase" (a1 has one).
   await page.getByTestId('rule-kind').first().selectOption('event');
-  await page.getByTestId('event-name').first().fill('purchase');
+  await page.getByTestId('event-name').first().fill('pur');
+  await page.getByTestId('value-suggestion').filter({ hasText: 'purchase' }).first().click();
+  await expect(page.getByTestId('event-name').first()).toHaveValue('purchase');
   await page.getByTestId('preview-size').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
-  // (3) Add an event-attribute filter: payload.sku = book → still the one match.
+  // (3) Event-attribute filter, autosuggesting the payload KEY and VALUE on focus:
+  // sku = book (from the seeded purchase payload) → still the one match.
   await page.getByTestId('event-cond-add').click();
-  await page.getByTestId('event-cond-field').fill('sku');
+  await page.getByTestId('event-cond-field').click();
+  await page.getByTestId('value-suggestion').filter({ hasText: 'sku' }).first().click();
+  await expect(page.getByTestId('event-cond-field')).toHaveValue('sku');
   await page.getByTestId('event-cond-op').selectOption('=');
-  await page.getByTestId('event-cond-value').fill('book');
+  await page.getByTestId('event-cond-value').click();
+  await page.getByTestId('value-suggestion').filter({ hasText: 'book' }).first().click();
+  await expect(page.getByTestId('event-cond-value')).toHaveValue('book');
   await page.getByTestId('preview-size').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 

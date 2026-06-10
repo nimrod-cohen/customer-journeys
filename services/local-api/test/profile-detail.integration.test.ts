@@ -176,6 +176,21 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     expect((none.body as { values: string[] }).values).toEqual([]);
   });
 
+  it('event autosuggest endpoints: types, payload keys, payload values', async () => {
+    // P_A has a page_view ({}) and a purchase ({"amount":50}).
+    const types = await call(world.env, 'GET', '/events/types', { token: tokA() });
+    expect((types.body as { values: string[] }).values).toEqual(expect.arrayContaining(['page_view', 'purchase']));
+
+    const keys = await call(world.env, 'GET', '/events/payload-keys', { token: tokA(), query: { type: 'purchase' } });
+    expect((keys.body as { values: string[] }).values).toEqual(['amount']);
+
+    const vals = await call(world.env, 'GET', '/events/payload-values', {
+      token: tokA(),
+      query: { type: 'purchase', key: 'amount' },
+    });
+    expect((vals.body as { values: string[] }).values).toEqual(['50']);
+  });
+
   it('GET /profiles/:id returns the profile + rolling features', async () => {
     const r = await call(world.env, 'GET', `/profiles/${P_A}`, { token: tokA() });
     expect(r.status).toBe(200);

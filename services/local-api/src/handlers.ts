@@ -750,6 +750,56 @@ export const listAttributeValues: Handler = async (ctx, pool, req) => {
   return ok({ values: rows.map((r) => r.v).filter((v): v is string => v != null) });
 };
 
+/** GET /events/types?q= — DISTINCT event type names (workspace-scoped, cap 30). */
+export const listEventTypes: Handler = async (ctx, pool, req) => {
+  const q = String(req.query.q ?? '').trim();
+  const { rows } = await pool.query<{ type: string }>(
+    `SELECT DISTINCT type FROM events WHERE workspace_id = $1 AND type ILIKE $2 ORDER BY type LIMIT 30`,
+    [ctx.workspaceId, `%${q}%`],
+  );
+  return ok({ values: rows.map((r) => r.type) });
+};
+
+/** GET /events/payload-keys?type=&q= — DISTINCT payload keys (optionally for one event type). */
+export const listEventPayloadKeys: Handler = async (ctx, pool, req) => {
+  const type = String(req.query.type ?? '').trim();
+  const q = String(req.query.q ?? '').trim();
+  const params: unknown[] = [ctx.workspaceId, `%${q}%`];
+  let typeClause = '';
+  if (type) {
+    params.push(type);
+    typeClause = `AND e.type = $${params.length}`;
+  }
+  const { rows } = await pool.query<{ k: string }>(
+    `SELECT DISTINCT k FROM events e, jsonb_object_keys(e.payload) AS k
+       WHERE e.workspace_id = $1 AND k ILIKE $2 ${typeClause}
+       ORDER BY k LIMIT 30`,
+    params,
+  );
+  return ok({ values: rows.map((r) => r.k) });
+};
+
+/** GET /events/payload-values?type=&key=&q= — DISTINCT values of one payload key. */
+export const listEventPayloadValues: Handler = async (ctx, pool, req) => {
+  const type = String(req.query.type ?? '').trim();
+  const key = String(req.query.key ?? '').trim();
+  const q = String(req.query.q ?? '').trim();
+  if (!key) return ok({ values: [] });
+  const params: unknown[] = [ctx.workspaceId, key, `%${q}%`];
+  let typeClause = '';
+  if (type) {
+    params.push(type);
+    typeClause = `AND type = $${params.length}`;
+  }
+  const { rows } = await pool.query<{ v: string | null }>(
+    `SELECT DISTINCT payload ->> $2 AS v FROM events
+       WHERE workspace_id = $1 AND payload ->> $2 ILIKE $3 ${typeClause}
+       ORDER BY v LIMIT 30`,
+    params,
+  );
+  return ok({ values: rows.map((r) => r.v).filter((v): v is string => v != null) });
+};
+
 /**
  * GET /profiles/attribute-keys — the DISTINCT attribute keys across the
  * workspace's profiles (powers the column picker exhaustively, not limited to a
@@ -1477,6 +1527,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /profiles/import-csv': importProfilesCsv,
   'GET /profiles/attribute-keys': listAttributeKeys,
   'GET /profiles/attribute-values': listAttributeValues,
+  'GET /events/types': listEventTypes,
+  'GET /events/payload-keys': listEventPayloadKeys,
+  'GET /events/payload-values': listEventPayloadValues,
   'GET /profiles/:id': getProfile,
   'PATCH /profiles/:id': updateProfile,
   'POST /profiles/:id/merge': mergeProfiles,

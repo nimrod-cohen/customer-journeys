@@ -24,22 +24,40 @@ import {
 } from '../segments/ast-builder.js';
 import { Badge, Button, Card, Field, Input, PageHeader, Select, Textarea } from '../ui/kit.js';
 
+// Fetchers for the autosuggest boxes — each returns the existing distinct values
+// matching `q` (workspace-scoped, capped server-side). A null fetcher = plain box.
+type Fetcher = ((q: string) => Promise<string[]>) | null;
+const fetchAttrValues = (key: string): Fetcher =>
+  key ? (q) => api.get<{ values: string[] }>('/profiles/attribute-values', { query: { key, q } }).then((r) => r.values) : null;
+const fetchEventTypes: Fetcher = (q) =>
+  api.get<{ values: string[] }>('/events/types', { query: { q } }).then((r) => r.values);
+const fetchPayloadKeys = (type: string): Fetcher => (q) =>
+  api.get<{ values: string[] }>('/events/payload-keys', { query: { type, q } }).then((r) => r.values);
+const fetchPayloadValues = (type: string, key: string): Fetcher =>
+  key ? (q) => api.get<{ values: string[] }>('/events/payload-values', { query: { type, key, q } }).then((r) => r.values) : null;
+
 /**
- * Free-text value input with autosuggest of EXISTING values for an attribute
- * field (`attributes.<key>`). Suggestions are fetched only once ≥2 chars are
- * typed and after the user pauses (debounced), to stay light. Non-attribute
- * fields just get a plain text box.
+ * Free-text input with autosuggest of EXISTING values via `fetcher`. Suggestions
+ * appear on focus and filter as you type (debounced 250ms so we only fetch on a
+ * pause). A null fetcher makes it a plain text box.
  */
-function ValueAutosuggest({
-  field,
+function Suggest({
   value,
   onChange,
+  fetcher,
+  placeholder,
+  testId,
+  wrapperClass = 'relative',
+  inputClass = '',
 }: {
-  field: string;
   value: string;
   onChange: (v: string) => void;
+  fetcher: Fetcher;
+  placeholder?: string;
+  testId: string;
+  wrapperClass?: string;
+  inputClass?: string;
 }) {
-  const attrKey = field.startsWith('attributes.') ? field.slice('attributes.'.length) : '';
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -54,19 +72,14 @@ function ValueAutosuggest({
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  // Fetch matching existing values for the attribute. Empty q (on focus) returns
-  // the top values; otherwise it's a substring filter.
   const doFetch = async (q: string) => {
-    if (!attrKey) {
+    if (!fetcher) {
       setSuggestions([]);
       setOpen(false);
       return;
     }
     try {
-      const r = await api.get<{ values: string[] }>('/profiles/attribute-values', {
-        query: { key: attrKey, q: q.trim() },
-      });
-      const vals = r.values.filter((s) => s !== q); // don't suggest the exact value already typed
+      const vals = (await fetcher(q.trim())).filter((s) => s !== q);
       setSuggestions(vals);
       setOpen(vals.length > 0);
     } catch {
@@ -78,16 +91,15 @@ function ValueAutosuggest({
   const onInput = (v: string) => {
     onChange(v);
     if (timer.current) clearTimeout(timer.current);
-    // Filter as you type — debounced so we only fetch once you pause.
     timer.current = setTimeout(() => void doFetch(v), 250);
   };
 
   return (
-    <div ref={ref} class="relative">
+    <div ref={ref} class={wrapperClass}>
       <Input
-        data-testid="rule-value"
-        class="w-40"
-        placeholder="value"
+        data-testid={testId}
+        class={`w-full ${inputClass}`}
+        placeholder={placeholder}
         value={value}
         onInput={(e: Event) => onInput((e.target as HTMLInputElement).value)}
         onFocus={() => void doFetch(value)}
@@ -332,10 +344,17 @@ export function SegmentBuilder({ id }: { id?: string }) {
                           ))}
                         </Select>
                         {row.operator !== 'exists' ? (
-                          <ValueAutosuggest
-                            field={row.field}
+                          <Suggest
+                            testId="rule-value"
+                            wrapperClass="relative w-40"
                             value={row.value}
                             onChange={(v) => update(i, { value: v })}
+                            fetcher={
+                              row.field.startsWith('attributes.')
+                                ? fetchAttrValues(row.field.slice('attributes.'.length))
+                                : null
+                            }
+                            placeholder="value"
                           />
                         ) : null}
                       </div>
@@ -343,12 +362,14 @@ export function SegmentBuilder({ id }: { id?: string }) {
                       <div class="space-y-2">
                         <div class="flex flex-wrap items-center gap-2">
                           <span class="text-sm text-stone-500">did event</span>
-                          <Input
-                            data-testid="event-name"
-                            class="min-w-[10rem] flex-1 font-mono text-xs"
+                          <Suggest
+                            testId="event-name"
+                            wrapperClass="relative min-w-[10rem] flex-1"
+                            inputClass="font-mono text-xs"
                             placeholder="e.g. lead, purchase"
                             value={row.field}
-                            onInput={(e: Event) => update(i, { field: (e.target as HTMLInputElement).value })}
+                            onChange={(v) => update(i, { field: v })}
+                            fetcher={fetchEventTypes}
                           />
                           <Select
                             data-testid="event-op"
@@ -386,12 +407,14 @@ export function SegmentBuilder({ id }: { id?: string }) {
                           ) : null}
                           {(row.conditions ?? []).map((c, j) => (
                             <div data-testid="event-cond-row" key={j} class="mt-1.5 flex flex-wrap items-center gap-2">
-                              <Input
-                                data-testid="event-cond-field"
-                                class="min-w-[8rem] flex-1 font-mono text-xs"
+                              <Suggest
+                                testId="event-cond-field"
+                                wrapperClass="relative min-w-[8rem] flex-1"
+                                inputClass="font-mono text-xs"
                                 placeholder="payload key (e.g. interest)"
                                 value={c.field}
-                                onInput={(e: Event) => setCond(i, j, { field: (e.target as HTMLInputElement).value })}
+                                onChange={(v) => setCond(i, j, { field: v })}
+                                fetcher={fetchPayloadKeys(row.field)}
                               />
                               <Select
                                 data-testid="event-cond-op"
@@ -408,12 +431,13 @@ export function SegmentBuilder({ id }: { id?: string }) {
                                 ))}
                               </Select>
                               {c.operator !== 'exists' ? (
-                                <Input
-                                  data-testid="event-cond-value"
-                                  class="w-36"
+                                <Suggest
+                                  testId="event-cond-value"
+                                  wrapperClass="relative w-36"
                                   placeholder="value"
                                   value={c.value}
-                                  onInput={(e: Event) => setCond(i, j, { value: (e.target as HTMLInputElement).value })}
+                                  onChange={(v) => setCond(i, j, { value: v })}
+                                  fetcher={fetchPayloadValues(row.field, c.field)}
                                 />
                               ) : null}
                               <Button
