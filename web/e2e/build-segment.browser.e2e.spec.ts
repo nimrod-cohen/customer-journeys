@@ -1,14 +1,12 @@
 // E2E (real Chromium): the Segments list → designated builder flow (§12). The
-// marketer opens the builder from the list, enters a rule (attributes.tier =
-// vip), previews the size (must be 2 — the two seeded VIPs in WS_A, never WS_B's
-// profile), saves, and lands back on the list which now shows the new segment
-// (proves the list is reactive). A second test loads an existing segment into the
-// builder, renames it, and confirms the rename reflects in the list.
+// builder is an edit page: the members panel on the right refreshes ONLY on entry
+// and on SAVE (never on every keystroke), and saving stays on the page. "← Back to
+// segments" returns to the list, which re-fetches and shows the change.
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
-test('create a dynamic segment from the list, preview size, and see it appear', async ({ page }) => {
+test('create a dynamic segment, save, and see its members + the list', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();
   await page.getByTestId('segments-list').waitFor();
@@ -26,19 +24,18 @@ test('create a dynamic segment from the list, preview size, and see it appear', 
   await page.getByTestId('value-suggestion').filter({ hasText: 'vip' }).first().click();
   await expect(page.getByTestId('rule-value').first()).toHaveValue('vip');
 
-  // Two seeded VIPs in WS_A; WS_B's VIP-less profile is excluded by scoping. The
-  // members list auto-loads (no Preview button) and lists both.
+  // Members only resolve on SAVE. Two seeded VIPs in WS_A; WS_B's profile excluded.
+  await page.getByTestId('save-segment').click();
   await expect(page.getByTestId('segment-size')).toContainText('2');
   await expect(page.getByTestId('member-preview-row')).toHaveCount(2);
 
-  await page.getByTestId('save-segment').click();
-
-  // Saving returns to the list, which re-fetches and shows the new segment.
+  // Back to the list, which re-fetches and shows the new segment.
+  await page.getByTestId('segments-back').click();
   await page.getByTestId('segments-list').waitFor();
   await expect(page.getByTestId('segment-list')).toContainText('VIP members');
 });
 
-test('segment by the unsubscribed attribute and by an event', async ({ page }) => {
+test('segment by the unsubscribed attribute and by an event (count refreshes on save)', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();
   await page.getByTestId('segments-list').waitFor();
@@ -50,6 +47,7 @@ test('segment by the unsubscribed attribute and by an event', async ({ page }) =
   await page.getByTestId('rule-field').first().fill('attributes.unsubscribed');
   await page.getByTestId('rule-operator').first().selectOption('=');
   await page.getByTestId('rule-value').first().fill('true');
+  await page.getByTestId('save-segment').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
   // (2) Switch to an EVENT rule and AUTOSUGGEST the event name: typing "pur"
@@ -58,6 +56,7 @@ test('segment by the unsubscribed attribute and by an event', async ({ page }) =
   await page.getByTestId('event-name').first().fill('pur');
   await page.getByTestId('value-suggestion').filter({ hasText: 'purchase' }).first().click();
   await expect(page.getByTestId('event-name').first()).toHaveValue('purchase');
+  await page.getByTestId('save-segment').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
   // (3) Event-attribute filter, autosuggesting the payload KEY and VALUE on focus:
@@ -70,10 +69,12 @@ test('segment by the unsubscribed attribute and by an event', async ({ page }) =
   await page.getByTestId('event-cond-value').click();
   await page.getByTestId('value-suggestion').filter({ hasText: 'book' }).first().click();
   await expect(page.getByTestId('event-cond-value')).toHaveValue('book');
+  await page.getByTestId('save-segment').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
-  // A non-matching payload value yields zero.
+  // A non-matching payload value yields zero (after saving).
   await page.getByTestId('event-cond-value').fill('nope');
+  await page.getByTestId('save-segment').click();
   await expect(page.getByTestId('segment-size')).toContainText('0');
 });
 
@@ -103,15 +104,16 @@ test('build a segment with a nested AND/OR group', async ({ page }) => {
   await group.getByTestId('rule-operator').nth(1).selectOption('=');
   await group.getByTestId('rule-value').nth(1).fill('std');
 
-  // tier=vip AND (plan=pro OR tier=std) → only a2 matches.
+  // tier=vip AND (plan=pro OR tier=std) → only a2 matches (after save).
+  await page.getByTestId('save-segment').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
-  await page.getByTestId('save-segment').click();
+  await page.getByTestId('segments-back').click();
   await page.getByTestId('segments-list').waitFor();
   await expect(page.getByTestId('segment-list')).toContainText('Nested group');
 });
 
-test('create a MANUAL segment (CSV list) — no rule builder', async ({ page }) => {
+test('create a MANUAL segment (CSV list) — no rule builder; members show after save', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();
   await page.getByTestId('segments-list').waitFor();
@@ -127,9 +129,12 @@ test('create a MANUAL segment (CSV list) — no rule builder', async ({ page }) 
 
   await page.getByTestId('csv-input').fill('a1@acme.com, a2@acme.com');
   await page.getByTestId('save-segment').click();
+  // Saving imports the emails and the members panel refreshes with the 2 members.
+  await expect(page.getByTestId('member-preview-row')).toHaveCount(2);
+
+  await page.getByTestId('segments-back').click();
   await page.getByTestId('segments-list').waitFor();
   await expect(page.getByTestId('segment-list')).toContainText('Hand picked');
-  // (Membership resolution from the CSV is covered by the import-csv integration test.)
 });
 
 test('deleting the root rule leaves an inactive draft segment', async ({ page }) => {
@@ -147,6 +152,9 @@ test('deleting the root rule leaves an inactive draft segment', async ({ page })
   await expect(page.getByTestId('segment-size')).toContainText('Draft');
 
   await page.getByTestId('save-segment').click();
+  await expect(page.getByTestId('segment-draft-note')).toBeVisible();
+
+  await page.getByTestId('segments-back').click();
   await page.getByTestId('segments-list').waitFor();
   await expect(page.getByTestId('segment-list')).toContainText('Draft seg');
 });
@@ -164,6 +172,8 @@ test('edit a segment from the list: builder hydrates and the rename reflects', a
   await page.getByTestId('rule-operator').first().selectOption('=');
   await page.getByTestId('rule-value').first().fill('std');
   await page.getByTestId('save-segment').click();
+  await expect(page.getByTestId('segment-size')).toContainText('1');
+  await page.getByTestId('segments-back').click();
   await page.getByTestId('segments-list').waitFor();
 
   // Open it in the designated edit screen — the builder hydrates from its AST.
@@ -177,9 +187,10 @@ test('edit a segment from the list: builder hydrates and the rename reflects', a
   await expect(page.getByTestId('rule-field').first()).toHaveValue('attributes.tier');
   await expect(page.getByTestId('rule-value').first()).toHaveValue('std');
 
-  // Rename and save → the list reflects the change.
+  // Rename and save → back on the list, the rename reflects.
   await page.getByTestId('segment-name').fill('Seg Edited');
   await page.getByTestId('save-segment').click();
+  await page.getByTestId('segments-back').click();
   await page.getByTestId('segments-list').waitFor();
   await expect(page.getByTestId('segment-list')).toContainText('Seg Edited');
 });

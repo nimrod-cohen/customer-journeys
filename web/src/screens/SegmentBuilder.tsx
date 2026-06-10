@@ -375,6 +375,11 @@ export function SegmentBuilder({ id }: { id?: string }) {
   // Live members preview (dynamic segments): one page of 50 at `offset`.
   const [members, setMembers] = useState<Array<{ id: string; email: string | null }>>([]);
   const [offset, setOffset] = useState(0);
+  // The members panel reflects the SAVED segment — it refreshes on entry and on
+  // save, NOT on every edit. `memVersion` bumps to trigger a (re)load; `dirty`
+  // marks unsaved rule edits so we can flag the list as stale.
+  const [memVersion, setMemVersion] = useState(0);
+  const [dirty, setDirty] = useState(false);
   const PAGE = 50;
   const [name, setName] = useState('');
   // A segment is EITHER dynamic (rule-based) OR manual (uploaded list) — never
@@ -396,6 +401,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
         setRows(g.rows);
         setCombinator(g.combinator);
         setGroups(g.groups);
+        setMemVersion((v) => v + 1); // load the saved segment's members on entry
       })
       .catch(() => navigate('/segments'));
   }, [id]);
@@ -415,6 +421,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
         setSize(0);
         setMembers([]);
         setOffset(0);
+        setDirty(false);
         return;
       }
       const res = await api.get<{ size: number; members: Array<{ id: string; email: string | null }> }>(
@@ -423,6 +430,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
       setSize(res.size);
       setMembers(res.members);
       setOffset(off);
+      setDirty(false);
       return;
     }
     const ast = buildAstFromGroup({ combinator, rows, groups });
@@ -431,6 +439,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
       setSize(0);
       setMembers([]);
       setOffset(0);
+      setDirty(false);
       return;
     }
     const res = await api.post<{ size: number; members: Array<{ id: string; email: string | null }> }>(
@@ -440,30 +449,36 @@ export function SegmentBuilder({ id }: { id?: string }) {
     setSize(res.size);
     setMembers(res.members);
     setOffset(off);
+    setDirty(false);
   };
 
-  // Auto-refresh the members panel on entry and (for dynamic) whenever the rules
-  // change — no manual "preview" button.
+  // Refresh the members panel ONLY on entry (after hydrate) and after a save —
+  // never on every keystroke. `memVersion` is bumped in those two places.
   useEffect(() => {
-    const t = setTimeout(() => void loadMembers(0), 400);
-    return () => clearTimeout(t);
+    if (memVersion === 0) return; // nothing to show until the segment exists / is saved
+    void loadMembers(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, combinator, groups, segmentKind, savedId]);
+  }, [memVersion]);
+
+  // Editing the rules marks the (saved) members list stale until the next save.
+  useEffect(() => {
+    setDirty(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, combinator, groups, csv]);
 
   const save = async () => {
     setSaving(true);
     try {
       const segName = name || 'Untitled segment';
       if (segmentKind === 'manual') {
-        // Manual: create (or rename) the segment, then import the pasted emails.
+        // Manual: create (or update) the segment, then import the pasted emails.
         const emails = csv
           .split(/[\n,]/)
           .map((s) => s.trim())
           .filter(Boolean);
         let sid = savedId;
-        if (editing && id) {
-          await api.put(`/segments/${id}`, { body: { name: segName } });
-          sid = id;
+        if (sid) {
+          await api.put(`/segments/${sid}`, { body: { name: segName } });
         } else {
           const res = await api.post<{ segment: { id: string } }>('/segments', {
             body: { name: segName, kind: 'manual', definition: null },
@@ -473,21 +488,22 @@ export function SegmentBuilder({ id }: { id?: string }) {
         }
         if (sid && emails.length) {
           await api.post(`/segments/${sid}/import-csv`, { body: { emails } });
+          setCsv(''); // imported — clear the box (members panel now reflects them)
         }
-        navigate('/segments');
+        setMemVersion((v) => v + 1); // refresh the members panel in place
         return;
       }
       // Dynamic: compile the rule group into the §8 AST.
       const ast = buildAstFromGroup(rootGroup());
-      if (editing && id) {
-        await api.put(`/segments/${id}`, { body: { name: segName, definition: ast } });
+      if (savedId) {
+        await api.put(`/segments/${savedId}`, { body: { name: segName, definition: ast } });
       } else {
         const res = await api.post<{ segment: { id: string } }>('/segments', {
           body: { name: segName, kind: 'dynamic_realtime', definition: ast },
         });
         setSavedId(res.segment.id);
       }
-      navigate('/segments');
+      setMemVersion((v) => v + 1); // refresh the members panel in place
     } finally {
       setSaving(false);
     }
@@ -659,7 +675,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
                 {isDraft
                   ? 'Draft'
                   : size === null
-                    ? 'Loading…'
+                    ? '—'
                     : segmentKind === 'manual'
                       ? `${size} member${size === 1 ? '' : 's'}`
                       : `${size} matching`}
@@ -669,53 +685,62 @@ export function SegmentBuilder({ id }: { id?: string }) {
               <p data-testid="segment-draft-note" class="mt-2 text-sm text-amber-600">
                 No rules yet — this segment is an inactive <b>draft</b> and matches no one until you add a rule.
               </p>
-            ) : size !== null ? (
-              members.length === 0 ? (
-                <p class="mt-2 text-sm text-stone-400">
-                  {segmentKind === 'manual' ? 'No members yet — paste emails and save.' : 'No matching profiles.'}
-                </p>
-              ) : (
-                <>
-                  <ul class="mt-3 divide-y divide-stone-100 overflow-hidden rounded-lg border border-stone-200">
-                    {members.map((m) => (
-                      <li
-                        data-testid="member-preview-row"
-                        key={m.id}
-                        class="truncate px-3 py-1.5 text-sm text-ink-800"
-                        title={m.email ?? m.id}
-                      >
-                        {m.email ?? m.id}
-                      </li>
-                    ))}
-                  </ul>
-                  {size > PAGE ? (
-                    <div class="mt-2 flex items-center justify-between gap-2 text-sm text-stone-500">
-                      <Button
-                        data-testid="members-prev"
-                        variant="ghost"
-                        size="sm"
-                        disabled={offset === 0}
-                        onClick={() => void loadMembers(Math.max(0, offset - PAGE))}
-                      >
-                        ← Prev
-                      </Button>
-                      <span data-testid="members-range" class="text-xs">
-                        {offset + 1}–{Math.min(offset + PAGE, size)} of {size}
-                      </span>
-                      <Button
-                        data-testid="members-next"
-                        variant="ghost"
-                        size="sm"
-                        disabled={offset + PAGE >= size}
-                        onClick={() => void loadMembers(offset + PAGE)}
-                      >
-                        Next →
-                      </Button>
-                    </div>
-                  ) : null}
-                </>
-              )
-            ) : null}
+            ) : size === null ? (
+              <p class="mt-2 text-sm text-stone-400">The member list refreshes when you save.</p>
+            ) : (
+              <>
+                {dirty ? (
+                  <p data-testid="members-stale" class="mt-2 text-xs text-amber-600">
+                    Unsaved edits — save to refresh this list.
+                  </p>
+                ) : null}
+                {members.length === 0 ? (
+                  <p class="mt-2 text-sm text-stone-400">
+                    {segmentKind === 'manual' ? 'No members yet — paste emails and save.' : 'No matching profiles.'}
+                  </p>
+                ) : (
+                  <>
+                    <ul class="mt-3 divide-y divide-stone-100 overflow-hidden rounded-lg border border-stone-200">
+                      {members.map((m) => (
+                        <li
+                          data-testid="member-preview-row"
+                          key={m.id}
+                          class="truncate px-3 py-1.5 text-sm text-ink-800"
+                          title={m.email ?? m.id}
+                        >
+                          {m.email ?? m.id}
+                        </li>
+                      ))}
+                    </ul>
+                    {size > PAGE ? (
+                      <div class="mt-2 flex items-center justify-between gap-2 text-sm text-stone-500">
+                        <Button
+                          data-testid="members-prev"
+                          variant="ghost"
+                          size="sm"
+                          disabled={offset === 0}
+                          onClick={() => void loadMembers(Math.max(0, offset - PAGE))}
+                        >
+                          ← Prev
+                        </Button>
+                        <span data-testid="members-range" class="text-xs">
+                          {offset + 1}–{Math.min(offset + PAGE, size)} of {size}
+                        </span>
+                        <Button
+                          data-testid="members-next"
+                          variant="ghost"
+                          size="sm"
+                          disabled={offset + PAGE >= size}
+                          onClick={() => void loadMembers(offset + PAGE)}
+                        >
+                          Next →
+                        </Button>
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </>
+            )}
           </Card>
         </div>
       </div>
