@@ -407,8 +407,32 @@ export function SegmentBuilder({ id }: { id?: string }) {
   const removeGroup = (gi: number) => setGroups((gs) => gs.filter((_, idx) => idx !== gi));
 
   // Load one page (50) of the matching members + the total count.
+  // Load one page (50) of members + the total count. Dynamic → live rule preview;
+  // manual → the segment's CURRENT materialized members (once it exists).
   const loadMembers = async (off: number) => {
+    if (segmentKind === 'manual') {
+      if (!savedId) {
+        setSize(0);
+        setMembers([]);
+        setOffset(0);
+        return;
+      }
+      const res = await api.get<{ size: number; members: Array<{ id: string; email: string | null }> }>(
+        `/segments/${savedId}/members?offset=${off}`,
+      );
+      setSize(res.size);
+      setMembers(res.members);
+      setOffset(off);
+      return;
+    }
     const ast = buildAstFromGroup({ combinator, rows, groups });
+    // No rules → an inactive DRAFT. Don't preview (a null AST would match everyone).
+    if (ast === null) {
+      setSize(0);
+      setMembers([]);
+      setOffset(0);
+      return;
+    }
     const res = await api.post<{ size: number; members: Array<{ id: string; email: string | null }> }>(
       '/segments/preview',
       { body: { definition: ast, offset: off } },
@@ -418,14 +442,13 @@ export function SegmentBuilder({ id }: { id?: string }) {
     setOffset(off);
   };
 
-  // Auto-refresh the members list + count on entry and whenever the rules change
-  // (debounced) — no manual "preview" button. Dynamic segments only.
+  // Auto-refresh the members panel on entry and (for dynamic) whenever the rules
+  // change — no manual "preview" button.
   useEffect(() => {
-    if (segmentKind !== 'dynamic_realtime') return;
     const t = setTimeout(() => void loadMembers(0), 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, combinator, groups, segmentKind]);
+  }, [rows, combinator, groups, segmentKind, savedId]);
 
   const save = async () => {
     setSaving(true);
@@ -470,6 +493,10 @@ export function SegmentBuilder({ id }: { id?: string }) {
     }
   };
 
+  // A dynamic segment with no rules is an inactive draft (matches no one until a
+  // rule is added).
+  const isDraft = segmentKind === 'dynamic_realtime' && buildAstFromGroup({ combinator, rows, groups }) === null;
+
   return (
     <section data-testid="segment-builder">
       <button
@@ -484,9 +511,9 @@ export function SegmentBuilder({ id }: { id?: string }) {
         subtitle="Build a dynamic rule-based audience or curate a manual list."
       />
 
-      <div class="max-w-3xl space-y-6">
-        {/* Builder */}
-        <div class="space-y-6">
+      <div class="flex flex-col gap-6 lg:flex-row lg:items-start">
+        {/* LEFT: the builder */}
+        <div class="min-w-0 flex-1">
           <Card class="p-5">
             <div class="flex flex-wrap items-end gap-3">
               <Field label="Segment name" class="min-w-[16rem] flex-1">
@@ -539,7 +566,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
 
             <div class="mt-5 space-y-3">
               <span class="label">Rules</span>
-              <RuleListEditor rows={rows} onChange={setRows} allowEmpty={groups.length > 0} />
+              <RuleListEditor rows={rows} onChange={setRows} allowEmpty />
 
               {groups.map((g, gi) => (
                 <div
@@ -586,72 +613,11 @@ export function SegmentBuilder({ id }: { id?: string }) {
                 + Add group
               </Button>
             </div>
-
-
-            {/* Live members — auto-refreshes on entry and as the rules change. */}
-            <div class="mt-5 border-t border-stone-100 pt-4">
-              <div class="flex items-center justify-between">
-                <span class="label">Members</span>
-                <span data-testid="segment-size" class="text-sm text-stone-600">
-                  {size === null ? 'Loading…' : `${size} matching profile${size === 1 ? '' : 's'}`}
-                </span>
-              </div>
-              {size !== null ? (
-                members.length === 0 ? (
-                  <p class="mt-2 text-sm text-stone-400">No matching profiles.</p>
-                ) : (
-                  <>
-                    <ul class="mt-2 divide-y divide-stone-100 overflow-hidden rounded-lg border border-stone-200">
-                      {members.map((m) => (
-                        <li
-                          data-testid="member-preview-row"
-                          key={m.id}
-                          class="px-3 py-1.5 text-sm text-ink-800"
-                        >
-                          {m.email ?? m.id}
-                        </li>
-                      ))}
-                    </ul>
-                    {size > PAGE ? (
-                      <div class="mt-2 flex items-center gap-3 text-sm text-stone-500">
-                        <Button
-                          data-testid="members-prev"
-                          variant="ghost"
-                          size="sm"
-                          disabled={offset === 0}
-                          onClick={() => void loadMembers(Math.max(0, offset - PAGE))}
-                        >
-                          ← Prev
-                        </Button>
-                        <span data-testid="members-range">
-                          {offset + 1}–{Math.min(offset + PAGE, size)} of {size}
-                        </span>
-                        <Button
-                          data-testid="members-next"
-                          variant="ghost"
-                          size="sm"
-                          disabled={offset + PAGE >= size}
-                          onClick={() => void loadMembers(offset + PAGE)}
-                        >
-                          Next →
-                        </Button>
-                      </div>
-                    ) : null}
-                  </>
-                )
-              ) : null}
-
-              <div class="mt-4">
-                <Button data-testid="save-segment" onClick={save} disabled={saving}>
-                  {saving ? 'Saving…' : editing ? 'Save changes' : 'Save segment'}
-                </Button>
-              </div>
-            </div>
             </>
             ) : (
               /* Manual: a hand-curated list uploaded as CSV. */
               <div class="mt-5 space-y-3">
-                <span class="label">Members (CSV)</span>
+                <span class="label">Add members (CSV)</span>
                 <p class="text-sm text-stone-500">
                   Paste comma- or newline-separated emails. Matching profiles in this workspace
                   become members; saving creates the segment and imports them.
@@ -663,13 +629,93 @@ export function SegmentBuilder({ id }: { id?: string }) {
                   placeholder="alice@acme.com, bob@acme.com"
                   class="font-mono text-xs"
                 />
-                <div class="mt-2 flex items-center gap-3 border-t border-stone-100 pt-4">
-                  <Button data-testid="save-segment" onClick={save} disabled={saving}>
-                    {saving ? 'Saving…' : editing ? 'Save changes' : 'Create segment'}
-                  </Button>
-                </div>
               </div>
             )}
+
+            <div class="mt-5 flex items-center gap-3 border-t border-stone-100 pt-4">
+              <Button data-testid="save-segment" onClick={save} disabled={saving}>
+                {saving
+                  ? 'Saving…'
+                  : editing
+                    ? isDraft
+                      ? 'Save draft'
+                      : 'Save changes'
+                    : isDraft
+                      ? 'Save draft'
+                      : segmentKind === 'manual'
+                        ? 'Create segment'
+                        : 'Save segment'}
+              </Button>
+            </div>
+          </Card>
+        </div>
+
+        {/* RIGHT: live members (both types) */}
+        <div class="w-full lg:w-80 lg:shrink-0">
+          <Card data-testid="members-panel" class="p-5 lg:sticky lg:top-4">
+            <div class="flex items-center justify-between">
+              <span class="label">Members</span>
+              <span data-testid="segment-size" class="text-sm font-medium text-stone-600">
+                {isDraft
+                  ? 'Draft'
+                  : size === null
+                    ? 'Loading…'
+                    : segmentKind === 'manual'
+                      ? `${size} member${size === 1 ? '' : 's'}`
+                      : `${size} matching`}
+              </span>
+            </div>
+            {isDraft ? (
+              <p data-testid="segment-draft-note" class="mt-2 text-sm text-amber-600">
+                No rules yet — this segment is an inactive <b>draft</b> and matches no one until you add a rule.
+              </p>
+            ) : size !== null ? (
+              members.length === 0 ? (
+                <p class="mt-2 text-sm text-stone-400">
+                  {segmentKind === 'manual' ? 'No members yet — paste emails and save.' : 'No matching profiles.'}
+                </p>
+              ) : (
+                <>
+                  <ul class="mt-3 divide-y divide-stone-100 overflow-hidden rounded-lg border border-stone-200">
+                    {members.map((m) => (
+                      <li
+                        data-testid="member-preview-row"
+                        key={m.id}
+                        class="truncate px-3 py-1.5 text-sm text-ink-800"
+                        title={m.email ?? m.id}
+                      >
+                        {m.email ?? m.id}
+                      </li>
+                    ))}
+                  </ul>
+                  {size > PAGE ? (
+                    <div class="mt-2 flex items-center justify-between gap-2 text-sm text-stone-500">
+                      <Button
+                        data-testid="members-prev"
+                        variant="ghost"
+                        size="sm"
+                        disabled={offset === 0}
+                        onClick={() => void loadMembers(Math.max(0, offset - PAGE))}
+                      >
+                        ← Prev
+                      </Button>
+                      <span data-testid="members-range" class="text-xs">
+                        {offset + 1}–{Math.min(offset + PAGE, size)} of {size}
+                      </span>
+                      <Button
+                        data-testid="members-next"
+                        variant="ghost"
+                        size="sm"
+                        disabled={offset + PAGE >= size}
+                        onClick={() => void loadMembers(offset + PAGE)}
+                      >
+                        Next →
+                      </Button>
+                    </div>
+                  ) : null}
+                </>
+              )
+            ) : null}
           </Card>
         </div>
       </div>

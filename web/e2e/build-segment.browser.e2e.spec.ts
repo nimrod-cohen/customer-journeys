@@ -132,6 +132,25 @@ test('create a MANUAL segment (CSV list) — no rule builder', async ({ page }) 
   // (Membership resolution from the CSV is covered by the import-csv integration test.)
 });
 
+test('deleting the root rule leaves an inactive draft segment', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+  await page.getByTestId('segment-name').fill('Draft seg');
+
+  // The lone root rule is now deletable → no rules left → inactive draft.
+  await page.getByTestId('rule-remove').click();
+  await expect(page.getByTestId('rule-row')).toHaveCount(0);
+  await expect(page.getByTestId('segment-draft-note')).toBeVisible();
+  await expect(page.getByTestId('segment-size')).toContainText('Draft');
+
+  await page.getByTestId('save-segment').click();
+  await page.getByTestId('segments-list').waitFor();
+  await expect(page.getByTestId('segment-list')).toContainText('Draft seg');
+});
+
 test('edit a segment from the list: builder hydrates and the rename reflects', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();

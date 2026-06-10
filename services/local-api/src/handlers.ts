@@ -335,10 +335,13 @@ export const createSegment: Handler = async (ctx, pool, req) => {
   const definition = (b.definition ?? null) as AstNode | null;
   if (!name) return ok({ error: 'name required' }, 400);
   if (definition !== null) validateAst(definition); // reject garbage AST early
+  // A dynamic segment with NO rules is an inactive DRAFT (never evaluated, so it
+  // never accidentally matches everyone). Manual lists are always active.
+  const status = kind === 'dynamic_realtime' && definition === null ? 'draft' : 'active';
   const { rows } = await pool.query(
-    `INSERT INTO segments (workspace_id, name, kind, definition)
-     VALUES ($1, $2, $3, $4::jsonb) RETURNING id, name, kind, status`,
-    [ctx.workspaceId, name, kind, definition === null ? null : JSON.stringify(definition)],
+    `INSERT INTO segments (workspace_id, name, kind, status, definition)
+     VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id, name, kind, status`,
+    [ctx.workspaceId, name, kind, status, definition === null ? null : JSON.stringify(definition)],
   );
   return ok({ segment: rows[0] }, 201);
 };
@@ -354,6 +357,9 @@ export const updateSegment: Handler = async (ctx, pool, req) => {
     `UPDATE segments SET
        name = COALESCE($1, name),
        definition = CASE WHEN $3::boolean THEN $2::jsonb ELSE definition END,
+       -- When the rules are (re)set: empty → inactive draft, non-empty → active.
+       -- A rename-only update ($3 false) leaves status untouched.
+       status = CASE WHEN $3::boolean THEN (CASE WHEN $2 IS NULL THEN 'draft' ELSE 'active' END) ELSE status END,
        updated_at = now()
      WHERE id = $4`,
     [
@@ -397,6 +403,27 @@ export const previewSegment: Handler = async (ctx, pool, req) => {
     [...where.values, offset],
   );
   return ok({ size, offset, page_size: PREVIEW_PAGE_SIZE, members: pageRes.rows });
+};
+
+/** GET /segments/:id/members?offset= — a segment's CURRENT members (50/page). Scoped. */
+export const getSegmentMembers: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  if (!(await ownsResource(pool, ctx.workspaceId, 'segments', id))) return ok({ error: 'not found' }, 404);
+  const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(0, Math.floor(Number(req.query.offset))) : 0;
+  const countRes = await pool.query<{ size: number }>(
+    'SELECT count(*)::int AS size FROM segment_memberships WHERE workspace_id = $1 AND segment_id = $2',
+    [ctx.workspaceId, id],
+  );
+  const pageRes = await pool.query<{ id: string; email: string | null }>(
+    `SELECT p.id, p.email
+       FROM segment_memberships sm
+       JOIN profiles p ON p.id = sm.profile_id
+      WHERE sm.workspace_id = $1 AND sm.segment_id = $2
+      ORDER BY p.email
+      LIMIT ${PREVIEW_PAGE_SIZE} OFFSET $3`,
+    [ctx.workspaceId, id, offset],
+  );
+  return ok({ size: countRes.rows[0]?.size ?? 0, offset, page_size: PREVIEW_PAGE_SIZE, members: pageRes.rows });
 };
 
 export const addSegmentMembers: Handler = async (ctx, pool, req) => {
@@ -1579,6 +1606,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /segments': createSegment,
   'PUT /segments/:id': updateSegment,
   'POST /segments/preview': previewSegment,
+  'GET /segments/:id/members': getSegmentMembers,
   'POST /segments/:id/members': addSegmentMembers,
   'DELETE /segments/:id/members': removeSegmentMembers,
   'POST /segments/:id/import-csv': importCsvMembers,

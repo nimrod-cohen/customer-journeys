@@ -42,6 +42,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /segments': 'manage_content',
   'PUT /segments/:id': 'manage_content',
   'POST /segments/preview': 'manage_content',
+  'GET /segments/:id/members': 'manage_content',
   'POST /segments/:id/members': 'manage_content',
   'DELETE /segments/:id/members': 'manage_content',
   'POST /segments/:id/import-csv': 'manage_content',
