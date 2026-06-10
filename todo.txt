@@ -1,5 +1,10 @@
-* segment rules are now all AND'd or all OR'd. make the segment rules grouped by AND/OR groups for maximum flexibility. a group can contain another group (up to 2 levels of hierarchy)
-* A profile-level “delivery health” view is a natural next addition if you want it visible in-app. - remove this from the help and develop this.
-* soft bounces - after a profile soft bounced 3 times straight (3 separate days, consecutively - without a success email in the middle), 
-move it to permanent_soft_bouce status which should show explicitly in the supperssion table, and the status is no longer "active".
+# DONE (2026-06-10)
+# [x] Segment rules: nested AND/OR groups, up to 2 levels (root rules + sub-groups). commit 957bc3e
+# [x] Profile-level "delivery health" view (new Delivery tab) + removed the note from Help. commit e94fb2f
+# [x] Soft bounces → permanent_soft_bounce after 3 DISTINCT days (no delivery in between);
+#     email_status flips to permanent_soft_bounce + suppression(permanent_soft_bounce); replaced the old 5-rule. commit fc0e18c
+
+# REMAINING
 * Streamed/bulk CSV import for very large files (current import parses client-side).
+  (Skipped on 2026-06-10 — needs a design decision: upload transport + async processing
+  + progress/status. Best done together; pick the approach and I'll build it.)
