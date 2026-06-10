@@ -3,11 +3,12 @@ import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '@cdp/db';
 import { runFeedbackStatementsInTx } from '../src/deps.js';
 import { handleNotification, type FeedbackDeps, type Reader } from '../src/feedback.js';
-import { SOFT_BOUNCE_THRESHOLD_N, buildSoftBounceCountQuery } from '../src/core.js';
+import { PERMANENT_SOFT_BOUNCE_DAYS, buildSoftBounceDayCountQuery } from '../src/core.js';
 
-// §10 "Soft bounce → count; suppress after N". N DISTINCT soft bounces (distinct
-// ses_message_id) suppress; a REPLAYED ses_message_id does NOT advance the count
-// (idempotency index makes the replay a no-op). Real Postgres only.
+// §10 "Soft bounce → permanent after N distinct DAYS, no delivery in between".
+// A profile that soft-bounces on N distinct UTC days (with no successful delivery
+// between) flips to email_status='permanent_soft_bounce' and is suppressed with
+// reason 'permanent_soft_bounce'. A delivery resets the window. Real Postgres only.
 const RUN = hasDatabaseUrl();
 
 const ws = 'fb500000-0000-0000-0000-0000000000a1';
@@ -31,9 +32,28 @@ function softBounce(messageId: string) {
   };
 }
 
-async function suppressed(admin: Pool): Promise<boolean> {
-  const r = await admin.query('SELECT 1 FROM suppressions WHERE workspace_id = $1 AND email = $2', [ws, email]);
-  return (r.rowCount ?? 0) > 0;
+/** Directly record a past-dated soft bounce / delivery (to simulate distinct days). */
+async function record(admin: Pool, type: string, subType: string | null, ses: string, at: string) {
+  await admin.query(
+    `INSERT INTO email_events (workspace_id, ses_message_id, type, sub_type, occurred_at, raw)
+     VALUES ($1,$2,$3,$4,$5::timestamptz, jsonb_build_object('recipient',$6::text))`,
+    [ws, ses, type, subType, at, email],
+  );
+}
+
+async function suppression(admin: Pool): Promise<string | null> {
+  const r = await admin.query<{ reason: string }>(
+    'SELECT reason FROM suppressions WHERE workspace_id = $1 AND email = $2',
+    [ws, email],
+  );
+  return r.rows[0]?.reason ?? null;
+}
+async function status(admin: Pool): Promise<string> {
+  const r = await admin.query<{ email_status: string }>(
+    'SELECT email_status FROM profiles WHERE workspace_id = $1 AND email = $2',
+    [ws, email],
+  );
+  return r.rows[0]?.email_status ?? '';
 }
 
 async function cleanup(admin: Pool): Promise<void> {
@@ -43,7 +63,7 @@ async function cleanup(admin: Pool): Promise<void> {
   await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);
 }
 
-describe.skipIf(!RUN)('feedback soft bounce after N (real Postgres)', () => {
+describe.skipIf(!RUN)('feedback permanent soft bounce after N distinct days (real Postgres)', () => {
   let admin: Pool;
   let deps: FeedbackDeps;
 
@@ -68,43 +88,53 @@ describe.skipIf(!RUN)('feedback soft bounce after N (real Postgres)', () => {
     }
   });
 
-  it('suppresses only after N DISTINCT soft bounces', async () => {
-    for (let i = 1; i < SOFT_BOUNCE_THRESHOLD_N; i++) {
-      await handleNotification(deps, softBounce(`soft-${i}`));
-      expect(await suppressed(admin)).toBe(false);
-    }
-    // The Nth distinct soft bounce crosses the threshold.
-    await handleNotification(deps, softBounce(`soft-${SOFT_BOUNCE_THRESHOLD_N}`));
-    expect(await suppressed(admin)).toBe(true);
+  it('flips to permanent_soft_bounce only on the Nth DISTINCT day', async () => {
+    // Two soft bounces on two distinct PAST days — not yet permanent.
+    await record(admin, 'bounce', 'Transient', 's1', '2026-01-01T08:00:00Z');
+    await record(admin, 'bounce', 'Transient', 's2', '2026-01-02T08:00:00Z');
+    // (Count query includes "today" as a 3rd day → would be 3, but no live bounce
+    // has been processed yet, so nothing is suppressed.)
+    expect(await suppression(admin)).toBeNull();
+
+    // A live soft bounce TODAY is the 3rd distinct day → permanent.
+    await handleNotification(deps, softBounce('s3-today'));
+    expect(await suppression(admin)).toBe('permanent_soft_bounce');
+    expect(await status(admin)).toBe('permanent_soft_bounce');
   });
 
-  it('a successful delivery RESETS the consecutive soft-bounce count', async () => {
-    // Three soft bounces, then a delivery, then one more soft bounce. The count
-    // query (consecutive-since-last-delivery) must report only the post-delivery 1.
-    const ins = async (type: string, subType: string | null, ses: string, at: string) =>
-      admin.query(
-        `INSERT INTO email_events (workspace_id, ses_message_id, type, sub_type, occurred_at, raw)
-         VALUES ($1,$2,$3,$4,$5::timestamptz, jsonb_build_object('recipient',$6::text))`,
-        [ws, ses, type, subType, at, email],
-      );
-    await ins('bounce', 'Transient', 's1', '2026-01-01T00:00:00Z');
-    await ins('bounce', 'Transient', 's2', '2026-01-02T00:00:00Z');
-    await ins('bounce', 'Transient', 's3', '2026-01-03T00:00:00Z');
-    await ins('delivery', null, 'd1', '2026-01-04T00:00:00Z'); // mailbox recovered
-    await ins('bounce', 'Transient', 's4', '2026-01-05T00:00:00Z');
-
-    const q = buildSoftBounceCountQuery(ws, email);
-    const r = await admin.query(q.text, q.values);
-    expect(r.rows[0].n).toBe(1); // only the soft bounce AFTER the delivery counts
+  it('two distinct days (incl. today) is NOT yet permanent', async () => {
+    await record(admin, 'bounce', 'Transient', 's1', '2026-01-01T08:00:00Z'); // 1 past day
+    await handleNotification(deps, softBounce('s2-today')); // + today = 2 days
+    expect(await suppression(admin)).toBeNull();
+    expect(await status(admin)).toBe('active');
   });
 
-  it('a replayed ses_message_id does NOT advance the count', async () => {
-    // Replay the SAME message id (N-1) times → still ONE distinct → no suppress.
-    for (let i = 0; i < SOFT_BOUNCE_THRESHOLD_N + 2; i++) {
+  it('multiple soft bounces on the SAME day count once', async () => {
+    // Two distinct PAST days, plus two live bounces TODAY (same day) → 3 distinct
+    // days total (day1, day2, today) → permanent on the first of today's bounces.
+    await record(admin, 'bounce', 'Transient', 'p1', '2026-01-01T08:00:00Z');
+    await record(admin, 'bounce', 'Transient', 'p2', '2026-01-01T20:00:00Z'); // same day as p1
+    await handleNotification(deps, softBounce('t1')); // today: only 2 distinct days so far (jan1 + today)
+    expect(await suppression(admin)).toBeNull();
+  });
+
+  it('a successful delivery RESETS the day window', async () => {
+    await record(admin, 'bounce', 'Transient', 's1', '2026-01-01T00:00:00Z');
+    await record(admin, 'bounce', 'Transient', 's2', '2026-01-02T00:00:00Z');
+    await record(admin, 'delivery', null, 'd1', '2026-01-03T00:00:00Z'); // recovered
+    const q = buildSoftBounceDayCountQuery(ws, email);
+    const r = await admin.query<{ n: number }>(q.text, q.values);
+    // Only "today" counts after the delivery (the two pre-delivery days are reset).
+    expect(r.rows[0].n).toBe(1);
+  });
+
+  it('a replayed ses_message_id does NOT add a day', async () => {
+    for (let i = 0; i < PERMANENT_SOFT_BOUNCE_DAYS + 2; i++) {
       await handleNotification(deps, softBounce('soft-replay'));
     }
-    expect(await suppressed(admin)).toBe(false);
-    const ev = await admin.query(
+    // All replays are the same id on the same day → 1 distinct day → not permanent.
+    expect(await suppression(admin)).toBeNull();
+    const ev = await admin.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM email_events WHERE workspace_id = $1 AND ses_message_id = 'soft-replay' AND type = 'bounce'",
       [ws],
     );

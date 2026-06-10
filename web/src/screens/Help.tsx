@@ -128,30 +128,27 @@ export function Help() {
         <h2 class="text-lg font-bold text-ink-950">How do I know a mailbox soft-bounced?</h2>
         <p class="mt-2 text-sm text-stone-600">
           A <b>soft bounce</b> is a <i>temporary</i> delivery failure (mailbox full, server busy,
-          greylisting). Unlike a hard bounce it does <b>not</b> change <Code>email_status</Code> — the
-          address may well recover — so it’s tracked as activity, not as a mailbox state:
+          greylisting). A single one does <b>not</b> change <Code>email_status</Code> — the address
+          may recover — so it’s tracked as activity. But repeated soft bounces escalate:
         </p>
         <ul class="mt-3 space-y-1.5 text-sm text-stone-700">
           <li>
-            • Each one is recorded in the <Code>email_events</Code> table as{' '}
-            <Code>type=bounce</Code>, <Code>sub_type=Transient</Code> (deduplicated by SES message
-            id).
+            • Each one is recorded in <Code>email_events</Code> as <Code>type=bounce</Code>,{' '}
+            <Code>sub_type=Transient</Code> (deduplicated by SES message id).
           </li>
           <li>
-            • The system counts <i>distinct</i> soft bounces per address. After{' '}
-            <b>3</b> it adds a suppression(<Code>soft_bounce</Code>) — so the address stops receiving
-            mail even though <Code>email_status</Code> stays <Code>active</Code>.
+            • The system counts the <b>distinct days</b> an address soft-bounces on with{' '}
+            <b>no successful delivery in between</b> (a delivery resets the count; the days need not
+            be consecutive). After <b>3 distinct days</b> the address becomes{' '}
+            <Code>permanent_soft_bounce</Code>: its <Code>email_status</Code> flips from{' '}
+            <Code>active</Code> to <Code>permanent_soft_bounce</Code> <b>and</b> a suppression with
+            reason <Code>permanent_soft_bounce</Code> is added, so it stops receiving mail.
           </li>
           <li>
-            • The Events tab on a profile shows <i>behavioural</i> events (page views, purchases,
-            etc.), not these delivery events — soft bounces aren’t surfaced in the UI yet.
+            • A profile’s <b>Delivery</b> tab shows its deliverability state, suppression, recent
+            delivery events and the soft-bounce day count.
           </li>
         </ul>
-        <p class="mt-3 text-sm text-stone-500">
-          So today, the authoritative way to know is the <Code>email_events</Code> log (or that the
-          address is on the suppression list with reason <Code>soft_bounce</Code>). A profile-level
-          “delivery health” view is a natural next addition if you want it visible in-app.
-        </p>
       </Card>
 
       {/* CSV import: existing profiles */}

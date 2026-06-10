@@ -113,7 +113,7 @@ export function toneFor(status: string | undefined | null): Tone {
   if (['pending', 'warming', 'draft', 'sending', 'onboarding', 'scheduled'].some((k) => s.includes(k)))
     return 'warn';
   if (
-    ['suspended', 'failed', 'bounced', 'complained', 'mismatch', 'false', 'error', 'refuse'].some((k) =>
+    ['suspended', 'failed', 'bounce', 'complained', 'mismatch', 'false', 'error', 'refuse'].some((k) =>
       s.includes(k),
     )
   )

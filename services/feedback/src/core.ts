@@ -180,20 +180,26 @@ export function resolveWorkspaceRef(n: SesNotification): WorkspaceRef | null {
 // ── soft-bounce threshold ─────────────────────────────────────────────────────
 
 /**
- * Number of CONSECUTIVE distinct soft bounces (since the last successful
- * delivery) after which an address is finally considered bounced + suppressed
- * (§10). Paired with the dispatcher's 24h soft-bounce cooldown, reaching this
- * takes at least N days — giving a transient mailbox issue time to clear.
+ * Number of DISTINCT DAYS (UTC) an address must soft-bounce on — with NO
+ * successful delivery in between — before it is moved to the terminal
+ * `permanent_soft_bounce` state (§10). The days need NOT be consecutive; any
+ * successful delivery resets the count (a recovered mailbox starts fresh).
  */
-export const SOFT_BOUNCE_THRESHOLD_N = 5;
+export const PERMANENT_SOFT_BOUNCE_DAYS = 3;
+
+/** The terminal email_status / suppression reason for a permanently soft-bounced address. */
+export const PERMANENT_SOFT_BOUNCE = 'permanent_soft_bounce';
 
 /**
- * Whether the CURRENT soft bounce crosses the suppression threshold, given the
- * count of PRIOR distinct soft-bounce events for the address. The current event
- * is the `(priorCount + 1)`-th, so it suppresses once `priorCount + 1 >= N`.
+ * Whether the soft-bounce DAY count (distinct UTC days with a soft bounce since
+ * the last successful delivery, INCLUDING today's bounce) reaches the permanent
+ * threshold.
  */
-export function shouldSuppressSoftBounce(priorCount: number, n: number = SOFT_BOUNCE_THRESHOLD_N): boolean {
-  return priorCount + 1 >= n;
+export function shouldMarkPermanentSoftBounce(
+  distinctDays: number,
+  days: number = PERMANENT_SOFT_BOUNCE_DAYS,
+): boolean {
+  return distinctDays >= days;
 }
 
 // ── reputation decision ───────────────────────────────────────────────────────
@@ -348,24 +354,29 @@ export function buildProfileEmailStatusUpdate(
 }
 
 /**
- * Count CONSECUTIVE distinct soft bounces for an address — i.e. those AFTER the
- * last successful delivery. A positive delivery RESETS the count (a recovered
- * mailbox starts fresh). The DISTINCT key is the SES message id, so a replayed
- * ses_message_id does NOT inflate the count. workspace_id bound at $1.
+ * Count the DISTINCT UTC DAYS an address has soft-bounced on since its last
+ * successful delivery, INCLUDING today (the current bounce). A delivery RESETS
+ * the window. Multiple soft bounces on the SAME day count once. The recorded
+ * rows are deduped by day, and replays are no-ops (the email_events insert is
+ * idempotent), so this never over-counts. workspace_id bound at $1.
  */
-export function buildSoftBounceCountQuery(workspaceId: string, email: string): SqlStatement {
-  if (!workspaceId) throw new Error('buildSoftBounceCountQuery: workspaceId is required');
+export function buildSoftBounceDayCountQuery(workspaceId: string, email: string): SqlStatement {
+  if (!workspaceId) throw new Error('buildSoftBounceDayCountQuery: workspaceId is required');
   return {
-    text: `SELECT count(DISTINCT ses_message_id)::int AS n
-           FROM email_events
-           WHERE workspace_id = $1
-             AND type = 'bounce'
-             AND sub_type = 'Transient'
-             AND raw->>'recipient' = $2
-             AND occurred_at > COALESCE(
-               (SELECT max(occurred_at) FROM email_events
-                 WHERE workspace_id = $1 AND type = 'delivery' AND raw->>'recipient' = $2),
-               '-infinity'::timestamptz)`,
+    text: `SELECT count(*)::int AS n FROM (
+             SELECT DISTINCT (occurred_at AT TIME ZONE 'UTC')::date AS d
+               FROM email_events
+              WHERE workspace_id = $1
+                AND type = 'bounce'
+                AND sub_type = 'Transient'
+                AND raw->>'recipient' = $2
+                AND occurred_at > COALESCE(
+                  (SELECT max(occurred_at) FROM email_events
+                    WHERE workspace_id = $1 AND type = 'delivery' AND raw->>'recipient' = $2),
+                  '-infinity'::timestamptz)
+             UNION
+             SELECT (now() AT TIME ZONE 'UTC')::date
+           ) t`,
     values: [workspaceId, email],
   };
 }

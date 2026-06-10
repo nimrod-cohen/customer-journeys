@@ -22,7 +22,7 @@ describe('buildFeedbackPlan', () => {
         recipients: ['a@b.com'],
       },
       profileId: PROFILE,
-      priorSoftBounceCount: 0,
+      softBounceDistinctDays: 0,
       raw: {},
     });
     const text = plan.map((s) => s.text).join('\n');
@@ -47,7 +47,7 @@ describe('buildFeedbackPlan', () => {
       workspaceId: WS,
       classified: { category: 'complaint', type: 'complaint', subType: null, sesMessageId: 'm2', recipients: ['c@b.com'] },
       profileId: PROFILE,
-      priorSoftBounceCount: 0,
+      softBounceDistinctDays: 0,
       raw: {},
     });
     const text = plan.map((s) => s.text).join('\n');
@@ -56,12 +56,12 @@ describe('buildFeedbackPlan', () => {
     expect(text).toMatch(/email_status = \$3/);
   });
 
-  it('soft bounce below N → only the event row (no suppression)', () => {
+  it('soft bounce below N days → only the event row (+mark failed), no suppression', () => {
     const plan = buildFeedbackPlan({
       workspaceId: WS,
       classified: { category: 'soft_bounce', type: 'bounce', subType: 'Transient', sesMessageId: 'm3', recipients: ['s@b.com'] },
       profileId: PROFILE,
-      priorSoftBounceCount: 0, // 1st event, below N=5
+      softBounceDistinctDays: 2, // only 2 distinct days, below 3
       raw: {},
     });
     const text = plan.map((s) => s.text).join('\n');
@@ -69,17 +69,18 @@ describe('buildFeedbackPlan', () => {
     expect(text).not.toMatch(/INSERT INTO suppressions/i);
   });
 
-  it('soft bounce AT N → event row + suppression', () => {
+  it('soft bounce on the 3rd distinct day → permanent: suppression + profile status', () => {
     const plan = buildFeedbackPlan({
       workspaceId: WS,
       classified: { category: 'soft_bounce', type: 'bounce', subType: 'Transient', sesMessageId: 'm4', recipients: ['s@b.com'] },
       profileId: PROFILE,
-      priorSoftBounceCount: 4, // 5th consecutive event, N=5 → cross
+      softBounceDistinctDays: 3, // 3rd distinct day → permanent
       raw: {},
     });
     const text = plan.map((s) => s.text).join('\n');
     expect(text).toMatch(/INSERT INTO suppressions/i);
     expect(text).not.toMatch(/global_hard_bounces/i);
+    expect(plan.some((s) => s.values.includes('permanent_soft_bounce'))).toBe(true);
   });
 
   it('other (delivery/open/click) → only the event row', () => {
@@ -87,7 +88,7 @@ describe('buildFeedbackPlan', () => {
       workspaceId: WS,
       classified: { category: 'other', type: 'delivery', subType: null, sesMessageId: 'm5', recipients: ['d@b.com'] },
       profileId: null,
-      priorSoftBounceCount: 0,
+      softBounceDistinctDays: 0,
       raw: {},
     });
     expect(plan).toHaveLength(1);

@@ -1,32 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { shouldSuppressSoftBounce, SOFT_BOUNCE_THRESHOLD_N } from '../src/core.js';
+import { shouldMarkPermanentSoftBounce, PERMANENT_SOFT_BOUNCE_DAYS } from '../src/core.js';
 
-// §10 "Soft bounce → count; suppress after N". shouldSuppressSoftBounce takes
-// the count of PRIOR distinct soft-bounce events (before the current one) and
-// the threshold N, and returns whether the current soft bounce crosses it.
+// §10 "Soft bounce → permanent after N distinct DAYS (no delivery in between)".
+// shouldMarkPermanentSoftBounce takes the count of distinct UTC days the address
+// has soft-bounced on (INCLUDING today) and returns whether it's now permanent.
 
-describe('shouldSuppressSoftBounce(priorCount, N)', () => {
-  it('exposes a sane default threshold', () => {
-    expect(SOFT_BOUNCE_THRESHOLD_N).toBeGreaterThanOrEqual(2);
+describe('shouldMarkPermanentSoftBounce(distinctDays, days)', () => {
+  it('exposes a sane default threshold (3 days)', () => {
+    expect(PERMANENT_SOFT_BOUNCE_DAYS).toBe(3);
   });
 
-  it('does not suppress before reaching N distinct soft bounces', () => {
-    // With N=3: priorCount 0,1 → this is the 1st/2nd event → not yet.
-    expect(shouldSuppressSoftBounce(0, 3)).toBe(false);
-    expect(shouldSuppressSoftBounce(1, 3)).toBe(false);
+  it('does not flip before reaching N distinct days', () => {
+    expect(shouldMarkPermanentSoftBounce(1, 3)).toBe(false);
+    expect(shouldMarkPermanentSoftBounce(2, 3)).toBe(false);
   });
 
-  it('suppresses on the Nth distinct soft bounce', () => {
-    // priorCount 2 → this is the 3rd event → cross.
-    expect(shouldSuppressSoftBounce(2, 3)).toBe(true);
+  it('flips on the Nth distinct day', () => {
+    expect(shouldMarkPermanentSoftBounce(3, 3)).toBe(true);
   });
 
-  it('remains suppressed beyond N', () => {
-    expect(shouldSuppressSoftBounce(5, 3)).toBe(true);
+  it('stays permanent beyond N', () => {
+    expect(shouldMarkPermanentSoftBounce(5, 3)).toBe(true);
   });
 
   it('uses the default N when not provided', () => {
-    expect(shouldSuppressSoftBounce(SOFT_BOUNCE_THRESHOLD_N - 1)).toBe(true);
-    expect(shouldSuppressSoftBounce(SOFT_BOUNCE_THRESHOLD_N - 2)).toBe(false);
+    expect(shouldMarkPermanentSoftBounce(PERMANENT_SOFT_BOUNCE_DAYS)).toBe(true);
+    expect(shouldMarkPermanentSoftBounce(PERMANENT_SOFT_BOUNCE_DAYS - 1)).toBe(false);
   });
 });

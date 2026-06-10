@@ -5,7 +5,7 @@ import {
   buildGlobalHardBounceUpsert,
   buildProfileEmailStatusUpdate,
   buildMessagesLogMarkFailed,
-  buildSoftBounceCountQuery,
+  buildSoftBounceDayCountQuery,
   buildReputationRateQuery,
   buildWorkspaceSuspend,
 } from '../src/core.js';
@@ -66,18 +66,20 @@ describe('feedback SqlStatement builders', () => {
     });
   });
 
-  describe('buildSoftBounceCountQuery', () => {
-    it('counts CONSECUTIVE soft bounces since the last delivery, workspace-scoped', () => {
-      const s = buildSoftBounceCountQuery(WS, 'a@b.com');
+  describe('buildSoftBounceDayCountQuery', () => {
+    it('counts DISTINCT days (incl. today) since the last delivery, workspace-scoped', () => {
+      const s = buildSoftBounceDayCountQuery(WS, 'a@b.com');
       expect(s.text).toMatch(/FROM email_events/i);
       expect(s.text).toMatch(/workspace_id = \$1/);
-      // A delivery resets the window (the count only includes later soft bounces).
+      // Distinct-by-day + includes today (the current bounce) via a UNION.
+      expect(s.text).toMatch(/DISTINCT \(occurred_at AT TIME ZONE 'UTC'\)::date/i);
+      expect(s.text).toMatch(/UNION/i);
+      // A delivery resets the window.
       expect(s.text).toMatch(/type = 'delivery'/i);
-      expect(s.text).toMatch(/occurred_at >/i);
       expect(s.values[0]).toBe(WS);
     });
     it('throws on falsy workspaceId', () => {
-      expect(() => buildSoftBounceCountQuery('', 'a@b.com')).toThrow(/workspace/i);
+      expect(() => buildSoftBounceDayCountQuery('', 'a@b.com')).toThrow(/workspace/i);
     });
   });
 

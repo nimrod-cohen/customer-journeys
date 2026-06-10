@@ -15,14 +15,15 @@
 import {
   classifySesEvent,
   resolveWorkspaceRef,
-  shouldSuppressSoftBounce,
+  shouldMarkPermanentSoftBounce,
+  PERMANENT_SOFT_BOUNCE,
   decideReputation,
   buildEmailEventInsert,
   buildSuppressionUpsert,
   buildGlobalHardBounceUpsert,
   buildProfileEmailStatusUpdate,
   buildMessagesLogMarkFailed,
-  buildSoftBounceCountQuery,
+  buildSoftBounceDayCountQuery,
   buildReputationRateQuery,
   buildWorkspaceSuspend,
   type ClassifiedEvent,
@@ -61,8 +62,9 @@ export interface FeedbackPlanInput {
   readonly classified: ClassifiedEvent;
   /** Resolved profile id for the affected recipient (null if unknown). */
   readonly profileId: string | null;
-  /** Count of PRIOR distinct soft bounces for the recipient in this workspace. */
-  readonly priorSoftBounceCount: number;
+  /** Distinct UTC days the recipient has soft-bounced on since the last delivery
+   * (INCLUDING today's bounce) — drives the permanent_soft_bounce decision. */
+  readonly softBounceDistinctDays: number;
   /** The raw notification for storage in email_events.raw. */
   readonly raw: unknown;
 }
@@ -119,12 +121,14 @@ export function buildFeedbackPlan(input: FeedbackPlanInput): SqlStatement[] {
     plan.push(buildProfileEmailStatusUpdate(workspaceId, email, 'complained'));
     markFailed('complained');
   } else if (classified.category === 'soft_bounce') {
-    // Every soft bounce marks its own message failed (no retry); suppression +
-    // 'bounced' status only once the consecutive-soft-bounce threshold is crossed.
+    // Every soft bounce marks its own message failed (no retry). Once the address
+    // has soft-bounced on N distinct days (no delivery in between) it becomes
+    // PERMANENT: an explicit suppression (reason permanent_soft_bounce) + the
+    // profile's email_status flips to permanent_soft_bounce (no longer active).
     markFailed('bounced');
-    if (shouldSuppressSoftBounce(input.priorSoftBounceCount)) {
-      plan.push(buildSuppressionUpsert(workspaceId, email, 'soft_bounce', 'feedback'));
-      plan.push(buildProfileEmailStatusUpdate(workspaceId, email, 'bounced'));
+    if (shouldMarkPermanentSoftBounce(input.softBounceDistinctDays)) {
+      plan.push(buildSuppressionUpsert(workspaceId, email, PERMANENT_SOFT_BOUNCE, 'feedback'));
+      plan.push(buildProfileEmailStatusUpdate(workspaceId, email, PERMANENT_SOFT_BOUNCE));
     }
   }
 
@@ -197,19 +201,20 @@ export async function handleNotification(
     profileId = rows[0]?.id ?? null;
   }
 
-  // For a soft bounce, read the PRIOR distinct soft-bounce count (replay-safe).
-  let priorSoftBounceCount = 0;
+  // For a soft bounce, count the distinct UTC days it has bounced on since the
+  // last delivery (including today) — drives the permanent decision (replay-safe).
+  let softBounceDistinctDays = 0;
   if (classified.category === 'soft_bounce' && email) {
-    const q = buildSoftBounceCountQuery(workspaceId, email);
+    const q = buildSoftBounceDayCountQuery(workspaceId, email);
     const { rows } = await deps.reader.query<{ n: number }>(q.text, q.values);
-    priorSoftBounceCount = rows[0]?.n ?? 0;
+    softBounceDistinctDays = rows[0]?.n ?? 0;
   }
 
   const plan = buildFeedbackPlan({
     workspaceId,
     classified,
     profileId,
-    priorSoftBounceCount,
+    softBounceDistinctDays,
     raw: notification,
   });
 
