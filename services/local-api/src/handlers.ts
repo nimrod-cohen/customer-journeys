@@ -731,6 +731,26 @@ export const importProfilesCsv: Handler = async (ctx, pool, req) => {
 };
 
 /**
+ * GET /profiles/attribute-values?key=&q= — DISTINCT values for one attribute key
+ * across the workspace's profiles, optionally filtered by a substring (q). Powers
+ * the segment editor's value autosuggest. Workspace-scoped; capped at 20.
+ */
+export const listAttributeValues: Handler = async (ctx, pool, req) => {
+  const key = String(req.query.key ?? '').trim();
+  const q = String(req.query.q ?? '').trim();
+  if (!key) return ok({ values: [] });
+  const { rows } = await pool.query<{ v: string | null }>(
+    `SELECT DISTINCT attributes ->> $2 AS v
+       FROM profiles
+      WHERE workspace_id = $1 AND attributes ->> $2 ILIKE $3
+      ORDER BY v
+      LIMIT 20`,
+    [ctx.workspaceId, key, `%${q}%`],
+  );
+  return ok({ values: rows.map((r) => r.v).filter((v): v is string => v != null) });
+};
+
+/**
  * GET /profiles/attribute-keys — the DISTINCT attribute keys across the
  * workspace's profiles (powers the column picker exhaustively, not limited to a
  * loaded page). Scoped to the token's workspace; excludes the internal
@@ -1456,6 +1476,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /profiles': createProfile,
   'POST /profiles/import-csv': importProfilesCsv,
   'GET /profiles/attribute-keys': listAttributeKeys,
+  'GET /profiles/attribute-values': listAttributeValues,
   'GET /profiles/:id': getProfile,
   'PATCH /profiles/:id': updateProfile,
   'POST /profiles/:id/merge': mergeProfiles,

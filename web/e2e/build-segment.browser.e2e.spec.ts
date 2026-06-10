@@ -20,7 +20,11 @@ test('create a dynamic segment from the list, preview size, and see it appear', 
   await page.getByTestId('segment-name').fill('VIP members');
   await page.getByTestId('rule-field').first().fill('attributes.tier');
   await page.getByTestId('rule-operator').first().selectOption('=');
-  await page.getByTestId('rule-value').first().fill('vip');
+  // The value box autosuggests EXISTING attribute values (debounced, ≥2 chars):
+  // typing "vi" surfaces "vip" from the seeded profiles; pick it.
+  await page.getByTestId('rule-value').first().fill('vi');
+  await page.getByTestId('value-suggestion').filter({ hasText: 'vip' }).first().click();
+  await expect(page.getByTestId('rule-value').first()).toHaveValue('vip');
 
   await page.getByTestId('preview-size').click();
   // Two seeded VIPs in WS_A; WS_B's VIP-less profile is excluded by scoping.

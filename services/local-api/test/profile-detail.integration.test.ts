@@ -158,6 +158,24 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     expect(p.created_at_unix).toBe(new Date(p.created_at).getTime());
   });
 
+  it('GET /profiles/attribute-values returns DISTINCT values for a key, substring-filtered', async () => {
+    // P_A2 has attributes.tier = 'std' (stable across this suite).
+    const all = await call(world.env, 'GET', '/profiles/attribute-values', { token: tokA(), query: { key: 'tier' } });
+    expect(all.status).toBe(200);
+    expect((all.body as { values: string[] }).values).toContain('std');
+
+    // Substring filter.
+    const filtered = await call(world.env, 'GET', '/profiles/attribute-values', {
+      token: tokA(),
+      query: { key: 'tier', q: 'st' },
+    });
+    expect((filtered.body as { values: string[] }).values).toEqual(['std']);
+
+    // Unknown key → no values.
+    const none = await call(world.env, 'GET', '/profiles/attribute-values', { token: tokA(), query: { key: 'nope' } });
+    expect((none.body as { values: string[] }).values).toEqual([]);
+  });
+
   it('GET /profiles/:id returns the profile + rolling features', async () => {
     const r = await call(world.env, 'GET', `/profiles/${P_A}`, { token: tokA() });
     expect(r.status).toBe(200);

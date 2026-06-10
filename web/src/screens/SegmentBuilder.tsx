@@ -3,7 +3,7 @@
 // via POST /segments/preview (scoped to the active workspace server-side). Manual
 // members are added by CSV emails via /segments/:id/import-csv. (Visual redesign;
 // all data-testid attributes preserved.)
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import {
@@ -23,6 +23,98 @@ import {
   type Combinator,
 } from '../segments/ast-builder.js';
 import { Badge, Button, Card, Field, Input, PageHeader, Select, Textarea } from '../ui/kit.js';
+
+/**
+ * Free-text value input with autosuggest of EXISTING values for an attribute
+ * field (`attributes.<key>`). Suggestions are fetched only once ≥2 chars are
+ * typed and after the user pauses (debounced), to stay light. Non-attribute
+ * fields just get a plain text box.
+ */
+function ValueAutosuggest({
+  field,
+  value,
+  onChange,
+}: {
+  field: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const attrKey = field.startsWith('attributes.') ? field.slice('attributes.'.length) : '';
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const onInput = (v: string) => {
+    onChange(v);
+    if (timer.current) clearTimeout(timer.current);
+    // Only an attribute field, and only after 2+ chars, debounced.
+    if (!attrKey || v.trim().length < 2) {
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
+    timer.current = setTimeout(() => {
+      void api
+        .get<{ values: string[] }>('/profiles/attribute-values', { query: { key: attrKey, q: v.trim() } })
+        .then((r) => {
+          // Don't suggest the exact value already typed.
+          const vals = r.values.filter((s) => s !== v);
+          setSuggestions(vals);
+          setOpen(vals.length > 0);
+        })
+        .catch(() => {
+          setSuggestions([]);
+          setOpen(false);
+        });
+    }, 250);
+  };
+
+  return (
+    <div ref={ref} class="relative">
+      <Input
+        data-testid="rule-value"
+        class="w-40"
+        placeholder="value"
+        value={value}
+        onInput={(e: Event) => onInput((e.target as HTMLInputElement).value)}
+        onFocus={() => {
+          if (suggestions.length) setOpen(true);
+        }}
+      />
+      {open ? (
+        <div
+          data-testid="value-suggestions"
+          class="absolute left-0 z-30 mt-1 max-h-48 w-56 overflow-y-auto rounded-lg border border-stone-200 bg-white p-1 shadow-soft"
+        >
+          {suggestions.map((s) => (
+            <button
+              key={s}
+              data-testid="value-suggestion"
+              type="button"
+              class="block w-full truncate rounded px-2 py-1 text-left text-sm text-ink-800 hover:bg-stone-100"
+              onClick={() => {
+                onChange(s);
+                setOpen(false);
+              }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /** Common field paths offered as suggestions for a 'field' rule. */
 const FIELD_SUGGESTIONS = [
@@ -239,12 +331,10 @@ export function SegmentBuilder({ id }: { id?: string }) {
                           ))}
                         </Select>
                         {row.operator !== 'exists' ? (
-                          <Input
-                            data-testid="rule-value"
-                            class="w-40"
-                            placeholder="value"
+                          <ValueAutosuggest
+                            field={row.field}
                             value={row.value}
-                            onInput={(e: Event) => update(i, { value: (e.target as HTMLInputElement).value })}
+                            onChange={(v) => update(i, { value: v })}
                           />
                         ) : null}
                       </div>
