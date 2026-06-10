@@ -46,6 +46,15 @@ export function SystemAdminConsole() {
   };
   const [coRenameId, setCoRenameId] = useState<string | null>(null);
   const [coRenameText, setCoRenameText] = useState('');
+  const deleteCompany = async (id: string) => {
+    setErr('');
+    try {
+      await api.del(`/admin/companies/${id}`);
+      await load();
+    } catch (e) {
+      setErr((e as { error?: string })?.error ?? 'could not delete company');
+    }
+  };
   const saveCompanyRename = async (id: string) => {
     const name = coRenameText.trim();
     if (!name) return;
@@ -172,8 +181,22 @@ export function SystemAdminConsole() {
                   </Button>
                 </span>
               )}
-              <span class="text-xs text-stone-500">
-                {c.workspaces.length} {c.workspaces.length === 1 ? 'workspace' : 'workspaces'}
+              <span class="flex items-center gap-3">
+                <span class="text-xs text-stone-500">
+                  {c.workspaces.length} {c.workspaces.length === 1 ? 'workspace' : 'workspaces'}
+                </span>
+                {c.workspaces.length === 0 ? (
+                  <Button
+                    data-testid="delete-company"
+                    data-id={c.id}
+                    variant="ghost"
+                    size="sm"
+                    class="text-rose-600 hover:bg-rose-50"
+                    onClick={() => void deleteCompany(c.id)}
+                  >
+                    Delete company
+                  </Button>
+                ) : null}
               </span>
             </div>
             {c.workspaces.length === 0 ? (

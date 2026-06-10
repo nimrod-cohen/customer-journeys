@@ -1,0 +1,4 @@
+* A profile-level “delivery health” view is a natural next addition if you want it visible in-app. - remove this from the help and develop this.
+* soft bounces - after a profile soft bounced 3 times straight (3 separate days, consecutively - without a success email in the middle), 
+move it to permanent_soft_bouce status which should show explicitly in the supperssion table, and the status is no longer "active".
+* Streamed/bulk CSV import for very large files (current import parses client-side).

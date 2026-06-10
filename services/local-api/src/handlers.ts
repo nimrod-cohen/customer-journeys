@@ -1211,6 +1211,24 @@ export const adminCreateCompany: Handler = async (ctx, pool, req) => {
   return ok({ company: rows[0] }, 201);
 };
 
+/**
+ * DELETE /admin/companies/:id — delete a company (platform admin; audited). Guard:
+ * only an EMPTY company (no workspaces) can be deleted, so no tenant data is ever
+ * orphaned. Move/delete its workspaces first.
+ */
+export const adminDeleteCompany: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const c = await pool.query<{ name: string }>('SELECT name FROM companies WHERE id = $1', [id]);
+  if (!c.rows[0]) return ok({ error: 'not found' }, 404);
+  const w = await pool.query('SELECT 1 FROM workspaces WHERE company_id = $1 LIMIT 1', [id]);
+  if ((w.rowCount ?? 0) > 0) return ok({ error: 'company still has workspaces' }, 409);
+  await pool.query('DELETE FROM companies WHERE id = $1', [id]);
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.delete_company', { company_id: id, name: c.rows[0].name }),
+  );
+  return ok({ deleted: true });
+};
+
 /** PATCH /admin/companies/:id — rename a company (platform admin; audited). */
 export const adminRenameCompany: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
@@ -1460,6 +1478,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /admin/companies': adminListCompanies,
   'POST /admin/companies': adminCreateCompany,
   'PATCH /admin/companies/:id': adminRenameCompany,
+  'DELETE /admin/companies/:id': adminDeleteCompany,
   'PATCH /admin/workspaces/:id': adminUpdateWorkspace,
   'DELETE /admin/workspaces/:id': adminDeleteWorkspace,
   'GET /admin/workspaces': adminListWorkspaces,

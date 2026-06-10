@@ -48,7 +48,7 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
       await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
     }
-    await world.pool.query("DELETE FROM companies WHERE name = 'NewCo'");
+    await world.pool.query("DELETE FROM companies WHERE name = ANY(ARRAY['NewCo','TempCo'])");
   }
 
   async function auditCount(): Promise<number> {
@@ -137,5 +137,25 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
       body: { name: 'Nope' },
     });
     expect(r.status).toBe(403);
+  });
+
+  it('deletes an EMPTY company; rejects a company with workspaces (409) and non-admins (403)', async () => {
+    const t = tokenFor(ADMIN, WS_A);
+    // An empty company can be deleted.
+    const create = await call(world.env, 'POST', '/admin/companies', { token: t, body: { name: 'TempCo' } });
+    const cid = (create.body as { company: { id: string } }).company.id;
+    const del = await call(world.env, 'DELETE', `/admin/companies/${cid}`, { token: t });
+    expect(del.status).toBe(200);
+    expect((await world.pool.query('SELECT 1 FROM companies WHERE id = $1', [cid])).rowCount).toBe(0);
+
+    // A company that still owns workspaces cannot be deleted.
+    const { rows } = await world.pool.query<{ company_id: string }>('SELECT company_id FROM workspaces WHERE id = $1', [WS_A]);
+    const wsCompany = rows[0]!.company_id;
+    const del2 = await call(world.env, 'DELETE', `/admin/companies/${wsCompany}`, { token: t });
+    expect(del2.status).toBe(409);
+
+    // Non-admins can't delete companies.
+    const del3 = await call(world.env, 'DELETE', `/admin/companies/${wsCompany}`, { token: tokenFor(MEMBER, WS_A) });
+    expect(del3.status).toBe(403);
   });
 });

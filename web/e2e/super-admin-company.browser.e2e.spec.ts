@@ -147,3 +147,29 @@ test('super admin creates a company and moves a workspace into it', async ({ pag
     .filter({ has: page.getByTestId('admin-company-name').filter({ hasText: /^Globex$/ }) });
   await expect(globexCard.getByText('Beta (B)')).toBeVisible();
 });
+
+test('super admin deletes an EMPTY company (button only shows when it has no workspaces)', async ({ page }) => {
+  await loginAs(page, DEV_ADMIN);
+  await page.getByTestId('nav-admin').click();
+  await page.getByTestId('system-admin-console').waitFor();
+
+  // Create an empty company.
+  await page.getByTestId('company-name').fill('Holdings Co');
+  await page.getByTestId('create-company').click();
+  const card = page
+    .locator('[data-testid="admin-company"]')
+    .filter({ has: page.getByTestId('admin-company-name').filter({ hasText: /^Holdings Co$/ }) });
+  await expect(card).toHaveCount(1);
+
+  // It's empty, so a "Delete company" button is available; delete it.
+  await card.getByTestId('delete-company').click();
+  await expect(
+    page.getByTestId('admin-company-name').filter({ hasText: /^Holdings Co$/ }),
+  ).toHaveCount(0);
+
+  // A company WITH workspaces (Acme) shows no delete button.
+  const acme = page
+    .locator('[data-testid="admin-company"]')
+    .filter({ has: page.getByTestId('admin-company-name').filter({ hasText: /^Acme$/ }) });
+  await expect(acme.getByTestId('delete-company')).toHaveCount(0);
+});
