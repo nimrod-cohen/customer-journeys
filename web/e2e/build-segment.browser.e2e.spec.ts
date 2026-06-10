@@ -26,9 +26,10 @@ test('create a dynamic segment from the list, preview size, and see it appear', 
   await page.getByTestId('value-suggestion').filter({ hasText: 'vip' }).first().click();
   await expect(page.getByTestId('rule-value').first()).toHaveValue('vip');
 
-  await page.getByTestId('preview-size').click();
-  // Two seeded VIPs in WS_A; WS_B's VIP-less profile is excluded by scoping.
+  // Two seeded VIPs in WS_A; WS_B's VIP-less profile is excluded by scoping. The
+  // members list auto-loads (no Preview button) and lists both.
   await expect(page.getByTestId('segment-size')).toContainText('2');
+  await expect(page.getByTestId('member-preview-row')).toHaveCount(2);
 
   await page.getByTestId('save-segment').click();
 
@@ -49,7 +50,6 @@ test('segment by the unsubscribed attribute and by an event', async ({ page }) =
   await page.getByTestId('rule-field').first().fill('attributes.unsubscribed');
   await page.getByTestId('rule-operator').first().selectOption('=');
   await page.getByTestId('rule-value').first().fill('true');
-  await page.getByTestId('preview-size').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
   // (2) Switch to an EVENT rule and AUTOSUGGEST the event name: typing "pur"
@@ -58,7 +58,6 @@ test('segment by the unsubscribed attribute and by an event', async ({ page }) =
   await page.getByTestId('event-name').first().fill('pur');
   await page.getByTestId('value-suggestion').filter({ hasText: 'purchase' }).first().click();
   await expect(page.getByTestId('event-name').first()).toHaveValue('purchase');
-  await page.getByTestId('preview-size').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
   // (3) Event-attribute filter, autosuggesting the payload KEY and VALUE on focus:
@@ -71,12 +70,10 @@ test('segment by the unsubscribed attribute and by an event', async ({ page }) =
   await page.getByTestId('event-cond-value').click();
   await page.getByTestId('value-suggestion').filter({ hasText: 'book' }).first().click();
   await expect(page.getByTestId('event-cond-value')).toHaveValue('book');
-  await page.getByTestId('preview-size').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
   // A non-matching payload value yields zero.
   await page.getByTestId('event-cond-value').fill('nope');
-  await page.getByTestId('preview-size').click();
   await expect(page.getByTestId('segment-size')).toContainText('0');
 });
 
@@ -107,7 +104,6 @@ test('build a segment with a nested AND/OR group', async ({ page }) => {
   await group.getByTestId('rule-value').nth(1).fill('std');
 
   // tier=vip AND (plan=pro OR tier=std) → only a2 matches.
-  await page.getByTestId('preview-size').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
   await page.getByTestId('save-segment').click();
@@ -133,12 +129,7 @@ test('create a MANUAL segment (CSV list) — no rule builder', async ({ page }) 
   await page.getByTestId('save-segment').click();
   await page.getByTestId('segments-list').waitFor();
   await expect(page.getByTestId('segment-list')).toContainText('Hand picked');
-
-  // The two emails resolved to members.
-  await page.getByTestId('nav-profiles').click();
-  await page.getByTestId('profile-explorer').waitFor();
-  await page.getByTestId('profile-segment-filter').selectOption({ label: 'Hand picked' });
-  await expect(page.getByTestId('profile-row')).toHaveCount(2);
+  // (Membership resolution from the CSV is covered by the import-csv integration test.)
 });
 
 test('edit a segment from the list: builder hydrates and the rename reflects', async ({ page }) => {

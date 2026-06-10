@@ -372,18 +372,31 @@ export const updateSegment: Handler = async (ctx, pool, req) => {
  * the §8 compiler (workspace_id structurally $1) so the preview count is scoped
  * to the active workspace and can NEVER match another workspace's profiles.
  */
+const PREVIEW_PAGE_SIZE = 50;
 export const previewSegment: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const ast = (b.definition ?? null) as AstNode | null;
+  const offset = Number.isFinite(Number(b.offset)) ? Math.max(0, Math.floor(Number(b.offset))) : 0;
   const where = compileWhere(ctx.workspaceId, ast);
-  const { rows } = await pool.query(
+  const countRes = await pool.query<{ size: number }>(
     `SELECT count(*)::int AS size
-     FROM profiles p
-     LEFT JOIN profile_features pf ON pf.profile_id = p.id
-     WHERE ${where.text}`,
+       FROM profiles p
+       LEFT JOIN profile_features pf ON pf.profile_id = p.id
+      WHERE ${where.text}`,
     where.values,
   );
-  return ok({ size: rows[0]?.size ?? 0 });
+  const size = countRes.rows[0]?.size ?? 0;
+  // The page of matching profiles (id, email), 50 per page at the given offset.
+  const pageRes = await pool.query<{ id: string; email: string | null }>(
+    `SELECT p.id, p.email
+       FROM profiles p
+       LEFT JOIN profile_features pf ON pf.profile_id = p.id
+      WHERE ${where.text}
+      ORDER BY p.email
+      LIMIT ${PREVIEW_PAGE_SIZE} OFFSET $${where.values.length + 1}`,
+    [...where.values, offset],
+  );
+  return ok({ size, offset, page_size: PREVIEW_PAGE_SIZE, members: pageRes.rows });
 };
 
 export const addSegmentMembers: Handler = async (ctx, pool, req) => {

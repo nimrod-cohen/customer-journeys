@@ -161,7 +161,17 @@ const EVENT_OP_LABEL: Record<EventCountOp, string> = {
  * onChange(rows) and renders the per-rule UI (field/event, operators, payload
  * filters, autosuggest). Reused by the root group and each sub-group.
  */
-function RuleListEditor({ rows, onChange }: { rows: RuleRow[]; onChange: (rows: RuleRow[]) => void }) {
+function RuleListEditor({
+  rows,
+  onChange,
+  allowEmpty = false,
+}: {
+  rows: RuleRow[];
+  onChange: (rows: RuleRow[]) => void;
+  /** Allow removing the LAST rule (leaving the list empty) — used at the root when
+   * a sub-group exists, so criteria can live entirely in groups. */
+  allowEmpty?: boolean;
+}) {
   const update = (i: number, patch: Partial<RuleRow>) =>
     onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const removeRow = (i: number) => onChange(rows.filter((_, idx) => idx !== i));
@@ -194,7 +204,7 @@ function RuleListEditor({ rows, onChange }: { rows: RuleRow[]; onChange: (rows: 
                 <option value="field">Attribute / field</option>
                 <option value="event">Event</option>
               </Select>
-              {rows.length > 1 ? (
+              {rows.length > 1 || allowEmpty ? (
                 <Button
                   data-testid="rule-remove"
                   variant="ghost"
@@ -362,6 +372,10 @@ export function SegmentBuilder({ id }: { id?: string }) {
   const [combinator, setCombinator] = useState<Combinator>('and');
   const [groups, setGroups] = useState<RuleGroup[]>([]);
   const [size, setSize] = useState<number | null>(null);
+  // Live members preview (dynamic segments): one page of 50 at `offset`.
+  const [members, setMembers] = useState<Array<{ id: string; email: string | null }>>([]);
+  const [offset, setOffset] = useState(0);
+  const PAGE = 50;
   const [name, setName] = useState('');
   // A segment is EITHER dynamic (rule-based) OR manual (uploaded list) — never
   // both. Chosen on create; fixed thereafter.
@@ -392,11 +406,26 @@ export function SegmentBuilder({ id }: { id?: string }) {
     setGroups((gs) => gs.map((g, idx) => (idx === gi ? { ...g, ...patch } : g)));
   const removeGroup = (gi: number) => setGroups((gs) => gs.filter((_, idx) => idx !== gi));
 
-  const preview = async () => {
-    const ast = buildAstFromGroup(rootGroup());
-    const res = await api.post<{ size: number }>('/segments/preview', { body: { definition: ast } });
+  // Load one page (50) of the matching members + the total count.
+  const loadMembers = async (off: number) => {
+    const ast = buildAstFromGroup({ combinator, rows, groups });
+    const res = await api.post<{ size: number; members: Array<{ id: string; email: string | null }> }>(
+      '/segments/preview',
+      { body: { definition: ast, offset: off } },
+    );
     setSize(res.size);
+    setMembers(res.members);
+    setOffset(off);
   };
+
+  // Auto-refresh the members list + count on entry and whenever the rules change
+  // (debounced) — no manual "preview" button. Dynamic segments only.
+  useEffect(() => {
+    if (segmentKind !== 'dynamic_realtime') return;
+    const t = setTimeout(() => void loadMembers(0), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, combinator, groups, segmentKind]);
 
   const save = async () => {
     setSaving(true);
@@ -510,7 +539,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
 
             <div class="mt-5 space-y-3">
               <span class="label">Rules</span>
-              <RuleListEditor rows={rows} onChange={setRows} />
+              <RuleListEditor rows={rows} onChange={setRows} allowEmpty={groups.length > 0} />
 
               {groups.map((g, gi) => (
                 <div
@@ -559,18 +588,64 @@ export function SegmentBuilder({ id }: { id?: string }) {
             </div>
 
 
-            <div class="mt-5 flex flex-wrap items-center gap-3 border-t border-stone-100 pt-4">
-              <Button data-testid="preview-size" variant="secondary" onClick={preview}>
-                Preview size
-              </Button>
-              <Button data-testid="save-segment" onClick={save} disabled={saving}>
-                {saving ? 'Saving…' : editing ? 'Save changes' : 'Save segment'}
-              </Button>
-              {size !== null ? (
+            {/* Live members — auto-refreshes on entry and as the rules change. */}
+            <div class="mt-5 border-t border-stone-100 pt-4">
+              <div class="flex items-center justify-between">
+                <span class="label">Members</span>
                 <span data-testid="segment-size" class="text-sm text-stone-600">
-                  Matches <b class="text-ink-900">{size}</b> profile{size === 1 ? '' : 's'}
+                  {size === null ? 'Loading…' : `${size} matching profile${size === 1 ? '' : 's'}`}
                 </span>
+              </div>
+              {size !== null ? (
+                members.length === 0 ? (
+                  <p class="mt-2 text-sm text-stone-400">No matching profiles.</p>
+                ) : (
+                  <>
+                    <ul class="mt-2 divide-y divide-stone-100 overflow-hidden rounded-lg border border-stone-200">
+                      {members.map((m) => (
+                        <li
+                          data-testid="member-preview-row"
+                          key={m.id}
+                          class="px-3 py-1.5 text-sm text-ink-800"
+                        >
+                          {m.email ?? m.id}
+                        </li>
+                      ))}
+                    </ul>
+                    {size > PAGE ? (
+                      <div class="mt-2 flex items-center gap-3 text-sm text-stone-500">
+                        <Button
+                          data-testid="members-prev"
+                          variant="ghost"
+                          size="sm"
+                          disabled={offset === 0}
+                          onClick={() => void loadMembers(Math.max(0, offset - PAGE))}
+                        >
+                          ← Prev
+                        </Button>
+                        <span data-testid="members-range">
+                          {offset + 1}–{Math.min(offset + PAGE, size)} of {size}
+                        </span>
+                        <Button
+                          data-testid="members-next"
+                          variant="ghost"
+                          size="sm"
+                          disabled={offset + PAGE >= size}
+                          onClick={() => void loadMembers(offset + PAGE)}
+                        >
+                          Next →
+                        </Button>
+                      </div>
+                    ) : null}
+                  </>
+                )
               ) : null}
+
+              <div class="mt-4">
+                <Button data-testid="save-segment" onClick={save} disabled={saving}>
+                  {saving ? 'Saving…' : editing ? 'Save changes' : 'Save segment'}
+                </Button>
+              </div>
             </div>
             </>
             ) : (
