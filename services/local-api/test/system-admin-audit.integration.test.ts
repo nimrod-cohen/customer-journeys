@@ -127,23 +127,37 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
     expect(r.status).toBe(403);
   });
 
-  it('deletes an EMPTY company; rejects a company with workspaces (409) and non-admins (403)', async () => {
+  it('deletes an EMPTY company (name-confirmed); rejects wrong name (400), with-workspaces (409), non-admin (403)', async () => {
     const t = tokenFor(ADMIN, WS_A);
-    // An empty company can be deleted.
     const create = await call(world.env, 'POST', '/admin/companies', { token: t, body: { name: 'TempCo' } });
     const cid = (create.body as { company: { id: string } }).company.id;
-    const del = await call(world.env, 'DELETE', `/admin/companies/${cid}`, { token: t });
+
+    // Wrong confirmation name → 400 (company kept).
+    const bad = await call(world.env, 'DELETE', `/admin/companies/${cid}`, { token: t, body: { confirm_name: 'nope' } });
+    expect(bad.status).toBe(400);
+    expect((await world.pool.query('SELECT 1 FROM companies WHERE id = $1', [cid])).rowCount).toBe(1);
+
+    // Correct name → deleted.
+    const del = await call(world.env, 'DELETE', `/admin/companies/${cid}`, { token: t, body: { confirm_name: 'TempCo' } });
     expect(del.status).toBe(200);
     expect((await world.pool.query('SELECT 1 FROM companies WHERE id = $1', [cid])).rowCount).toBe(0);
 
-    // A company that still owns workspaces cannot be deleted.
-    const { rows } = await world.pool.query<{ company_id: string }>('SELECT company_id FROM workspaces WHERE id = $1', [WS_A]);
-    const wsCompany = rows[0]!.company_id;
-    const del2 = await call(world.env, 'DELETE', `/admin/companies/${wsCompany}`, { token: t });
+    // A company that still owns workspaces cannot be deleted (even with the right name).
+    const { rows } = await world.pool.query<{ company_id: string; name: string }>(
+      'SELECT w.company_id, c.name FROM workspaces w JOIN companies c ON c.id = w.company_id WHERE w.id = $1',
+      [WS_A],
+    );
+    const del2 = await call(world.env, 'DELETE', `/admin/companies/${rows[0]!.company_id}`, {
+      token: t,
+      body: { confirm_name: rows[0]!.name },
+    });
     expect(del2.status).toBe(409);
 
     // Non-admins can't delete companies.
-    const del3 = await call(world.env, 'DELETE', `/admin/companies/${wsCompany}`, { token: tokenFor(MEMBER, WS_A) });
+    const del3 = await call(world.env, 'DELETE', `/admin/companies/${rows[0]!.company_id}`, {
+      token: tokenFor(MEMBER, WS_A),
+      body: { confirm_name: rows[0]!.name },
+    });
     expect(del3.status).toBe(403);
   });
 });

@@ -1218,8 +1218,12 @@ export const adminCreateCompany: Handler = async (ctx, pool, req) => {
  */
 export const adminDeleteCompany: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
+  const confirm = typeof asObject(req.body).confirm_name === 'string' ? String(asObject(req.body).confirm_name) : '';
   const c = await pool.query<{ name: string }>('SELECT name FROM companies WHERE id = $1', [id]);
   if (!c.rows[0]) return ok({ error: 'not found' }, 404);
+  if (confirm.trim() !== c.rows[0].name) {
+    return ok({ error: 'company name confirmation does not match' }, 400);
+  }
   const w = await pool.query('SELECT 1 FROM workspaces WHERE company_id = $1 LIMIT 1', [id]);
   if ((w.rowCount ?? 0) > 0) return ok({ error: 'company still has workspaces' }, 409);
   await pool.query('DELETE FROM companies WHERE id = $1', [id]);

@@ -156,8 +156,14 @@ test('super admin deletes an EMPTY company (button only shows when it has no wor
     .filter({ has: page.getByTestId('admin-company-name').filter({ hasText: /^Holdings Co$/ }) });
   await expect(card).toHaveCount(1);
 
-  // It's empty, so a "Delete company" button is available; delete it.
+  // It's empty, so a "Delete company" button is available; deleting requires
+  // typing the exact company name.
   await card.getByTestId('delete-company').click();
+  await page.getByTestId('delete-company-modal').waitFor();
+  const confirmBtn = page.getByTestId('confirm-delete-company');
+  await expect(confirmBtn).toBeDisabled();
+  await page.getByTestId('company-delete-confirm-input').fill('Holdings Co');
+  await confirmBtn.click();
   await expect(
     page.getByTestId('admin-company-name').filter({ hasText: /^Holdings Co$/ }),
   ).toHaveCount(0);

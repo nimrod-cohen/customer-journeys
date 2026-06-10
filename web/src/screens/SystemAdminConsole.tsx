@@ -46,13 +46,24 @@ export function SystemAdminConsole() {
   };
   const [coRenameId, setCoRenameId] = useState<string | null>(null);
   const [coRenameText, setCoRenameText] = useState('');
-  const deleteCompany = async (id: string) => {
-    setErr('');
+  // Type-the-name confirmation for deleting a company.
+  const [coDelTarget, setCoDelTarget] = useState<{ id: string; name: string } | null>(null);
+  const [coDelConfirm, setCoDelConfirm] = useState('');
+  const [coDelBusy, setCoDelBusy] = useState(false);
+  const [coDelErr, setCoDelErr] = useState('');
+  const deleteCompany = async () => {
+    if (!coDelTarget) return;
+    setCoDelBusy(true);
+    setCoDelErr('');
     try {
-      await api.del(`/admin/companies/${id}`);
+      await api.del(`/admin/companies/${coDelTarget.id}`, { body: { confirm_name: coDelConfirm.trim() } });
+      setCoDelTarget(null);
+      setCoDelConfirm('');
       await load();
     } catch (e) {
-      setErr((e as { error?: string })?.error ?? 'could not delete company');
+      setCoDelErr((e as { error?: string })?.error ?? 'could not delete company');
+    } finally {
+      setCoDelBusy(false);
     }
   };
   const saveCompanyRename = async (id: string) => {
@@ -186,7 +197,11 @@ export function SystemAdminConsole() {
                     variant="ghost"
                     size="sm"
                     class="text-rose-600 hover:bg-rose-50"
-                    onClick={() => void deleteCompany(c.id)}
+                    onClick={() => {
+                      setCoDelTarget({ id: c.id, name: c.name });
+                      setCoDelConfirm('');
+                      setCoDelErr('');
+                    }}
                   >
                     Delete company
                   </Button>
@@ -320,6 +335,55 @@ export function SystemAdminConsole() {
                     onClick={doDelete}
                   >
                     {deleteBusy ? 'Deleting…' : 'Delete workspace'}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {coDelTarget
+        ? createPortal(
+            <div
+              data-testid="delete-company-modal"
+              class="fixed inset-0 z-50 grid place-items-center bg-ink-950/50 p-4"
+              onClick={() => setCoDelTarget(null)}
+            >
+              <div
+                class="w-full max-w-md rounded-xl bg-white p-5 shadow-soft"
+                onClick={(e: Event) => e.stopPropagation()}
+              >
+                <h3 class="text-lg font-bold text-ink-950">Delete company</h3>
+                <p class="mt-2 text-sm text-stone-600">
+                  This deletes the company <b>{coDelTarget.name}</b>. It must have no workspaces.
+                </p>
+                <p class="mt-3 text-sm text-stone-600">
+                  Type <span class="font-mono font-semibold text-ink-900">{coDelTarget.name}</span> to
+                  confirm:
+                </p>
+                <Input
+                  data-testid="company-delete-confirm-input"
+                  class="mt-1"
+                  value={coDelConfirm}
+                  onInput={(e: Event) => setCoDelConfirm((e.target as HTMLInputElement).value)}
+                />
+                {coDelErr ? (
+                  <p data-testid="delete-company-error" class="mt-2 text-sm text-rose-600">
+                    {coDelErr}
+                  </p>
+                ) : null}
+                <div class="mt-4 flex justify-end gap-2">
+                  <Button variant="ghost" onClick={() => setCoDelTarget(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    data-testid="confirm-delete-company"
+                    variant="danger"
+                    disabled={coDelConfirm.trim() !== coDelTarget.name || coDelBusy}
+                    onClick={deleteCompany}
+                  >
+                    {coDelBusy ? 'Deleting…' : 'Delete company'}
                   </Button>
                 </div>
               </div>
