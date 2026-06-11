@@ -59,8 +59,13 @@ export function EmailEditor({ id }: { id?: string }) {
     });
     editor.setComponents(INITIAL_MJML);
     editorRef.current = editor;
-    // grapesjs-mjml makes getHtml() return the MJML document.
-    setMjml(editor.getHtml());
+    // grapesjs-mjml makes getHtml() return the MJML document. Keep the surfaced
+    // MJML LIVE: GrapesJS emits 'update' on every canvas change, so the preview
+    // and the saved payload always reflect the current design (not a stale
+    // snapshot from load/refresh).
+    const sync = () => setMjml(editor.getHtml());
+    sync();
+    editor.on('update', sync);
     return () => editor.destroy();
   }, []);
 
@@ -78,13 +83,26 @@ export function EmailEditor({ id }: { id?: string }) {
     setMjml(editor.getHtml());
   };
 
-  /** Insert an <mj-image src> referencing the uploaded asset URL (§11). */
+  /**
+   * Insert an <mj-image src> referencing the uploaded asset URL (§11), nested
+   * INSIDE the MJML body (never appended to the wrapper, which would place it
+   * after </mjml> and produce an invalid two-root document the server rejects).
+   * We splice it into the current MJML and re-parse so the tree stays valid.
+   */
   const insertImage = () => {
     const editor = editorRef.current;
     if (!editor) return;
-    const wrapper = editor.getWrapper();
-    const column = wrapper?.find('mj-column')[0] ?? wrapper;
-    column?.append(`<mj-image src="${SAMPLE_ASSET_URL}" />`);
+    const img = `<mj-image src="${SAMPLE_ASSET_URL}" />`;
+    const cur = editor.getHtml();
+    let next: string;
+    if (cur.includes('</mj-column>')) {
+      next = cur.replace('</mj-column>', `${img}</mj-column>`);
+    } else if (cur.includes('</mj-body>')) {
+      next = cur.replace('</mj-body>', `<mj-section><mj-column>${img}</mj-column></mj-section></mj-body>`);
+    } else {
+      next = cur;
+    }
+    editor.setComponents(next);
     refreshMjml();
   };
 
@@ -95,7 +113,10 @@ export function EmailEditor({ id }: { id?: string }) {
   const save = async () => {
     setSaving(true);
     try {
-      const body = { name: name || 'Untitled', mjml };
+      // Read the CURRENT MJML straight from the editor (authoritative) rather than
+      // any state snapshot, so the latest canvas edits are always persisted.
+      const currentMjml = editorRef.current?.getHtml() ?? mjml;
+      const body = { name: name || 'Untitled', mjml: currentMjml };
       let savedId = id;
       if (id) {
         await api.put(`/templates/${id}`, { body });
