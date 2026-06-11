@@ -14,7 +14,7 @@
 //   - all sends go through the Dispatcher (we only enqueue outbox ids); we never
 //     re-implement suppression/cap/quiet-hours here.
 import type { SendMessageCommand } from '@aws-sdk/client-sqs';
-import { resolveAudience } from '@cdp/segments';
+import { resolveAudience, buildSegmentMatch, type AstNode } from '@cdp/segments';
 import {
   buildBroadcastOutboxInsert,
   buildBroadcastStatusUpdate,
@@ -120,11 +120,30 @@ export async function runBroadcast(
     return { result: 'skipped', reason: 'broadcast not claimed (already sending/sent)' };
   }
 
-  // 4. Resolve the audience AT SEND TIME (segment_memberships, both sources).
-  //    audience_ref is a segment_id for both 'segment' and 'manual_group'.
-  const aud = resolveAudience(workspaceId, bc.audience_ref);
-  const { rows: members } = await deps.reader.query<{ profile_id: string }>(aud.text, aud.values);
-  const profileIds = members.map((m) => m.profile_id);
+  // 4. Resolve the audience AT SEND TIME. A DYNAMIC segment is resolved LIVE by
+  //    running its compiled rule now (so time-windowed audiences are exact and we
+  //    don't depend on a materialized cache); a MANUAL list reads its curated
+  //    membership rows. audience_ref is a segment_id in both cases.
+  const { rows: segRows } = await deps.reader.query<{ kind: string; definition: AstNode | null }>(
+    `SELECT kind, definition FROM segments WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, bc.audience_ref],
+  );
+  const seg = segRows[0];
+  let profileIds: string[];
+  if (seg && seg.kind !== 'manual') {
+    // Dynamic: a null definition is an inactive draft → no audience (never blast all).
+    if (!seg.definition) {
+      profileIds = [];
+    } else {
+      const match = buildSegmentMatch(workspaceId, seg.definition);
+      const { rows } = await deps.reader.query<{ id: string }>(match.text, match.values);
+      profileIds = rows.map((r) => r.id);
+    }
+  } else {
+    const aud = resolveAudience(workspaceId, bc.audience_ref);
+    const { rows: members } = await deps.reader.query<{ profile_id: string }>(aud.text, aud.values);
+    profileIds = members.map((m) => m.profile_id);
+  }
 
   const payload = { broadcast_id: broadcastId };
   const batchSize = deps.batchSize ?? DEFAULT_BATCH_SIZE;
