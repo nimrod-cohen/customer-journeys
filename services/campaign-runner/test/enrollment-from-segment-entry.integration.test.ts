@@ -120,4 +120,30 @@ describe.skipIf(!RUN)('enrollment from segment entry (real Postgres)', () => {
     );
     expect(c.rows[0].n).toBe(0);
   });
+
+  it("an EXIT-triggered campaign enrolls on 'exited' (leaving the segment); the enter one does not", async () => {
+    const exitCamp = (
+      await admin.query(
+        "INSERT INTO campaigns (workspace_id, name, definition, trigger_segment_id, status, trigger_on) VALUES ($1,'ExitC',$2::jsonb,$3,'active','exit') RETURNING id",
+        [WS, JSON.stringify(DEF), SEG],
+      )
+    ).rows[0].id;
+    const p3 = (
+      await admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'ext3') RETURNING id", [WS])
+    ).rows[0].id;
+
+    const res = await enrollFromSegmentChange(deps(), {
+      workspace_id: WS,
+      segment_id: SEG,
+      profile_id: p3,
+      action: 'exited',
+    });
+    // Only the exit-triggered campaign fires on 'exited' — the enter campaign (CAMP) does not.
+    expect(res.intents.map((i) => i.campaignId)).toEqual([exitCamp]);
+    const e = await admin.query(
+      'SELECT campaign_id FROM campaign_enrollments WHERE workspace_id = $1 AND profile_id = $2',
+      [WS, p3],
+    );
+    expect(e.rows.map((r) => r.campaign_id)).toEqual([exitCamp]);
+  });
 });

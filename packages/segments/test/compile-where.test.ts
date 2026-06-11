@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   compileWhere,
   validateAst,
+  isTimeSensitive,
   resolveField,
   resolveOperator,
   SCALAR_FEATURE_FIELDS,
@@ -343,6 +344,28 @@ describe('event time-window + negate (§ time-sensitive rules)', () => {
   it('rejects a non-positive withinDays', () => {
     expect(() => validateAst({ event: 'x', withinDays: 0 } as AstNode)).toThrow(/withinDays/i);
     expect(() => validateAst({ event: 'x', withinDays: -5 } as AstNode)).toThrow(/withinDays/i);
+  });
+});
+
+describe('isTimeSensitive (which segments need the scheduled sweep)', () => {
+  it('true when any event predicate has a withinDays window (even nested)', () => {
+    expect(isTimeSensitive({ event: 'login', withinDays: 7 } as AstNode)).toBe(true);
+    expect(
+      isTimeSensitive({
+        op: 'and',
+        conditions: [
+          { field: 'attributes.tier', operator: '=', value: 'vip' },
+          { op: 'or', conditions: [{ event: 'purchase', withinDays: 30 }, { event: 'login' }] },
+        ],
+      } as AstNode),
+    ).toBe(true);
+  });
+
+  it('false for ever-events and pure attribute/count rules', () => {
+    expect(isTimeSensitive(null)).toBe(false);
+    expect(isTimeSensitive({ field: 'attributes.tier', operator: '=', value: 'vip' } as AstNode)).toBe(false);
+    expect(isTimeSensitive({ event: 'purchase', operator: '>=', value: 2 } as AstNode)).toBe(false);
+    expect(isTimeSensitive({ op: 'and', conditions: [{ event: 'login' }] } as AstNode)).toBe(false);
   });
 });
 

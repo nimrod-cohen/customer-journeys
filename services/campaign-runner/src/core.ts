@@ -283,30 +283,37 @@ export interface EnrollmentIntent {
   readonly startNode: string;
 }
 
-/** A campaign's enrollment-relevant columns (trigger_segment_id, start node). */
+/** A campaign's enrollment-relevant columns (trigger_segment_id, start node, trigger_on). */
 export interface CampaignTriggerRow {
   readonly id: string;
   readonly workspace_id: string;
   readonly trigger_segment_id: string | null;
   readonly start_node: string;
+  /** Fire enrollment on segment ENTER (default) or EXIT. */
+  readonly trigger_on?: 'enter' | 'exit';
 }
 
 /**
- * Parse a segment_change_log row into enrollment intents (§9B). Only 'entered'
- * actions produce intents; an 'exited' action produces NONE. An intent is
- * produced for each active campaign whose trigger_segment_id matches the
- * changed segment (and same workspace). THROWS on a falsy workspaceId.
+ * Parse a segment_change_log row into enrollment intents (§9B). The change-log
+ * `action` is matched against each campaign's `trigger_on`: an 'entered' row
+ * enrolls campaigns with trigger_on='enter' (the default), and an 'exited' row
+ * enrolls campaigns with trigger_on='exit' (a profile LEAVING the segment — e.g.
+ * aging out of a time window). An intent is produced per active campaign whose
+ * trigger_segment_id matches the changed segment (same workspace). THROWS on a
+ * falsy workspaceId.
  */
 export function parseEnrollmentTrigger(
   row: SegmentChangeLogRow,
   campaigns: readonly CampaignTriggerRow[],
 ): EnrollmentIntent[] {
   if (!row.workspace_id) throw new Error('parseEnrollmentTrigger: workspace_id is required');
-  if (row.action !== 'entered') return [];
+  if (row.action !== 'entered' && row.action !== 'exited') return [];
+  const wantTriggerOn = row.action === 'entered' ? 'enter' : 'exit';
   const intents: EnrollmentIntent[] = [];
   for (const c of campaigns) {
     if (c.workspace_id !== row.workspace_id) continue;
     if (c.trigger_segment_id !== row.segment_id) continue;
+    if ((c.trigger_on ?? 'enter') !== wantTriggerOn) continue;
     intents.push({
       workspaceId: row.workspace_id,
       campaignId: c.id,

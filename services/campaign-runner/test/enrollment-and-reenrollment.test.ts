@@ -61,4 +61,23 @@ describe('parseEnrollmentTrigger', () => {
     const row = { workspace_id: '', segment_id: 's', profile_id: 'p', action: 'entered' };
     expect(() => parseEnrollmentTrigger(row as SegmentChangeLogRow, campaigns)).toThrow();
   });
+
+  describe('trigger_on enter/exit', () => {
+    const enterC: CampaignTriggerRow = { id: 'enter', workspace_id: 'ws', trigger_segment_id: 'seg-A', start_node: 't', trigger_on: 'enter' };
+    const exitC: CampaignTriggerRow = { id: 'exit', workspace_id: 'ws', trigger_segment_id: 'seg-A', start_node: 't', trigger_on: 'exit' };
+    const both = [enterC, exitC];
+    const row = (action: string): SegmentChangeLogRow => ({ workspace_id: 'ws', segment_id: 'seg-A', profile_id: 'p1', action });
+
+    it("'entered' enrolls only enter-triggered campaigns", () => {
+      expect(parseEnrollmentTrigger(row('entered'), both).map((i) => i.campaignId)).toEqual(['enter']);
+    });
+
+    it("'exited' enrolls only exit-triggered campaigns (leaving a segment starts a journey)", () => {
+      expect(parseEnrollmentTrigger(row('exited'), both).map((i) => i.campaignId)).toEqual(['exit']);
+    });
+
+    it('an unknown action enrolls nobody', () => {
+      expect(parseEnrollmentTrigger(row('weird'), both)).toEqual([]);
+    });
+  });
 });

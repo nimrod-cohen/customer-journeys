@@ -259,6 +259,20 @@ export function validateAst(node: AstNode): void {
   }
 }
 
+/**
+ * Whether a rule AST is TIME-SENSITIVE — i.e. contains any event predicate with a
+ * `withinDays` window, so its membership changes purely as the clock moves (a
+ * profile ages out with no new event). Such segments need periodic re-evaluation
+ * (the scheduled sweep) to emit enter/exit transitions; non-time-sensitive ones
+ * change only on data changes (handled by the realtime processor). Pure.
+ */
+export function isTimeSensitive(ast: AstNode | null | undefined): boolean {
+  if (!ast) return false;
+  if (isGroup(ast)) return ast.conditions.some((c) => isTimeSensitive(c));
+  if (isEvent(ast)) return ast.withinDays !== undefined;
+  return false;
+}
+
 /** Internal: a placeholder allocator that tracks the running param list. */
 class ParamBuilder {
   // workspace_id is structurally $1; AST values start at $2.

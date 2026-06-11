@@ -2,7 +2,12 @@
 // Sweeps every active workspace's dynamic_batch segments. Pure logic lives in
 // ./core.ts; all I/O in ./deps.ts. Per-workspace failures are isolated so one
 // workspace's error never blocks the rest of the sweep.
-import { runBatchEvalForWorkspace, type BatchEvalDeps, type BatchEvalResult } from './core.js';
+import {
+  runBatchEvalForWorkspace,
+  runCampaignTimeSweepForWorkspace,
+  type BatchEvalDeps,
+  type BatchEvalResult,
+} from './core.js';
 
 /** Injected dependencies for the scheduled sweep. */
 export interface BatchEvalHandlerDeps extends BatchEvalDeps {
@@ -24,7 +29,11 @@ export function makeBatchEvalHandler(deps: BatchEvalHandlerDeps) {
     const failures: { workspaceId: string; error: string }[] = [];
     for (const ws of ids) {
       try {
-        workspaces.push(await runBatchEvalForWorkspace(deps, ws));
+        // dynamic_batch segments + time-sensitive campaign-trigger segments (the
+        // latter so a profile aging out of a window fires its campaign enter/exit).
+        const batch = await runBatchEvalForWorkspace(deps, ws);
+        const timeSweep = await runCampaignTimeSweepForWorkspace(deps, ws);
+        workspaces.push({ workspaceId: ws, segments: [...batch.segments, ...timeSweep.segments] });
       } catch (err) {
         failures.push({ workspaceId: ws, error: err instanceof Error ? err.message : String(err) });
       }

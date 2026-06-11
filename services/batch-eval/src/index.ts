@@ -7,6 +7,8 @@ export {
   planBatchEval,
   planBatchSegmentApply,
   runBatchEvalForWorkspace,
+  planCampaignTimeSweep,
+  runCampaignTimeSweepForWorkspace,
   type BatchEvalDeps,
   type BatchEvalResult,
   type BatchSegmentResult,

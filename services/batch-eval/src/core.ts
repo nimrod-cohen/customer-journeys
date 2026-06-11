@@ -11,6 +11,8 @@
 
 import {
   selectActiveBatchSegments,
+  selectCampaignTriggerSegments,
+  isTimeSensitive,
   buildSegmentMatch,
   selectEvaluatorMembership,
   buildInsertMemberships,
@@ -124,5 +126,42 @@ export async function runBatchEvalForWorkspace(
     results.push({ segmentId: seg.id, entered: entered.length, exited: exited.length });
   }
 
+  return { workspaceId, segments: results };
+}
+
+/** Plan the read that lists campaign-trigger segments for a workspace (sweep scope). */
+export function planCampaignTimeSweep(workspaceId: string): SqlStatement {
+  return selectCampaignTriggerSegments(workspaceId);
+}
+
+/**
+ * Re-evaluate the TIME-SENSITIVE segments that trigger active campaigns in one
+ * workspace and emit their membership transitions. A time-windowed segment's
+ * membership drifts with the clock (a profile ages out with no event), so it must
+ * be re-checked periodically: match the whole workspace, diff vs current evaluator
+ * membership, apply membership + segment_change_log (entered/exited) per segment in
+ * its own tx. The emitted change_log is what drives time-based campaign enter/exit.
+ * Non-time-sensitive trigger segments are skipped — the realtime processor owns
+ * those (they change only on data changes). Same builders/scoping as the batch sweep.
+ */
+export async function runCampaignTimeSweepForWorkspace(
+  deps: BatchEvalDeps,
+  workspaceId: string,
+): Promise<BatchEvalResult> {
+  const segQ = planCampaignTimeSweep(workspaceId);
+  const segRes = await deps.reader.query(segQ.text, segQ.values);
+  const segments = (segRes.rows as unknown as SegmentRow[]).filter((s) => isTimeSensitive(asAst(s.definition)));
+
+  const results: BatchSegmentResult[] = [];
+  for (const seg of segments) {
+    const matchQ = buildSegmentMatch(workspaceId, asAst(seg.definition));
+    const matched = (await deps.reader.query(matchQ.text, matchQ.values)).rows.map((r) => r.id as string);
+    const memQ = selectEvaluatorMembership(workspaceId, seg.id);
+    const current = (await deps.reader.query(memQ.text, memQ.values)).rows.map((r) => r.profile_id as string);
+    const { entered, exited } = diffMembership(current, matched);
+    const statements = planBatchSegmentApply(workspaceId, seg.id, entered, exited);
+    if (statements.length > 0) await deps.runInWorkspaceTx(workspaceId, statements);
+    results.push({ segmentId: seg.id, entered: entered.length, exited: exited.length });
+  }
   return { workspaceId, segments: results };
 }

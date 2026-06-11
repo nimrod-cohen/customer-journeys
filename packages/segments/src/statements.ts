@@ -52,6 +52,27 @@ export function selectActiveBatchSegments(workspaceId: string): SqlStatement {
 }
 
 /**
+ * Select active dynamic_realtime segments that are the enrollment trigger of an
+ * active campaign (campaigns.trigger_segment_id). These are the segments the
+ * scheduled sweep must re-evaluate over time so enter/exit transitions fire for
+ * campaigns — the rest are left to the realtime processor. workspace_id at $1.
+ */
+export function selectCampaignTriggerSegments(workspaceId: string): SqlStatement {
+  return {
+    text: `SELECT s.id, s.workspace_id, s.definition, s.kind
+           FROM segments s
+           WHERE s.workspace_id = $1
+             AND s.status = 'active'
+             AND s.kind = 'dynamic_realtime'
+             AND EXISTS (
+               SELECT 1 FROM campaigns c
+               WHERE c.workspace_id = $1 AND c.status = 'active' AND c.trigger_segment_id = s.id
+             )`,
+    values: [workspaceId],
+  };
+}
+
+/**
  * Build the "who matches this segment" query, optionally scoped to a SINGLE
  * changed profile (realtime path) via `AND p.id = $profile`. Reuses the §8
  * compiler so workspace_id is structurally $1 and the rule is fully

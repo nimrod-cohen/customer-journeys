@@ -5,6 +5,7 @@
 export {
   compileWhere,
   validateAst,
+  isTimeSensitive,
   resolveField,
   resolveOperator,
   SCALAR_FEATURE_FIELDS,
@@ -24,6 +25,7 @@ export { diffMembership, type MembershipDiff } from './diff.js';
 export {
   selectActiveRealtimeSegments,
   selectActiveBatchSegments,
+  selectCampaignTriggerSegments,
   buildSegmentMatch,
   selectEvaluatorMembership,
   buildInsertMemberships,

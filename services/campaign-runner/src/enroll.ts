@@ -45,6 +45,7 @@ interface CampaignRow {
   readonly id: string;
   readonly workspace_id: string;
   readonly trigger_segment_id: string | null;
+  readonly trigger_on?: 'enter' | 'exit';
   readonly definition: unknown;
 }
 
@@ -59,11 +60,12 @@ export async function enrollFromSegmentChange(
   row: SegmentChangeLogRow,
 ): Promise<EnrollResult> {
   if (!row.workspace_id) throw new Error('enrollFromSegmentChange: workspace_id is required');
-  if (row.action !== 'entered') return { enrolled: 0, intents: [] };
+  if (row.action !== 'entered' && row.action !== 'exited') return { enrolled: 0, intents: [] };
 
-  // Load active campaigns for THIS workspace triggered by THIS segment.
+  // Load active campaigns for THIS workspace triggered by THIS segment. Whether a
+  // campaign fires on this row is decided by trigger_on vs the action (parseEnrollmentTrigger).
   const { rows: campaignRows } = await deps.reader.query<CampaignRow>(
-    `SELECT id, workspace_id, trigger_segment_id, definition
+    `SELECT id, workspace_id, trigger_segment_id, trigger_on, definition
      FROM campaigns
      WHERE workspace_id = $1 AND status = 'active' AND trigger_segment_id = $2`,
     [row.workspace_id, row.segment_id],
@@ -87,6 +89,7 @@ export async function enrollFromSegmentChange(
       workspace_id: c.workspace_id,
       trigger_segment_id: c.trigger_segment_id,
       start_node: startNode,
+      trigger_on: c.trigger_on ?? 'enter',
     });
   }
 
