@@ -37,6 +37,12 @@ export const ICONS: Record<string, JSX.Element> = {
     </I>
   ),
   editor: <I d="M4 20h16M4 16l9-9 4 4-9 9H4v-4Zm9-9 2-2 4 4-2 2" />,
+  templates: (
+    <I>
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <path d="M8 8h8M8 12h8M8 16h5" />
+    </I>
+  ),
   profiles: (
     <I>
       <circle cx="12" cy="8" r="3.5" />

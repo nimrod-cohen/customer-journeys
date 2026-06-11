@@ -24,6 +24,7 @@ import {
   BillingUsageView,
 } from './screens/SimpleScreens.js';
 import { ProfileDetail } from './screens/ProfileDetail.js';
+import { TemplatesList } from './screens/TemplatesList.js';
 import { Help } from './screens/Help.js';
 import { Activity } from './screens/Activity.js';
 import { EmailEditor } from './EmailEditor.js';
@@ -52,9 +53,15 @@ function screenFor(path: string): JSX.Element {
     const rest = path.slice('/broadcasts/'.length);
     return rest === 'new' ? <BroadcastWizard /> : <BroadcastWizard id={rest} />;
   }
+  // The email editor: new template at /editor, edit one at /editor/:id.
+  if (path.startsWith('/editor/')) {
+    return <EmailEditor id={path.slice('/editor/'.length)} />;
+  }
   switch (path) {
     case '/broadcasts':
       return <BroadcastComposer />;
+    case '/templates':
+      return <TemplatesList />;
     case '/campaigns':
       return <CampaignBuilder />;
     case '/editor':
@@ -93,7 +100,7 @@ export function AppShell(): JSX.Element {
   // fall back to the first permitted item (the System Admin console for them).
   // The email editor has no nav item (reached from Broadcasts/Campaigns), but is
   // still permitted for anyone who can manage content (i.e. has those screens).
-  const canEditor = route === '/editor' && nav.some((n) => n.id === 'broadcasts');
+  const canEditor = (route === '/editor' || route.startsWith('/editor/')) && nav.some((n) => n.id === 'broadcasts');
   const permitted = canEditor || nav.some((n) => underNav(route, n.path));
   const effectiveRoute = permitted ? route : (nav[0]?.path ?? route);
   useEffect(() => {

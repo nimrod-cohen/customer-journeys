@@ -50,6 +50,8 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   // --- templates (manage_content) ---
   'GET /templates': 'manage_content',
   'POST /templates': 'manage_content',
+  'GET /templates/:id': 'manage_content',
+  'PUT /templates/:id': 'manage_content',
 
   // --- broadcasts (manage_content) ---
   'GET /broadcasts': 'manage_content',

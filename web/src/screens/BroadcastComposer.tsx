@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
+import { setEditorReturn, takeReturnedTemplate } from '../store/editorReturn.js';
 import { Badge, Button, Card, Field, Input, PageHeader, Select, EmptyState, toneFor } from '../ui/kit.js';
 
 interface Segment {
@@ -185,9 +186,42 @@ export function BroadcastWizard({ id }: { id?: string }) {
           setScheduleMode('later');
           setScheduledAt(isoToLocalInput(b.scheduled_at));
         }
+        // Returning from the email editor (Design email): select the template we
+        // just saved and jump to the Content step. Applied AFTER the broadcast's
+        // own fields so it wins over the (older) saved template_id.
+        const justSaved = takeReturnedTemplate();
+        if (justSaved) {
+          setTplId(justSaved);
+          setStep(1);
+        }
       })
       .catch(() => navigate('/broadcasts'));
   }, [id]);
+
+  /**
+   * Open the email editor to design content for THIS broadcast. We persist the
+   * broadcast as a draft first (so the wizard state survives the round-trip and
+   * we have a URL to return to), then hand the editor a return path. On save the
+   * editor comes back here with the new template selected.
+   */
+  const designEmail = async () => {
+    const body = {
+      name: name || 'Untitled broadcast',
+      audience_kind: 'segment',
+      audience_ref: segId,
+      template_id: tplId || null,
+      scheduled_at: scheduleMode === 'later' && scheduledAt ? new Date(scheduledAt).toISOString() : null,
+    };
+    let bid = id;
+    if (id) {
+      await api.put(`/broadcasts/${id}`, { body });
+    } else {
+      const r = await api.post<{ broadcast: { id: string } }>('/broadcasts', { body });
+      bid = r.broadcast.id;
+    }
+    setEditorReturn(`/broadcasts/${bid}`);
+    navigate(tplId ? `/editor/${tplId}` : '/editor');
+  };
 
   const segName = segments.find((s) => s.id === segId)?.name ?? '—';
   const tplName = templates.find((t) => t.id === tplId)?.name ?? '—';
@@ -294,7 +328,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
                 ))}
               </Select>
             </Field>
-            <Button data-testid="design-email" variant="secondary" onClick={() => navigate('/editor')}>
+            <Button data-testid="design-email" variant="secondary" onClick={designEmail}>
               Design email
             </Button>
           </div>

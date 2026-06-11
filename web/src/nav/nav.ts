@@ -22,8 +22,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'segments', label: 'Segments', path: '/segments', capability: 'manage_content' },
   { id: 'broadcasts', label: 'Broadcasts', path: '/broadcasts', capability: 'manage_content' },
   { id: 'campaigns', label: 'Campaigns', path: '/campaigns', capability: 'manage_content' },
-  // The email editor is reached from within Broadcasts/Campaigns (no standalone
-  // nav item) — see the "Design email" action on those screens.
+  { id: 'templates', label: 'Email templates', path: '/templates', capability: 'manage_content' },
+  // The email editor itself (/editor) has no standalone nav item — it is reached
+  // from the Templates list and from the "Design email" action on Broadcasts.
   { id: 'profiles', label: 'Profiles', path: '/profiles', capability: 'manage_content' },
   { id: 'suppressions', label: 'Suppressions', path: '/suppressions', capability: 'manage_content' },
   { id: 'billing', label: 'Billing & usage', path: '/billing', capability: 'view_billing' },

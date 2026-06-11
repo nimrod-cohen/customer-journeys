@@ -64,6 +64,36 @@ test('edit a draft broadcast (rename) — only drafts/scheduled are editable', a
   await expect(page.getByTestId('broadcast-list')).toContainText('Editable v2');
 });
 
+test('design an email from the broadcast wizard and return with it selected', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-broadcasts').click();
+  await page.getByTestId('broadcast-composer').waitFor();
+  await page.getByTestId('new-broadcast').click();
+  await page.getByTestId('broadcast-wizard').waitFor();
+
+  // Step 1 — audience.
+  await page.getByTestId('broadcast-name').fill('With design');
+  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await page.getByTestId('wizard-next').click();
+
+  // Step 2 — "Design email" persists a draft and opens the editor.
+  await page.getByTestId('design-email').click();
+  await page.getByTestId('email-editor').waitFor();
+  await expect(page.getByTestId('mjml-output')).toHaveValue(/^<mjml>/, { timeout: 20_000 });
+  await page.getByTestId('template-name').fill('Designed in wizard');
+  await page.getByTestId('save-template').click();
+
+  // Returns to the broadcast wizard with the new template selected on the Content step.
+  await page.getByTestId('broadcast-wizard').waitFor();
+  await expect(page.getByTestId('broadcast-template')).not.toHaveValue('');
+
+  // Finish: schedule (manual) and save → the broadcast appears in the list.
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('wizard-save').click();
+  await page.getByTestId('broadcast-composer').waitFor();
+  await expect(page.getByTestId('broadcast-list')).toContainText('With design');
+});
+
 test('build and save a campaign workflow', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-campaigns').click();

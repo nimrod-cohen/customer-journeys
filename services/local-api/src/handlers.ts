@@ -505,6 +505,41 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
   return ok({ template: rows[0] }, 201);
 };
 
+/** GET /templates/:id — one template (with its MJML) for the editor. Scoped. */
+export const getTemplate: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, mjml, updated_at FROM email_templates WHERE id = $1',
+    [id],
+  );
+  const { rows } = await pool.query(q.text, q.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  return ok({ template: rows[0] });
+};
+
+/** PUT /templates/:id — update name/MJML (recompiles HTML server-side). Scoped. */
+export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const name = b.name !== undefined ? String(b.name) : null;
+  const mjml = b.mjml !== undefined ? String(b.mjml) : null;
+  const compiled = mjml !== null ? deps.compileMjml(mjml) : null;
+  const q = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE email_templates SET
+       name = COALESCE($1, name),
+       mjml = COALESCE($2, mjml),
+       compiled_html = COALESCE($3, compiled_html),
+       updated_at = now()
+     WHERE id = $4`,
+    [name, mjml, compiled, id],
+  );
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ updated: rowCount });
+};
+
 // ---------------------------------------------------------------------------
 // broadcasts (manage_content)
 // ---------------------------------------------------------------------------
@@ -1728,6 +1763,8 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /segments/:id/import-csv': importCsvMembers,
   'GET /templates': listTemplates,
   'POST /templates': createTemplate,
+  'GET /templates/:id': getTemplate,
+  'PUT /templates/:id': updateTemplate,
   'GET /broadcasts': listBroadcasts,
   'POST /broadcasts': createBroadcast,
   'GET /broadcasts/:id': getBroadcast,
