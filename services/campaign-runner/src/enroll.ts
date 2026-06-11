@@ -12,8 +12,11 @@
 import {
   parseEnrollmentTrigger,
   buildEnrollmentInsert,
+  parseKeepWhileInCancellations,
+  buildEnrollmentCancel,
   type SegmentChangeLogRow,
   type CampaignTriggerRow,
+  type CampaignKeepRow,
   type EnrollmentIntent,
   type SqlStatement,
 } from './core.js';
@@ -39,6 +42,8 @@ export interface EnrollDeps {
 export interface EnrollResult {
   readonly enrolled: number;
   readonly intents: readonly EnrollmentIntent[];
+  /** Active enrollments ended because the profile left a keep_while_in_segment. */
+  readonly cancelled: number;
 }
 
 interface CampaignRow {
@@ -60,7 +65,7 @@ export async function enrollFromSegmentChange(
   row: SegmentChangeLogRow,
 ): Promise<EnrollResult> {
   if (!row.workspace_id) throw new Error('enrollFromSegmentChange: workspace_id is required');
-  if (row.action !== 'entered' && row.action !== 'exited') return { enrolled: 0, intents: [] };
+  if (row.action !== 'entered' && row.action !== 'exited') return { enrolled: 0, intents: [], cancelled: 0 };
 
   // Load active campaigns for THIS workspace triggered by THIS segment. Whether a
   // campaign fires on this row is decided by trigger_on vs the action (parseEnrollmentTrigger).
@@ -94,13 +99,25 @@ export async function enrollFromSegmentChange(
   }
 
   const intents = parseEnrollmentTrigger(row, triggerRows);
-  if (intents.length === 0) return { enrolled: 0, intents: [] };
 
-  // Insert all enrollments for this workspace in ONE tx (ON CONFLICT DO NOTHING).
-  const statements = intents.map((i) =>
-    buildEnrollmentInsert(i.workspaceId, i.campaignId, i.profileId, i.startNode),
-  );
-  await deps.runInWorkspaceTx(row.workspace_id, statements);
+  // On 'exited', also CANCEL active enrollments in campaigns that require staying
+  // in this segment (keep_while_in_segment) — the profile no longer qualifies.
+  let cancelIntents: ReturnType<typeof parseKeepWhileInCancellations> = [];
+  if (row.action === 'exited') {
+    const { rows: keepRows } = await deps.reader.query<CampaignKeepRow>(
+      `SELECT id, workspace_id, keep_while_in_segment FROM campaigns
+       WHERE workspace_id = $1 AND status = 'active' AND keep_while_in_segment = $2`,
+      [row.workspace_id, row.segment_id],
+    );
+    cancelIntents = parseKeepWhileInCancellations(row, keepRows);
+  }
 
-  return { enrolled: intents.length, intents };
+  // Apply enrollments (ON CONFLICT DO NOTHING) + cancellations in ONE workspace tx.
+  const statements: SqlStatement[] = [
+    ...intents.map((i) => buildEnrollmentInsert(i.workspaceId, i.campaignId, i.profileId, i.startNode)),
+    ...cancelIntents.map((c) => buildEnrollmentCancel(c.workspaceId, c.campaignId, c.profileId)),
+  ];
+  if (statements.length > 0) await deps.runInWorkspaceTx(row.workspace_id, statements);
+
+  return { enrolled: intents.length, intents, cancelled: cancelIntents.length };
 }

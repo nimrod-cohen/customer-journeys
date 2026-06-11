@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   decideReenrollment,
   parseEnrollmentTrigger,
+  parseKeepWhileInCancellations,
+  buildEnrollmentCancel,
   type SegmentChangeLogRow,
   type CampaignTriggerRow,
+  type CampaignKeepRow,
 } from '../src/core.js';
 
 describe('decideReenrollment', () => {
@@ -79,5 +82,31 @@ describe('parseEnrollmentTrigger', () => {
     it('an unknown action enrolls nobody', () => {
       expect(parseEnrollmentTrigger(row('weird'), both)).toEqual([]);
     });
+  });
+});
+
+describe('parseKeepWhileInCancellations (keep-while-in-segment)', () => {
+  const campaigns: CampaignKeepRow[] = [
+    { id: 'gated', workspace_id: 'ws', keep_while_in_segment: 'seg-A' },
+    { id: 'other-seg', workspace_id: 'ws', keep_while_in_segment: 'seg-B' },
+    { id: 'ungated', workspace_id: 'ws', keep_while_in_segment: null },
+    { id: 'cross', workspace_id: 'other', keep_while_in_segment: 'seg-A' },
+  ];
+  const row = (action: string): SegmentChangeLogRow => ({ workspace_id: 'ws', segment_id: 'seg-A', profile_id: 'p1', action });
+
+  it("'exited' cancels only campaigns gated on THAT segment in the SAME workspace", () => {
+    expect(parseKeepWhileInCancellations(row('exited'), campaigns).map((c) => c.campaignId)).toEqual(['gated']);
+  });
+
+  it("'entered' cancels nobody (only leaving the segment ends a gated journey)", () => {
+    expect(parseKeepWhileInCancellations(row('entered'), campaigns)).toEqual([]);
+  });
+
+  it('buildEnrollmentCancel only ends ACTIVE enrollments, workspace-scoped', () => {
+    const s = buildEnrollmentCancel('ws', 'c', 'p');
+    expect(s.text).toMatch(/UPDATE campaign_enrollments/);
+    expect(s.text).toMatch(/status = 'exited'/);
+    expect(s.text).toMatch(/AND status = 'active'/);
+    expect(s.values).toEqual(['ws', 'c', 'p']);
   });
 });

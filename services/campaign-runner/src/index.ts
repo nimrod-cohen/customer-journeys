@@ -29,6 +29,8 @@ export {
   decideReenrollment,
   parseEnrollmentTrigger,
   buildEnrollmentInsert,
+  parseKeepWhileInCancellations,
+  buildEnrollmentCancel,
   buildSweepQuery,
   buildEnrollmentClaim,
   buildAdvanceEnrollment,
@@ -43,6 +45,8 @@ export {
   type Arrival,
   type SegmentChangeLogRow,
   type CampaignTriggerRow,
+  type CampaignKeepRow,
+  type CancelIntent,
   type EnrollmentIntent,
 } from './core.js';
 

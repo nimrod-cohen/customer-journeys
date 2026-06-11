@@ -347,6 +347,61 @@ export function buildEnrollmentInsert(
   };
 }
 
+/** A campaign's membership-gating column (keep_while_in_segment). */
+export interface CampaignKeepRow {
+  readonly id: string;
+  readonly workspace_id: string;
+  readonly keep_while_in_segment: string | null;
+}
+
+/** An intent to cancel (exit) a profile's active enrollment when it leaves a segment. */
+export interface CancelIntent {
+  readonly workspaceId: string;
+  readonly campaignId: string;
+  readonly profileId: string;
+}
+
+/**
+ * Parse a segment_change_log row into enrollment CANCELLATIONS (§9B): for an
+ * 'exited' row, every active campaign whose keep_while_in_segment matches the
+ * changed segment (same workspace) yields a cancel intent for the profile — its
+ * journey ends because it no longer satisfies the membership gate. Non-'exited'
+ * rows yield none. THROWS on a falsy workspaceId.
+ */
+export function parseKeepWhileInCancellations(
+  row: SegmentChangeLogRow,
+  campaigns: readonly CampaignKeepRow[],
+): CancelIntent[] {
+  if (!row.workspace_id) throw new Error('parseKeepWhileInCancellations: workspace_id is required');
+  if (row.action !== 'exited') return [];
+  const out: CancelIntent[] = [];
+  for (const c of campaigns) {
+    if (c.workspace_id !== row.workspace_id) continue;
+    if (c.keep_while_in_segment !== row.segment_id) continue;
+    out.push({ workspaceId: row.workspace_id, campaignId: c.id, profileId: row.profile_id });
+  }
+  return out;
+}
+
+/**
+ * Complete (exit) a profile's ACTIVE enrollment in a campaign — used when the
+ * profile leaves a keep_while_in_segment. Only touches status='active' rows
+ * (idempotent; a completed/exited enrollment is left alone). workspace_id at $1.
+ */
+export function buildEnrollmentCancel(
+  workspaceId: string,
+  campaignId: string,
+  profileId: string,
+): SqlStatement {
+  if (!workspaceId) throw new Error('buildEnrollmentCancel: workspaceId is required');
+  return {
+    text: `UPDATE campaign_enrollments
+              SET status = 'exited', updated_at = now()
+            WHERE workspace_id = $1 AND campaign_id = $2 AND profile_id = $3 AND status = 'active'`,
+    values: [workspaceId, campaignId, profileId],
+  };
+}
+
 /**
  * The runner's sweep query: active enrollments whose next_run_at has arrived
  * (status='active' AND next_run_at <= now). Cross-workspace (each row carries

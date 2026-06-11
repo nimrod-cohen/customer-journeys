@@ -146,4 +146,34 @@ describe.skipIf(!RUN)('enrollment from segment entry (real Postgres)', () => {
     );
     expect(e.rows.map((r) => r.campaign_id)).toEqual([exitCamp]);
   });
+
+  it("leaving a keep_while_in_segment campaign ENDS the profile's active enrollment", async () => {
+    // A campaign that requires staying in SEG; a profile actively enrolled in it.
+    const gated = (
+      await admin.query(
+        "INSERT INTO campaigns (workspace_id, name, definition, status, keep_while_in_segment) VALUES ($1,'Gated',$2::jsonb,'active',$3) RETURNING id",
+        [WS, JSON.stringify(DEF), SEG],
+      )
+    ).rows[0].id;
+    const p4 = (
+      await admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'ext4') RETURNING id", [WS])
+    ).rows[0].id;
+    await admin.query(
+      "INSERT INTO campaign_enrollments (workspace_id, campaign_id, profile_id, current_node, status) VALUES ($1,$2,$3,'trig','active')",
+      [WS, gated, p4],
+    );
+
+    const res = await enrollFromSegmentChange(deps(), {
+      workspace_id: WS,
+      segment_id: SEG,
+      profile_id: p4,
+      action: 'exited',
+    });
+    expect(res.cancelled).toBe(1);
+    const e = await admin.query(
+      'SELECT status FROM campaign_enrollments WHERE workspace_id = $1 AND campaign_id = $2 AND profile_id = $3',
+      [WS, gated, p4],
+    );
+    expect(e.rows[0].status).toBe('exited');
+  });
 });
