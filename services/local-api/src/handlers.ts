@@ -1236,18 +1236,52 @@ export const getProfileDelivery: Handler = async (ctx, pool, req) => {
   });
 };
 
-/** GET /profiles/:id/segments — segments this profile currently belongs to (scoped). */
+/**
+ * GET /profiles/:id/segments — segments this profile belongs to (scoped).
+ *
+ * Manual segments come from the `segment_memberships` rows (the source of truth
+ * for hand-curated lists). Dynamic segments are evaluated LIVE — the rule run
+ * against this one profile at now() — so time-windowed membership is always
+ * current and never depends on a possibly-stale materialized cache (which the
+ * scheduled sweep maintains for sends/enrollment, not for this read).
+ */
 export const listProfileSegments: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  const { rows } = await pool.query(
+
+  // Manual memberships (truth for kind='manual').
+  const manual = await pool.query<{
+    id: string;
+    name: string;
+    kind: string;
+    source: string;
+    entered_at: string | null;
+  }>(
     `SELECT s.id, s.name, s.kind, sm.source, sm.entered_at
        FROM segment_memberships sm
        JOIN segments s ON s.id = sm.segment_id
-      WHERE sm.workspace_id = $1 AND sm.profile_id = $2
+      WHERE sm.workspace_id = $1 AND sm.profile_id = $2 AND s.kind = 'manual'
       ORDER BY sm.entered_at DESC`,
     [ctx.workspaceId, id],
   );
-  return ok({ segments: rows });
+
+  // Active dynamic segments → does this profile match the rule RIGHT NOW?
+  const active = await pool.query<{ id: string; name: string; kind: string; definition: AstNode | null }>(
+    `SELECT id, name, kind, definition
+       FROM segments
+      WHERE workspace_id = $1 AND status = 'active' AND kind = 'dynamic_realtime'
+      ORDER BY name`,
+    [ctx.workspaceId],
+  );
+  const live: Array<{ id: string; name: string; kind: string; source: string; entered_at: null }> = [];
+  for (const s of active.rows) {
+    const m = buildSegmentMatch(ctx.workspaceId, s.definition ?? null, id);
+    const r = await pool.query(m.text, m.values);
+    if ((r.rowCount ?? 0) > 0) {
+      live.push({ id: s.id, name: s.name, kind: s.kind, source: 'live', entered_at: null });
+    }
+  }
+
+  return ok({ segments: [...manual.rows, ...live] });
 };
 
 // ---------------------------------------------------------------------------

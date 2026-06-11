@@ -38,7 +38,7 @@ interface SegmentRow {
   name: string;
   kind: string;
   source: string;
-  entered_at: string;
+  entered_at: string | null;
 }
 interface AttrPair {
   key: string;

@@ -1,0 +1,19 @@
+// vite.config.ts
+import { defineConfig } from "file:///Users/nimrodcohen/dev/customer-journeys/node_modules/.pnpm/vite@5.4.21_@types+node@20.19.42/node_modules/vite/dist/node/index.js";
+import preact from "file:///Users/nimrodcohen/dev/customer-journeys/node_modules/.pnpm/@preact+preset-vite@2.10.5_@babel+core@7.29.7_preact@10.29.2_rollup@4.61.1_vite@5.4.21_@types+node@20.19.42_/node_modules/@preact/preset-vite/dist/esm/index.mjs";
+var vite_config_default = defineConfig({
+  plugins: [preact()],
+  server: { port: 5173, strictPort: true },
+  preview: { port: 4173, strictPort: true },
+  build: { outDir: "dist" },
+  // Vitest owns test/ (unit + DB-integration). Playwright owns e2e/ (browser),
+  // run via `pnpm test:e2e` — keep its specs out of the vitest run.
+  test: {
+    include: ["test/**/*.test.ts"],
+    exclude: ["node_modules/**", "dist/**", "e2e/**"]
+  }
+});
+export {
+  vite_config_default as default
+};
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsidml0ZS5jb25maWcudHMiXSwKICAic291cmNlc0NvbnRlbnQiOiBbImNvbnN0IF9fdml0ZV9pbmplY3RlZF9vcmlnaW5hbF9kaXJuYW1lID0gXCIvVXNlcnMvbmltcm9kY29oZW4vZGV2L2N1c3RvbWVyLWpvdXJuZXlzL3dlYlwiO2NvbnN0IF9fdml0ZV9pbmplY3RlZF9vcmlnaW5hbF9maWxlbmFtZSA9IFwiL1VzZXJzL25pbXJvZGNvaGVuL2Rldi9jdXN0b21lci1qb3VybmV5cy93ZWIvdml0ZS5jb25maWcudHNcIjtjb25zdCBfX3ZpdGVfaW5qZWN0ZWRfb3JpZ2luYWxfaW1wb3J0X21ldGFfdXJsID0gXCJmaWxlOi8vL1VzZXJzL25pbXJvZGNvaGVuL2Rldi9jdXN0b21lci1qb3VybmV5cy93ZWIvdml0ZS5jb25maWcudHNcIjsvLy8gPHJlZmVyZW5jZSB0eXBlcz1cInZpdGVzdFwiIC8+XG5pbXBvcnQgeyBkZWZpbmVDb25maWcgfSBmcm9tICd2aXRlJztcbmltcG9ydCBwcmVhY3QgZnJvbSAnQHByZWFjdC9wcmVzZXQtdml0ZSc7XG5cbi8vIFZpdGUgKyBQcmVhY3QgU1BBIChcdTAwQTcxMiBib290c3RyYXAsIHNjb3BlZCB0byBcdTAwQTcxMSB0aGlzIHBoYXNlKS4gVGhlIGRldi9wcmV2aWV3XG4vLyBzZXJ2ZXIgaXMgd2hhdCBQbGF5d3JpZ2h0IGRyaXZlcyBpbiB0aGUgYnJvd3NlciBlMmUuIGBncmFwZXNqc2Agc2hpcHMgQ1NTIHdlXG4vLyBpbXBvcnQgaW4gdGhlIGNvbXBvbmVudDsgbm90aGluZyBoZXJlIGlzIHdvcmtzcGFjZS1hd2FyZSAoYXV0aC9uYXYgaXMgUGhhc2UgMTIpLlxuZXhwb3J0IGRlZmF1bHQgZGVmaW5lQ29uZmlnKHtcbiAgcGx1Z2luczogW3ByZWFjdCgpXSxcbiAgc2VydmVyOiB7IHBvcnQ6IDUxNzMsIHN0cmljdFBvcnQ6IHRydWUgfSxcbiAgcHJldmlldzogeyBwb3J0OiA0MTczLCBzdHJpY3RQb3J0OiB0cnVlIH0sXG4gIGJ1aWxkOiB7IG91dERpcjogJ2Rpc3QnIH0sXG4gIC8vIFZpdGVzdCBvd25zIHRlc3QvICh1bml0ICsgREItaW50ZWdyYXRpb24pLiBQbGF5d3JpZ2h0IG93bnMgZTJlLyAoYnJvd3NlciksXG4gIC8vIHJ1biB2aWEgYHBucG0gdGVzdDplMmVgIFx1MjAxNCBrZWVwIGl0cyBzcGVjcyBvdXQgb2YgdGhlIHZpdGVzdCBydW4uXG4gIHRlc3Q6IHtcbiAgICBpbmNsdWRlOiBbJ3Rlc3QvKiovKi50ZXN0LnRzJ10sXG4gICAgZXhjbHVkZTogWydub2RlX21vZHVsZXMvKionLCAnZGlzdC8qKicsICdlMmUvKionXSxcbiAgfSxcbn0pO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUNBLFNBQVMsb0JBQW9CO0FBQzdCLE9BQU8sWUFBWTtBQUtuQixJQUFPLHNCQUFRLGFBQWE7QUFBQSxFQUMxQixTQUFTLENBQUMsT0FBTyxDQUFDO0FBQUEsRUFDbEIsUUFBUSxFQUFFLE1BQU0sTUFBTSxZQUFZLEtBQUs7QUFBQSxFQUN2QyxTQUFTLEVBQUUsTUFBTSxNQUFNLFlBQVksS0FBSztBQUFBLEVBQ3hDLE9BQU8sRUFBRSxRQUFRLE9BQU87QUFBQTtBQUFBO0FBQUEsRUFHeEIsTUFBTTtBQUFBLElBQ0osU0FBUyxDQUFDLG1CQUFtQjtBQUFBLElBQzdCLFNBQVMsQ0FBQyxtQkFBbUIsV0FBVyxRQUFRO0FBQUEsRUFDbEQ7QUFDRixDQUFDOyIsCiAgIm5hbWVzIjogW10KfQo=

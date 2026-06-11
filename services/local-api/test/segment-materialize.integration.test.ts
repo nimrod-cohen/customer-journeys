@@ -62,10 +62,11 @@ describeMaybe('dynamic segment materializes on save (real Postgres)', () => {
     const mem = await call(world.env, 'GET', `/segments/${sid}/members`, { token: tok() });
     expect((mem.body as { size: number }).size).toBe(2);
 
-    // The matching profile's Segments tab now includes it; the non-matching one doesn't.
+    // The matching profile's Segments tab includes it (evaluated LIVE → source 'live');
+    // the non-matching one doesn't.
     const segs = await call(world.env, 'GET', `/profiles/${vip1}/segments`, { token: tok() });
     const names = (segs.body as { segments: Array<{ name: string; source: string }> }).segments;
-    expect(names.some((s) => s.name === 'VIP members' && s.source === 'evaluator')).toBe(true);
+    expect(names.some((s) => s.name === 'VIP members' && s.source === 'live')).toBe(true);
 
     const other = await call(world.env, 'GET', `/profiles/${std1}/segments`, { token: tok() });
     expect((other.body as { segments: Array<{ name: string }> }).segments.some((s) => s.name === 'VIP members')).toBe(
