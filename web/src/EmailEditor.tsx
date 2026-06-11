@@ -23,6 +23,19 @@ const INITIAL_MJML = serializeEditorToMjml({
   blocks: [{ type: 'text', content: 'Welcome to the CDP editor' }],
 });
 
+/**
+ * A minimal EDITABLE skeleton: an <mj-body> with an empty section+column. Used
+ * when a stored template has no <mj-body> (e.g. an empty `<mjml></mjml>`), which
+ * would otherwise leave the canvas with no valid drop target so dragged blocks go
+ * nowhere. With a body present, GrapesJS accepts dropped sections/columns/blocks.
+ */
+const EDITABLE_SKELETON = '<mjml><mj-body><mj-section><mj-column></mj-column></mj-section></mj-body></mjml>';
+
+/** Ensure the MJML has a body the editor can drop into; else an editable skeleton. */
+function ensureBody(mjml: string | null | undefined): string {
+  return mjml && mjml.includes('<mj-body') ? mjml : EDITABLE_SKELETON;
+}
+
 /** The asset URL the e2e "insert image" action references (a CloudFront URL). */
 const SAMPLE_ASSET_URL = 'https://images.cdp.example/ws/sample-hero.png';
 
@@ -69,10 +82,12 @@ export function EmailEditor({ id }: { id?: string }) {
     return () => editor.destroy();
   }, []);
 
-  // When an existing template's MJML arrives, load it into the editor.
+  // When an existing template's MJML arrives, load it into the editor. A stored
+  // template with no <mj-body> (e.g. an empty doc) is loaded as an editable
+  // skeleton so the canvas has a drop target.
   useEffect(() => {
     if (loadedMjml == null || !editorRef.current) return;
-    editorRef.current.setComponents(loadedMjml);
+    editorRef.current.setComponents(ensureBody(loadedMjml));
     setMjml(editorRef.current.getHtml());
   }, [loadedMjml]);
 
@@ -114,8 +129,9 @@ export function EmailEditor({ id }: { id?: string }) {
     setSaving(true);
     try {
       // Read the CURRENT MJML straight from the editor (authoritative) rather than
-      // any state snapshot, so the latest canvas edits are always persisted.
-      const currentMjml = editorRef.current?.getHtml() ?? mjml;
+      // any state snapshot, so the latest canvas edits are always persisted. Never
+      // persist a body-less doc (it would be un-editable on reload).
+      const currentMjml = ensureBody(editorRef.current?.getHtml() ?? mjml);
       const body = { name: name || 'Untitled', mjml: currentMjml };
       let savedId = id;
       if (id) {

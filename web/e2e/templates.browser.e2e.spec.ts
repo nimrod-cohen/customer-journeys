@@ -14,8 +14,9 @@ test('create an email template, then re-open it to edit', async ({ page }) => {
   await page.getByTestId('new-template').click();
   await page.getByTestId('email-editor').waitFor();
   await expect(page.getByTestId('gjs-host')).toBeVisible();
-  // Wait for the editor to emit MJML before saving.
-  await expect(page.getByTestId('mjml-output')).toHaveValue(/^<mjml>/, { timeout: 20_000 });
+  // Wait for the editor to emit MJML before saving — and it must include an
+  // <mj-body> so the canvas has a valid drop target for dragged blocks.
+  await expect(page.getByTestId('mjml-output')).toHaveValue(/<mj-body/, { timeout: 20_000 });
 
   await page.getByTestId('template-name').fill('Newsletter');
   // Make a DESIGN change (insert an image) and save WITHOUT manually refreshing —
