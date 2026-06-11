@@ -232,4 +232,56 @@ describe('segment AST builder', () => {
       expect(buildAstFromGroup(root)).toEqual({ field: 'attributes.tier', operator: '=', value: 'vip' });
     });
   });
+
+  describe('event rules: occurred / not-occurred + time window', () => {
+    const ev = (over: Partial<RuleRow>): RuleRow => ({
+      kind: 'event',
+      field: 'purchase',
+      operator: '=',
+      value: '',
+      eventOp: 'occurred',
+      eventWindow: 'ever',
+      eventWindowDays: '30',
+      conditions: [],
+      ...over,
+    });
+
+    it('occurred within last N days → { event, withinDays }', () => {
+      const ast = buildAst([ev({ eventOp: 'occurred', eventWindow: 'within', eventWindowDays: '30' })], 'and');
+      expect(ast).toEqual({ event: 'purchase', withinDays: 30 });
+      expect(() => compileWhere(WS, ast as never)).not.toThrow();
+    });
+
+    it('did not occur (ever) → { event, negate: true }', () => {
+      const ast = buildAst([ev({ eventOp: 'not_occurred', eventWindow: 'ever' })], 'and');
+      expect(ast).toEqual({ event: 'purchase', negate: true });
+      expect(compileWhere(WS, ast as never).text).toContain('NOT (EXISTS');
+    });
+
+    it('did not occur within last N days → { event, negate, withinDays }', () => {
+      const ast = buildAst([ev({ eventOp: 'not_occurred', eventWindow: 'within', eventWindowDays: '7' })], 'and');
+      expect(ast).toEqual({ event: 'purchase', negate: true, withinDays: 7 });
+    });
+
+    it('count threshold scoped by the window → { event, operator, value, withinDays }', () => {
+      const ast = buildAst([ev({ eventOp: '>=', value: '3', eventWindow: 'within', eventWindowDays: '30' })], 'and');
+      expect(ast).toEqual({ event: 'purchase', operator: '>=', value: 3, withinDays: 30 });
+    });
+
+    it("'ever' omits withinDays; an empty/zero days is dropped", () => {
+      expect(buildAst([ev({ eventWindow: 'ever' })], 'and')).toEqual({ event: 'purchase' });
+      expect(buildAst([ev({ eventWindow: 'within', eventWindowDays: '' })], 'and')).toEqual({ event: 'purchase' });
+    });
+
+    it('round-trips a windowed not-occurred event back into the row', () => {
+      const back = rowsFromAst({ event: 'login', negate: true, withinDays: 14 } as never);
+      expect(back.rows[0]).toMatchObject({
+        kind: 'event',
+        field: 'login',
+        eventOp: 'not_occurred',
+        eventWindow: 'within',
+        eventWindowDays: '14',
+      });
+    });
+  });
 });

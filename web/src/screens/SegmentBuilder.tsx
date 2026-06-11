@@ -15,12 +15,14 @@ import {
   emptyEventCondition,
   BUILDER_OPERATORS,
   EVENT_COUNT_OPS,
+  isCountOp,
   type AstNode,
   type RuleRow,
   type RuleKind,
   type RuleGroup,
   type EventCondition,
   type EventCountOp,
+  type EventWindow,
   type BuilderOperator,
   type Combinator,
 } from '../segments/ast-builder.js';
@@ -143,12 +145,13 @@ const FIELD_SUGGESTIONS = [
 ];
 /** Friendly labels for the event count operator. */
 const EVENT_OP_LABEL: Record<EventCountOp, string> = {
-  occurred: 'has been performed',
-  '>=': 'performed ≥ N times',
-  '>': 'performed > N times',
-  '=': 'performed exactly N times',
-  '<=': 'performed ≤ N times',
-  '<': 'performed < N times',
+  occurred: 'occurred',
+  not_occurred: 'did not occur',
+  '>=': 'occurred ≥ N times',
+  '>': 'occurred > N times',
+  '=': 'occurred exactly N times',
+  '<=': 'occurred ≤ N times',
+  '<': 'occurred < N times',
 };
 
 /**
@@ -278,7 +281,7 @@ function RuleListEditor({
                       </option>
                     ))}
                   </Select>
-                  {(row.eventOp ?? 'occurred') !== 'occurred' ? (
+                  {isCountOp(row.eventOp ?? 'occurred') ? (
                     <Input
                       data-testid="event-count"
                       type="number"
@@ -287,6 +290,32 @@ function RuleListEditor({
                       value={row.value}
                       onInput={(e: Event) => update(i, { value: (e.target as HTMLInputElement).value })}
                     />
+                  ) : null}
+                </div>
+
+                {/* Time window: ever, or within the last N days (makes membership time-dependent). */}
+                <div class="flex flex-wrap items-center gap-2">
+                  <Select
+                    data-testid="event-window"
+                    class="w-44"
+                    value={row.eventWindow ?? 'ever'}
+                    onChange={(e: Event) => update(i, { eventWindow: (e.target as HTMLSelectElement).value as EventWindow })}
+                  >
+                    <option value="ever">ever</option>
+                    <option value="within">within the last</option>
+                  </Select>
+                  {(row.eventWindow ?? 'ever') === 'within' ? (
+                    <>
+                      <Input
+                        data-testid="event-window-days"
+                        type="number"
+                        class="w-20"
+                        placeholder="N"
+                        value={row.eventWindowDays ?? ''}
+                        onInput={(e: Event) => update(i, { eventWindowDays: (e.target as HTMLInputElement).value })}
+                      />
+                      <span class="text-sm text-stone-500">days</span>
+                    </>
                   ) : null}
                 </div>
 

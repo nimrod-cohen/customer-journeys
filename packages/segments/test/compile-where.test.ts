@@ -298,6 +298,54 @@ describe('event predicates — "people who did an event"', () => {
   });
 });
 
+describe('event time-window + negate (§ time-sensitive rules)', () => {
+  it('occurred within last N days → adds a sliding occurred_at window (days bound as a param)', () => {
+    const q = compileWhere(WS, { event: 'purchase', withinDays: 30 } as AstNode);
+    expect(q.text).toBe(
+      'p.workspace_id = $1 AND (EXISTS (SELECT 1 FROM events e WHERE ' +
+        "e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $2 " +
+        "AND e.occurred_at >= now() - ($3::numeric * interval '1 day')))",
+    );
+    expect(q.values).toEqual([WS, 'purchase', 30]);
+    // The day count is a bound param, never concatenated.
+    expect(q.text).not.toMatch(/\b30\b/);
+  });
+
+  it('did NOT occur (negate, no count) → NOT EXISTS', () => {
+    const q = compileWhere(WS, { event: 'purchase', negate: true } as AstNode);
+    expect(q.text).toBe(
+      'p.workspace_id = $1 AND (NOT (EXISTS (SELECT 1 FROM events e WHERE ' +
+        'e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $2)))',
+    );
+    expect(q.values).toEqual([WS, 'purchase']);
+  });
+
+  it('did NOT occur within last N days → NOT EXISTS over the window', () => {
+    const q = compileWhere(WS, { event: 'login', negate: true, withinDays: 7 } as AstNode);
+    expect(q.text).toBe(
+      'p.workspace_id = $1 AND (NOT (EXISTS (SELECT 1 FROM events e WHERE ' +
+        "e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $2 " +
+        "AND e.occurred_at >= now() - ($3::numeric * interval '1 day'))))",
+    );
+    expect(q.values).toEqual([WS, 'login', 7]);
+  });
+
+  it('count threshold scoped by the window: ">= 3 times within 30 days"', () => {
+    const q = compileWhere(WS, { event: 'purchase', operator: '>=', value: 3, withinDays: 30 } as AstNode);
+    expect(q.text).toBe(
+      'p.workspace_id = $1 AND ((SELECT count(*) FROM events e WHERE ' +
+        "e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $2 " +
+        "AND e.occurred_at >= now() - ($3::numeric * interval '1 day')) >= $4)",
+    );
+    expect(q.values).toEqual([WS, 'purchase', 30, 3]);
+  });
+
+  it('rejects a non-positive withinDays', () => {
+    expect(() => validateAst({ event: 'x', withinDays: 0 } as AstNode)).toThrow(/withinDays/i);
+    expect(() => validateAst({ event: 'x', withinDays: -5 } as AstNode)).toThrow(/withinDays/i);
+  });
+});
+
 describe('SCALAR_PROFILE_FIELDS export', () => {
   it('includes email_status mapped to p.email_status', () => {
     expect(SCALAR_PROFILE_FIELDS.email_status).toBe('p.email_status');

@@ -17,9 +17,21 @@ export type BuilderOperator = (typeof BUILDER_OPERATORS)[number];
 /** A rule row is a profile/attribute field test or an event test. */
 export type RuleKind = 'field' | 'event';
 
-/** The event count operators: 'occurred' = at least once (EXISTS); else count <op> n. */
-export const EVENT_COUNT_OPS = ['occurred', '>=', '>', '=', '<=', '<'] as const;
+/**
+ * The event occurrence test: 'occurred' = at least once (EXISTS), 'not_occurred'
+ * = never/none (NOT EXISTS); the rest are count comparisons (count <op> n). All
+ * are scoped by the row's time window (ever | within last N days).
+ */
+export const EVENT_COUNT_OPS = ['occurred', 'not_occurred', '>=', '>', '=', '<=', '<'] as const;
 export type EventCountOp = (typeof EVENT_COUNT_OPS)[number];
+
+/** Whether an event op is a numeric count comparison (needs an N value). */
+export function isCountOp(op: EventCountOp): boolean {
+  return op !== 'occurred' && op !== 'not_occurred';
+}
+
+/** The event time window: 'ever' (all time) or 'within' the last N days. */
+export type EventWindow = 'ever' | 'within';
 
 /** One payload ("event attribute") sub-condition within an event row. */
 export interface EventCondition {
@@ -39,8 +51,12 @@ export interface RuleRow {
   readonly operator: BuilderOperator;
   /** Raw value: the field value (kind 'field') or the count value (kind 'event'). */
   readonly value: string;
-  /** Event count operator (kind 'event'); 'occurred' = at least once. */
+  /** Event occurrence/count operator (kind 'event'); 'occurred' = at least once. */
   readonly eventOp?: EventCountOp;
+  /** Event time window (kind 'event'): 'ever' (default) or 'within' the last N days. */
+  readonly eventWindow?: EventWindow;
+  /** Number of days for an 'within' window (raw input string). */
+  readonly eventWindowDays?: string;
   /** Event payload sub-conditions (kind 'event'). */
   readonly conditions?: readonly EventCondition[];
 }
@@ -61,6 +77,8 @@ export interface EventNode {
   operator?: '>' | '>=' | '=' | '<=' | '<';
   value?: number;
   where?: ConditionNode[];
+  withinDays?: number;
+  negate?: boolean;
 }
 
 /** An AST group node (matches @cdp/segments GroupNode). */
@@ -78,7 +96,16 @@ export function emptyRow(): RuleRow {
 
 /** A blank event rule. */
 export function emptyEventRow(): RuleRow {
-  return { kind: 'event', field: 'purchase', operator: '=', value: '', eventOp: 'occurred', conditions: [] };
+  return {
+    kind: 'event',
+    field: 'purchase',
+    operator: '=',
+    value: '',
+    eventOp: 'occurred',
+    eventWindow: 'ever',
+    eventWindowDays: '30',
+    conditions: [],
+  };
 }
 
 /** A blank payload sub-condition. */
@@ -118,9 +145,17 @@ function rowToEvent(row: RuleRow): EventNode | null {
     .filter((c) => c.field.trim().length > 0)
     .map((c) => rowToCondition({ field: `payload.${c.field.trim()}`, operator: c.operator, value: c.value }));
   if (conds.length) node.where = conds;
+  // Time window: 'within' the last N days (a positive integer) scopes the events.
+  if (row.eventWindow === 'within') {
+    const days = Number(row.eventWindowDays);
+    if (Number.isFinite(days) && days > 0) node.withinDays = days;
+  }
+  // Occurrence / count: 'occurred' = EXISTS, 'not_occurred' = NOT EXISTS, else count.
   const eventOp = row.eventOp ?? 'occurred';
-  if (eventOp !== 'occurred') {
-    node.operator = eventOp;
+  if (eventOp === 'not_occurred') {
+    node.negate = true;
+  } else if (isCountOp(eventOp)) {
+    node.operator = eventOp as '>' | '>=' | '=' | '<=' | '<';
     node.value = Number(row.value);
   }
   return node;
@@ -205,12 +240,15 @@ function conditionToRow(c: ConditionNode): RuleRow {
 
 /** Turn one event node into an editable event row. */
 function eventToRow(ev: EventNode): RuleRow {
+  const eventOp: EventCountOp = ev.operator ?? (ev.negate ? 'not_occurred' : 'occurred');
   return {
     kind: 'event',
     field: ev.event,
     operator: '=',
     value: ev.value !== undefined ? String(ev.value) : '',
-    eventOp: ev.operator ?? 'occurred',
+    eventOp,
+    eventWindow: ev.withinDays !== undefined ? 'within' : 'ever',
+    eventWindowDays: ev.withinDays !== undefined ? String(ev.withinDays) : '30',
     conditions: (ev.where ?? []).map((w) => ({
       field: w.field.startsWith('payload.') ? w.field.slice('payload.'.length) : w.field,
       operator: asBuilderOp(w.operator),

@@ -169,6 +169,36 @@ test('deleting the root rule leaves an inactive draft segment', async ({ page })
   await expect(page.getByTestId('segment-list')).toContainText('Draft seg');
 });
 
+test('event rule with a time window (occurred within last N days)', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+  await page.getByTestId('segment-name').fill('Recent buyers');
+
+  // Event rule: purchase OCCURRED, within a time window. a1's seeded purchase is
+  // dated 2026-02-01 (months ago), so a tight window matches no one.
+  await page.getByTestId('rule-kind').first().selectOption('event');
+  await page.getByTestId('event-name').first().fill('purchase');
+  await page.getByTestId('event-window').selectOption('within');
+  await page.getByTestId('event-window-days').fill('7');
+  await page.getByTestId('save-segment').click();
+  await expect(page.getByTestId('segment-size')).toContainText('0');
+
+  // A wide window includes the old purchase → a1 matches.
+  await page.getByTestId('event-window-days').fill('36500');
+  await page.getByTestId('save-segment').click();
+  await expect(page.getByTestId('segment-size')).toContainText('1');
+
+  // "did not occur within 7 days" is the dual — a1 (no recent purchase) is included.
+  await page.getByTestId('event-op').first().selectOption('not_occurred');
+  await page.getByTestId('event-window-days').fill('7');
+  await page.getByTestId('save-segment').click();
+  // At least a1; exact count depends on workspace size, so assert a1 is present.
+  await expect(page.getByTestId('member-preview-row').filter({ hasText: 'a1@acme.com' })).toHaveCount(1);
+});
+
 test('edit a segment from the list: builder hydrates and the rename reflects', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();

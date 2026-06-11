@@ -42,6 +42,12 @@ export interface GroupNode {
  *   - with `operator`+`value` → `(SELECT count(*) …) <op> $value` (count test),
  *   - optional `where` → payload predicates (`payload.<key>`) ANDed into the
  *     subquery (lets you match "had a purchase WHERE payload.amount = 100").
+ *   - optional `withinDays` → restricts to events whose `occurred_at` is within
+ *     the last N days (`e.occurred_at >= now() - $n*interval'1 day'`). This makes
+ *     membership TIME-DEPENDENT: a profile drifts out of the segment as the window
+ *     slides, with no new event — so such rules must be re-evaluated over time.
+ *   - optional `negate` → wraps the whole predicate in `NOT (…)`. negate + no
+ *     operator = "did NOT occur" (NOT EXISTS), the dual of "occurred".
  * workspace_id is bound at $1 INSIDE the subquery too — never another tenant.
  */
 export interface EventNode {
@@ -49,6 +55,10 @@ export interface EventNode {
   readonly operator?: '>' | '>=' | '=' | '<=' | '<';
   readonly value?: number;
   readonly where?: readonly ConditionNode[];
+  /** Restrict to events in the last N days (positive integer). Omitted = ever. */
+  readonly withinDays?: number;
+  /** Negate the whole event predicate (NOT EXISTS / NOT(count op N)). */
+  readonly negate?: boolean;
 }
 
 /** A rule-AST node — a boolean group, a leaf condition, or an event predicate. */
@@ -229,6 +239,14 @@ export function validateAst(node: AstNode): void {
         }
       }
     }
+    if (node.withinDays !== undefined) {
+      if (typeof node.withinDays !== 'number' || !Number.isFinite(node.withinDays) || node.withinDays <= 0) {
+        throw new Error('validateAst: event.withinDays must be a positive number of days');
+      }
+    }
+    if (node.negate !== undefined && typeof node.negate !== 'boolean') {
+      throw new Error('validateAst: event.negate must be a boolean');
+    }
     return;
   }
   // Leaf condition.
@@ -333,7 +351,17 @@ function compileEvent(node: EventNode, params: ParamBuilder): string {
   for (const w of node.where ?? []) {
     preds.push(compilePayloadCondition(w, params));
   }
+  // Optional rolling time window: only events in the last N days count. The day
+  // count is a bound param (never interpolated); now() makes it slide over time.
+  if (node.withinDays !== undefined) {
+    if (typeof node.withinDays !== 'number' || !Number.isFinite(node.withinDays) || node.withinDays <= 0) {
+      throw new Error('compileWhere: event.withinDays must be a positive number of days');
+    }
+    const daysParam = params.bind(node.withinDays);
+    preds.push(`e.occurred_at >= now() - (${daysParam}::numeric * interval '1 day')`);
+  }
   const subWhere = preds.join(' AND ');
+  let predicate: string;
   if (node.operator !== undefined) {
     if (!EVENT_COUNT_OPERATORS.has(node.operator)) {
       throw new Error(`compileWhere: invalid event count operator "${node.operator}"`);
@@ -342,10 +370,13 @@ function compileEvent(node: EventNode, params: ParamBuilder): string {
       throw new Error('compileWhere: event count value must be a number');
     }
     const valParam = params.bind(node.value);
-    return `(SELECT count(*) FROM events e WHERE ${subWhere}) ${node.operator} ${valParam}`;
+    predicate = `(SELECT count(*) FROM events e WHERE ${subWhere}) ${node.operator} ${valParam}`;
+  } else {
+    // No count test → "occurred at least once".
+    predicate = `EXISTS (SELECT 1 FROM events e WHERE ${subWhere})`;
   }
-  // No count test → "occurred at least once".
-  return `EXISTS (SELECT 1 FROM events e WHERE ${subWhere})`;
+  // negate → "did NOT occur" (NOT EXISTS) / NOT(count op N).
+  return node.negate ? `NOT (${predicate})` : predicate;
 }
 
 /** Compile any AST node (group / event / leaf) to a parameterized SQL boolean expression. */
