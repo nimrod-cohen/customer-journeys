@@ -566,10 +566,20 @@ export const createCampaign: Handler = async (ctx, pool, req) => {
   const definition = b.definition;
   if (!name) return ok({ error: 'name required' }, 400);
   validateCampaignDefinition(definition); // reject malformed graphs (§9B)
+  // trigger_on: fire on segment ENTER (default) or EXIT. keep_while_in_segment:
+  // optional gate that exits the enrollment when the profile leaves that segment.
+  const triggerOn = b.trigger_on === 'exit' ? 'exit' : 'enter';
   const { rows } = await pool.query(
-    `INSERT INTO campaigns (workspace_id, name, definition, trigger_segment_id)
-     VALUES ($1, $2, $3::jsonb, $4) RETURNING id, name, status`,
-    [ctx.workspaceId, name, JSON.stringify(definition), b.trigger_segment_id ?? null],
+    `INSERT INTO campaigns (workspace_id, name, definition, trigger_segment_id, trigger_on, keep_while_in_segment)
+     VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id, name, status, trigger_on, keep_while_in_segment`,
+    [
+      ctx.workspaceId,
+      name,
+      JSON.stringify(definition),
+      b.trigger_segment_id ?? null,
+      triggerOn,
+      b.keep_while_in_segment ?? null,
+    ],
   );
   return ok({ campaign: rows[0] }, 201);
 };
@@ -583,7 +593,9 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
     `UPDATE campaigns SET
        name = COALESCE($1, name),
        definition = CASE WHEN $3::boolean THEN $2::jsonb ELSE definition END,
-       status = COALESCE($4, status)
+       status = COALESCE($4, status),
+       trigger_on = COALESCE($6, trigger_on),
+       keep_while_in_segment = CASE WHEN $7::boolean THEN $8 ELSE keep_while_in_segment END
      WHERE id = $5`,
     [
       b.name !== undefined ? String(b.name) : null,
@@ -591,6 +603,9 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
       b.definition !== undefined,
       b.status !== undefined ? String(b.status) : null,
       id,
+      b.trigger_on === 'enter' || b.trigger_on === 'exit' ? b.trigger_on : null,
+      b.keep_while_in_segment !== undefined,
+      (b.keep_while_in_segment ?? null) as string | null,
     ],
   );
   const { rowCount } = await pool.query(q.text, q.values);
