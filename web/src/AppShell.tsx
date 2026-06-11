@@ -11,7 +11,7 @@ import { buildNav } from './nav/nav.js';
 import { ICONS } from './ui/icons.js';
 import { SegmentBuilder } from './screens/SegmentBuilder.js';
 import { SegmentsList } from './screens/SegmentsList.js';
-import { BroadcastComposer } from './screens/BroadcastComposer.js';
+import { BroadcastComposer, BroadcastWizard } from './screens/BroadcastComposer.js';
 import { CampaignBuilder } from './screens/CampaignBuilder.js';
 import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
 import { CompanySettings } from './screens/CompanySettings.js';
@@ -45,6 +45,12 @@ function screenFor(path: string): JSX.Element {
   if (path.startsWith('/segments/')) {
     const rest = path.slice('/segments/'.length);
     return rest === 'new' ? <SegmentBuilder /> : <SegmentBuilder id={rest} />;
+  }
+  // Broadcasts: list at /broadcasts; the creation/edit wizard at /broadcasts/new
+  // and /broadcasts/:id.
+  if (path.startsWith('/broadcasts/')) {
+    const rest = path.slice('/broadcasts/'.length);
+    return rest === 'new' ? <BroadcastWizard /> : <BroadcastWizard id={rest} />;
   }
   switch (path) {
     case '/broadcasts':

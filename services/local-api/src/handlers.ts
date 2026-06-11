@@ -510,29 +510,91 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
 // ---------------------------------------------------------------------------
 
 export const listBroadcasts: Handler = async (ctx, pool) => {
+  // ORDER BY is appended AFTER scopedQuery builds the WHERE (scopedQuery would
+  // otherwise inject its WHERE after the ORDER BY → invalid SQL).
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, sent_at FROM broadcasts',
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, sent_at FROM broadcasts',
   );
-  const { rows } = await pool.query(q.text, q.values);
+  const { rows } = await pool.query(`${q.text} ORDER BY created_at DESC`, q.values);
   return ok({ broadcasts: rows });
 };
 
+/** GET /broadcasts/:id — one broadcast for the editor (scoped). */
+export const getBroadcast: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at FROM broadcasts WHERE id = $1',
+    [id],
+  );
+  const { rows } = await pool.query(q.text, q.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  return ok({ broadcast: rows[0] });
+};
+
+/** A scheduled_at present → status 'scheduled', else 'draft' (a not-yet-sent broadcast). */
+function scheduleStatus(scheduledAt: string | null): 'draft' | 'scheduled' {
+  return scheduledAt ? 'scheduled' : 'draft';
+}
+
 export const createBroadcast: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
+  const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, status`,
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, scheduled_at, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, status`,
     [
       ctx.workspaceId,
       String(b.name ?? 'Untitled'),
       b.template_id ?? null,
       String(b.audience_kind ?? 'segment'),
       b.audience_ref ?? null,
+      scheduledAt,
+      scheduleStatus(scheduledAt),
       ctx.userId ?? null,
     ],
   );
   return ok({ broadcast: rows[0] }, 201);
+};
+
+/**
+ * PUT /broadcasts/:id — edit a broadcast, allowed ONLY while it is draft or
+ * scheduled (a sending/sent/cancelled broadcast is immutable). Scoped to the
+ * token's workspace; status is recomputed from scheduled_at.
+ */
+export const updateBroadcast: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const cur = scopedQuery(ctx.workspaceId, 'SELECT status FROM broadcasts WHERE id = $1', [id]);
+  const { rows: curRows } = await pool.query<{ status: string }>(cur.text, cur.values);
+  if (!curRows[0]) return ok({ error: 'not found' }, 404);
+  if (curRows[0].status !== 'draft' && curRows[0].status !== 'scheduled') {
+    return ok({ error: `a ${curRows[0].status} broadcast can no longer be edited` }, 409);
+  }
+  const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
+  const upd = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE broadcasts SET
+       name = COALESCE($1, name),
+       audience_kind = COALESCE($2, audience_kind),
+       audience_ref = COALESCE($3, audience_ref),
+       template_id = $4,
+       scheduled_at = $5,
+       status = $6
+     WHERE id = $7`,
+    [
+      b.name !== undefined ? String(b.name) : null,
+      b.audience_kind !== undefined ? String(b.audience_kind) : null,
+      b.audience_ref ?? null,
+      b.template_id ?? null,
+      scheduledAt,
+      scheduleStatus(scheduledAt),
+      id,
+    ],
+  );
+  const { rowCount } = await pool.query(upd.text, upd.values);
+  return ok({ updated: rowCount ?? 0 });
 };
 
 /** POST /broadcasts/:id/send — runs the broadcast core (SQS mocked at the boundary). */
@@ -1668,6 +1730,8 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /templates': createTemplate,
   'GET /broadcasts': listBroadcasts,
   'POST /broadcasts': createBroadcast,
+  'GET /broadcasts/:id': getBroadcast,
+  'PUT /broadcasts/:id': updateBroadcast,
   'POST /broadcasts/:id/send': sendBroadcast,
   'GET /campaigns': listCampaigns,
   'POST /campaigns': createCampaign,

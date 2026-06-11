@@ -7,21 +7,61 @@ import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
-test('compose and send a broadcast to a segment', async ({ page }) => {
+test('create a broadcast via the wizard, then send it', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-broadcasts').click();
   await page.getByTestId('broadcast-composer').waitFor();
 
-  await page.getByTestId('broadcast-name').fill('Spring sale');
-  // The seeded manual segment + template are the first non-empty options.
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
-  await page.getByTestId('broadcast-template').selectOption({ index: 1 });
-  await page.getByTestId('create-broadcast').click();
+  // "New broadcast" opens the multi-step wizard.
+  await page.getByTestId('new-broadcast').click();
+  await page.getByTestId('broadcast-wizard').waitFor();
 
-  // The new broadcast appears; send it and confirm a result is shown.
-  await expect(page.getByTestId('broadcast-item').first()).toBeVisible();
-  await page.getByTestId('send-broadcast').first().click();
+  // Step 1 — audience: the seeded manual segment is the first non-empty option.
+  await page.getByTestId('broadcast-name').fill('Spring sale');
+  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await page.getByTestId('wizard-next').click();
+  // Step 2 — content: the seeded template.
+  await page.getByTestId('broadcast-template').selectOption({ index: 1 });
+  await page.getByTestId('wizard-next').click();
+  // Step 3 — schedule (send manually = draft) and save.
+  await page.getByTestId('wizard-save').click();
+
+  // Back on the list; the new broadcast appears — send it and confirm a result.
+  await page.getByTestId('broadcast-composer').waitFor();
+  await expect(page.getByTestId('broadcast-list')).toContainText('Spring sale');
+  const item = page.getByTestId('broadcast-item').filter({ hasText: 'Spring sale' });
+  await item.getByTestId('send-broadcast').click();
   await expect(page.getByTestId('send-result')).toBeVisible();
+});
+
+test('edit a draft broadcast (rename) — only drafts/scheduled are editable', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-broadcasts').click();
+  await page.getByTestId('broadcast-composer').waitFor();
+
+  // Create a draft to edit.
+  await page.getByTestId('new-broadcast').click();
+  await page.getByTestId('broadcast-wizard').waitFor();
+  await page.getByTestId('broadcast-name').fill('Editable');
+  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('broadcast-template').selectOption({ index: 1 });
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('wizard-save').click();
+  await page.getByTestId('broadcast-composer').waitFor();
+
+  // Open it via Edit — the wizard hydrates from the saved broadcast.
+  await page.getByTestId('broadcast-item').filter({ hasText: 'Editable' }).getByTestId('broadcast-edit').click();
+  await page.getByTestId('broadcast-wizard').waitFor();
+  await expect(page.getByTestId('broadcast-name')).toHaveValue('Editable');
+
+  // Rename and save → the list reflects it.
+  await page.getByTestId('broadcast-name').fill('Editable v2');
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('wizard-save').click();
+  await page.getByTestId('broadcast-composer').waitFor();
+  await expect(page.getByTestId('broadcast-list')).toContainText('Editable v2');
 });
 
 test('build and save a campaign workflow', async ({ page }) => {

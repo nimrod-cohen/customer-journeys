@@ -54,6 +54,8 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   // --- broadcasts (manage_content) ---
   'GET /broadcasts': 'manage_content',
   'POST /broadcasts': 'manage_content',
+  'GET /broadcasts/:id': 'manage_content',
+  'PUT /broadcasts/:id': 'manage_content',
   'POST /broadcasts/:id/send': 'manage_content',
 
   // --- campaigns (manage_content) ---
