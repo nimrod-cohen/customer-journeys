@@ -354,3 +354,6 @@
 .nm-history-time { display: inline-flex; align-items: center; gap: 3px; color: #a8a29e; font-size: 10px; white-space: nowrap; }
 .nm-history-action { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nm-history-badge { font-size: 9px; text-transform: uppercase; color: #0f766e; background: #ccfbf1; border-radius: 4px; padding: 1px 5px; }
+
+/* ── Icon buttons (lucide) ── */
+.nm-tab, .nm-btn, .nm-mini-btn { display: inline-flex; align-items: center; gap: 5px; justify-content: center; }

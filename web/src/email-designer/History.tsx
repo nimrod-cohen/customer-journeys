@@ -5,7 +5,7 @@
 // change. The newest entry is the current document.
 import type { JSX } from 'preact';
 import { undoStack, previewIndex, previewVersion, exitPreview, revertToVersion } from './state.js';
-import { Clock, Undo } from './icons.tsx';
+import { Clock, RotateCcw } from './icons.tsx';
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -62,7 +62,7 @@ export function History(): JSX.Element {
                     title="Restore this version"
                     onClick={() => revertToVersion(i)}
                   >
-                    <Undo size={12} /> Restore
+                    <RotateCcw size={12} /> Restore
                   </button>
                 ) : null}
               </li>

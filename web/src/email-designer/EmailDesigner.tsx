@@ -21,7 +21,7 @@ import { Properties } from './Properties.tsx';
 import { SettingsPanel } from './SettingsPanel.tsx';
 import { Navigator } from './Navigator.tsx';
 import { History } from './History.tsx';
-import { Monitor, Tablet, Smartphone, Undo as UndoIcon, Redo as RedoIcon } from './icons.tsx';
+import { Monitor, Tablet, Smartphone, Undo as UndoIcon, Redo as RedoIcon, Plus, Paintbrush, Settings2, HistoryIcon } from './icons.tsx';
 import type { EmailDesign } from './model.js';
 
 export interface EmailDesignerProps {
@@ -55,8 +55,9 @@ export function EmailDesigner({ design, onChange, documentKey }: EmailDesignerPr
             data-testid="tab-add"
             class={`nm-tab ${mode === 'toolbox' ? 'nm-active' : ''}`}
             onClick={() => (sidebarMode.value = 'toolbox')}
+            title="Add components"
           >
-            Add
+            <Plus size={15} /> Add
           </button>
           <button
             type="button"
@@ -64,24 +65,27 @@ export function EmailDesigner({ design, onChange, documentKey }: EmailDesignerPr
             class={`nm-tab ${mode === 'properties' ? 'nm-active' : ''}`}
             onClick={() => (sidebarMode.value = 'properties')}
             disabled={!selectedId.value && mode !== 'properties'}
+            title="Style the selected element"
           >
-            Style
+            <Paintbrush size={15} /> Style
           </button>
           <button
             type="button"
             data-testid="tab-template"
             class={`nm-tab ${mode === 'settings' ? 'nm-active' : ''}`}
             onClick={() => (sidebarMode.value = 'settings')}
+            title="Template settings"
           >
-            Template
+            <Settings2 size={15} /> Template
           </button>
           <button
             type="button"
             data-testid="tab-history"
             class={`nm-tab ${mode === 'history' ? 'nm-active' : ''}`}
             onClick={() => (sidebarMode.value = 'history')}
+            title="Change history"
           >
-            History
+            <HistoryIcon size={15} /> History
           </button>
         </div>
         <div class="nm-toolbar-actions">

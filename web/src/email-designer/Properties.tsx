@@ -24,6 +24,7 @@ import {
 } from './state.js';
 import { FONT_SIZE_EMS, type Align, type Border, type Radius, type Spacing } from './model.js';
 import { AssetPicker } from './AssetPicker.tsx';
+import { AlignLeft, AlignCenter, AlignRight, Copy, Trash2 } from './icons.tsx';
 
 type Patch = Record<string, unknown>;
 
@@ -124,8 +125,9 @@ function AlignField({ value, onCommit }: { value: Align | undefined; onCommit: (
             class={`nm-mini-btn ${value === a ? 'nm-active' : ''}`}
             data-testid={`align-${a}`}
             onClick={() => onCommit(a)}
+            title={`Align ${a}`}
           >
-            {a === 'left' ? '⟸' : a === 'center' ? '↔' : '⟹'}
+            {a === 'left' ? <AlignLeft size={14} /> : a === 'center' ? <AlignCenter size={14} /> : <AlignRight size={14} />}
           </button>
         ))}
       </div>
@@ -247,10 +249,10 @@ function RowPanel({ id }: { id: string }): JSX.Element {
       <RadiusField value={p.radius} onCommit={(v) => commit({ radius: v })} />
       <div class="nm-props-actions">
         <button type="button" class="nm-btn" data-testid="duplicate-node" onClick={() => mutate('Duplicate row', () => duplicateRow(id))}>
-          Duplicate
+          <Copy size={13} /> Duplicate
         </button>
         <button type="button" class="nm-btn nm-danger" data-testid="delete-node" onClick={() => mutate('Remove row', () => removeRow(id))}>
-          Delete
+          <Trash2 size={13} /> Delete
         </button>
       </div>
     </div>
@@ -378,10 +380,10 @@ function ElementPanel({ id }: { id: string }): JSX.Element {
 
       <div class="nm-props-actions">
         <button type="button" class="nm-btn" data-testid="duplicate-node" onClick={() => mutate('Duplicate', () => duplicateElement(id))}>
-          Duplicate
+          <Copy size={13} /> Duplicate
         </button>
         <button type="button" class="nm-btn nm-danger" data-testid="delete-node" onClick={() => mutate('Remove', () => removeElement(id))}>
-          Delete
+          <Trash2 size={13} /> Delete
         </button>
       </div>
     </div>

@@ -2,6 +2,7 @@
 // → grid columns → elements. Click selects; rows can be reordered with ↑/↓.
 import type { JSX } from 'preact';
 import { rows, selectedId, selectNode, reorderRow, mutate } from './state.js';
+import { ArrowUp, ArrowDown } from './icons.tsx';
 import type { DesignElement } from './model.js';
 
 export function Navigator(): JSX.Element {
@@ -28,7 +29,7 @@ export function Navigator(): JSX.Element {
                   mutate('Reorder row', () => reorderRow(row.id, list[idx - 1]!.id));
                 }}
               >
-                ↑
+                <ArrowUp size={12} />
               </button>
               <button
                 type="button"
@@ -40,7 +41,7 @@ export function Navigator(): JSX.Element {
                   mutate('Reorder row', () => reorderRow(row.id, list[idx + 2]?.id ?? null));
                 }}
               >
-                ↓
+                <ArrowDown size={12} />
               </button>
             </span>
           </div>

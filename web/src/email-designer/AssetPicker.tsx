@@ -7,6 +7,7 @@ import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { apiBaseUrl } from '../api/client.js';
+import { GalleryHorizontalEnd } from './icons.tsx';
 
 interface GalleryAsset {
   readonly id: string;
@@ -94,7 +95,7 @@ export function AssetPicker({ value, onCommit }: { value: string; onCommit: (src
           if (!assets) void loadGallery();
         }}
       >
-        {galleryOpen ? 'Close gallery' : 'Choose from gallery…'}
+        <GalleryHorizontalEnd size={13} /> {galleryOpen ? 'Close gallery' : 'Choose from gallery…'}
       </button>
       {galleryOpen ? (
         <div data-testid="asset-gallery" class="nm-gallery">
