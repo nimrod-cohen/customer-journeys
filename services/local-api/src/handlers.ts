@@ -645,6 +645,109 @@ export const listAssets: Handler = async (ctx, pool) => {
   });
 };
 
+/**
+ * PATCH /assets/:id — rename and/or move an asset to another folder. Scoped.
+ * (Serving stays public-by-uuid; the URL doesn't change on rename/move.)
+ */
+export const updateAsset: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const filename = b.filename !== undefined ? String(b.filename).trim() : null;
+  if (filename !== null && !filename) return ok({ error: 'filename cannot be empty' }, 400);
+  const q = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE assets SET
+       filename = COALESCE($1, filename),
+       folder = CASE WHEN $2::boolean THEN $3 ELSE folder END
+     WHERE id = $4`,
+    [filename, b.folder !== undefined, normalizeFolder(b.folder), id],
+  );
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ updated: rowCount });
+};
+
+/**
+ * DELETE /assets/:id — remove an image from the gallery. DESTRUCTIVE: emails
+ * already referencing its URL will lose the image (the UI warns before calling).
+ */
+export const deleteAsset: Handler = async (ctx, pool, req) => {
+  const q = scopedQuery(ctx.workspaceId, 'DELETE FROM assets WHERE id = $1', [req.params.id!]);
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ deleted: rowCount });
+};
+
+/**
+ * PATCH /asset-folders — rename a folder path. Cascades to nested subfolders and
+ * to every contained asset's folder (prefix rewrite). Body-based (paths contain
+ * slashes). Scoped.
+ */
+export const renameAssetFolder: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const from = normalizeFolder(b.from);
+  const to = normalizeFolder(b.to);
+  if (!from || !to) return ok({ error: 'from and to folder names required' }, 400);
+  if (from === to) return ok({ renamed: 0 });
+  // Rewrite the folder rows (the folder itself + descendants)…
+  const f = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE asset_folders SET name = $1 || substring(name FROM length($2) + 1)
+     WHERE name = $2 OR name LIKE $2 || '/%'`,
+    [to, from],
+  );
+  await pool.query(f.text, f.values);
+  // …and every contained asset's folder path.
+  const a = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE assets SET folder = $1 || substring(folder FROM length($2) + 1)
+     WHERE folder = $2 OR folder LIKE $2 || '/%'`,
+    [to, from],
+  );
+  await pool.query(a.text, a.values);
+  // The rename may have merged into an existing folder — dedupe rows (direct
+  // query; scopedQuery's unqualified workspace_id would be ambiguous here).
+  await pool.query(
+    `DELETE FROM asset_folders a USING asset_folders b
+     WHERE a.workspace_id = $1 AND b.workspace_id = $1
+       AND a.name = b.name AND a.id > b.id`,
+    [ctx.workspaceId],
+  );
+  return ok({ renamed: 1, name: to });
+};
+
+/**
+ * DELETE /asset-folders — remove a folder. NON-DESTRUCTIVE for images: contained
+ * assets (incl. nested) are re-parented to the folder's parent; only the folder
+ * rows are removed. Body-based (paths contain slashes). Scoped.
+ */
+export const deleteAssetFolder: Handler = async (ctx, pool, req) => {
+  const name = normalizeFolder(asObject(req.body).name);
+  if (!name) return ok({ error: 'folder name required' }, 400);
+  const parent = name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : '';
+  // Re-parent contained assets: the deleted folder's own assets go to `parent`;
+  // nested ones keep their sub-path under `parent` ('a/b/x' − 'a' → 'b/x').
+  const a = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE assets
+     SET folder = CASE
+       WHEN folder = $1 THEN $2
+       WHEN $2 = '' THEN substring(folder FROM length($1) + 2)
+       ELSE $2 || '/' || substring(folder FROM length($1) + 2)
+     END
+     WHERE folder = $1 OR folder LIKE $1 || '/%'`,
+    [name, parent],
+  );
+  await pool.query(a.text, a.values);
+  const f = scopedQuery(
+    ctx.workspaceId,
+    `DELETE FROM asset_folders WHERE name = $1 OR name LIKE $1 || '/%'`,
+    [name],
+  );
+  await pool.query(f.text, f.values);
+  return ok({ deleted: 1 });
+};
+
 /** POST /asset-folders — create a (possibly still empty) gallery folder. */
 export const createAssetFolder: Handler = async (ctx, pool, req) => {
   const name = normalizeFolder(asObject(req.body).name);
@@ -1886,6 +1989,10 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /assets': uploadAsset,
   'GET /assets': listAssets,
   'POST /asset-folders': createAssetFolder,
+  'PATCH /assets/:id': updateAsset,
+  'DELETE /assets/:id': deleteAsset,
+  'PATCH /asset-folders': renameAssetFolder,
+  'DELETE /asset-folders': deleteAssetFolder,
   'GET /broadcasts': listBroadcasts,
   'POST /broadcasts': createBroadcast,
   'GET /broadcasts/:id': getBroadcast,

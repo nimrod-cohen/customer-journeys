@@ -22,6 +22,9 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Pencil,
+  FolderInput,
+  Trash2,
 } from './manager-icons.ts';
 
 interface GalleryAsset {
@@ -124,6 +127,39 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
     await load();
     setPath(full); // step into the new folder so the next upload lands there
     setPage(0);
+  };
+
+  // ── Management actions ──
+  const renameAsset = async (a: GalleryAsset): Promise<void> => {
+    const filename = prompt('Rename image:', a.filename);
+    if (!filename?.trim() || filename.trim() === a.filename) return;
+    await api.patch(`/assets/${a.id}`, { body: { filename: filename.trim() } });
+    await load();
+  };
+  const moveAsset = async (a: GalleryAsset): Promise<void> => {
+    const folder = prompt('Move to folder (empty = All files):', a.folder);
+    if (folder === null) return;
+    await api.patch(`/assets/${a.id}`, { body: { folder } });
+    await load();
+  };
+  const deleteAsset = async (a: GalleryAsset): Promise<void> => {
+    if (!confirm(`Delete "${a.filename}"? Emails already using this image will lose it.`)) return;
+    await api.del(`/assets/${a.id}`);
+    await load();
+  };
+  const renameFolder = async (full: string): Promise<void> => {
+    const seg = full.split('/').pop()!;
+    const name = prompt('Rename folder:', seg);
+    if (!name?.trim() || name.trim() === seg) return;
+    const to = full.includes('/') ? `${full.slice(0, full.lastIndexOf('/'))}/${name.trim()}` : name.trim();
+    await api.patch('/asset-folders', { body: { from: full, to } });
+    await load();
+  };
+  const deleteFolder = async (full: string): Promise<void> => {
+    if (!confirm(`Delete folder "${full}"? Its images move to the parent folder (they are not deleted).`)) return;
+    await api.del('/asset-folders', { body: { name: full } });
+    await load();
+    if (path === full || path.startsWith(`${full}/`)) setPath('');
   };
 
   const upload = async (file: File): Promise<void> => {
@@ -257,34 +293,55 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
           ) : (
             shown.map((entry) =>
               entry.kind === 'folder' ? (
-                <button
+                <div
                   key={`f-${entry.folderPath}`}
-                  type="button"
                   data-testid="am-folder-card"
                   class="nm-am-card nm-am-folder"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => { setPath(entry.folderPath!); setPage(0); }}
                 >
+                  <span class="nm-am-actions" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" data-testid="am-folder-rename" class="nm-am-action" title="Rename folder" onClick={() => void renameFolder(entry.folderPath!)}>
+                      <Pencil size={13} />
+                    </button>
+                    <button type="button" data-testid="am-folder-delete" class="nm-am-action nm-danger" title="Delete folder (images move to parent)" onClick={() => void deleteFolder(entry.folderPath!)}>
+                      <Trash2 size={13} />
+                    </button>
+                  </span>
                   <span class="nm-am-thumb">
                     <Folder size={view === 'list' ? 20 : 56} />
                   </span>
                   <span class="nm-am-card-name">{entry.name}</span>
                   <span class="nm-am-card-meta">{entry.itemCount} item{entry.itemCount === 1 ? '' : 's'}</span>
-                </button>
+                </div>
               ) : (
-                <button
+                <div
                   key={entry.asset!.id}
-                  type="button"
                   data-testid="am-item"
                   class="nm-am-card"
+                  role="button"
+                  tabIndex={0}
                   title={entry.asset!.filename}
                   onClick={() => onSelect(`${apiBaseUrl()}${entry.asset!.path}`)}
                 >
+                  <span class="nm-am-actions" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" data-testid="am-item-rename" class="nm-am-action" title="Rename" onClick={() => void renameAsset(entry.asset!)}>
+                      <Pencil size={13} />
+                    </button>
+                    <button type="button" data-testid="am-item-move" class="nm-am-action" title="Move to folder…" onClick={() => void moveAsset(entry.asset!)}>
+                      <FolderInput size={13} />
+                    </button>
+                    <button type="button" data-testid="am-item-delete" class="nm-am-action nm-danger" title="Delete image" onClick={() => void deleteAsset(entry.asset!)}>
+                      <Trash2 size={13} />
+                    </button>
+                  </span>
                   <span class="nm-am-thumb">
                     <img src={`${apiBaseUrl()}${entry.asset!.path}`} alt={entry.asset!.filename} loading="lazy" />
                   </span>
                   <span class="nm-am-card-name">{entry.asset!.filename}</span>
                   <span class="nm-am-card-meta">{fmtSize(entry.asset!.size_bytes)}</span>
-                </button>
+                </div>
               ),
             )
           )}

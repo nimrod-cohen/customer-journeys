@@ -58,6 +58,10 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /assets': 'manage_content',
   'GET /assets': 'manage_content',
   'POST /asset-folders': 'manage_content',
+  'PATCH /assets/:id': 'manage_content',
+  'DELETE /assets/:id': 'manage_content',
+  'PATCH /asset-folders': 'manage_content',
+  'DELETE /asset-folders': 'manage_content',
 
   // --- broadcasts (manage_content) ---
   'GET /broadcasts': 'manage_content',

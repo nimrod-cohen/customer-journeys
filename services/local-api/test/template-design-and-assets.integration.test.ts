@@ -182,6 +182,51 @@ describeMaybe('template design + clone + assets (real Postgres)', () => {
     expect(assets.every((a) => a.size_bytes > 0 && a.size_bytes < 10_000)).toBe(true);
   });
 
+  it('management: rename/move/delete assets; rename/delete folders cascade', async () => {
+    const up = async (filename: string, folder: string) => {
+      const r = await call(world.env, 'POST', '/assets', {
+        token: tok(),
+        body: { filename, mime: 'image/png', data_base64: PNG_B64, folder },
+      });
+      return (r.body as { id: string }).id;
+    };
+    const a1 = await up('one.png', 'mgmt');
+    const a2 = await up('two.png', 'mgmt/deep');
+
+    // Rename + move an asset.
+    await call(world.env, 'PATCH', `/assets/${a1}`, { token: tok(), body: { filename: 'renamed.png', folder: 'elsewhere' } });
+    let list = (await call(world.env, 'GET', '/assets', { token: tok() })).body as {
+      assets: Array<{ id: string; filename: string; folder: string }>;
+      folders: string[];
+    };
+    const moved = list.assets.find((x) => x.id === a1)!;
+    expect(moved.filename).toBe('renamed.png');
+    expect(moved.folder).toBe('elsewhere');
+
+    // Rename a folder: nested assets + folder rows follow the prefix rewrite.
+    await call(world.env, 'PATCH', '/asset-folders', { token: tok(), body: { from: 'mgmt', to: 'managed' } });
+    list = (await call(world.env, 'GET', '/assets', { token: tok() })).body as typeof list;
+    expect(list.assets.find((x) => x.id === a2)!.folder).toBe('managed/deep');
+    expect(list.folders).not.toContain('mgmt');
+
+    // Delete a folder: contained assets re-parent (deep → root-level 'deep').
+    await call(world.env, 'DELETE', '/asset-folders', { token: tok(), body: { name: 'managed' } });
+    list = (await call(world.env, 'GET', '/assets', { token: tok() })).body as typeof list;
+    expect(list.assets.find((x) => x.id === a2)!.folder).toBe('deep');
+    expect(list.folders).not.toContain('managed');
+
+    // Delete an asset: gone from the list AND the public URL 404s.
+    await call(world.env, 'DELETE', `/assets/${a2}`, { token: tok() });
+    list = (await call(world.env, 'GET', '/assets', { token: tok() })).body as typeof list;
+    expect(list.assets.some((x) => x.id === a2)).toBe(false);
+    const app = createApp({ pool: world.pool });
+    expect((await app.request(`/assets/${a2}`)).status).toBe(404);
+
+    // Cross-workspace management is 403/404.
+    const foreign = tokenFor(USER, OTHER);
+    expect([403, 404]).toContain((await call(world.env, 'DELETE', `/assets/${a1}`, { token: foreign })).status);
+  });
+
   it('rejects non-image mimes and oversized payloads', async () => {
     const bad = await call(world.env, 'POST', '/assets', {
       token: tok(),

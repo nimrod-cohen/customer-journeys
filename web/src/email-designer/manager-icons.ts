@@ -14,4 +14,7 @@ export {
   ChevronsLeft,
   ChevronsRight,
   ImagePlus,
+  Pencil,
+  FolderInput,
+  Trash2,
 } from 'lucide-preact';

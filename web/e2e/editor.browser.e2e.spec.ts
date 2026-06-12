@@ -126,3 +126,49 @@ test('the text toolbar sits right above the text element, right-aligned', async 
   expect(tb.y + tb.height).toBeLessThanOrEqual(txt.y);
   expect(txt.y - (tb.y + tb.height)).toBeLessThanOrEqual(12);
 });
+
+test('asset manager: rename, move and delete images and folders', async ({ page }) => {
+  await openDesigner(page);
+  await page.getByTestId('toolbox-image').click();
+  await page.getByTestId('canvas-element').click();
+  await page.getByTestId('asset-select').click();
+  await page.getByTestId('asset-manager').waitFor();
+
+  // Upload at root.
+  await page.getByTestId('am-file-input').setInputFiles({
+    name: 'mgmt.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  });
+  const item = page.getByTestId('am-item').filter({ hasText: 'mgmt.png' });
+  await item.waitFor();
+
+  // Rename.
+  page.once('dialog', (d) => void d.accept('final.png'));
+  await item.getByTestId('am-item-rename').click();
+  await page.getByTestId('am-item').filter({ hasText: 'final.png' }).waitFor();
+
+  // Create a folder (steps in), go back, move the image into it.
+  page.once('dialog', (d) => void d.accept('archive'));
+  await page.getByTestId('am-new-folder').click();
+  await page.getByTestId('am-breadcrumb').getByText('All files').click();
+  page.once('dialog', (d) => void d.accept('archive'));
+  await page.getByTestId('am-item').filter({ hasText: 'final.png' }).getByTestId('am-item-move').click();
+  const folderCard = page.getByTestId('am-folder-card').filter({ hasText: 'archive' });
+  await expect(folderCard).toContainText('1 item');
+
+  // Inside the folder: delete the image (confirm dialog).
+  await folderCard.click();
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('am-item').filter({ hasText: 'final.png' }).getByTestId('am-item-delete').click();
+  await expect(page.getByTestId('am-item')).toHaveCount(0);
+
+  // Back at root: delete the now-empty folder (confirm dialog).
+  await page.getByTestId('am-breadcrumb').getByText('All files').click();
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('am-folder-card').filter({ hasText: 'archive' }).getByTestId('am-folder-delete').click();
+  await expect(page.getByTestId('am-folder-card').filter({ hasText: 'archive' })).toHaveCount(0);
+});
