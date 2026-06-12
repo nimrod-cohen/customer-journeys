@@ -75,7 +75,28 @@ export function EmailEditor({ id }: { id?: string }) {
   const [loadedMjml, setLoadedMjml] = useState<string | null>(null);
   const [rtl, setRtl] = useState(false);
   const [saving, setSaving] = useState(false);
+  // The emitted MJML as of the last load/save — compared against the live emitted
+  // MJML to know if there are UNSAVED changes (for the refresh/close warning).
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const editing = Boolean(id);
+  // Mirror `rtl`/dirty into refs so once-registered listeners see current values.
+  const rtlRef = useRef(false);
+  const dirtyRef = useRef(false);
+
+  /** Apply text direction to the editor CANVAS (preview), so RTL renders live. */
+  const applyCanvasDir = (on: boolean) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    try {
+      const body = editor.Canvas.getBody() as HTMLElement | undefined;
+      if (!body) return;
+      body.setAttribute('dir', on ? 'rtl' : 'ltr');
+      body.style.direction = on ? 'rtl' : 'ltr';
+      body.style.textAlign = on ? 'right' : '';
+    } catch {
+      /* canvas frame not ready yet — the canvas:frame:load handler re-applies */
+    }
+  };
 
   // Edit mode: load the template's name + MJML before applying it to the editor.
   useEffect(() => {
@@ -136,9 +157,33 @@ export function EmailEditor({ id }: { id?: string }) {
     // snapshot from load/refresh).
     const sync = () => setMjml(editor.getHtml());
     sync();
+    setSavedSnapshot(withRtl(editor.getHtml(), false)); // initial baseline (clean)
     editor.on('update', sync);
+    // Re-assert the canvas direction when the frame (re)loads.
+    editor.on('canvas:frame:load', () => applyCanvasDir(rtlRef.current));
     return () => editor.destroy();
   }, []);
+
+  // Warn before a browser refresh/close when there are UNSAVED changes (in-app
+  // hash navigation doesn't unload the page, so this only guards real reloads).
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (dirtyRef.current) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+
+  // Reflect RTL in the CANVAS too (not just the compiled output) so the preview
+  // shows true right-to-left — Hebrew/Arabic bidi (e.g. sentence-ending period)
+  // renders correctly. The compiled email gets direction from the RTL head.
+  useEffect(() => {
+    rtlRef.current = rtl;
+    applyCanvasDir(rtl);
+  }, [rtl]);
 
   // When an existing template's MJML arrives, load it into the editor. A stored
   // template with no <mj-body> (e.g. an empty doc) is loaded as an editable
@@ -148,6 +193,8 @@ export function EmailEditor({ id }: { id?: string }) {
     // The RTL head is a string layer; the editor body never holds it.
     editorRef.current.setComponents(ensureBody(stripHead(loadedMjml)));
     setMjml(editorRef.current.getHtml());
+    // Baseline for unsaved-change detection: the loaded doc is "clean".
+    setSavedSnapshot(withRtl(editorRef.current.getHtml(), isRtl(loadedMjml)));
   }, [loadedMjml]);
 
   /** Read the current MJML out of the editor (always rooted at <mjml>). */
@@ -185,6 +232,9 @@ export function EmailEditor({ id }: { id?: string }) {
   // emitted doc carries the RTL head when the RTL toggle is on.
   const emitted = withRtl(mjml, rtl);
   const payload: SaveTemplatePayload = { name, mjml: emitted };
+  // Unsaved changes = the live doc differs from the last load/save baseline.
+  const dirty = savedSnapshot !== null && emitted !== savedSnapshot;
+  dirtyRef.current = dirty;
 
   const save = async () => {
     setSaving(true);
@@ -194,6 +244,8 @@ export function EmailEditor({ id }: { id?: string }) {
       // persist a body-less doc (it would be un-editable on reload). Apply RTL.
       const currentMjml = withRtl(ensureBody(editorRef.current?.getHtml() ?? mjml), rtl);
       const body = { name: name || 'Untitled', mjml: currentMjml };
+      setSavedSnapshot(currentMjml); // mark clean — the saved doc is the new baseline
+      dirtyRef.current = false;
       let savedId = id;
       if (id) {
         await api.put(`/templates/${id}`, { body });

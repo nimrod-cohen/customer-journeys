@@ -44,9 +44,11 @@ test('mark a template RTL (right-to-left) and it round-trips', async ({ page }) 
   await expect(page.getByTestId('mjml-output')).toHaveValue(/<mj-body/, { timeout: 20_000 });
 
   await page.getByTestId('template-name').fill('Hebrew news');
-  // Toggle RTL → the emitted MJML carries the document-level RTL head.
+  // Toggle RTL → the emitted MJML carries the document-level RTL head AND the
+  // canvas preview flips to right-to-left so bidi renders correctly.
   await page.getByTestId('rtl-toggle').check();
   await expect(page.getByTestId('mjml-output')).toHaveValue(/cdp-rtl/);
+  await expect(page.frameLocator('iframe.gjs-frame').locator('body')).toHaveAttribute('dir', 'rtl');
   await page.getByTestId('save-template').click();
   await page.getByTestId('templates-screen').waitFor();
 
