@@ -64,6 +64,7 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(''); // "2/5" while a batch uploads
   const [error, setError] = useState('');
   /** The asset being dragged (moving = drop it on a folder card or [..]). */
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -179,18 +180,26 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
     if (path === full || path.startsWith(`${full}/`)) setPath('');
   };
 
-  const upload = async (file: File): Promise<void> => {
+  /** Upload one or many files into the current folder (sequential, with progress). */
+  const upload = async (files: readonly File[]): Promise<void> => {
+    if (files.length === 0) return;
     setBusy(true);
     setError('');
-    try {
-      const data_base64 = await fileToBase64(file);
-      await api.post('/assets', { body: { filename: file.name, mime: file.type, data_base64, folder: path } });
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed');
-    } finally {
-      setBusy(false);
+    const failures: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]!;
+      setProgress(files.length > 1 ? `${i + 1}/${files.length}` : '');
+      try {
+        const data_base64 = await fileToBase64(file);
+        await api.post('/assets', { body: { filename: file.name, mime: file.type, data_base64, folder: path } });
+      } catch (e) {
+        failures.push(`${file.name}: ${e instanceof Error ? e.message : 'upload failed'}`);
+      }
     }
+    setProgress('');
+    setBusy(false);
+    if (failures.length) setError(failures.join(' · '));
+    await load();
   };
 
   const crumbs = path ? path.split('/') : [];
@@ -246,17 +255,18 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
               <FolderPlus size={15} /> New Folder
             </button>
             <button type="button" data-testid="am-upload" class="nm-am-btn nm-am-primary" disabled={busy} onClick={() => fileRef.current?.click()}>
-              <Upload size={15} /> {busy ? 'Uploading…' : 'Upload file'}
+              <Upload size={15} /> {busy ? `Uploading${progress ? ` ${progress}` : ''}…` : 'Upload files'}
             </button>
             <input
               ref={fileRef}
               data-testid="am-file-input"
               type="file"
+              multiple
               accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
               style={{ display: 'none' }}
               onChange={(e) => {
-                const file = (e.target as HTMLInputElement).files?.[0];
-                if (file) void upload(file);
+                const files = [...((e.target as HTMLInputElement).files ?? [])];
+                if (files.length) void upload(files);
                 (e.target as HTMLInputElement).value = '';
               }}
             />

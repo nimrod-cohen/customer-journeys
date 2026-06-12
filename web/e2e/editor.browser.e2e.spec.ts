@@ -191,3 +191,26 @@ test('the text toolbar sits right above the text element, right-aligned', async 
   expect(tb.y + tb.height).toBeLessThanOrEqual(txt.y);
   expect(txt.y - (tb.y + tb.height)).toBeLessThanOrEqual(12);
 });
+
+test('asset manager: upload multiple files at once', async ({ page }) => {
+  await openDesigner(page);
+  await page.getByTestId('toolbox-image').click();
+  await page.getByTestId('canvas-element').click();
+  await page.getByTestId('asset-select').click();
+  await page.getByTestId('asset-manager').waitFor();
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  await page.getByTestId('am-file-input').setInputFiles([
+    { name: 'batch-1.png', mimeType: 'image/png', buffer: png },
+    { name: 'batch-2.png', mimeType: 'image/png', buffer: png },
+    { name: 'batch-3.png', mimeType: 'image/png', buffer: png },
+  ]);
+
+  // All three land in the gallery (current folder = root).
+  await expect(page.getByTestId('am-item').filter({ hasText: 'batch-1.png' })).toHaveCount(1);
+  await expect(page.getByTestId('am-item').filter({ hasText: 'batch-2.png' })).toHaveCount(1);
+  await expect(page.getByTestId('am-item').filter({ hasText: 'batch-3.png' })).toHaveCount(1);
+});
