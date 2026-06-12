@@ -140,6 +140,34 @@ describeMaybe('template design + clone + assets (real Postgres)', () => {
     expect((await app.request('/assets/not-a-uuid')).status).toBe(404);
   });
 
+  it('uploads land in the GALLERY with folders; the list is workspace-scoped', async () => {
+    // Two uploads into folders (one nested, messy input gets normalized) + root.
+    const up = (filename: string, folder: string) =>
+      call(world.env, 'POST', '/assets', {
+        token: tok(),
+        body: { filename, mime: 'image/png', data_base64: PNG_B64, folder },
+      });
+    const a = await up('logo.png', 'logos');
+    expect((a.body as { folder: string }).folder).toBe('logos');
+    const b = await up('hero.png', ' products // 2026 ');
+    expect((b.body as { folder: string }).folder).toBe('products/2026');
+    await up('root.png', '');
+
+    const list = await call(world.env, 'GET', '/assets', { token: tok() });
+    expect(list.status).toBe(200);
+    const assets = (list.body as { assets: Array<{ filename: string; folder: string; path: string }> }).assets;
+    const byName = Object.fromEntries(assets.map((x) => [x.filename, x]));
+    expect(byName['logo.png']!.folder).toBe('logos');
+    expect(byName['hero.png']!.folder).toBe('products/2026');
+    expect(byName['root.png']!.folder).toBe('');
+    expect(byName['logo.png']!.path).toMatch(/^\/assets\//);
+
+    // Another workspace's gallery doesn't include them (no membership → 403/404,
+    // and a member of OTHER would get an empty list — scoping is by token).
+    const foreign = await call(world.env, 'GET', '/assets', { token: tokenFor(USER, OTHER) });
+    expect([403, 404]).toContain(foreign.status);
+  });
+
   it('rejects non-image mimes and oversized payloads', async () => {
     const bad = await call(world.env, 'POST', '/assets', {
       token: tok(),

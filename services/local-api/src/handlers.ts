@@ -595,19 +595,47 @@ const ALLOWED_ASSET_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'ima
  * base). Serving is public-by-uuid (GET /assets/:id in app.ts — the CloudFront
  * model); upload is capability-gated + workspace-scoped.
  */
+/** Normalize a gallery folder: trim, collapse slashes, strip edges; '' = root. */
+function normalizeFolder(raw: unknown): string {
+  return String(raw ?? '')
+    .trim()
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((seg) => seg.trim())
+    .filter(Boolean)
+    .join('/')
+    .slice(0, 120);
+}
+
 export const uploadAsset: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const filename = String(b.filename ?? 'upload');
   const mime = String(b.mime ?? '');
   const data = String(b.data_base64 ?? '');
+  const folder = normalizeFolder(b.folder);
   if (!ALLOWED_ASSET_MIME.has(mime)) return ok({ error: `unsupported image type '${mime}'` }, 400);
   if (!data) return ok({ error: 'data_base64 required' }, 400);
   if (data.length > MAX_ASSET_BASE64) return ok({ error: 'image too large (max ~2MB)' }, 413);
   const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO assets (workspace_id, filename, mime, data) VALUES ($1, $2, $3, $4) RETURNING id`,
-    [ctx.workspaceId, filename, mime, data],
+    `INSERT INTO assets (workspace_id, filename, mime, data, folder) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [ctx.workspaceId, filename, mime, data, folder],
   );
-  return ok({ id: rows[0]!.id, path: `/assets/${rows[0]!.id}` }, 201);
+  return ok({ id: rows[0]!.id, path: `/assets/${rows[0]!.id}`, folder }, 201);
+};
+
+/**
+ * GET /assets — the workspace's image GALLERY (every upload lands here),
+ * grouped client-side by folder. Metadata only (the binary serves by uuid).
+ */
+export const listAssets: Handler = async (ctx, pool) => {
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, filename, mime, folder, created_at FROM assets',
+  );
+  const { rows } = await pool.query(`${q.text} ORDER BY folder, created_at DESC`, q.values);
+  return ok({
+    assets: (rows as Array<{ id: string }>).map((r) => ({ ...r, path: `/assets/${r.id}` })),
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -1837,6 +1865,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /templates/:id': updateTemplate,
   'POST /templates/:id/clone': cloneTemplate,
   'POST /assets': uploadAsset,
+  'GET /assets': listAssets,
   'GET /broadcasts': listBroadcasts,
   'POST /broadcasts': createBroadcast,
   'GET /broadcasts/:id': getBroadcast,

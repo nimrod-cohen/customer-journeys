@@ -69,3 +69,36 @@ test('viewport preview: mobile narrows the frame and stacks grid columns', async
   await expect(page.locator('.nm-canvas-page')).toHaveAttribute('style', /width: 600px/);
   await expect(grid).toHaveCSS('flex-direction', 'row');
 });
+
+test('image gallery: uploads land in folders and can be reused', async ({ page }) => {
+  await openDesigner(page);
+
+  // First image element: UPLOAD a real png into the "logos" folder.
+  await page.getByTestId('toolbox-image').click();
+  await page.getByTestId('canvas-element').click();
+  await page.getByTestId('asset-folder').fill('logos');
+  await page.getByTestId('asset-file').setInputFiles({
+    name: 'pixel.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  });
+  // The upload commits the served asset URL as the image src.
+  await expect(page.getByTestId('asset-url')).toHaveValue(/\/assets\//);
+
+  // Second image element: pick the SAME image from the gallery's folder.
+  await page.getByTestId('tab-add').click(); // back to the toolbox
+  await page.getByTestId('toolbox-image').click();
+  await page.getByTestId('canvas-element').nth(1).click();
+  await page.getByTestId('gallery-toggle').click();
+  await page.getByTestId('asset-gallery').waitFor();
+  await page.getByTestId('gallery-folder').filter({ hasText: 'logos' }).click();
+  await page.getByTestId('gallery-item').filter({ hasText: 'pixel.png' }).click();
+  await expect(page.getByTestId('asset-url')).toHaveValue(/\/assets\//);
+
+  // Both serialize as mj-image with asset URLs.
+  const mjml = await page.getByTestId('mjml-output').inputValue();
+  expect(mjml.match(/<mj-image/g)?.length).toBe(2);
+});
