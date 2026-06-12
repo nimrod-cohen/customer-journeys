@@ -34,3 +34,24 @@ test('create an email template, then re-open it to edit', async ({ page }) => {
   await expect(page.getByTestId('template-name')).toHaveValue('Newsletter');
   await expect(page.getByTestId('mjml-output')).toHaveValue(/<mj-image/, { timeout: 20_000 });
 });
+
+test('mark a template RTL (right-to-left) and it round-trips', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-templates').click();
+  await page.getByTestId('templates-screen').waitFor();
+  await page.getByTestId('new-template').click();
+  await page.getByTestId('email-editor').waitFor();
+  await expect(page.getByTestId('mjml-output')).toHaveValue(/<mj-body/, { timeout: 20_000 });
+
+  await page.getByTestId('template-name').fill('Hebrew news');
+  // Toggle RTL → the emitted MJML carries the document-level RTL head.
+  await page.getByTestId('rtl-toggle').check();
+  await expect(page.getByTestId('mjml-output')).toHaveValue(/cdp-rtl/);
+  await page.getByTestId('save-template').click();
+  await page.getByTestId('templates-screen').waitFor();
+
+  // Re-open → RTL is detected from the stored doc (toggle stays checked).
+  await page.getByTestId('template-item').filter({ hasText: 'Hebrew news' }).getByTestId('template-edit').click();
+  await page.getByTestId('email-editor').waitFor();
+  await expect(page.getByTestId('rtl-toggle')).toBeChecked();
+});

@@ -31,4 +31,22 @@ describe('compileMjml (real mjml)', () => {
       expect((err as MjmlCompileError).issues.length).toBeGreaterThan(0);
     }
   });
+
+  // RTL (Hebrew/Arabic): `dir` on mj-text is INVALID under strict MJML, so the
+  // editor expresses RTL via a head (mj-attributes default css-class + mj-style).
+  // The compiled HTML must carry direction:rtl. (Guards the editor's RTL output.)
+  it('rejects an invalid dir attribute on mj-text (strict)', () => {
+    const bad = `<mjml><mj-body><mj-section><mj-column><mj-text dir="rtl">שלום</mj-text></mj-column></mj-section></mj-body></mjml>`;
+    expect(() => compileMjml(bad)).toThrow(MjmlCompileError);
+  });
+
+  it('compiles the RTL head (mj-attributes + mj-style) to direction:rtl HTML', () => {
+    const rtl =
+      '<mjml><mj-head><mj-attributes><mj-text css-class="cdp-rtl" align="right" /></mj-attributes>' +
+      '<mj-style>.cdp-rtl div{direction:rtl;text-align:right}</mj-style></mj-head>' +
+      '<mj-body><mj-section><mj-column><mj-text>שלום עולם</mj-text></mj-column></mj-section></mj-body></mjml>';
+    const html = compileMjml(rtl);
+    expect(html.toLowerCase()).toContain('direction:rtl');
+    expect(html).toContain('שלום עולם');
+  });
 });

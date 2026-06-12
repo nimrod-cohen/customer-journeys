@@ -36,6 +36,34 @@ function ensureBody(mjml: string | null | undefined): string {
   return mjml && mjml.includes('<mj-body') ? mjml : EDITABLE_SKELETON;
 }
 
+/**
+ * RTL (right-to-left) is applied at the DOCUMENT level: a head with an
+ * mj-attributes default + a style makes every mj-text render right-to-left
+ * (Hebrew/Arabic). `dir="rtl"` on mj-text is invalid under strict MJML, and a
+ * css-class needs a defined rule — so the head carries both. The head is managed
+ * here as a STRING layer (kept out of the GrapesJS body model) so it round-trips
+ * cleanly. The marker class `cdp-rtl` also lets us detect RTL on load.
+ */
+const RTL_HEAD =
+  '<mj-head><mj-attributes><mj-text css-class="cdp-rtl" align="right" /></mj-attributes>' +
+  '<mj-style>.cdp-rtl div{direction:rtl;text-align:right}</mj-style></mj-head>';
+
+/** Whether a stored MJML doc is RTL (carries our marker). */
+function isRtl(mjml: string | null | undefined): boolean {
+  return !!mjml && mjml.includes('cdp-rtl');
+}
+
+/** Strip ANY <mj-head> so the editor body model never holds the RTL head. */
+function stripHead(mjml: string): string {
+  return mjml.replace(/<mj-head>[\s\S]*?<\/mj-head>/i, '');
+}
+
+/** Produce the document MJML for save/preview: body + (RTL head when enabled). */
+function withRtl(bodyMjml: string, rtl: boolean): string {
+  const base = stripHead(bodyMjml);
+  return rtl ? base.replace('<mjml>', `<mjml>${RTL_HEAD}`) : base;
+}
+
 /** The asset URL the e2e "insert image" action references (a CloudFront URL). */
 const SAMPLE_ASSET_URL = 'https://images.cdp.example/ws/sample-hero.png';
 
@@ -45,6 +73,7 @@ export function EmailEditor({ id }: { id?: string }) {
   const [mjml, setMjml] = useState('');
   const [name, setName] = useState('Untitled');
   const [loadedMjml, setLoadedMjml] = useState<string | null>(null);
+  const [rtl, setRtl] = useState(false);
   const [saving, setSaving] = useState(false);
   const editing = Boolean(id);
 
@@ -55,6 +84,7 @@ export function EmailEditor({ id }: { id?: string }) {
       .get<{ template: { name: string; mjml: string } }>(`/templates/${id}`)
       .then((r) => {
         setName(r.template.name);
+        setRtl(isRtl(r.template.mjml));
         setLoadedMjml(r.template.mjml ?? '');
       })
       .catch(() => navigate('/templates'));
@@ -87,7 +117,8 @@ export function EmailEditor({ id }: { id?: string }) {
   // skeleton so the canvas has a drop target.
   useEffect(() => {
     if (loadedMjml == null || !editorRef.current) return;
-    editorRef.current.setComponents(ensureBody(loadedMjml));
+    // The RTL head is a string layer; the editor body never holds it.
+    editorRef.current.setComponents(ensureBody(stripHead(loadedMjml)));
     setMjml(editorRef.current.getHtml());
   }, [loadedMjml]);
 
@@ -122,16 +153,18 @@ export function EmailEditor({ id }: { id?: string }) {
   };
 
   // The save payload ({name, mjml}) — the live editor MJML is authoritative;
-  // the server compiles + persists it. Never includes hand-rolled HTML.
-  const payload: SaveTemplatePayload = { name, mjml };
+  // the server compiles + persists it. Never includes hand-rolled HTML. The
+  // emitted doc carries the RTL head when the RTL toggle is on.
+  const emitted = withRtl(mjml, rtl);
+  const payload: SaveTemplatePayload = { name, mjml: emitted };
 
   const save = async () => {
     setSaving(true);
     try {
       // Read the CURRENT MJML straight from the editor (authoritative) rather than
       // any state snapshot, so the latest canvas edits are always persisted. Never
-      // persist a body-less doc (it would be un-editable on reload).
-      const currentMjml = ensureBody(editorRef.current?.getHtml() ?? mjml);
+      // persist a body-less doc (it would be un-editable on reload). Apply RTL.
+      const currentMjml = withRtl(ensureBody(editorRef.current?.getHtml() ?? mjml), rtl);
       const body = { name: name || 'Untitled', mjml: currentMjml };
       let savedId = id;
       if (id) {
@@ -171,6 +204,19 @@ export function EmailEditor({ id }: { id?: string }) {
                 onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
               />
             </Field>
+            <label
+              data-testid="rtl-toggle-label"
+              class="flex h-9 cursor-pointer select-none items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 text-sm font-medium text-ink-800"
+              title="Right-to-left text (Hebrew, Arabic…)"
+            >
+              <input
+                data-testid="rtl-toggle"
+                type="checkbox"
+                checked={rtl}
+                onChange={(e: Event) => setRtl((e.target as HTMLInputElement).checked)}
+              />
+              RTL
+            </label>
             <Button data-testid="insert-image" variant="secondary" onClick={insertImage}>
               Insert image
             </Button>
@@ -193,7 +239,7 @@ export function EmailEditor({ id }: { id?: string }) {
           <textarea
             data-testid="mjml-output"
             readOnly
-            value={mjml}
+            value={emitted}
             rows={8}
             class="textarea w-full font-mono text-xs"
           />
