@@ -297,3 +297,7 @@
 .nm-nav-item.nm-active { background: #ccfbf1; color: #0f766e; }
 .nm-nav-actions { display: flex; gap: 2px; opacity: 0; }
 .nm-nav-item:hover .nm-nav-actions { opacity: 1; }
+
+/* ── Viewport preview ── */
+.nm-vp-group { display: flex; gap: 2px; margin-inline-end: 10px; }
+.nm-canvas-page { transition: width 0.15s ease; }

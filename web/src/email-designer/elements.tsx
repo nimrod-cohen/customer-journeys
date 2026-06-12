@@ -12,6 +12,7 @@ import {
   updateElementProps,
   mutate,
   dropOnCell,
+  viewportMode,
 } from './state.js';
 import {
   DEFAULT_CONTENT_PADDING,
@@ -244,12 +245,15 @@ function SeparatorEl({ element }: { element: LeafElement & { type: 'separator' }
 // ── Grid ─────────────────────────────────────────────────────────────────────
 
 function GridEl({ element }: { element: GridElement }): JSX.Element {
+  // Mobile preview stacks columns full-width — exactly what MJML's compiled
+  // output does below its responsive breakpoint.
+  const stacked = viewportMode.value === 'mobile';
   return (
-    <div class="nm-grid" style={{ display: 'flex', width: '100%' }}>
+    <div class="nm-grid" style={{ display: 'flex', width: '100%', flexDirection: stacked ? 'column' : 'row' }}>
       {element.children.map((cell) => {
         const p = cell.props ?? {};
         const s: Style = {
-          flex: p.width ? `0 0 ${p.width}%` : '1 1 0',
+          flex: stacked ? '1 1 auto' : p.width ? `0 0 ${p.width}%` : '1 1 0',
           padding: paddingCss(p.padding, '0'),
         };
         if (p.bgColor) s.backgroundColor = p.bgColor;

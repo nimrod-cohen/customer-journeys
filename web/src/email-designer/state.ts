@@ -23,6 +23,13 @@ export const selectedId = signal<string | null>(null);
 /** Sidebar mode: toolbox (default) | properties | settings | history. */
 export const sidebarMode = signal<'toolbox' | 'properties' | 'settings' | 'history'>('toolbox');
 
+/**
+ * Viewport PREVIEW mode (desktop | tablet | mobile). Purely visual: it resizes
+ * the canvas frame and, on mobile, stacks grid columns exactly like MJML's
+ * responsive output does below its breakpoint. It never touches the design.
+ */
+export const viewportMode = signal<'desktop' | 'tablet' | 'mobile'>('desktop');
+
 /** Drag state: a toolbox item being dragged onto the canvas. */
 export const dragging = signal<{ type: DesignElement['type'] } | null>(null);
 export const dropTargetId = signal<string | null>(null);
@@ -138,6 +145,7 @@ export function loadDesign(design: EmailDesign | null, onChange: DesignListener 
   redoStack.value = [];
   dragging.value = null;
   dropTargetId.value = null;
+  viewportMode.value = 'desktop';
   _listener = onChange;
   syncIdCounter(d.rows);
 }

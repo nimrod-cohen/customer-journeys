@@ -17,6 +17,7 @@ import {
   removeElement,
   findRow,
   mutate,
+  viewportMode,
 } from './state.js';
 import { borderCss, paddingCss, radiusCss, type Style } from './canvas-styles.js';
 import { ElementRenderer } from './elements.tsx';
@@ -54,8 +55,12 @@ export function Canvas(): JSX.Element {
   }, []);
 
   const st = settings.value;
+  // Viewport preview frame: the email body renders at min(bodyWidth, frame).
+  // Mobile mirrors MJML's responsive output (grids stack — see GridEl).
+  const vp = viewportMode.value;
+  const frame = vp === 'mobile' ? 375 : vp === 'tablet' ? 768 : Number.POSITIVE_INFINITY;
   const bodyStyle: Style = {
-    width: `${st.bodyWidth ?? 600}px`,
+    width: `${Math.min(st.bodyWidth ?? 600, frame)}px`,
     maxWidth: '100%',
     margin: '0 auto',
     backgroundColor: '#ffffff',
@@ -72,7 +77,7 @@ export function Canvas(): JSX.Element {
     >
       <div
         ref={pageRef}
-        class={`nm-canvas-page ${dragging.value ? 'nm-drag-active' : ''}`}
+        class={`nm-canvas-page nm-vp-${vp} ${dragging.value ? 'nm-drag-active' : ''}`}
         dir={st.direction === 'rtl' ? 'rtl' : 'ltr'}
         style={bodyStyle}
         onDragOver={(e) => {

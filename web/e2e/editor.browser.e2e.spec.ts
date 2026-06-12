@@ -46,3 +46,26 @@ test('an image element serializes as <mj-image src> referencing its URL', async 
   const mjml = await output.inputValue();
   expect(mjml).toContain('https://images.cdp.example/ws/sample-hero.png');
 });
+
+test('viewport preview: mobile narrows the frame and stacks grid columns', async ({ page }) => {
+  await openDesigner(page);
+
+  // A 2-column grid renders side-by-side on desktop.
+  await page.getByTestId('toolbox-grid').click();
+  const grid = page.locator('.nm-grid');
+  await expect(grid).toHaveCSS('flex-direction', 'row');
+
+  // Mobile preview: the canvas page narrows to phone width and columns STACK
+  // (exactly what MJML's responsive output does below its breakpoint).
+  await page.getByTestId('viewport-mobile').click();
+  await expect(page.locator('.nm-canvas-page')).toHaveCSS('width', '375px');
+  await expect(grid).toHaveCSS('flex-direction', 'column');
+
+  // Tablet/desktop: the email body returns to its design width (600px default;
+  // assert the style — the computed width may clamp to the available column).
+  await page.getByTestId('viewport-tablet').click();
+  await expect(page.locator('.nm-canvas-page')).toHaveAttribute('style', /width: 600px/);
+  await page.getByTestId('viewport-desktop').click();
+  await expect(page.locator('.nm-canvas-page')).toHaveAttribute('style', /width: 600px/);
+  await expect(grid).toHaveCSS('flex-direction', 'row');
+});

@@ -9,6 +9,7 @@ import {
   loadDesign,
   sidebarMode,
   selectedId,
+  viewportMode,
   undo,
   redo,
   undoStack,
@@ -74,6 +75,27 @@ export function EmailDesigner({ design, onChange, documentKey }: EmailDesignerPr
           </button>
         </div>
         <div class="nm-toolbar-actions">
+          {/* Viewport preview: resize the canvas frame; mobile stacks columns. */}
+          <div class="nm-vp-group">
+            {(['desktop', 'tablet', 'mobile'] as const).map((vp) => (
+              <button
+                key={vp}
+                type="button"
+                data-testid={`viewport-${vp}`}
+                class={`nm-mini-btn ${viewportMode.value === vp ? 'nm-active' : ''}`}
+                title={`Preview on ${vp}`}
+                onClick={() => (viewportMode.value = vp)}
+              >
+                {vp === 'desktop' ? (
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="13" rx="1.5" /><path d="M9 21h6M12 17v4" /></svg>
+                ) : vp === 'tablet' ? (
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2" /><path d="M11 18.5h2" /></svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7.5" y="2" width="9" height="20" rx="2" /><path d="M11 18.5h2" /></svg>
+                )}
+              </button>
+            ))}
+          </div>
           <button type="button" data-testid="designer-undo" class="nm-mini-btn" title="Undo" disabled={undoStack.value.length === 0} onClick={undo}>
             ↶
           </button>
