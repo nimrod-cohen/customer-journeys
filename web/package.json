@@ -17,8 +17,7 @@
     "@cdp/service-image": "workspace:*",
     "@cdp/shared": "workspace:*",
     "@cdp/tenancy": "workspace:*",
-    "grapesjs": "^0.21.13",
-    "grapesjs-mjml": "^1.0.7",
+    "@preact/signals": "^2.9.1",
     "preact": "^10.22.0"
   },
   "devDependencies": {

@@ -1,52 +1,48 @@
+// §11 / §16A tier 3 (browser): the custom email designer renders in REAL
+// Chromium and EMITS MJML — the browser tier of the "emit MJML, never
+// hand-rolled HTML" invariant (unit: email-designer-serializer; integration:
+// save-template). Click-to-add keeps the flow drag-free and deterministic.
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
-// §11 / §16A tier 3 (browser): the editor renders in REAL Chromium and EMITS
-// MJML — the third tier proving the "emit MJML, never hand-rolled HTML"
-// invariant (unit + integration + browser). Stable data-testid selectors; the
-// app seeds a deterministic starter doc so there's no flakiness.
-//
-// Phase 12: the editor is now the /editor screen behind auth — we log in (as a
-// marketer, manage_content) and navigate to it before asserting.
-async function openEditor(page: import('@playwright/test').Page): Promise<void> {
+async function openDesigner(page: import('@playwright/test').Page): Promise<void> {
   await loginAs(page, DEV_MKT);
-  // The editor lives in the context of Broadcasts/Campaigns (no standalone nav).
-  await page.getByTestId('nav-broadcasts').click();
-  await page.getByTestId('design-email').click();
+  await page.getByTestId('nav-templates').click();
+  await page.getByTestId('templates-screen').waitFor();
+  await page.getByTestId('new-template').click();
+  await page.getByTestId('email-editor').waitFor();
+  await expect(page.getByTestId('email-designer-component')).toBeVisible();
 }
 
-test('the GrapesJS+MJML editor renders and emits MJML rooted at <mjml>', async ({ page }) => {
-  await openEditor(page);
+test('the designer renders and emits MJML rooted at <mjml>', async ({ page }) => {
+  await openDesigner(page);
 
-  // The editor host mounts.
-  await expect(page.getByTestId('gjs-host')).toBeVisible();
+  // Click-to-add a text component → a row + element appear on the canvas.
+  await page.getByTestId('toolbox-text').click();
+  await expect(page.getByTestId('canvas-row')).toHaveCount(1);
+  await expect(page.getByTestId('canvas-element')).toHaveCount(1);
 
   // The live MJML output is rooted at <mjml> — never hand-rolled email HTML.
   const output = page.getByTestId('mjml-output');
-  await expect(output).toHaveValue(/^<mjml>/, { timeout: 20_000 });
+  await expect(output).toHaveValue(/^<mjml>/);
   const mjml = await output.inputValue();
-  expect(mjml).toContain('<mj-body>');
+  expect(mjml).toContain('<mj-body');
+  expect(mjml).toContain('<mj-text');
   expect(mjml).not.toMatch(/<!DOCTYPE|<html/i);
 });
 
-test('inserting an image adds an <mj-image src> referencing the asset URL', async ({ page }) => {
-  await openEditor(page);
-  await expect(page.getByTestId('gjs-host')).toBeVisible();
+test('an image element serializes as <mj-image src> referencing its URL', async ({ page }) => {
+  await openDesigner(page);
 
-  await page.getByTestId('insert-image').click();
+  await page.getByTestId('toolbox-image').click();
+  // Click the element on the canvas → the properties panel shows the URL field.
+  await page.getByTestId('canvas-element').click();
+  await page.getByTestId('asset-url').fill('https://images.cdp.example/ws/sample-hero.png');
+  await page.keyboard.press('Tab');
 
   const output = page.getByTestId('mjml-output');
-  await expect(output).toHaveValue(/<mj-image/, { timeout: 20_000 });
+  await expect(output).toHaveValue(/<mj-image/);
   const mjml = await output.inputValue();
-  expect(mjml).toContain('<mj-image');
   expect(mjml).toContain('https://images.cdp.example/ws/sample-hero.png');
-
-  // The save payload carries {name, mjml} only (no compiled HTML client-side).
-  const payload = JSON.parse(await page.getByTestId('payload-preview').innerText()) as {
-    name: string;
-    mjml: string;
-  };
-  expect(Object.keys(payload).sort()).toEqual(['mjml', 'name']);
-  expect(payload.mjml).toContain('<mj-image');
 });

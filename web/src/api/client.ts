@@ -14,6 +14,11 @@ function resolveBase(): string {
   return env?.VITE_API_BASE ?? 'http://localhost:8787';
 }
 
+/** The API origin — used to absolutize server-relative resource paths (e.g. /assets/:id). */
+export function apiBaseUrl(): string {
+  return resolveBase();
+}
+
 export interface ApiError {
   readonly status: number;
   readonly error: string;

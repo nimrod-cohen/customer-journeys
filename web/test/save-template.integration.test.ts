@@ -1,7 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { adminPool, applyMigrations, hasDatabaseUrl } from '@cdp/db';
 import { saveTemplate } from '@cdp/service-image';
-import { buildSaveTemplatePayload, type EditorState } from '../src/serialize.js';
+import { designToMjml } from '../src/email-designer/mjml-serializer.js';
+import type { EmailDesign } from '../src/email-designer/model.js';
+
+/** Build the {name, mjml} save payload from a design (the new designer's path). */
+function buildSaveTemplatePayload(design: EmailDesign, name: string): { name: string; mjml: string } {
+  return { name, mjml: designToMjml(design) };
+}
 
 // §11 / §16A tier 2: the WHOLE save path against a REAL local Postgres (never
 // mock the DB). The editor's pure payload builder produces {name, mjml}; the
@@ -18,10 +24,16 @@ const ALL = [WS_A, WS_B];
 
 const describeMaybe = hasDatabaseUrl() ? describe : describe.skip;
 
-const state: EditorState = {
-  blocks: [
-    { type: 'text', content: 'Welcome aboard' },
-    { type: 'image', src: 'https://images.cdp.example/ws/hero.png', alt: 'Hero' },
+const state: EmailDesign = {
+  version: 1,
+  rows: [
+    {
+      id: 'row-1',
+      elements: [
+        { id: 'e1', type: 'text', props: { html: 'Welcome aboard' } },
+        { id: 'e2', type: 'image', props: { src: 'https://images.cdp.example/ws/hero.png', alt: 'Hero' } },
+      ],
+    },
   ],
 };
 
@@ -77,7 +89,10 @@ describeMaybe('save-template path (editor payload → server compile → real Po
   });
 
   it('is idempotent per (workspace, name): a re-save updates, not duplicates', async () => {
-    const next: EditorState = { blocks: [{ type: 'text', content: 'Updated copy' }] };
+    const next: EmailDesign = {
+      version: 1,
+      rows: [{ id: 'row-1', elements: [{ id: 'e1', type: 'text', props: { html: 'Updated copy' } }] }],
+    };
     const payload = buildSaveTemplatePayload(next, 'Welcome');
     await saveTemplate(runner(pool), { workspaceId: WS_A, name: 'Welcome', mjml: payload.mjml });
 

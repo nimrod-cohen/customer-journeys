@@ -27,7 +27,13 @@ export function createStore<T>(initial: T): Store<T> {
 
 /** Preact hook: subscribe to a store and re-render on change. */
 export function useStore<T>(store: Store<T>): T {
-  const [, force] = useState(0);
-  useEffect(() => store.subscribe(() => force((n) => n + 1)), [store]);
-  return store.get();
+  const [value, setValue] = useState(store.get());
+  useEffect(() => {
+    // Catch up on any update that landed BETWEEN render and this effect (e.g. a
+    // fetch resolving while modules load) — otherwise it would be missed forever
+    // (setState with an identical value is a no-op, so this never over-renders).
+    setValue(store.get());
+    return store.subscribe((v) => setValue(v));
+  }, [store]);
+  return value;
 }

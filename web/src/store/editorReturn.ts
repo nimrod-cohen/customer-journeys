@@ -8,14 +8,19 @@
 interface EditorReturn {
   /** The route to navigate back to after saving the template. */
   readonly returnPath: string;
+  /**
+   * How a NEW template created in this flow should be saved: 'copy' = a working
+   * copy owned by the originating broadcast/campaign (not a library entry).
+   */
+  readonly createAs?: 'copy';
 }
 
 let pending: EditorReturn | null = null;
 let returnedTemplateId: string | null = null;
 
 /** Record where the editor should return after saving (set before navigating to /editor). */
-export function setEditorReturn(returnPath: string): void {
-  pending = { returnPath };
+export function setEditorReturn(returnPath: string, opts?: { createAs?: 'copy' }): void {
+  pending = opts?.createAs ? { returnPath, createAs: opts.createAs } : { returnPath };
 }
 
 /** Consume the pending return context (null if the editor was opened standalone). */
@@ -35,4 +40,20 @@ export function takeReturnedTemplate(): string | null {
   const id = returnedTemplateId;
   returnedTemplateId = null;
   return id;
+}
+
+// ── Saved-flag across the new-template remount ───────────────────────────────
+// Saving a NEW template navigates /editor → /editor/:id, which remounts the
+// screen (the app body is keyed by route). The freshly-mounted editor reads this
+// to keep showing the "Saved ✓" indicator.
+let justSavedTemplateId: string | null = null;
+
+export function setJustSavedTemplate(id: string): void {
+  justSavedTemplateId = id;
+}
+
+export function takeJustSavedTemplate(id: string): boolean {
+  const hit = justSavedTemplateId === id;
+  if (hit) justSavedTemplateId = null;
+  return hit;
 }

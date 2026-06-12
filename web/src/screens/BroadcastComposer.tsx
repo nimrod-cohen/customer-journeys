@@ -152,6 +152,10 @@ export function BroadcastWizard({ id }: { id?: string }) {
   const [name, setName] = useState('');
   const [segId, setSegId] = useState('');
   const [tplId, setTplId] = useState('');
+  // The broadcast's WORKING COPY of a template (kind='copy'): picking a library
+  // template clones it so this broadcast's content is independently editable and
+  // the library original stays pristine.
+  const [attachedCopy, setAttachedCopy] = useState<{ id: string; name: string } | null>(null);
   const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>('now');
   const [scheduledAt, setScheduledAt] = useState('');
   const [saving, setSaving] = useState(false);
@@ -194,9 +198,41 @@ export function BroadcastWizard({ id }: { id?: string }) {
           setTplId(justSaved);
           setStep(1);
         }
+        // Resolve the attached template: a kind='copy' row is this broadcast's
+        // working copy (shown as such in the dropdown).
+        const attached = justSaved || b.template_id;
+        if (attached) {
+          void api
+            .get<{ template: { id: string; name: string; kind: string } }>(`/templates/${attached}`)
+            .then((t) => {
+              if (t.template.kind === 'copy') setAttachedCopy({ id: t.template.id, name: t.template.name });
+            })
+            .catch(() => undefined);
+        }
       })
       .catch(() => navigate('/broadcasts'));
   }, [id]);
+
+  /**
+   * Template picked in the dropdown. A LIBRARY template is CLONED on the spot —
+   * the broadcast then points at its own mutable copy (re-editable via Design
+   * email) and the library original is never touched. Re-picking the existing
+   * copy just selects it.
+   */
+  const pickTemplate = async (value: string): Promise<void> => {
+    if (!value || value === attachedCopy?.id) {
+      setTplId(value);
+      return;
+    }
+    const lib = templates.find((t) => t.id === value);
+    if (!lib) {
+      setTplId(value);
+      return;
+    }
+    const r = await api.post<{ template: { id: string; name: string } }>(`/templates/${value}/clone`, { body: {} });
+    setAttachedCopy({ id: r.template.id, name: r.template.name });
+    setTplId(r.template.id);
+  };
 
   /**
    * Open the email editor to design content for THIS broadcast. We persist the
@@ -219,12 +255,22 @@ export function BroadcastWizard({ id }: { id?: string }) {
       const r = await api.post<{ broadcast: { id: string } }>('/broadcasts', { body });
       bid = r.broadcast.id;
     }
-    setEditorReturn(`/broadcasts/${bid}`);
-    navigate(tplId ? `/editor/${tplId}` : '/editor');
+    if (tplId) {
+      setEditorReturn(`/broadcasts/${bid}`);
+      navigate(`/editor/${tplId}`);
+    } else {
+      // Designing from scratch for this broadcast → the editor saves a working
+      // COPY (not a library template).
+      setEditorReturn(`/broadcasts/${bid}`, { createAs: 'copy' });
+      navigate('/editor');
+    }
   };
 
   const segName = segments.find((s) => s.id === segId)?.name ?? '—';
-  const tplName = templates.find((t) => t.id === tplId)?.name ?? '—';
+  const tplName =
+    tplId === attachedCopy?.id && attachedCopy
+      ? `${attachedCopy.name} (this broadcast's copy)`
+      : (templates.find((t) => t.id === tplId)?.name ?? '—');
 
   const canNext = step === 0 ? name.trim().length > 0 && segId !== '' : step === 1 ? tplId !== '' : true;
   const canSave =
@@ -318,9 +364,12 @@ export function BroadcastWizard({ id }: { id?: string }) {
               <Select
                 data-testid="broadcast-template"
                 value={tplId}
-                onChange={(e: Event) => setTplId((e.target as HTMLSelectElement).value)}
+                onChange={(e: Event) => void pickTemplate((e.target as HTMLSelectElement).value)}
               >
                 <option value="">Select template</option>
+                {attachedCopy ? (
+                  <option value={attachedCopy.id}>{attachedCopy.name} — this broadcast's copy</option>
+                ) : null}
                 {templates.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}

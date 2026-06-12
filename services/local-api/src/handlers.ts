@@ -505,10 +505,13 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
   // Compile MJML→HTML server-side (reuse @cdp/email compileMjml via deps). The
   // designer's editable source (design JSON) is stored alongside the derived MJML.
   const compiled = deps.compileMjml(mjml);
+  // kind: 'library' (default — shows in the Templates list) or 'copy' (a working
+  // copy created from a broadcast/campaign design flow; never listed).
+  const kind = b.kind === 'copy' ? 'copy' : 'library';
   const { rows } = await pool.query(
-    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design)
-     VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id, name, updated_at`,
-    [ctx.workspaceId, name, mjml, compiled, b.design === undefined ? null : JSON.stringify(b.design)],
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING id, name, updated_at`,
+    [ctx.workspaceId, name, mjml, compiled, b.design === undefined ? null : JSON.stringify(b.design), kind],
   );
   return ok({ template: rows[0] }, 201);
 };

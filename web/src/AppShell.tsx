@@ -27,7 +27,7 @@ import { ProfileDetail } from './screens/ProfileDetail.js';
 import { TemplatesList } from './screens/TemplatesList.js';
 import { Help } from './screens/Help.js';
 import { Activity } from './screens/Activity.js';
-import { EmailEditor } from './EmailEditor.js';
+import { TemplateEditor } from './screens/TemplateEditor.tsx';
 import type { JSX } from 'preact';
 
 /** True when `route` is `item` or a sub-route of it (e.g. /profiles/<id> under /profiles). */
@@ -55,7 +55,7 @@ function screenFor(path: string): JSX.Element {
   }
   // The email editor: new template at /editor, edit one at /editor/:id.
   if (path.startsWith('/editor/')) {
-    return <EmailEditor id={path.slice('/editor/'.length)} />;
+    return <TemplateEditor id={path.slice('/editor/'.length)} />;
   }
   switch (path) {
     case '/broadcasts':
@@ -65,7 +65,7 @@ function screenFor(path: string): JSX.Element {
     case '/campaigns':
       return <CampaignBuilder />;
     case '/editor':
-      return <EmailEditor />;
+      return <TemplateEditor />;
     case '/profiles':
       return <ProfileExplorer />;
     case '/suppressions':

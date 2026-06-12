@@ -20,7 +20,7 @@ A **serverless, multi-tenant marketing CDP** on AWS: companies get isolated work
 - **Queue:** SQS **FIFO** (+ DLQ), `MessageGroupId = profile_id`.
 - **Email:** Amazon SES; each workspace sends from its own verified domain.
 - **Auth:** Supabase Auth; validated at the gateway by a **Lambda authorizer** (REST API has no native JWT authorizer).
-- **Email editor:** Core GrapesJS (BSD-3, free) + MJML plugin — NOT the paid Studio SDK. Editor must emit MJML, never hand-rolled HTML.
+- **Email editor:** a CUSTOM in-house designer (`web/src/email-designer/`, ported from the owner's nomentor builder; Preact + @preact/signals) — this deliberately OVERRIDES the spec's GrapesJS choice. The surviving invariant is unchanged: the editor **emits MJML, never hand-rolled HTML** (design JSON → `mjml-serializer.ts` → server `compileMjml`, strict). Templates are a LIBRARY; attaching one to a broadcast/campaign CLONES it (`kind='copy'`, `source_template_id`) into an independently editable working copy.
 - **IaC:** AWS CDK (TypeScript).
 - **Frontend:** Preact/React SPA, Vite, static on S3 + CloudFront.
 - **Testing:** Vitest or Jest; Supabase CLI / Testcontainers for ephemeral Postgres; `aws-sdk-client-mock` for AWS SDK; LocalStack for the thin E2E tier.
