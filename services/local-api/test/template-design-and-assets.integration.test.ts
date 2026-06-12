@@ -45,6 +45,7 @@ describeMaybe('template design + clone + assets (real Postgres)', () => {
 
   async function cleanup(): Promise<void> {
     await world.pool.query('DELETE FROM assets WHERE workspace_id = ANY($1)', [[WS, OTHER]]);
+    await world.pool.query('DELETE FROM asset_folders WHERE workspace_id = ANY($1)', [[WS, OTHER]]);
     await world.pool.query('DELETE FROM email_templates WHERE workspace_id = ANY($1)', [[WS, OTHER]]);
     await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [WS]);
     for (const ws of [WS, OTHER]) await world.pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
@@ -166,6 +167,19 @@ describeMaybe('template design + clone + assets (real Postgres)', () => {
     // and a member of OTHER would get an empty list — scoping is by token).
     const foreign = await call(world.env, 'GET', '/assets', { token: tokenFor(USER, OTHER) });
     expect([403, 404]).toContain(foreign.status);
+  });
+
+  it('asset folders persist even while empty and merge with implicit ones', async () => {
+    const c = await call(world.env, 'POST', '/asset-folders', { token: tok(), body: { name: ' Banners / 2026 ' } });
+    expect(c.status).toBe(201);
+    expect((c.body as { name: string }).name).toBe('Banners/2026');
+
+    const list = await call(world.env, 'GET', '/assets', { token: tok() });
+    const { folders, assets } = list.body as { folders: string[]; assets: Array<{ size_bytes: number }> };
+    expect(folders).toContain('Banners/2026'); // persisted, still empty
+    expect(folders).toContain('logos'); // implicit from an earlier upload
+    // size metadata is present and sane (the 1×1 png is ~70 bytes).
+    expect(assets.every((a) => a.size_bytes > 0 && a.size_bytes < 10_000)).toBe(true);
   });
 
   it('rejects non-image mimes and oversized payloads', async () => {

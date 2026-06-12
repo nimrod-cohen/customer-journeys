@@ -630,12 +630,31 @@ export const uploadAsset: Handler = async (ctx, pool, req) => {
 export const listAssets: Handler = async (ctx, pool) => {
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, filename, mime, folder, created_at FROM assets',
+    // size ≈ base64 length × 3/4 (the dev harness stores base64 in-row).
+    "SELECT id, filename, mime, folder, created_at, (octet_length(data) * 3 / 4)::int AS size_bytes FROM assets",
   );
   const { rows } = await pool.query(`${q.text} ORDER BY folder, created_at DESC`, q.values);
+  // Folders = persisted rows (creatable while still empty) ∪ implicit (in use).
+  const fq = scopedQuery(ctx.workspaceId, 'SELECT name FROM asset_folders');
+  const { rows: folderRows } = await pool.query<{ name: string }>(fq.text, fq.values);
+  const implicit = (rows as Array<{ folder: string }>).map((r) => r.folder).filter(Boolean);
+  const folders = [...new Set([...folderRows.map((f) => f.name), ...implicit])].sort();
   return ok({
     assets: (rows as Array<{ id: string }>).map((r) => ({ ...r, path: `/assets/${r.id}` })),
+    folders,
   });
+};
+
+/** POST /asset-folders — create a (possibly still empty) gallery folder. */
+export const createAssetFolder: Handler = async (ctx, pool, req) => {
+  const name = normalizeFolder(asObject(req.body).name);
+  if (!name) return ok({ error: 'folder name required' }, 400);
+  await pool.query(
+    `INSERT INTO asset_folders (workspace_id, name) VALUES ($1, $2)
+     ON CONFLICT (workspace_id, name) DO NOTHING`,
+    [ctx.workspaceId, name],
+  );
+  return ok({ name }, 201);
 };
 
 // ---------------------------------------------------------------------------
@@ -1866,6 +1885,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /templates/:id/clone': cloneTemplate,
   'POST /assets': uploadAsset,
   'GET /assets': listAssets,
+  'POST /asset-folders': createAssetFolder,
   'GET /broadcasts': listBroadcasts,
   'POST /broadcasts': createBroadcast,
   'GET /broadcasts/:id': getBroadcast,

@@ -70,14 +70,20 @@ test('viewport preview: mobile narrows the frame and stacks grid columns', async
   await expect(grid).toHaveCSS('flex-direction', 'row');
 });
 
-test('image gallery: uploads land in folders and can be reused', async ({ page }) => {
+test('asset manager: create a folder, upload into it, reuse from the gallery', async ({ page }) => {
   await openDesigner(page);
 
-  // First image element: UPLOAD a real png into the "logos" folder.
+  // First image element → "Select image…" opens the Select Asset modal.
   await page.getByTestId('toolbox-image').click();
   await page.getByTestId('canvas-element').click();
-  await page.getByTestId('asset-folder').fill('logos');
-  await page.getByTestId('asset-file').setInputFiles({
+  await page.getByTestId('asset-select').click();
+  await page.getByTestId('asset-manager').waitFor();
+
+  // New Folder ("logos") → steps into it; Upload file lands in that folder.
+  page.once('dialog', (d) => void d.accept('logos'));
+  await page.getByTestId('am-new-folder').click();
+  await expect(page.getByTestId('am-breadcrumb')).toContainText('logos');
+  await page.getByTestId('am-file-input').setInputFiles({
     name: 'pixel.png',
     mimeType: 'image/png',
     buffer: Buffer.from(
@@ -85,17 +91,18 @@ test('image gallery: uploads land in folders and can be reused', async ({ page }
       'base64',
     ),
   });
-  // The upload commits the served asset URL as the image src.
+  // The upload appears in the folder; clicking it selects + closes the modal.
+  await page.getByTestId('am-item').filter({ hasText: 'pixel.png' }).click();
   await expect(page.getByTestId('asset-url')).toHaveValue(/\/assets\//);
 
-  // Second image element: pick the SAME image from the gallery's folder.
-  await page.getByTestId('tab-add').click(); // back to the toolbox
+  // Second image element: reuse the SAME image via the folder card.
+  await page.getByTestId('tab-add').click();
   await page.getByTestId('toolbox-image').click();
   await page.getByTestId('canvas-element').nth(1).click();
-  await page.getByTestId('gallery-toggle').click();
-  await page.getByTestId('asset-gallery').waitFor();
-  await page.getByTestId('gallery-folder').filter({ hasText: 'logos' }).click();
-  await page.getByTestId('gallery-item').filter({ hasText: 'pixel.png' }).click();
+  await page.getByTestId('asset-select').click();
+  await page.getByTestId('asset-manager').waitFor();
+  await page.getByTestId('am-folder-card').filter({ hasText: 'logos' }).click();
+  await page.getByTestId('am-item').filter({ hasText: 'pixel.png' }).click();
   await expect(page.getByTestId('asset-url')).toHaveValue(/\/assets\//);
 
   // Both serialize as mj-image with asset URLs.
