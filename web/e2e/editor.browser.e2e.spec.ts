@@ -214,3 +214,33 @@ test('asset manager: upload multiple files at once', async ({ page }) => {
   await expect(page.getByTestId('am-item').filter({ hasText: 'batch-2.png' })).toHaveCount(1);
   await expect(page.getByTestId('am-item').filter({ hasText: 'batch-3.png' })).toHaveCount(1);
 });
+
+test('text editor: adding a link via the styled dialog applies to the selection', async ({ page }) => {
+  await openDesigner(page);
+  await page.getByTestId('toolbox-text').click();
+
+  // Focus the text and select ALL of it programmatically (deterministic).
+  const editable = page.getByTestId('text-editable');
+  await editable.click();
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="text-editable"]')!;
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.addRange(range);
+  });
+
+  // Toolbar → link → styled dialog → URL → confirm.
+  await page.getByTestId('rte-toolbar').waitFor();
+  await page.getByTestId('rte-toolbar').getByTitle('link', { exact: true }).click();
+  await page.getByTestId('dialog-input').fill('https://example.com/promo');
+  await page.getByTestId('dialog-confirm').click();
+
+  // The link is applied in the editable DOM…
+  await expect(editable.locator('a[href="https://example.com/promo"]')).toHaveCount(1);
+  // …and survives into the emitted MJML once the edit commits (blur).
+  await page.getByTestId('canvas-empty').waitFor({ state: 'hidden' });
+  await page.getByTestId('template-name').click(); // blur the editable → save
+  await expect(page.getByTestId('mjml-output')).toHaveValue(/https:\/\/example\.com\/promo/);
+});

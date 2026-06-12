@@ -58,6 +58,10 @@ const RTE_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48];
 function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  // True while the link-URL dialog is open: the editable BLURS into the dialog,
+  // which must NOT hide the toolbar or save (a save re-renders the contenteditable
+  // and detaches the saved selection — the link would apply to nothing).
+  const linkDialogActive = useRef(false);
   const [showToolbar, setShowToolbar] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
 
@@ -120,16 +124,25 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
         f.replaceWith(span);
       });
     } else if (btn.prompt) {
-      // Preserve the text selection across the styled dialog, then restore it
-      // before applying the command (a dialog click would otherwise clear it).
+      // Preserve the text selection across the styled dialog: block the blur
+      // handler (no hide/save → the DOM stays intact), and after the dialog
+      // closes re-FOCUS the editable, restore the range, then apply the command
+      // (execCommand needs the editable focused to act on the selection).
+      linkDialogActive.current = true;
       const sel = window.getSelection();
       const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
-      const url = await askText({ title: 'Link URL', placeholder: 'https://…', confirmLabel: 'Add link' });
-      if (range && sel) {
-        sel.removeAllRanges();
-        sel.addRange(range);
+      try {
+        const url = await askText({ title: 'Link URL', placeholder: 'https://…', confirmLabel: 'Add link' });
+        await new Promise((r) => setTimeout(r, 0)); // let the dialog unmount settle
+        ref.current?.focus();
+        if (range && sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+        if (url && btn.cmd) document.execCommand(btn.cmd, false, url);
+      } finally {
+        linkDialogActive.current = false;
       }
-      if (url && btn.cmd) document.execCommand(btn.cmd, false, url);
     } else if (btn.cmd) {
       document.execCommand(btn.cmd, false);
     }
@@ -174,6 +187,7 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
         style={s}
         onFocus={position}
         onBlur={(e) => {
+          if (linkDialogActive.current) return; // blurring INTO the link dialog
           if (toolbarRef.current?.contains(e.relatedTarget as Node)) return;
           setShowToolbar(false);
           save();
