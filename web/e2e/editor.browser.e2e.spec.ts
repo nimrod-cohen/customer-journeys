@@ -102,3 +102,20 @@ test('image gallery: uploads land in folders and can be reused', async ({ page }
   const mjml = await page.getByTestId('mjml-output').inputValue();
   expect(mjml.match(/<mj-image/g)?.length).toBe(2);
 });
+
+test('the text toolbar sits right above the text element, right-aligned', async ({ page }) => {
+  await openDesigner(page);
+  await page.getByTestId('toolbox-text').click();
+
+  // Focus the text → the formatting toolbar appears.
+  await page.getByTestId('text-editable').click();
+  const toolbar = page.getByTestId('rte-toolbar');
+  await toolbar.waitFor();
+
+  const tb = (await toolbar.boundingBox())!;
+  const txt = (await page.getByTestId('text-editable').boundingBox())!;
+  // Right edges align (±2px) and the toolbar sits immediately above the text.
+  expect(Math.abs(tb.x + tb.width - (txt.x + txt.width))).toBeLessThanOrEqual(2);
+  expect(tb.y + tb.height).toBeLessThanOrEqual(txt.y);
+  expect(txt.y - (tb.y + tb.height)).toBeLessThanOrEqual(12);
+});

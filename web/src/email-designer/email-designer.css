@@ -181,7 +181,6 @@
 .nm-text-editable { outline: none; min-height: 1.4em; cursor: text; }
 .nm-rte-toolbar {
   position: fixed;
-  transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 2px;

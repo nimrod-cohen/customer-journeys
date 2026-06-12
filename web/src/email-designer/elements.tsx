@@ -2,7 +2,8 @@
 // model). Each leaf renders an approximation of its compiled MJML output; the
 // text element is contenteditable with a floating formatting toolbar (bold/
 // italic/underline/lists/link/size) producing inline HTML that mj-text accepts.
-import { useRef, useState, useCallback } from 'preact/hooks';
+import { useRef, useState, useCallback, useEffect } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 import type { JSX } from 'preact';
 import {
   dragging,
@@ -73,12 +74,32 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
     }
   };
 
+  // The toolbar sits IMMEDIATELY ABOVE the text element, right-aligned with its
+  // edge; when that spot scrolls out of the viewport it sticks to the top.
   const position = useCallback((): void => {
     const rect = ref.current?.getBoundingClientRect();
     if (!rect) return;
-    setPos({ top: Math.max(8, rect.top - 44), left: rect.left + rect.width / 2 });
+    const TOOLBAR_H = 38;
+    const GAP = 6;
+    setPos({
+      top: Math.max(8, rect.top - TOOLBAR_H - GAP),
+      left: rect.right, // the toolbar right-aligns to this via translateX(-100%)
+    });
     setShowToolbar(true);
   }, []);
+
+  // While the toolbar is open, track scrolling/resizing so it follows the text
+  // (capture phase — the canvas scrolls in an inner container).
+  useEffect(() => {
+    if (!showToolbar) return;
+    const reposition = (): void => position();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [showToolbar, position]);
 
   const exec = (btn: RteButton): void => {
     if (btn.sizeDelta) {
@@ -106,14 +127,16 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
     ref.current?.focus();
   };
 
-  return (
-    <div class="nm-text-wrap">
-      {showToolbar ? (
+  // The toolbar is PORTALED to document.body: the app shell animates with a
+  // transform, which would otherwise hijack position:fixed (a transformed
+  // ancestor becomes the containing block) and strand the toolbar mid-page.
+  const toolbar = showToolbar
+    ? createPortal(
         <div
           ref={toolbarRef}
           data-testid="rte-toolbar"
           class="nm-rte-toolbar"
-          style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
+          style={{ top: `${pos.top}px`, left: `${pos.left}px`, transform: 'translateX(-100%)' }}
           onMouseDown={(e) => e.preventDefault()}
         >
           {RTE_BUTTONS.map((btn, i) =>
@@ -125,8 +148,15 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
               </button>
             ),
           )}
-        </div>
-      ) : null}
+        </div>,
+        document.body,
+      )
+    : null;
+
+  return (
+    <div class="nm-text-wrap">
+      {toolbar}
+
       <div
         ref={ref}
         data-testid="text-editable"
