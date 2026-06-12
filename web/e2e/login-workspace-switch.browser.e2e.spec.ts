@@ -13,6 +13,9 @@ import { DEV_OWNER, WS_A, WS_A2, SEG_A_NAME, SEG_A2_NAME } from './seed.js';
 test('login then switch workspace re-scopes the app with no cross-bleed', async ({ page }) => {
   await loginAs(page, DEV_OWNER);
 
+  // The app version is shown (small text) in the sidebar footer.
+  await expect(page.getByTestId('app-version')).toContainText(/v\d+\.\d+\.\d+/);
+
   // Active workspace is one of the memberships; navigate to segments (the list).
   await page.getByTestId('nav-segments').click();
   await page.getByTestId('segments-list').waitFor();

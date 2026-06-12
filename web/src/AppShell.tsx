@@ -175,6 +175,10 @@ export function AppShell(): JSX.Element {
           >
             Log out
           </button>
+          <p data-testid="app-version" class="mt-2 text-center text-[10px] lowercase tracking-wide text-stone-500">
+            v{__APP_VERSION__}
+            {__APP_COMMIT__ ? ` · ${__APP_COMMIT__}` : ''}
+          </p>
         </div>
       </aside>
 
