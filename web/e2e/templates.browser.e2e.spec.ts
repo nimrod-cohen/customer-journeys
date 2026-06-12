@@ -24,15 +24,16 @@ test('create an email template, then re-open it to edit', async ({ page }) => {
   await page.getByTestId('insert-image').click();
   await page.getByTestId('save-template').click();
 
-  // Back on the list; the template appears.
-  await page.getByTestId('templates-screen').waitFor();
-  await expect(page.getByTestId('template-list')).toContainText('Newsletter');
-
-  // Re-open it — the editor hydrates the name AND the saved design (the image).
-  await page.getByTestId('template-item').filter({ hasText: 'Newsletter' }).getByTestId('template-edit').click();
-  await page.getByTestId('email-editor').waitFor();
+  // Save STAYS in the editor (a new template moves to its /editor/:id URL). The
+  // saved design reloaded from the server — name + image are present.
+  await expect(page.getByTestId('email-editor')).toBeVisible();
   await expect(page.getByTestId('template-name')).toHaveValue('Newsletter');
   await expect(page.getByTestId('mjml-output')).toHaveValue(/<mj-image/, { timeout: 20_000 });
+
+  // It's in the Templates list too.
+  await page.getByTestId('editor-back').click();
+  await page.getByTestId('templates-screen').waitFor();
+  await expect(page.getByTestId('template-list')).toContainText('Newsletter');
 });
 
 test('mark a template RTL (right-to-left) and it round-trips', async ({ page }) => {
@@ -50,10 +51,9 @@ test('mark a template RTL (right-to-left) and it round-trips', async ({ page }) 
   await expect(page.getByTestId('mjml-output')).toHaveValue(/cdp-rtl/);
   await expect(page.frameLocator('iframe.gjs-frame').locator('body')).toHaveAttribute('dir', 'rtl');
   await page.getByTestId('save-template').click();
-  await page.getByTestId('templates-screen').waitFor();
 
-  // Re-open → RTL is detected from the stored doc (toggle stays checked).
-  await page.getByTestId('template-item').filter({ hasText: 'Hebrew news' }).getByTestId('template-edit').click();
-  await page.getByTestId('email-editor').waitFor();
+  // Save stays in the editor; the new template reloads from /editor/:id and RTL is
+  // detected from the stored doc (toggle stays checked, canvas stays RTL).
   await expect(page.getByTestId('rtl-toggle')).toBeChecked();
+  await expect(page.frameLocator('iframe.gjs-frame').locator('body')).toHaveAttribute('dir', 'rtl');
 });

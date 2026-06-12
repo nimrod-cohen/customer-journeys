@@ -78,21 +78,40 @@ export function EmailEditor({ id }: { id?: string }) {
   // The emitted MJML as of the last load/save — compared against the live emitted
   // MJML to know if there are UNSAVED changes (for the refresh/close warning).
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
   const editing = Boolean(id);
   // Mirror `rtl`/dirty into refs so once-registered listeners see current values.
   const rtlRef = useRef(false);
   const dirtyRef = useRef(false);
 
-  /** Apply text direction to the editor CANVAS (preview), so RTL renders live. */
+  /**
+   * Apply text direction to the editor CANVAS (preview) so RTL renders live —
+   * Hebrew/Arabic bidi (e.g. a sentence-ending period) is correct. We set dir on
+   * the body AND inject a style into the canvas iframe that forces direction:rtl
+   * on every element (a plain body `direction` doesn't reliably reach the text
+   * inside MJML's nested tables). Preview-only — the compiled email gets its
+   * direction from the RTL head.
+   */
   const applyCanvasDir = (on: boolean) => {
     const editor = editorRef.current;
     if (!editor) return;
     try {
       const body = editor.Canvas.getBody() as HTMLElement | undefined;
-      if (!body) return;
-      body.setAttribute('dir', on ? 'rtl' : 'ltr');
-      body.style.direction = on ? 'rtl' : 'ltr';
-      body.style.textAlign = on ? 'right' : '';
+      if (body) body.setAttribute('dir', on ? 'rtl' : 'ltr');
+      const doc = editor.Canvas.getDocument() as Document | undefined;
+      if (!doc) return;
+      const ID = 'cdp-rtl-style';
+      let style = doc.getElementById(ID) as HTMLStyleElement | null;
+      if (on) {
+        if (!style) {
+          style = doc.createElement('style');
+          style.id = ID;
+          doc.head.appendChild(style);
+        }
+        style.textContent = 'body, body * { direction: rtl; } body { text-align: right; }';
+      } else if (style) {
+        style.remove();
+      }
     } catch {
       /* canvas frame not ready yet — the canvas:frame:load handler re-applies */
     }
@@ -253,15 +272,18 @@ export function EmailEditor({ id }: { id?: string }) {
         const r = await api.post<{ template: { id: string } }>('/templates', { body });
         savedId = r.template.id;
       }
-      // If we were opened from a broadcast (or other) flow, hand the saved
-      // template back and return there; otherwise go to the Templates list.
+      // Opened from a broadcast (or other) flow → hand the template back + return.
       const ret = takeEditorReturn();
       if (ret) {
         setReturnedTemplate(savedId ?? null);
         navigate(ret.returnPath);
-      } else {
-        navigate('/templates');
+        return;
       }
+      // Otherwise STAY in the editor (don't bounce to the list). A brand-new
+      // template moves to its /editor/:id URL so the save is addressable and a
+      // refresh reloads it; editing an existing one just stays put.
+      setJustSaved(true);
+      if (!id && savedId) navigate(`/editor/${savedId}`);
     } finally {
       setSaving(false);
     }
@@ -306,6 +328,11 @@ export function EmailEditor({ id }: { id?: string }) {
             <Button data-testid="save-template" onClick={save} disabled={saving}>
               {saving ? 'Saving…' : editing ? 'Save changes' : 'Save template'}
             </Button>
+            {justSaved && !dirty ? (
+              <span data-testid="template-saved" class="self-center text-sm font-medium text-emerald-600">
+                Saved ✓
+              </span>
+            ) : null}
           </div>
         }
       />
