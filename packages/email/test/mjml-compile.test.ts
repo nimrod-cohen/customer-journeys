@@ -40,6 +40,19 @@ describe('compileMjml (real mjml)', () => {
     expect(() => compileMjml(bad)).toThrow(MjmlCompileError);
   });
 
+  // The editor exposes per-component layout traits (padding/align/width) that map
+  // to real MJML attributes — assert those compile under strict validation.
+  it('compiles per-component layout attributes (padding/align/width)', () => {
+    const doc =
+      '<mjml><mj-body>' +
+      '<mj-section padding="20px"><mj-column width="50%" padding="5px">' +
+      '<mj-text padding="10px 25px" align="right">hi</mj-text>' +
+      '<mj-image padding="5px" align="center" width="200px" src="https://x/y.png" />' +
+      '<mj-button padding="5px" align="left" width="150px">b</mj-button>' +
+      '</mj-column></mj-section></mj-body></mjml>';
+    expect(() => compileMjml(doc)).not.toThrow();
+  });
+
   it('compiles the RTL head (mj-attributes + mj-style) to direction:rtl HTML', () => {
     const rtl =
       '<mjml><mj-head><mj-attributes><mj-text css-class="cdp-rtl" align="right" /></mj-attributes>' +

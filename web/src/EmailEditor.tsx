@@ -170,6 +170,36 @@ export function EmailEditor({ id }: { id?: string }) {
       },
     });
 
+    // Per-component layout traits (settings panel). Padding/align/width map to
+    // real MJML attributes → strict-valid output. Added on selection (so they
+    // appear for every instance) only if the component doesn't already have them.
+    const PADDING = { type: 'text', name: 'padding', label: 'Padding', placeholder: 'e.g. 10px 25px' };
+    const ALIGN = {
+      type: 'select',
+      name: 'align',
+      label: 'Align',
+      options: [
+        { value: 'left', name: 'Left' },
+        { value: 'center', name: 'Center' },
+        { value: 'right', name: 'Right' },
+      ],
+    };
+    const WIDTH = { type: 'text', name: 'width', label: 'Width (blank = auto)', placeholder: 'e.g. 300px' };
+    const STYLE_TRAITS: Record<string, Array<Record<string, unknown>>> = {
+      'mj-text': [PADDING, ALIGN],
+      'mj-button': [PADDING, ALIGN, WIDTH],
+      'mj-image': [PADDING, ALIGN, WIDTH],
+      'mj-section': [PADDING],
+      'mj-column': [PADDING, WIDTH],
+    };
+    editor.on('component:selected', (component: import('grapesjs').Component) => {
+      const extra = STYLE_TRAITS[String(component.get('type'))];
+      if (!extra) return;
+      for (const t of extra) {
+        if (!component.getTrait(t.name as string)) component.addTrait(t as never);
+      }
+    });
+
     // grapesjs-mjml makes getHtml() return the MJML document. Keep the surfaced
     // MJML LIVE: GrapesJS emits 'update' on every canvas change, so the preview
     // and the saved payload always reflect the current design (not a stale
