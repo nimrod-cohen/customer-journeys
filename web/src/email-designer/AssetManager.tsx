@@ -7,6 +7,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import type { JSX } from 'preact';
+// The nm-am-* styles live in the designer stylesheet; import it here too so the
+// panel is styled when embedded outside the designer (Asset-management tab).
+import './email-designer.css';
 import { api } from '../store/session.js';
 import { apiBaseUrl } from '../api/client.js';
 import { askText, askConfirm } from '../ui/dialog.tsx';
@@ -54,7 +57,39 @@ function fmtSize(bytes: number): string {
   return `${bytes}B`;
 }
 
+/** The modal wrapper: overlay + "Select Asset" header around the panel. */
 export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) => void; onClose: () => void }): JSX.Element {
+  // Close on Escape.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div class="nm-am-overlay" onClick={onClose}>
+      <div data-testid="asset-manager" class="nm-am" onClick={(e) => e.stopPropagation()}>
+        <div class="nm-am-header">
+          <h2>Select Asset</h2>
+          <button type="button" data-testid="am-close" class="nm-am-icon-btn" title="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+        <AssetManagerPanel onSelect={onSelect} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/**
+ * The gallery manager PANEL — reusable: inside the Select-Asset modal (with
+ * onSelect: clicking an image picks it) and embedded as the Image-gallery tab of
+ * the Asset-management screen (no onSelect: pure management).
+ */
+export function AssetManagerPanel({ onSelect }: { onSelect?: (url: string) => void }): JSX.Element {
   const [assets, setAssets] = useState<GalleryAsset[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
   const [path, setPath] = useState('');
@@ -79,15 +114,6 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
   useEffect(() => {
     void load();
   }, []);
-
-  // Close on Escape.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const needle = search.trim().toLowerCase();
 
@@ -204,17 +230,8 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
 
   const crumbs = path ? path.split('/') : [];
 
-  return createPortal(
-    <div class="nm-am-overlay" onClick={onClose}>
-      <div data-testid="asset-manager" class="nm-am" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div class="nm-am-header">
-          <h2>Select Asset</h2>
-          <button type="button" data-testid="am-close" class="nm-am-icon-btn" title="Close" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-
+  return (
+    <div data-testid="asset-manager-panel" class="nm-am-panel">
         {/* Toolbar */}
         <div class="nm-am-toolbar">
           <label class="nm-am-search">
@@ -396,7 +413,7 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
                     setDraggingId(null);
                     setDropTarget(null);
                   }}
-                  onClick={() => onSelect(`${apiBaseUrl()}${entry.asset!.path}`)}
+                  onClick={onSelect ? () => onSelect(`${apiBaseUrl()}${entry.asset!.path}`) : undefined}
                 >
                   <span class="nm-am-actions" onClick={(e) => e.stopPropagation()}>
                     <button type="button" data-testid="am-item-rename" class="nm-am-action" title="Rename" onClick={() => void renameAsset(entry.asset!)}>
@@ -416,9 +433,7 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
             )
           )}
         </div>
-      </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
 

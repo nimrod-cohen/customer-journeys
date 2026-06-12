@@ -1,11 +1,12 @@
-// TemplatesList (§11/§12): the home for email templates. Lists the workspace's
-// templates; "New template" opens the editor for a fresh one; "Edit" opens the
-// editor for an existing one (/editor/:id). The editor is where the design + MJML
-// live; this screen is where you find and manage them.
+// Asset management (§11/§12): one screen, two tabs —
+//   • Email templates: the library list (design/edit/clone-source for broadcasts)
+//   • Image gallery: the SAME AssetManagerPanel used by the Select-Asset modal,
+//     embedded for pure management (folders, upload, rename, drag-move, delete).
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { Button, PageHeader, EmptyState } from '../ui/kit.js';
+import { Button, Card, PageHeader, EmptyState } from '../ui/kit.js';
+import { AssetManagerPanel } from '../email-designer/AssetManager.tsx';
 
 interface Template {
   id: string;
@@ -20,6 +21,7 @@ function fmtDate(ts: string | null): string {
 }
 
 export function TemplatesList() {
+  const [tab, setTab] = useState<'templates' | 'gallery'>('templates');
   const [templates, setTemplates] = useState<Template[] | null>(null);
 
   useEffect(() => {
@@ -29,16 +31,46 @@ export function TemplatesList() {
   return (
     <section data-testid="templates-screen">
       <PageHeader
-        title="Email templates"
-        subtitle="Design reusable emails; broadcasts and campaigns send them."
+        title="Asset management"
+        subtitle="Email templates and the image gallery your emails are built from."
         actions={
-          <Button data-testid="new-template" onClick={() => navigate('/editor')}>
-            New template
-          </Button>
+          tab === 'templates' ? (
+            <Button data-testid="new-template" onClick={() => navigate('/editor')}>
+              New template
+            </Button>
+          ) : undefined
         }
       />
 
-      {templates === null ? (
+      {/* Tabs */}
+      <div class="mb-5 flex gap-1 border-b border-stone-200">
+        <button
+          type="button"
+          data-testid="assets-tab-templates"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'templates' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => setTab('templates')}
+        >
+          Email templates
+        </button>
+        <button
+          type="button"
+          data-testid="assets-tab-gallery"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'gallery' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => setTab('gallery')}
+        >
+          Image gallery
+        </button>
+      </div>
+
+      {tab === 'gallery' ? (
+        <Card class="overflow-hidden p-2">
+          <AssetManagerPanel />
+        </Card>
+      ) : templates === null ? (
         <p class="text-sm text-stone-500">Loading…</p>
       ) : templates.length ? (
         <ul data-testid="template-list" class="space-y-2">

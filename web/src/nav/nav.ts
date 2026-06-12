@@ -22,7 +22,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'segments', label: 'Segments', path: '/segments', capability: 'manage_content' },
   { id: 'broadcasts', label: 'Broadcasts', path: '/broadcasts', capability: 'manage_content' },
   { id: 'campaigns', label: 'Campaigns', path: '/campaigns', capability: 'manage_content' },
-  { id: 'templates', label: 'Email templates', path: '/templates', capability: 'manage_content' },
+  // Asset management = email templates + image gallery tabs on one screen.
+  { id: 'templates', label: 'Asset management', path: '/templates', capability: 'manage_content' },
   // The email editor itself (/editor) has no standalone nav item — it is reached
   // from the Templates list and from the "Design email" action on Broadcasts.
   { id: 'profiles', label: 'Profiles', path: '/profiles', capability: 'manage_content' },

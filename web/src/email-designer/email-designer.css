@@ -356,6 +356,15 @@
   box-shadow: 0 20px 60px rgb(0 0 0 / 0.3);
   overflow: hidden;
 }
+/* The reusable manager panel: fills the modal below the header (scrollable
+   content), and lays out naturally when embedded in the Asset-management tab. */
+.nm-am-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
 .nm-am-header {
   display: flex;
   align-items: center;
