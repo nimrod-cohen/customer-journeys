@@ -511,3 +511,9 @@
 .nm-am-action:hover { border-color: #14b8a6; color: #0f766e; }
 .nm-am-action.nm-danger:hover { border-color: #ef4444; color: #b91c1c; }
 .nm-am-listview .nm-am-actions { position: static; opacity: 1; margin-inline-start: auto; }
+
+/* ── Asset drag & drop ── */
+.nm-am-card[draggable='true'] { cursor: grab; }
+.nm-am-dragging { opacity: 0.45; }
+.nm-am-droptarget { border-color: #14b8a6 !important; box-shadow: 0 0 0 2px rgb(20 184 166 / 0.35); }
+.nm-am-up .nm-am-thumb { color: #64748b; }

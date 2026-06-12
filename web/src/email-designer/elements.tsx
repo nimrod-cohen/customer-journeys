@@ -24,6 +24,7 @@ import {
   radiusCss,
   type Style,
 } from './canvas-styles.js';
+import { askText } from '../ui/dialog.tsx';
 import type { DesignElement, GridElement, LeafElement } from './model.js';
 
 // ── Text (contenteditable + floating toolbar) ────────────────────────────────
@@ -101,7 +102,7 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
     };
   }, [showToolbar, position]);
 
-  const exec = (btn: RteButton): void => {
+  const exec = async (btn: RteButton): Promise<void> => {
     if (btn.sizeDelta) {
       const sel = window.getSelection();
       const node = sel?.anchorNode;
@@ -119,7 +120,15 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
         f.replaceWith(span);
       });
     } else if (btn.prompt) {
-      const url = prompt('Enter URL:');
+      // Preserve the text selection across the styled dialog, then restore it
+      // before applying the command (a dialog click would otherwise clear it).
+      const sel = window.getSelection();
+      const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+      const url = await askText({ title: 'Link URL', placeholder: 'https://…', confirmLabel: 'Add link' });
+      if (range && sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
       if (url && btn.cmd) document.execCommand(btn.cmd, false, url);
     } else if (btn.cmd) {
       document.execCommand(btn.cmd, false);
@@ -143,7 +152,7 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
             btn.sep ? (
               <span key={i} class="nm-rte-sep" />
             ) : (
-              <button key={btn.label} type="button" class="nm-rte-btn" title={btn.label} onClick={() => exec(btn)}>
+              <button key={btn.label} type="button" class="nm-rte-btn" title={btn.label} onClick={() => void exec(btn)}>
                 <span style={btn.css}>{btn.label}</span>
               </button>
             ),

@@ -9,6 +9,7 @@ import { createPortal } from 'preact/compat';
 import type { JSX } from 'preact';
 import { api } from '../store/session.js';
 import { apiBaseUrl } from '../api/client.js';
+import { askText, askConfirm } from '../ui/dialog.tsx';
 import {
   X,
   Search,
@@ -23,8 +24,8 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Pencil,
-  FolderInput,
   Trash2,
+  FolderUp,
 } from './manager-icons.ts';
 
 interface GalleryAsset {
@@ -64,6 +65,9 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
   const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  /** The asset being dragged (moving = drop it on a folder card or [..]). */
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = async (): Promise<void> => {
@@ -120,9 +124,9 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
   const rangeEnd = Math.min(entries.length, (safePage + 1) * PAGE_SIZE);
 
   const newFolder = async (): Promise<void> => {
-    const name = prompt('New folder name:');
-    if (!name?.trim()) return;
-    const full = path ? `${path}/${name.trim()}` : name.trim();
+    const name = await askText({ title: 'New folder', placeholder: 'e.g. logos', confirmLabel: 'Create' });
+    if (!name) return;
+    const full = path ? `${path}/${name}` : name;
     await api.post('/asset-folders', { body: { name: full } });
     await load();
     setPath(full); // step into the new folder so the next upload lands there
@@ -131,32 +135,45 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
 
   // ── Management actions ──
   const renameAsset = async (a: GalleryAsset): Promise<void> => {
-    const filename = prompt('Rename image:', a.filename);
-    if (!filename?.trim() || filename.trim() === a.filename) return;
-    await api.patch(`/assets/${a.id}`, { body: { filename: filename.trim() } });
+    const filename = await askText({ title: 'Rename image', initial: a.filename, confirmLabel: 'Rename' });
+    if (!filename || filename === a.filename) return;
+    await api.patch(`/assets/${a.id}`, { body: { filename } });
     await load();
   };
-  const moveAsset = async (a: GalleryAsset): Promise<void> => {
-    const folder = prompt('Move to folder (empty = All files):', a.folder);
-    if (folder === null) return;
-    await api.patch(`/assets/${a.id}`, { body: { folder } });
+  /** Move an asset into a folder ('' = All files) — the drop handler. */
+  const moveAssetTo = async (assetId: string, folder: string): Promise<void> => {
+    await api.patch(`/assets/${assetId}`, { body: { folder } });
+    setDraggingId(null);
+    setDropTarget(null);
     await load();
   };
   const deleteAsset = async (a: GalleryAsset): Promise<void> => {
-    if (!confirm(`Delete "${a.filename}"? Emails already using this image will lose it.`)) return;
+    const ok = await askConfirm({
+      title: 'Delete image',
+      message: `Delete "${a.filename}"? Emails already using this image will lose it.`,
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     await api.del(`/assets/${a.id}`);
     await load();
   };
   const renameFolder = async (full: string): Promise<void> => {
     const seg = full.split('/').pop()!;
-    const name = prompt('Rename folder:', seg);
-    if (!name?.trim() || name.trim() === seg) return;
-    const to = full.includes('/') ? `${full.slice(0, full.lastIndexOf('/'))}/${name.trim()}` : name.trim();
+    const name = await askText({ title: 'Rename folder', initial: seg, confirmLabel: 'Rename' });
+    if (!name || name === seg) return;
+    const to = full.includes('/') ? `${full.slice(0, full.lastIndexOf('/'))}/${name}` : name;
     await api.patch('/asset-folders', { body: { from: full, to } });
     await load();
   };
   const deleteFolder = async (full: string): Promise<void> => {
-    if (!confirm(`Delete folder "${full}"? Its images move to the parent folder (they are not deleted).`)) return;
+    const ok = await askConfirm({
+      title: 'Delete folder',
+      message: `Delete folder "${full}"? Its images move to the parent folder (they are not deleted).`,
+      danger: true,
+      confirmLabel: 'Delete folder',
+    });
+    if (!ok) return;
     await api.del('/asset-folders', { body: { name: full } });
     await load();
     if (path === full || path.startsWith(`${full}/`)) setPath('');
@@ -288,7 +305,33 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
 
         {/* Content */}
         <div class={`nm-am-content ${view === 'list' ? 'nm-am-listview' : ''}`}>
-          {shown.length === 0 ? (
+          {path && !needle ? (
+            <div
+              data-testid="am-up-card"
+              class={`nm-am-card nm-am-folder nm-am-up ${dropTarget === '..' ? 'nm-am-droptarget' : ''}`}
+              role="button"
+              tabIndex={0}
+              title="Up to the parent folder — drop an image here to move it out"
+              onClick={() => { setPath(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''); setPage(0); }}
+              onDragOver={(e) => {
+                if (!draggingId) return;
+                e.preventDefault();
+                setDropTarget('..');
+              }}
+              onDragLeave={() => setDropTarget((t) => (t === '..' ? null : t))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (draggingId) void moveAssetTo(draggingId, path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
+              }}
+            >
+              <span class="nm-am-thumb">
+                <FolderUp size={view === 'list' ? 20 : 56} />
+              </span>
+              <span class="nm-am-card-name">[..]</span>
+              <span class="nm-am-card-meta">parent folder</span>
+            </div>
+          ) : null}
+          {shown.length === 0 && !path ? (
             <p class="nm-am-empty">{needle ? 'No images match your search.' : 'This folder is empty — upload a file.'}</p>
           ) : (
             shown.map((entry) =>
@@ -296,10 +339,20 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
                 <div
                   key={`f-${entry.folderPath}`}
                   data-testid="am-folder-card"
-                  class="nm-am-card nm-am-folder"
+                  class={`nm-am-card nm-am-folder ${dropTarget === entry.folderPath ? 'nm-am-droptarget' : ''}`}
                   role="button"
                   tabIndex={0}
                   onClick={() => { setPath(entry.folderPath!); setPage(0); }}
+                  onDragOver={(e) => {
+                    if (!draggingId) return;
+                    e.preventDefault();
+                    setDropTarget(entry.folderPath!);
+                  }}
+                  onDragLeave={() => setDropTarget((t) => (t === entry.folderPath ? null : t))}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggingId) void moveAssetTo(draggingId, entry.folderPath!);
+                  }}
                 >
                   <span class="nm-am-actions" onClick={(e) => e.stopPropagation()}>
                     <button type="button" data-testid="am-folder-rename" class="nm-am-action" title="Rename folder" onClick={() => void renameFolder(entry.folderPath!)}>
@@ -319,18 +372,25 @@ export function AssetManager({ onSelect, onClose }: { onSelect: (url: string) =>
                 <div
                   key={entry.asset!.id}
                   data-testid="am-item"
-                  class="nm-am-card"
+                  class={`nm-am-card ${draggingId === entry.asset!.id ? 'nm-am-dragging' : ''}`}
                   role="button"
                   tabIndex={0}
                   title={entry.asset!.filename}
+                  draggable
+                  onDragStart={(e) => {
+                    setDraggingId(entry.asset!.id);
+                    e.dataTransfer?.setData('text/plain', entry.asset!.id);
+                    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragEnd={() => {
+                    setDraggingId(null);
+                    setDropTarget(null);
+                  }}
                   onClick={() => onSelect(`${apiBaseUrl()}${entry.asset!.path}`)}
                 >
                   <span class="nm-am-actions" onClick={(e) => e.stopPropagation()}>
                     <button type="button" data-testid="am-item-rename" class="nm-am-action" title="Rename" onClick={() => void renameAsset(entry.asset!)}>
                       <Pencil size={13} />
-                    </button>
-                    <button type="button" data-testid="am-item-move" class="nm-am-action" title="Move to folder…" onClick={() => void moveAsset(entry.asset!)}>
-                      <FolderInput size={13} />
                     </button>
                     <button type="button" data-testid="am-item-delete" class="nm-am-action nm-danger" title="Delete image" onClick={() => void deleteAsset(entry.asset!)}>
                       <Trash2 size={13} />

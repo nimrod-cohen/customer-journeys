@@ -79,9 +79,10 @@ test('asset manager: create a folder, upload into it, reuse from the gallery', a
   await page.getByTestId('asset-select').click();
   await page.getByTestId('asset-manager').waitFor();
 
-  // New Folder ("logos") → steps into it; Upload file lands in that folder.
-  page.once('dialog', (d) => void d.accept('logos'));
+  // New Folder ("logos") via the styled dialog → steps into it; upload lands there.
   await page.getByTestId('am-new-folder').click();
+  await page.getByTestId('dialog-input').fill('logos');
+  await page.getByTestId('dialog-confirm').click();
   await expect(page.getByTestId('am-breadcrumb')).toContainText('logos');
   await page.getByTestId('am-file-input').setInputFiles({
     name: 'pixel.png',
@@ -91,6 +92,8 @@ test('asset manager: create a folder, upload into it, reuse from the gallery', a
       'base64',
     ),
   });
+  // Inside a folder a [..] parent card is offered (click = up, drop = move out).
+  await expect(page.getByTestId('am-up-card')).toBeVisible();
   // The upload appears in the folder; clicking it selects + closes the modal.
   await page.getByTestId('am-item').filter({ hasText: 'pixel.png' }).click();
   await expect(page.getByTestId('asset-url')).toHaveValue(/\/assets\//);
@@ -110,24 +113,7 @@ test('asset manager: create a folder, upload into it, reuse from the gallery', a
   expect(mjml.match(/<mj-image/g)?.length).toBe(2);
 });
 
-test('the text toolbar sits right above the text element, right-aligned', async ({ page }) => {
-  await openDesigner(page);
-  await page.getByTestId('toolbox-text').click();
-
-  // Focus the text → the formatting toolbar appears.
-  await page.getByTestId('text-editable').click();
-  const toolbar = page.getByTestId('rte-toolbar');
-  await toolbar.waitFor();
-
-  const tb = (await toolbar.boundingBox())!;
-  const txt = (await page.getByTestId('text-editable').boundingBox())!;
-  // Right edges align (±2px) and the toolbar sits immediately above the text.
-  expect(Math.abs(tb.x + tb.width - (txt.x + txt.width))).toBeLessThanOrEqual(2);
-  expect(tb.y + tb.height).toBeLessThanOrEqual(txt.y);
-  expect(txt.y - (tb.y + tb.height)).toBeLessThanOrEqual(12);
-});
-
-test('asset manager: rename, move and delete images and folders', async ({ page }) => {
+test('asset manager: rename, drag-to-move and delete images and folders', async ({ page }) => {
   await openDesigner(page);
   await page.getByTestId('toolbox-image').click();
   await page.getByTestId('canvas-element').click();
@@ -146,29 +132,62 @@ test('asset manager: rename, move and delete images and folders', async ({ page 
   const item = page.getByTestId('am-item').filter({ hasText: 'mgmt.png' });
   await item.waitFor();
 
-  // Rename.
-  page.once('dialog', (d) => void d.accept('final.png'));
+  // Rename via the styled dialog.
   await item.getByTestId('am-item-rename').click();
-  await page.getByTestId('am-item').filter({ hasText: 'final.png' }).waitFor();
+  await page.getByTestId('dialog-input').fill('final.png');
+  await page.getByTestId('dialog-confirm').click();
+  const renamed = page.getByTestId('am-item').filter({ hasText: 'final.png' });
+  await renamed.waitFor();
 
-  // Create a folder (steps in), go back, move the image into it.
-  page.once('dialog', (d) => void d.accept('archive'));
+  // Create a folder (steps in), go back to root.
   await page.getByTestId('am-new-folder').click();
+  await page.getByTestId('dialog-input').fill('archive');
+  await page.getByTestId('dialog-confirm').click();
   await page.getByTestId('am-breadcrumb').getByText('All files').click();
-  page.once('dialog', (d) => void d.accept('archive'));
-  await page.getByTestId('am-item').filter({ hasText: 'final.png' }).getByTestId('am-item-move').click();
+
+  // DRAG the image onto the folder card to move it (HTML5 dnd via dispatched events).
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  await renamed.dispatchEvent('dragstart', { dataTransfer });
   const folderCard = page.getByTestId('am-folder-card').filter({ hasText: 'archive' });
+  await folderCard.dispatchEvent('dragover', { dataTransfer });
+  await folderCard.dispatchEvent('drop', { dataTransfer });
   await expect(folderCard).toContainText('1 item');
 
-  // Inside the folder: delete the image (confirm dialog).
+  // Inside the folder: DRAG it onto [..] to move it back out to the root.
   await folderCard.click();
-  page.once('dialog', (d) => void d.accept());
-  await page.getByTestId('am-item').filter({ hasText: 'final.png' }).getByTestId('am-item-delete').click();
+  const inFolder = page.getByTestId('am-item').filter({ hasText: 'final.png' });
+  await inFolder.waitFor();
+  const dt2 = await page.evaluateHandle(() => new DataTransfer());
+  await inFolder.dispatchEvent('dragstart', { dataTransfer: dt2 });
+  await page.getByTestId('am-up-card').dispatchEvent('dragover', { dataTransfer: dt2 });
+  await page.getByTestId('am-up-card').dispatchEvent('drop', { dataTransfer: dt2 });
   await expect(page.getByTestId('am-item')).toHaveCount(0);
 
-  // Back at root: delete the now-empty folder (confirm dialog).
+  // Back at root: the image is there; delete it (styled danger confirm).
   await page.getByTestId('am-breadcrumb').getByText('All files').click();
-  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('am-item').filter({ hasText: 'final.png' }).getByTestId('am-item-delete').click();
+  await page.getByTestId('dialog-confirm').click();
+  await expect(page.getByTestId('am-item').filter({ hasText: 'final.png' })).toHaveCount(0);
+
+  // Delete the empty folder (styled confirm; images would move to parent).
   await page.getByTestId('am-folder-card').filter({ hasText: 'archive' }).getByTestId('am-folder-delete').click();
+  await page.getByTestId('dialog-confirm').click();
   await expect(page.getByTestId('am-folder-card').filter({ hasText: 'archive' })).toHaveCount(0);
+});
+
+test('the text toolbar sits right above the text element, right-aligned', async ({ page }) => {
+  await openDesigner(page);
+  await page.getByTestId('toolbox-text').click();
+
+  // Focus the text → the formatting toolbar appears.
+  await page.getByTestId('text-editable').click();
+  const toolbar = page.getByTestId('rte-toolbar');
+  await toolbar.waitFor();
+
+  const tb = (await toolbar.boundingBox())!;
+  const txt = (await page.getByTestId('text-editable').boundingBox())!;
+  // Right edges align (±2px) and the toolbar sits immediately above the text.
+  expect(Math.abs(tb.x + tb.width - (txt.x + txt.width))).toBeLessThanOrEqual(2);
+  expect(tb.y + tb.height).toBeLessThanOrEqual(txt.y);
+  expect(txt.y - (tb.y + tb.height)).toBeLessThanOrEqual(12);
 });

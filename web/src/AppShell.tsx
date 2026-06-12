@@ -28,6 +28,7 @@ import { TemplatesList } from './screens/TemplatesList.js';
 import { Help } from './screens/Help.js';
 import { Activity } from './screens/Activity.js';
 import { TemplateEditor } from './screens/TemplateEditor.tsx';
+import { DialogHost } from './ui/dialog.tsx';
 import type { JSX } from 'preact';
 
 /** True when `route` is `item` or a sub-route of it (e.g. /profiles/<id> under /profiles). */
@@ -182,6 +183,7 @@ export function AppShell(): JSX.Element {
         </div>
       </aside>
 
+      <DialogHost />
       <main data-testid="app-body" class="flex-1 overflow-x-hidden px-8 py-8">
         {/* Key by route AND active workspace so switching company/workspace
             remounts the screen and re-fetches its (now re-scoped) data, even when
