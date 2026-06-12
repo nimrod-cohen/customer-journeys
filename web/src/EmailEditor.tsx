@@ -102,6 +102,34 @@ export function EmailEditor({ id }: { id?: string }) {
     });
     editor.setComponents(INITIAL_MJML);
     editorRef.current = editor;
+
+    // Enrich the rich-text toolbar (shown when a text block is double-clicked).
+    // Defaults already include bold/italic/underline/strikethrough/link; we add
+    // alignment, lists, and font size. Each runs a contenteditable command, which
+    // produces ordinary inline HTML inside mj-text (valid under strict MJML).
+    const rte = editor.RichTextEditor;
+    const cmd = (name: string, icon: string, title: string, command: string) =>
+      rte.add(name, { icon, attributes: { title }, result: (r: { exec: (c: string) => void }) => r.exec(command) });
+    cmd('cdp-align-left', '⟸', 'Align left', 'justifyLeft');
+    cmd('cdp-align-center', '↔', 'Align center', 'justifyCenter');
+    cmd('cdp-align-right', '⟹', 'Align right', 'justifyRight');
+    cmd('cdp-ul', '•', 'Bulleted list', 'insertUnorderedList');
+    cmd('cdp-ol', '1.', 'Numbered list', 'insertOrderedList');
+    rte.add('cdp-font-size', {
+      icon: `<select class="gjs-field" title="Font size" style="background:transparent;border:0;color:inherit;font:inherit;cursor:pointer">
+          <option value="">Size</option>
+          <option value="2">Small</option>
+          <option value="3">Normal</option>
+          <option value="5">Large</option>
+          <option value="7">Huge</option>
+        </select>`,
+      event: 'change',
+      result: (r: { exec: (c: string, v?: string) => void }, action: { btn?: HTMLElement }) => {
+        const sel = action.btn?.querySelector('select');
+        if (sel && sel.value) r.exec('fontSize', sel.value);
+      },
+    });
+
     // grapesjs-mjml makes getHtml() return the MJML document. Keep the surfaced
     // MJML LIVE: GrapesJS emits 'update' on every canvas change, so the preview
     // and the saved payload always reflect the current design (not a stale
