@@ -52,6 +52,10 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /templates': 'manage_content',
   'GET /templates/:id': 'manage_content',
   'PUT /templates/:id': 'manage_content',
+  'POST /templates/:id/clone': 'manage_content',
+
+  // --- assets (uploaded email images; GET /assets/:id is public-by-uuid in app.ts) ---
+  'POST /assets': 'manage_content',
 
   // --- broadcasts (manage_content) ---
   'GET /broadcasts': 'manage_content',

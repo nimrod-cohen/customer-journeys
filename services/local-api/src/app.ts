@@ -56,6 +56,23 @@ export function createApp(opts: CreateAppOptions): Hono {
     return c.json(r.body as object, r.status as 200 | 400 | 401 | 403);
   });
 
+  // Serve an uploaded asset (email image) as BINARY — public-by-uuid, no auth:
+  // the CloudFront model (possession of the unguessable URL grants read, exactly
+  // like a CDN image link inside a delivered email). Uploads are capability-gated
+  // (POST /assets via dispatch); only serving is public.
+  app.get('/assets/:id', async (c) => {
+    const id = c.req.param('id');
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return c.notFound();
+    const { rows } = await opts.pool.query('SELECT mime, data FROM assets WHERE id = $1', [id]);
+    const row = rows[0] as { mime: string; data: string } | undefined;
+    if (!row) return c.notFound();
+    const bytes = Buffer.from(row.data, 'base64');
+    return c.body(bytes, 200, {
+      'content-type': row.mime,
+      'cache-control': 'public, max-age=31536000, immutable',
+    });
+  });
+
   // --- everything else flows through the dispatch pipeline ---
   app.all('*', async (c) => {
     const url = new URL(c.req.url);

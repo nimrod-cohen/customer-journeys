@@ -1,0 +1,155 @@
+// Phase 2 of the email-designer port (§11): templates carry the designer's
+// editable `design` JSON alongside the derived MJML; library templates CLONE into
+// independently-mutable working copies (for broadcasts/campaigns); assets upload
+// workspace-scoped and serve public-by-uuid as binary. REAL Postgres.
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { hasDatabaseUrl } from '@cdp/db';
+import { createApp } from '../src/index.js';
+import { makeWorld, tokenFor, call, type TestWorld } from './seed.js';
+
+const WS = '0c0d0e13-0000-4000-8000-000000000a01';
+const OTHER = '0c0d0e13-0000-4000-8000-000000000a02';
+const USER = '0c0d0e13-0000-4000-8000-0000000000b1';
+
+const MJML = '<mjml><mj-body><mj-section><mj-column><mj-text>hi</mj-text></mj-column></mj-section></mj-body></mjml>';
+const DESIGN = {
+  version: 1,
+  settings: { direction: 'rtl', bodyWidth: 640 },
+  rows: [{ id: 'row-1', elements: [{ id: 'e1', type: 'text', props: { html: 'hi' } }] }],
+};
+// A 1×1 transparent PNG.
+const PNG_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+const describeMaybe = hasDatabaseUrl() ? describe : describe.skip;
+
+describeMaybe('template design + clone + assets (real Postgres)', () => {
+  let world: TestWorld;
+  const tok = () => tokenFor(USER, WS);
+
+  beforeAll(async () => {
+    world = makeWorld();
+    await cleanup();
+    for (const ws of [WS, OTHER]) {
+      await world.pool.query("INSERT INTO workspaces (id, name, status) VALUES ($1,'W','active')", [ws]);
+    }
+    await world.pool.query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')", [WS, USER]);
+  });
+
+  afterAll(async () => {
+    if (world) {
+      await cleanup();
+      await world.pool.end();
+    }
+  });
+
+  async function cleanup(): Promise<void> {
+    await world.pool.query('DELETE FROM assets WHERE workspace_id = ANY($1)', [[WS, OTHER]]);
+    await world.pool.query('DELETE FROM email_templates WHERE workspace_id = ANY($1)', [[WS, OTHER]]);
+    await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [WS]);
+    for (const ws of [WS, OTHER]) await world.pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
+  }
+
+  it('design round-trips: create with design → get → update design', async () => {
+    const c = await call(world.env, 'POST', '/templates', {
+      token: tok(),
+      body: { name: 'Designed', mjml: MJML, design: DESIGN },
+    });
+    expect(c.status).toBe(201);
+    const id = (c.body as { template: { id: string } }).template.id;
+
+    const g = await call(world.env, 'GET', `/templates/${id}`, { token: tok() });
+    const t = (g.body as { template: { design: typeof DESIGN; kind: string } }).template;
+    expect(t.design).toEqual(DESIGN);
+    expect(t.kind).toBe('library');
+
+    const newDesign = { ...DESIGN, rows: [] };
+    await call(world.env, 'PUT', `/templates/${id}`, { token: tok(), body: { design: newDesign } });
+    const g2 = await call(world.env, 'GET', `/templates/${id}`, { token: tok() });
+    expect((g2.body as { template: { design: { rows: unknown[] } } }).template.design.rows).toEqual([]);
+  });
+
+  it('clone → independent working copy; library list excludes copies', async () => {
+    const c = await call(world.env, 'POST', '/templates', {
+      token: tok(),
+      body: { name: 'Library T', mjml: MJML, design: DESIGN },
+    });
+    const libId = (c.body as { template: { id: string } }).template.id;
+
+    const cl = await call(world.env, 'POST', `/templates/${libId}/clone`, { token: tok(), body: {} });
+    expect(cl.status).toBe(201);
+    const copyId = (cl.body as { template: { id: string } }).template.id;
+    expect(copyId).not.toBe(libId);
+
+    // The copy carries the design + provenance and is kind='copy'.
+    const gc = await call(world.env, 'GET', `/templates/${copyId}`, { token: tok() });
+    const copy = (gc.body as { template: { kind: string; source_template_id: string; design: unknown } }).template;
+    expect(copy.kind).toBe('copy');
+    expect(copy.source_template_id).toBe(libId);
+    expect(copy.design).toEqual(DESIGN);
+
+    // Mutating the copy does NOT touch the library original.
+    await call(world.env, 'PUT', `/templates/${copyId}`, {
+      token: tok(),
+      body: { name: 'Copy edited', mjml: MJML.replace('hi', 'changed'), design: { ...DESIGN, rows: [] } },
+    });
+    const gl = await call(world.env, 'GET', `/templates/${libId}`, { token: tok() });
+    const lib = (gl.body as { template: { name: string; mjml: string } }).template;
+    expect(lib.name).toBe('Library T');
+    expect(lib.mjml).toContain('hi');
+
+    // The Templates list shows library entries only — never working copies.
+    const list = await call(world.env, 'GET', '/templates', { token: tok() });
+    const ids = (list.body as { templates: Array<{ id: string }> }).templates.map((t) => t.id);
+    expect(ids).toContain(libId);
+    expect(ids).not.toContain(copyId);
+  });
+
+  it('cloning a cross-workspace template id is 404', async () => {
+    const c = await call(world.env, 'POST', '/templates', {
+      token: tok(),
+      body: { name: 'Mine', mjml: MJML },
+    });
+    const id = (c.body as { template: { id: string } }).template.id;
+    const foreign = tokenFor(USER, OTHER); // no membership in OTHER
+    expect([403, 404]).toContain(
+      (await call(world.env, 'POST', `/templates/${id}/clone`, { token: foreign, body: {} })).status,
+    );
+  });
+
+  it('asset upload → public binary serve (CloudFront model)', async () => {
+    const up = await call(world.env, 'POST', '/assets', {
+      token: tok(),
+      body: { filename: 'pixel.png', mime: 'image/png', data_base64: PNG_B64 },
+    });
+    expect(up.status).toBe(201);
+    const { id, path } = up.body as { id: string; path: string };
+    expect(path).toBe(`/assets/${id}`);
+
+    // Serving goes through the Hono app (binary, no auth) — like a CDN URL.
+    const app = createApp({ pool: world.pool });
+    const res = await app.request(path);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    const buf = new Uint8Array(await res.arrayBuffer());
+    expect(buf.length).toBeGreaterThan(20);
+    expect(Buffer.from(buf).toString('base64')).toBe(PNG_B64);
+
+    // Unknown / malformed ids 404.
+    expect((await app.request('/assets/0c0d0e13-dead-4000-8000-00000000beef')).status).toBe(404);
+    expect((await app.request('/assets/not-a-uuid')).status).toBe(404);
+  });
+
+  it('rejects non-image mimes and oversized payloads', async () => {
+    const bad = await call(world.env, 'POST', '/assets', {
+      token: tok(),
+      body: { filename: 'x.exe', mime: 'application/octet-stream', data_base64: PNG_B64 },
+    });
+    expect(bad.status).toBe(400);
+    const big = await call(world.env, 'POST', '/assets', {
+      token: tok(),
+      body: { filename: 'big.png', mime: 'image/png', data_base64: 'A'.repeat(3_000_001) },
+    });
+    expect(big.status).toBe(413);
+  });
+});

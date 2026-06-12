@@ -485,9 +485,16 @@ export const importCsvMembers: Handler = async (ctx, pool, req) => {
 // templates (manage_content)
 // ---------------------------------------------------------------------------
 
+/**
+ * GET /templates — the LIBRARY templates only. kind='copy' rows (per-broadcast/
+ * campaign clones) are working copies, not library entries — they never list.
+ */
 export const listTemplates: Handler = async (ctx, pool) => {
-  const q = scopedQuery(ctx.workspaceId, 'SELECT id, name, updated_at FROM email_templates');
-  const { rows } = await pool.query(q.text, q.values);
+  const q = scopedQuery(
+    ctx.workspaceId,
+    "SELECT id, name, updated_at FROM email_templates WHERE kind = 'library'",
+  );
+  const { rows } = await pool.query(`${q.text} ORDER BY updated_at DESC`, q.values);
   return ok({ templates: rows });
 };
 
@@ -495,22 +502,23 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
   const b = asObject(req.body);
   const name = String(b.name ?? 'Untitled');
   const mjml = String(b.mjml ?? '');
-  // Compile MJML→HTML server-side (reuse @cdp/email compileMjml via deps).
+  // Compile MJML→HTML server-side (reuse @cdp/email compileMjml via deps). The
+  // designer's editable source (design JSON) is stored alongside the derived MJML.
   const compiled = deps.compileMjml(mjml);
   const { rows } = await pool.query(
-    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html)
-     VALUES ($1, $2, $3, $4) RETURNING id, name, updated_at`,
-    [ctx.workspaceId, name, mjml, compiled],
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design)
+     VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id, name, updated_at`,
+    [ctx.workspaceId, name, mjml, compiled, b.design === undefined ? null : JSON.stringify(b.design)],
   );
   return ok({ template: rows[0] }, 201);
 };
 
-/** GET /templates/:id — one template (with its MJML) for the editor. Scoped. */
+/** GET /templates/:id — one template (MJML + design) for the editor. Scoped. */
 export const getTemplate: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, mjml, updated_at FROM email_templates WHERE id = $1',
+    'SELECT id, name, mjml, design, kind, source_template_id, updated_at FROM email_templates WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -518,7 +526,7 @@ export const getTemplate: Handler = async (ctx, pool, req) => {
   return ok({ template: rows[0] });
 };
 
-/** PUT /templates/:id — update name/MJML (recompiles HTML server-side). Scoped. */
+/** PUT /templates/:id — update name/MJML/design (recompiles HTML server-side). Scoped. */
 export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
   const id = req.params.id!;
   const b = asObject(req.body);
@@ -531,13 +539,72 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
        name = COALESCE($1, name),
        mjml = COALESCE($2, mjml),
        compiled_html = COALESCE($3, compiled_html),
+       design = CASE WHEN $4::boolean THEN $5::jsonb ELSE design END,
        updated_at = now()
-     WHERE id = $4`,
-    [name, mjml, compiled, id],
+     WHERE id = $6`,
+    [
+      name,
+      mjml,
+      compiled,
+      b.design !== undefined,
+      b.design === undefined || b.design === null ? null : JSON.stringify(b.design),
+      id,
+    ],
   );
   const { rowCount } = await pool.query(q.text, q.values);
   if (!rowCount) return ok({ error: 'not found' }, 404);
   return ok({ updated: rowCount });
+};
+
+/**
+ * POST /templates/:id/clone — copy a template into a per-broadcast/campaign
+ * WORKING COPY (kind='copy', source_template_id = the original). The copy is
+ * independently editable with the same designer; the library original stays
+ * pristine. Returns the new copy's id. Scoped.
+ */
+export const cloneTemplate: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const q = scopedQuery(
+    ctx.workspaceId,
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id)
+     SELECT workspace_id, COALESCE($2, name), mjml, compiled_html, design, 'copy', id
+     FROM email_templates WHERE id = $1`,
+    [id, b.name !== undefined ? String(b.name) : null],
+  );
+  // scopedQuery scopes the SELECT; RETURNING rides after the statement text.
+  const { rows } = await pool.query(`${q.text} RETURNING id, name`, q.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  return ok({ template: rows[0] }, 201);
+};
+
+// ---------------------------------------------------------------------------
+// assets (uploaded email images; §11)
+// ---------------------------------------------------------------------------
+
+/** Max upload ~2MB of raw bytes (base64 is ~4/3 of that). */
+const MAX_ASSET_BASE64 = 3_000_000;
+const ALLOWED_ASSET_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml']);
+
+/**
+ * POST /assets — upload an image (JSON {filename, mime, data_base64}); returns
+ * {id, path} where path is /assets/:id (the client absolutizes against its API
+ * base). Serving is public-by-uuid (GET /assets/:id in app.ts — the CloudFront
+ * model); upload is capability-gated + workspace-scoped.
+ */
+export const uploadAsset: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const filename = String(b.filename ?? 'upload');
+  const mime = String(b.mime ?? '');
+  const data = String(b.data_base64 ?? '');
+  if (!ALLOWED_ASSET_MIME.has(mime)) return ok({ error: `unsupported image type '${mime}'` }, 400);
+  if (!data) return ok({ error: 'data_base64 required' }, 400);
+  if (data.length > MAX_ASSET_BASE64) return ok({ error: 'image too large (max ~2MB)' }, 413);
+  const { rows } = await pool.query<{ id: string }>(
+    `INSERT INTO assets (workspace_id, filename, mime, data) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [ctx.workspaceId, filename, mime, data],
+  );
+  return ok({ id: rows[0]!.id, path: `/assets/${rows[0]!.id}` }, 201);
 };
 
 // ---------------------------------------------------------------------------
@@ -1765,6 +1832,8 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /templates': createTemplate,
   'GET /templates/:id': getTemplate,
   'PUT /templates/:id': updateTemplate,
+  'POST /templates/:id/clone': cloneTemplate,
+  'POST /assets': uploadAsset,
   'GET /broadcasts': listBroadcasts,
   'POST /broadcasts': createBroadcast,
   'GET /broadcasts/:id': getBroadcast,
