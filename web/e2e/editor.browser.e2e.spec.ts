@@ -186,10 +186,12 @@ test('the text toolbar sits right above the text element, right-aligned', async 
 
   const tb = (await toolbar.boundingBox())!;
   const txt = (await page.getByTestId('text-editable').boundingBox())!;
-  // Right edges align (±2px) and the toolbar sits immediately above the text.
+  const canvasBox = (await page.locator('.nm-canvas').boundingBox())!;
+  // Right edges align (±2px); the toolbar starts at/above the text and never
+  // escapes the canvas area (it clamps to the canvas top when space is tight).
   expect(Math.abs(tb.x + tb.width - (txt.x + txt.width))).toBeLessThanOrEqual(2);
-  expect(tb.y + tb.height).toBeLessThanOrEqual(txt.y);
-  expect(txt.y - (tb.y + tb.height)).toBeLessThanOrEqual(12);
+  expect(tb.y).toBeLessThanOrEqual(txt.y);
+  expect(tb.y).toBeGreaterThanOrEqual(canvasBox.y);
 });
 
 test('asset manager: upload multiple files at once', async ({ page }) => {
@@ -243,4 +245,45 @@ test('text editor: adding a link via the styled dialog applies to the selection'
   await page.getByTestId('canvas-empty').waitFor({ state: 'hidden' });
   await page.getByTestId('template-name').click(); // blur the editable → save
   await expect(page.getByTestId('mjml-output')).toHaveValue(/https:\/\/example\.com\/promo/);
+});
+
+test('text editor: lists are visible at design time and the toolbar clamps to the canvas', async ({ page }) => {
+  await openDesigner(page);
+  await page.getByTestId('toolbox-text').click();
+
+  // Make the text a bulleted list via the toolbar.
+  const editable = page.getByTestId('text-editable');
+  await editable.click();
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="text-editable"]')!;
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.addRange(range);
+  });
+  await page.getByTestId('rte-toolbar').waitFor();
+  await page.getByTestId('rte-toolbar').getByTitle('• list').click();
+
+  // The list RENDERS as a list (Tailwind preflight is overridden in the canvas).
+  const ul = editable.locator('ul');
+  await expect(ul).toHaveCount(1);
+  await expect(ul).toHaveCSS('list-style-type', 'disc');
+  const pad = await ul.evaluate((el) => getComputedStyle(el).paddingInlineStart);
+  expect(parseInt(pad)).toBeGreaterThanOrEqual(20);
+
+  // Toolbar clamp: scroll the text out of view inside the canvas — the toolbar
+  // must stick to the CANVAS top (below the designer toolbar), not the page top.
+  await page.evaluate(() => {
+    // grow the canvas content so it can scroll, then scroll past the text
+    const canvas = document.querySelector('.nm-canvas')!;
+    const spacer = document.createElement('div');
+    spacer.style.height = '1500px';
+    canvas.appendChild(spacer);
+    canvas.scrollTop = 600;
+    canvas.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  const tb = (await page.getByTestId('rte-toolbar').boundingBox())!;
+  const canvasBox = (await page.locator('.nm-canvas').boundingBox())!;
+  expect(tb.y).toBeGreaterThanOrEqual(canvasBox.y);
 });

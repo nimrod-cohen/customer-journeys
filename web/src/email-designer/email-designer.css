@@ -517,3 +517,17 @@
 .nm-am-dragging { opacity: 0.45; }
 .nm-am-droptarget { border-color: #14b8a6 !important; box-shadow: 0 0 0 2px rgb(20 184 166 / 0.35); }
 .nm-am-up .nm-am-thumb { color: #64748b; }
+
+/* ── Rich-text lists ──
+   Tailwind's preflight strips list-style + padding from ul/ol globally, which
+   made RTE-created lists invisible at design time. Restore browser-like list
+   rendering inside the canvas text (padding-inline-start is RTL-aware). The
+   compiled email is unaffected (clients render mj-text lists with defaults). */
+.nm-text-editable ul,
+.nm-text-editable ol {
+  margin: 0.4em 0;
+  padding-inline-start: 24px;
+}
+.nm-text-editable ul { list-style: disc; }
+.nm-text-editable ol { list-style: decimal; }
+.nm-text-editable ul ul { list-style: circle; }

@@ -80,14 +80,16 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
   };
 
   // The toolbar sits IMMEDIATELY ABOVE the text element, right-aligned with its
-  // edge; when that spot scrolls out of the viewport it sticks to the top.
+  // edge; when that spot scrolls out of view it sticks to the TOP OF THE CANVAS
+  // (just below the designer's own toolbar) — never floating over the page header.
   const position = useCallback((): void => {
     const rect = ref.current?.getBoundingClientRect();
     if (!rect) return;
     const TOOLBAR_H = 38;
     const GAP = 6;
+    const canvasTop = ref.current?.closest('.nm-canvas')?.getBoundingClientRect().top ?? 0;
     setPos({
-      top: Math.max(8, rect.top - TOOLBAR_H - GAP),
+      top: Math.max(canvasTop + GAP, rect.top - TOOLBAR_H - GAP),
       left: rect.right, // the toolbar right-aligns to this via translateX(-100%)
     });
     setShowToolbar(true);
