@@ -1,15 +1,23 @@
 // TemplateEditor — the template HOST for the embeddable EmailDesigner (§11).
 // Owns load/save: GET /templates/:id → design (the editable source of truth),
-// serializes design → MJML on save (the "editor emits MJML, never hand-rolled
-// HTML" invariant) and PUTs/POSTs {name, design, mjml}; the server compiles the
-// HTML. Carries over the established editor UX: save STAYS here (Saved ✓), a new
-// template moves to /editor/:id, the broadcast "Design email" round-trip returns
-// via editorReturn, and a beforeunload guard warns on unsaved changes.
+// serializes design → MJML (the "editor emits MJML, never hand-rolled HTML"
+// invariant) and persists {name, design, mjml}; the server compiles the HTML.
+//
+// Changes AUTOSAVE (debounced ~800ms, nomentor-style) with a Saving…/Saved ✓
+// status. The FIRST autosave of a new template creates the row and silently
+// rewrites the URL to /editor/:id (history.replaceState — no remount, no lost
+// edits; a refresh then reloads the saved template). The broadcast "Design
+// email" round-trip is finished EXPLICITLY via the "Save & return" button (an
+// autosave never navigates away mid-design).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { takeEditorReturn, setReturnedTemplate, setJustSavedTemplate, takeJustSavedTemplate } from '../store/editorReturn.js';
+import {
+  takeEditorReturn,
+  peekEditorReturn,
+  setReturnedTemplate,
+} from '../store/editorReturn.js';
 import { Button, Field, Input, PageHeader } from '../ui/kit.js';
 import { EmailDesigner } from '../email-designer/EmailDesigner.tsx';
 import { designToMjml } from '../email-designer/mjml-serializer.js';
@@ -22,19 +30,25 @@ interface TemplateRow {
   readonly kind: string;
 }
 
+const AUTOSAVE_MS = 800;
+
 export function TemplateEditor({ id }: { id?: string }): JSX.Element {
   const editing = Boolean(id);
   const [name, setName] = useState('Untitled');
   const [design, setDesign] = useState<EmailDesign | null>(null);
   const [loadedKey, setLoadedKey] = useState(id ? '' : 'new'); // designer mounts when set
   const [legacy, setLegacy] = useState(false); // stored template has no design (old editor)
-  const [saving, setSaving] = useState(false);
-  const [justSaved, setJustSaved] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState('');
-  // The live design (updated on every committed designer change) + dirty flag.
+  // Live values in refs so the debounced persist always reads current state.
   const liveDesign = useRef<EmailDesign>(emptyDesign());
+  const nameRef = useRef('Untitled');
+  const idRef = useRef<string | undefined>(id); // becomes set on first auto-create
   const dirtyRef = useRef(false);
-  const [dirty, setDirty] = useState(false);
+  const savingRef = useRef(false);
+  const queuedRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [mjml, setMjml] = useState('');
 
   // Load an existing template; a design-less (old-editor) template opens empty
   // with a replace-on-save notice, inheriting RTL from its stored MJML marker.
@@ -47,6 +61,7 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
       .get<{ template: TemplateRow }>(`/templates/${id}`)
       .then((r) => {
         setName(r.template.name);
+        nameRef.current = r.template.name;
         if (isEmailDesign(r.template.design)) {
           setDesign(r.template.design);
           liveDesign.current = r.template.design;
@@ -58,75 +73,101 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
           liveDesign.current = d;
         }
         setLoadedKey(id);
-        if (takeJustSavedTemplate(id)) setJustSaved(true);
       })
       .catch(() => navigate('/templates'));
   }, [id]);
 
-  // Warn before a browser refresh/close when there are unsaved changes.
+  // Warn before a browser refresh/close while changes are not yet persisted
+  // (autosave shrinks that window to ~a second).
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent): void => {
-      if (dirtyRef.current) {
+      if (dirtyRef.current || savingRef.current) {
         e.preventDefault();
         e.returnValue = '';
       }
     };
     window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, []);
 
-  const [mjml, setMjml] = useState('');
+  /** Persist the current design/name. Creates the row on first save (a working
+   *  COPY when this editor was opened from a broadcast design flow). */
+  const persist = async (): Promise<boolean> => {
+    if (savingRef.current) {
+      queuedRef.current = true; // run again after the in-flight save
+      return true;
+    }
+    savingRef.current = true;
+    dirtyRef.current = false;
+    setStatus('saving');
+    setError('');
+    try {
+      const d = liveDesign.current;
+      const body: Record<string, unknown> = {
+        name: nameRef.current || 'Untitled',
+        design: d,
+        mjml: designToMjml(d),
+      };
+      if (idRef.current) {
+        await api.put(`/templates/${idRef.current}`, { body });
+      } else {
+        if (peekEditorReturn()?.createAs === 'copy') body.kind = 'copy';
+        const r = await api.post<{ template: { id: string } }>('/templates', { body });
+        idRef.current = r.template.id;
+        // Silent URL rewrite (no remount — in-progress edits are kept); a
+        // refresh now reloads the saved template.
+        history.replaceState(null, '', `#/editor/${r.template.id}`);
+      }
+      setStatus(dirtyRef.current ? 'dirty' : 'saved');
+      return true;
+    } catch (e) {
+      setStatus('error');
+      setError(e instanceof Error ? e.message : 'Save failed');
+      dirtyRef.current = true;
+      return false;
+    } finally {
+      savingRef.current = false;
+      if (queuedRef.current) {
+        queuedRef.current = false;
+        void persist();
+      }
+    }
+  };
+
+  const scheduleAutosave = (): void => {
+    dirtyRef.current = true;
+    setStatus('dirty');
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => void persist(), AUTOSAVE_MS);
+  };
+
   const onDesignChange = (d: EmailDesign): void => {
     liveDesign.current = d;
     setMjml(designToMjml(d));
-    dirtyRef.current = true;
-    setDirty(true);
-    setJustSaved(false);
+    setLegacy(false);
+    scheduleAutosave();
   };
   // Show the loaded design's MJML before the first edit.
   useEffect(() => {
     setMjml(designToMjml(liveDesign.current));
   }, [loadedKey]);
 
-  const save = async (): Promise<void> => {
-    setSaving(true);
-    setError('');
-    try {
-      // Consume the return context up front: a NEW template created from a
-      // broadcast/campaign design flow saves as a working COPY (not library).
-      const ret = takeEditorReturn();
-      const d = liveDesign.current;
-      const body: Record<string, unknown> = { name: name || 'Untitled', design: d, mjml: designToMjml(d) };
-      if (!id && ret?.createAs === 'copy') body.kind = 'copy';
-      let savedId = id;
-      if (id) {
-        await api.put(`/templates/${id}`, { body });
-      } else {
-        const r = await api.post<{ template: { id: string } }>('/templates', { body });
-        savedId = r.template.id;
-      }
-      dirtyRef.current = false;
-      setDirty(false);
-      setJustSaved(true);
-      setLegacy(false);
-      // Opened from a broadcast flow → hand the template back + return there.
-      if (ret) {
-        setReturnedTemplate(savedId ?? null);
-        navigate(ret.returnPath);
-        return;
-      }
-      // Otherwise STAY; a brand-new template moves to its /editor/:id URL (the
-      // remount picks the Saved ✓ flag back up).
-      if (!id && savedId) {
-        setJustSavedTemplate(savedId);
-        navigate(`/editor/${savedId}`);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed');
-    } finally {
-      setSaving(false);
+  /** Explicit save: flush now; if opened from a broadcast flow, return there. */
+  const saveNow = async (): Promise<void> => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    const okSave = await persist();
+    if (!okSave) return;
+    const ret = takeEditorReturn();
+    if (ret) {
+      setReturnedTemplate(idRef.current ?? null);
+      navigate(ret.returnPath);
     }
   };
+
+  const returnPending = peekEditorReturn() !== null;
 
   return (
     <section data-testid="email-editor">
@@ -135,7 +176,7 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
       </button>
       <PageHeader
         title={editing ? 'Edit email template' : 'New email template'}
-        subtitle="Design the email — it compiles to cross-client HTML via MJML on save."
+        subtitle="Design the email — changes save automatically and compile to cross-client HTML via MJML."
         actions={
           <div class="flex items-end gap-2">
             <Field label="Template name">
@@ -143,20 +184,27 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
                 data-testid="template-name"
                 value={name}
                 onInput={(e: Event) => {
-                  setName((e.target as HTMLInputElement).value);
-                  dirtyRef.current = true;
-                  setDirty(true);
+                  const v = (e.target as HTMLInputElement).value;
+                  setName(v);
+                  nameRef.current = v;
+                  scheduleAutosave();
                 }}
               />
             </Field>
-            <Button data-testid="save-template" onClick={() => void save()} disabled={saving}>
-              {saving ? 'Saving…' : editing ? 'Save changes' : 'Save template'}
+            <Button data-testid="save-template" onClick={() => void saveNow()} disabled={status === 'saving'}>
+              {returnPending ? 'Save & return' : 'Save now'}
             </Button>
-            {justSaved && !dirty ? (
-              <span data-testid="template-saved" class="self-center text-sm font-medium text-emerald-600">
-                Saved ✓
-              </span>
-            ) : null}
+            <span data-testid="save-status" class="self-center text-sm font-medium">
+              {status === 'saving' ? (
+                <span class="text-stone-500">Saving…</span>
+              ) : status === 'saved' ? (
+                <span data-testid="template-saved" class="text-emerald-600">Saved ✓</span>
+              ) : status === 'error' ? (
+                <span class="text-rose-600">Save failed</span>
+              ) : status === 'dirty' ? (
+                <span class="text-stone-400">…</span>
+              ) : null}
+            </span>
           </div>
         }
       />
@@ -164,7 +212,7 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
       {legacy ? (
         <p data-testid="legacy-template-note" class="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
           This template was created with the previous editor and has no editable design — designing here
-          replaces its content when you save.
+          replaces its content when it saves.
         </p>
       ) : null}
       {error ? <p class="mb-3 text-sm text-rose-600">{error}</p> : null}

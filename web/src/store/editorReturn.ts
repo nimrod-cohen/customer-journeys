@@ -23,6 +23,11 @@ export function setEditorReturn(returnPath: string, opts?: { createAs?: 'copy' }
   pending = opts?.createAs ? { returnPath, createAs: opts.createAs } : { returnPath };
 }
 
+/** Peek the pending return context WITHOUT consuming it (autosave reads createAs). */
+export function peekEditorReturn(): EditorReturn | null {
+  return pending;
+}
+
 /** Consume the pending return context (null if the editor was opened standalone). */
 export function takeEditorReturn(): EditorReturn | null {
   const r = pending;

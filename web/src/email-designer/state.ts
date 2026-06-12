@@ -71,9 +71,11 @@ export function currentDesign(): EmailDesign {
   return { version: 1, settings: settings.value, rows: rows.value };
 }
 
-interface HistoryEntry {
+export interface HistoryEntry {
+  /** The document state BEFORE the action (what undo restores). */
   readonly snapshot: string;
   readonly action: string;
+  readonly timestamp: number;
 }
 export const undoStack = signal<HistoryEntry[]>([]);
 export const redoStack = signal<HistoryEntry[]>([]);
@@ -98,7 +100,7 @@ export function mutate(action: string, fn: () => void): void {
   fn();
   const after = snapshot();
   if (after === before) return;
-  const list = [...undoStack.value, { snapshot: before, action }];
+  const list = [...undoStack.value, { snapshot: before, action, timestamp: Date.now() }];
   while (list.length > MAX_HISTORY) list.shift();
   undoStack.value = list;
   redoStack.value = [];
@@ -109,7 +111,7 @@ export function undo(): void {
   const list = [...undoStack.value];
   const entry = list.pop();
   if (!entry) return;
-  redoStack.value = [...redoStack.value, { snapshot: snapshot(), action: entry.action }];
+  redoStack.value = [...redoStack.value, { snapshot: snapshot(), action: entry.action, timestamp: Date.now() }];
   undoStack.value = list;
   applySnapshot(entry.snapshot);
 }
@@ -118,9 +120,57 @@ export function redo(): void {
   const list = [...redoStack.value];
   const entry = list.pop();
   if (!entry) return;
-  undoStack.value = [...undoStack.value, { snapshot: snapshot(), action: entry.action }];
+  undoStack.value = [...undoStack.value, { snapshot: snapshot(), action: entry.action, timestamp: Date.now() }];
   redoStack.value = list;
   applySnapshot(entry.snapshot);
+}
+
+// ── History panel (preview / revert) ─────────────────────────────────────────
+// The undo stack stores BEFORE-states; the state AFTER entry i is entry i+1's
+// before-state (or the live document for the newest entry). The panel previews a
+// version by applying it WITHOUT notifying the host (no autosave of a preview)
+// and reverts by committing it as a regular, undoable mutation.
+
+export const previewIndex = signal<number | null>(null);
+let _liveSnapshot: string | null = null;
+
+/** The document state AFTER history entry i. */
+export function snapshotAfter(i: number): string {
+  const list = undoStack.value;
+  return i + 1 < list.length ? list[i + 1]!.snapshot : (_liveSnapshot ?? snapshot());
+}
+
+function applyWithoutNotify(s: string): void {
+  try {
+    const d = JSON.parse(s) as EmailDesign;
+    rows.value = [...d.rows] as DesignRow[];
+    settings.value = d.settings ?? {};
+  } catch {
+    /* corrupt snapshot — ignore */
+  }
+}
+
+/** Preview the state after history entry i (read-only peek; live state is kept). */
+export function previewVersion(i: number): void {
+  if (i < 0 || i >= undoStack.value.length) return;
+  if (previewIndex.value === null) _liveSnapshot = snapshot();
+  applyWithoutNotify(snapshotAfter(i));
+  previewIndex.value = i;
+}
+
+/** Leave preview and restore the live document. */
+export function exitPreview(): void {
+  if (_liveSnapshot !== null) applyWithoutNotify(_liveSnapshot);
+  _liveSnapshot = null;
+  previewIndex.value = null;
+}
+
+/** Commit history entry i's after-state as the new live document (undoable). */
+export function revertToVersion(i: number): void {
+  if (i < 0 || i >= undoStack.value.length) return;
+  const target = snapshotAfter(i);
+  exitPreview();
+  mutate(`Restore version ${i + 1}`, () => applyWithoutNotify(target));
 }
 
 function applySnapshot(s: string): void {
@@ -146,6 +196,8 @@ export function loadDesign(design: EmailDesign | null, onChange: DesignListener 
   dragging.value = null;
   dropTargetId.value = null;
   viewportMode.value = 'desktop';
+  previewIndex.value = null;
+  _liveSnapshot = null;
   _listener = onChange;
   syncIdCounter(d.rows);
 }

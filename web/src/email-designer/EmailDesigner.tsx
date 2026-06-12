@@ -20,6 +20,8 @@ import { Canvas } from './Canvas.tsx';
 import { Properties } from './Properties.tsx';
 import { SettingsPanel } from './SettingsPanel.tsx';
 import { Navigator } from './Navigator.tsx';
+import { History } from './History.tsx';
+import { Monitor, Tablet, Smartphone, Undo as UndoIcon, Redo as RedoIcon } from './icons.tsx';
 import type { EmailDesign } from './model.js';
 
 export interface EmailDesignerProps {
@@ -73,6 +75,14 @@ export function EmailDesigner({ design, onChange, documentKey }: EmailDesignerPr
           >
             Template
           </button>
+          <button
+            type="button"
+            data-testid="tab-history"
+            class={`nm-tab ${mode === 'history' ? 'nm-active' : ''}`}
+            onClick={() => (sidebarMode.value = 'history')}
+          >
+            History
+          </button>
         </div>
         <div class="nm-toolbar-actions">
           {/* Viewport preview: resize the canvas frame; mobile stacks columns. */}
@@ -86,27 +96,21 @@ export function EmailDesigner({ design, onChange, documentKey }: EmailDesignerPr
                 title={`Preview on ${vp}`}
                 onClick={() => (viewportMode.value = vp)}
               >
-                {vp === 'desktop' ? (
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="13" rx="1.5" /><path d="M9 21h6M12 17v4" /></svg>
-                ) : vp === 'tablet' ? (
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2" /><path d="M11 18.5h2" /></svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7.5" y="2" width="9" height="20" rx="2" /><path d="M11 18.5h2" /></svg>
-                )}
+                {vp === 'desktop' ? <Monitor size={15} /> : vp === 'tablet' ? <Tablet size={15} /> : <Smartphone size={15} />}
               </button>
             ))}
           </div>
           <button type="button" data-testid="designer-undo" class="nm-mini-btn" title="Undo" disabled={undoStack.value.length === 0} onClick={undo}>
-            ↶
+            <UndoIcon size={15} />
           </button>
           <button type="button" data-testid="designer-redo" class="nm-mini-btn" title="Redo" disabled={redoStack.value.length === 0} onClick={redo}>
-            ↷
+            <RedoIcon size={15} />
           </button>
         </div>
       </div>
       <div class="nm-designer-body">
         <aside class="nm-sidebar">
-          {mode === 'settings' ? <SettingsPanel /> : mode === 'properties' ? <Properties /> : <Toolbox />}
+          {mode === 'settings' ? <SettingsPanel /> : mode === 'properties' ? <Properties /> : mode === 'history' ? <History /> : <Toolbox />}
         </aside>
         <Canvas />
         <Navigator />
