@@ -191,20 +191,25 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
                 }}
               />
             </Field>
-            <Button data-testid="save-template" onClick={() => void saveNow()} disabled={status === 'saving'}>
-              {returnPending ? 'Save & return' : 'Save now'}
-            </Button>
-            <span data-testid="save-status" class="self-center text-sm font-medium">
-              {status === 'saving' ? (
-                <span class="text-stone-500">Saving…</span>
-              ) : status === 'saved' ? (
-                <span data-testid="template-saved" class="text-emerald-600">Saved ✓</span>
-              ) : status === 'error' ? (
-                <span class="text-rose-600">Save failed</span>
-              ) : status === 'dirty' ? (
-                <span class="text-stone-400">…</span>
-              ) : null}
-            </span>
+            {/* Button + save status share one bottom-aligned row, with the
+                status vertically centered against the button (not floating up
+                toward the field label). */}
+            <div class="flex items-center gap-2">
+              <Button data-testid="save-template" onClick={() => void saveNow()} disabled={status === 'saving'}>
+                {returnPending ? 'Save & return' : 'Save now'}
+              </Button>
+              <span data-testid="save-status" class="min-w-[4.5rem] text-sm font-medium">
+                {status === 'saving' ? (
+                  <span class="text-stone-500">Saving…</span>
+                ) : status === 'saved' ? (
+                  <span data-testid="template-saved" class="text-emerald-600">Saved ✓</span>
+                ) : status === 'error' ? (
+                  <span class="text-rose-600">Save failed</span>
+                ) : status === 'dirty' ? (
+                  <span class="text-stone-400">…</span>
+                ) : null}
+              </span>
+            </div>
           </div>
         }
       />

@@ -424,7 +424,9 @@ export function AssetManagerPanel({ onSelect }: { onSelect?: (url: string) => vo
                     </button>
                   </span>
                   <span class="nm-am-thumb">
-                    <img src={`${apiBaseUrl()}${entry.asset!.path}`} alt={entry.asset!.filename} loading="lazy" />
+                    {/* draggable={false}: otherwise grabbing the thumbnail starts
+                        a native IMAGE drag and the card's own drag never fires. */}
+                    <img src={`${apiBaseUrl()}${entry.asset!.path}`} alt={entry.asset!.filename} loading="lazy" draggable={false} />
                   </span>
                   <span class="nm-am-card-name">{entry.asset!.filename}</span>
                   <span class="nm-am-card-meta">{fmtSize(entry.asset!.size_bytes)}</span>

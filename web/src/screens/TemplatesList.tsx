@@ -67,7 +67,7 @@ export function TemplatesList() {
       </div>
 
       {tab === 'gallery' ? (
-        <Card class="overflow-hidden p-2">
+        <Card class="flex h-[70vh] flex-col overflow-hidden p-2">
           <AssetManagerPanel />
         </Card>
       ) : templates === null ? (
