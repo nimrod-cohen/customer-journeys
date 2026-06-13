@@ -26,6 +26,7 @@ import {
   type BuilderOperator,
   type Combinator,
 } from '../segments/ast-builder.js';
+import { resolveCustomerField } from '@cdp/shared';
 import { Button, Card, Field, Input, PageHeader, Select, Textarea } from '../ui/kit.js';
 
 // Fetchers for the autosuggest boxes — each returns the existing distinct values
@@ -133,14 +134,17 @@ function Suggest({
   );
 }
 
-/** Common field paths offered as suggestions for a 'field' rule. */
+/** Common field paths offered as suggestions for a 'field' rule. The
+ *  `customer.*` namespace is the same shorthand used in email tags (§11):
+ *  `customer.tier` ≡ `attributes.tier`, `customer.email` ≡ `email`. */
 const FIELD_SUGGESTIONS = [
   'email_status',
   'total_events',
   'monetary_total',
   'last_event_at',
+  'customer.tier',
+  'customer.source',
   'attributes.tier',
-  'attributes.source',
   'features.counters.purchase_30d',
 ];
 /** Friendly labels for the event count operator. */
@@ -227,7 +231,7 @@ function RuleListEditor({
                   data-testid="rule-field"
                   list="field-suggestions"
                   class="min-w-[12rem] flex-1 font-mono text-xs"
-                  placeholder="email_status, attributes.tier, features.counters.purchase_30d…"
+                  placeholder="customer.tier, email_status, features.counters.purchase_30d…"
                   value={row.field}
                   onInput={(e: Event) => update(i, { field: (e.target as HTMLInputElement).value })}
                 />
@@ -249,9 +253,12 @@ function RuleListEditor({
                     wrapperClass="relative w-40"
                     value={row.value}
                     onChange={(v) => update(i, { value: v })}
-                    fetcher={
-                      row.field.startsWith('attributes.') ? fetchAttrValues(row.field.slice('attributes.'.length)) : null
-                    }
+                    fetcher={(() => {
+                      // Resolve the customer.* shorthand too: customer.tier and
+                      // attributes.tier both autocomplete the attribute's values.
+                      const canon = resolveCustomerField(row.field);
+                      return canon.startsWith('attributes.') ? fetchAttrValues(canon.slice('attributes.'.length)) : null;
+                    })()}
                     placeholder="value"
                   />
                 ) : null}

@@ -6,6 +6,28 @@ import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
+test('the customer.* shorthand resolves like attributes.* in a segment rule (§11)', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+
+  await page.getByTestId('segment-name').fill('VIPs (shorthand)');
+  // `customer.tier` is shorthand for `attributes.tier` — the server expands it.
+  await page.getByTestId('rule-field').first().fill('customer.tier');
+  await page.getByTestId('rule-operator').first().selectOption('=');
+  // Value autocomplete still works on the shorthand (resolves to the attribute).
+  await page.getByTestId('rule-value').first().click();
+  await page.getByTestId('value-suggestion').filter({ hasText: 'vip' }).first().click();
+  await expect(page.getByTestId('rule-value').first()).toHaveValue('vip');
+
+  // Same two seeded VIPs as the explicit attributes.tier rule.
+  await page.getByTestId('save-segment').click();
+  await expect(page.getByTestId('segment-size')).toContainText('2');
+  await expect(page.getByTestId('member-preview-row')).toHaveCount(2);
+});
+
 test('create a dynamic segment, save, and see its members + the list', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();

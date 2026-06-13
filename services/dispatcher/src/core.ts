@@ -10,7 +10,7 @@
 // is reached ONLY on the all-pass 'send' path.
 import { canSend, buildListUnsubscribeHeaders, type SendingIdentity } from '@cdp/email';
 import type { SendEmailInput } from '@cdp/email';
-import type { WorkspaceStatus } from '@cdp/shared';
+import { expandCustomerToken, type WorkspaceStatus } from '@cdp/shared';
 
 /** A parameterized query ready for `pool.query(text, values)` (shared shape). */
 export interface SqlStatement {
@@ -160,13 +160,17 @@ export function nextSendableAt(now: Date, config: QuietHoursConfig | null): Date
  * values. Whitespace inside the braces is tolerated; unknown tags are left
  * untouched. No hand-rolled HTML — the template body is the workspace's compiled
  * HTML (§11), this only fills merge fields.
+ *
+ * `customer.*` tags get the systemwide shorthand expanded first, so
+ * `{{customer.tier}}` and `{{customer.attributes.tier}}` resolve to the SAME
+ * value (the merge map is keyed by the canonical token; see `customerMerge`).
  */
 export function renderTemplateBody(
   compiledHtml: string,
   merge: Readonly<Record<string, string>>,
 ): string {
   return compiledHtml.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, key: string) => {
-    const value = merge[key];
+    const value = merge[expandCustomerToken(key)] ?? merge[key];
     return value === undefined ? match : value;
   });
 }

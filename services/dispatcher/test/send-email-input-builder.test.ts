@@ -25,6 +25,14 @@ describe('renderTemplateBody', () => {
     const html = '<html>{{unknown}} kept</html>';
     expect(renderTemplateBody(html, {})).toBe('<html>{{unknown}} kept</html>');
   });
+
+  it('resolves the customer.* shorthand to the same value as the full path (§11)', () => {
+    // Merge is keyed by the canonical token (as customerMerge builds it).
+    const merge = { 'customer.attributes.tier': 'Gold', 'customer.email': 'a@b.com' };
+    expect(renderTemplateBody('Tier: {{customer.tier}}', merge)).toBe('Tier: Gold');
+    expect(renderTemplateBody('Tier: {{customer.attributes.tier}}', merge)).toBe('Tier: Gold');
+    expect(renderTemplateBody('To {{ customer.email }}', merge)).toBe('To a@b.com');
+  });
 });
 
 function ctx(): DispatchContext {

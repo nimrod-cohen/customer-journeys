@@ -41,6 +41,34 @@ describe('resolveField (whitelist + jsonb-key binding)', () => {
     expect(r.jsonKey).toBe('purchase_30d');
   });
 
+  it('accepts the customer.* namespace + shorthand (§11)', () => {
+    // Shorthand: customer.<key> ≡ attributes.<key>.
+    const tier = resolveField('customer.tier');
+    expect(tier.mapping.kind).toBe('attribute');
+    expect(tier.jsonKey).toBe('tier');
+    // Explicit attributes path under the namespace resolves the same.
+    expect(resolveField('customer.attributes.tier').jsonKey).toBe('tier');
+    // Reserved profile columns map to their scalar column, not an attribute.
+    expect(resolveField('customer.email').mapping).toEqual({ kind: 'scalar', column: 'p.email' });
+    expect(resolveField('customer.email_status').mapping).toEqual({
+      kind: 'scalar',
+      column: 'p.email_status',
+    });
+    // A bare 'customer.' is not a field → rejected by the whitelist.
+    expect(() => resolveField('customer.')).toThrow();
+  });
+
+  it('compiles a customer.* shorthand rule to the SAME SQL as attributes.*', () => {
+    const ast: AstNode = { field: 'customer.tier', operator: '=', value: 'gold' };
+    const viaShort = compileWhere(WS, ast);
+    const viaAttr = compileWhere(WS, { field: 'attributes.tier', operator: '=', value: 'gold' });
+    expect(viaShort.text).toBe(viaAttr.text);
+    expect(viaShort.values).toEqual(viaAttr.values);
+    // And the jsonb key 'tier' is BOUND, never concatenated into the text.
+    expect(viaShort.values).toContain('tier');
+    expect(viaShort.text).not.toContain('tier');
+  });
+
   it('THROWS on an unknown / non-whitelisted field', () => {
     expect(() => resolveField('profiles.email')).toThrow();
     expect(() => resolveField('password')).toThrow();

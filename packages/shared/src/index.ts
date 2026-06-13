@@ -1,6 +1,9 @@
 // @cdp/shared — cross-cutting types, env/config, workspace-aware logging.
 // See CDP-BUILD-SPEC.md §3, §3A, §6, §12, §13, §19, §21.
 
+// The `customer.*` personalization / segment-field namespace + shorthand (§8/§11).
+export * from './customer.js';
+
 /** Workspace-scoped roles stored in workspace_users.role (§3A). */
 export type WorkspaceRole = 'owner' | 'marketer' | 'accounting';
 

@@ -358,6 +358,11 @@ function ElementPanel({ id }: { id: string }): JSX.Element {
           <NumberField label="Line height" value={el.props.lineHeight} onCommit={(v) => commit({ lineHeight: v })} placeholder="1.5" />
           <PaddingField value={el.props.padding} onCommit={(v) => commit({ padding: v })} />
           <p class="nm-props-hint">Double-click the text on the canvas to edit and format it.</p>
+          <p class="nm-props-hint">
+            Personalize with <code>{'{{customer.first_name}}'}</code> — shorthand for{' '}
+            <code>{'{{customer.attributes.first_name}}'}</code>. Use <code>{'{{customer.email}}'}</code> for built-in
+            profile fields.
+          </p>
         </>
       ) : null}
 

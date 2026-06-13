@@ -74,8 +74,19 @@ function makeReader(state: FakeState): { reader: Reader; claimAttempts: number }
           ],
         };
       }
-      if (t.startsWith('SELECT id, email FROM profiles')) {
-        return { rows: [{ id: PROFILE, email: 'r@example.com' } as unknown as T] };
+      if (t.startsWith('SELECT id, email, external_id, email_status, created_at, attributes')) {
+        return {
+          rows: [
+            {
+              id: PROFILE,
+              email: 'r@example.com',
+              external_id: null,
+              email_status: 'active',
+              created_at: null,
+              attributes: { tier: 'gold' },
+            } as unknown as T,
+          ],
+        };
       }
       if (t.startsWith('SELECT compiled_html FROM email_templates')) {
         return { rows: [{ compiled_html: '<html>Hi {{first_name}}</html>' } as unknown as T] };

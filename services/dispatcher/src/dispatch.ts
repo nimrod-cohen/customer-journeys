@@ -27,6 +27,7 @@ import {
   type QuietHoursConfig,
   type SqlStatement,
 } from './core.js';
+import { customerMerge } from '@cdp/shared';
 
 /** A minimal query reader (returns rows). The orchestrator never opens a tx. */
 export interface Reader {
@@ -127,8 +128,16 @@ export async function dispatchOutbox(
     const ws = wsRows[0];
     if (!ws) return { result: 'noop', reason: 'workspace not found' };
 
-    const { rows: profRows } = await deps.reader.query<{ id: string; email: string | null }>(
-      `SELECT id, email FROM profiles WHERE workspace_id = $1 AND id = $2`,
+    const { rows: profRows } = await deps.reader.query<{
+      id: string;
+      email: string | null;
+      external_id: string | null;
+      email_status: string | null;
+      created_at: string | null;
+      attributes: Record<string, unknown> | null;
+    }>(
+      `SELECT id, email, external_id, email_status, created_at, attributes
+       FROM profiles WHERE workspace_id = $1 AND id = $2`,
       [workspaceId, ob.profile_id],
     );
     const profile = profRows[0];
@@ -145,7 +154,10 @@ export async function dispatchOutbox(
 
     const payload = ob.payload ?? {};
     const subject = typeof payload['subject'] === 'string' ? payload['subject'] : '';
-    const merge = asStringRecord(payload['merge']);
+    // The recipient's own data populates the `customer.*` namespace; an explicit
+    // per-send `payload.merge` provides any extra tags. Profile-derived customer
+    // values are authoritative (override a stale payload customer key).
+    const merge = { ...asStringRecord(payload['merge']), ...customerMerge(profile) };
     const frequencyCapPerDays =
       typeof payload['frequency_cap_per_days'] === 'number'
         ? (payload['frequency_cap_per_days'] as number)

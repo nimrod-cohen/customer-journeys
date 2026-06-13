@@ -15,6 +15,13 @@
 //
 // The compiled WHERE targets `profiles p JOIN profile_features pf` (the caller
 // supplies that FROM/JOIN; this module produces only the WHERE body + values).
+//
+// A field may also use the `customer.*` namespace (the same shorthand as email
+// merge tags, §11): `customer.tier` ≡ `attributes.tier`, `customer.email` ≡ the
+// scalar `email`. It's normalized to the canonical name BEFORE whitelisting, so
+// the security guarantees below are unchanged.
+
+import { resolveCustomerField } from '@cdp/shared';
 
 /** A parameterized query fragment ready for `pool.query(text, values)`. */
 export interface SqlStatement {
@@ -156,10 +163,14 @@ function isEvent(node: AstNode): node is EventNode {
  * `features.counters.*` the jsonb key is captured to be BOUND as a param (never
  * concatenated into SQL).
  */
-export function resolveField(field: string): ResolvedField {
-  if (typeof field !== 'string' || field.length === 0) {
+export function resolveField(rawField: string): ResolvedField {
+  if (typeof rawField !== 'string' || rawField.length === 0) {
     throw new Error('compileWhere: field must be a non-empty string');
   }
+  // Normalize the `customer.*` namespace + shorthand to the canonical field name
+  // (`customer.tier` → `attributes.tier`, `customer.email` → `email`) before the
+  // whitelist runs. A bare `customer.` stays as-is and is rejected below.
+  const field = resolveCustomerField(rawField);
   if (Object.prototype.hasOwnProperty.call(SCALAR_FEATURE_FIELDS, field)) {
     const column = SCALAR_FEATURE_FIELDS[field] as string;
     return { mapping: { kind: 'scalar', column }, jsonKey: null };
