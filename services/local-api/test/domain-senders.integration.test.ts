@@ -1,7 +1,9 @@
-// Domain senders CRUD through the API (§10). REAL Postgres. Proves: add derives
-// the domain from the address and validates it; list is grouped-ready + scoped;
-// duplicate address is 409; delete is scoped (a foreign workspace can't touch it).
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+// Domain senders + sending domains through the API (§10). REAL Postgres. Proves:
+// a workspace can list several sending domains (added unverified, then verified);
+// a domain_sender requires a VERIFIED domain; the address's domain is derived and
+// validated; duplicates 409; deletes are workspace-scoped; a domain with senders
+// can't be removed.
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { hasDatabaseUrl, adminPool } from '@cdp/db';
 import { makePgLookups, makeLocalDeps, dispatch, type DispatchEnv } from '../src/index.js';
 import { tokenFor } from './seed.js';
@@ -18,14 +20,35 @@ function env(pool: Pool): DispatchEnv {
   return { pool, lookups: makePgLookups(pool), deps: makeLocalDeps(pool) };
 }
 
-describeMaybe('domain senders via API (real Postgres)', () => {
+describeMaybe('sending domains + senders via API (real Postgres)', () => {
   let pool: Pool;
   const e = (): DispatchEnv => env(pool);
   const tok = (): string => tokenFor(OWNER, WS);
 
+  const addSender = (token: string, name: string, email: string) =>
+    dispatch({ method: 'POST', path: '/domain-senders', authorization: token, query: {}, body: { name, email } }, e());
+  const listSenders = (token: string) =>
+    dispatch({ method: 'GET', path: '/domain-senders', authorization: token, query: {}, body: {} }, e());
+  const addDomain = (token: string, domain: string) =>
+    dispatch({ method: 'POST', path: '/sending-domains', authorization: token, query: {}, body: { domain } }, e());
+  const listDomains = (token: string) =>
+    dispatch({ method: 'GET', path: '/sending-domains', authorization: token, query: {}, body: {} }, e());
+  const verifyDomain = (token: string, id: string) =>
+    dispatch({ method: 'POST', path: `/sending-domains/${id}/verify`, authorization: token, query: {}, body: {} }, e());
+  const delDomain = (token: string, id: string) =>
+    dispatch({ method: 'DELETE', path: `/sending-domains/${id}`, authorization: token, query: {}, body: {} }, e());
+
+  /** Add `domain` and verify it; returns its id. */
+  async function verifiedDomain(domain: string): Promise<string> {
+    const created = await addDomain(tok(), domain);
+    const id = (created.body as { domain: { id: string } }).domain.id;
+    await verifyDomain(tok(), id);
+    return id;
+  }
+
   beforeAll(async () => {
     pool = adminPool();
-    await cleanup();
+    await dropWorkspaces();
     for (const [ws, owner] of [[WS, OWNER], [OTHER, OTHER_OWNER]] as const) {
       await pool.query("INSERT INTO workspaces (id, name, status) VALUES ($1,'W','active')", [ws]);
       await pool.query(
@@ -35,66 +58,92 @@ describeMaybe('domain senders via API (real Postgres)', () => {
     }
   });
 
+  beforeEach(async () => {
+    for (const ws of [WS, OTHER]) {
+      await pool.query('DELETE FROM domain_senders WHERE workspace_id = $1', [ws]);
+      await pool.query('DELETE FROM sending_domains WHERE workspace_id = $1', [ws]);
+    }
+  });
+
   afterAll(async () => {
     if (pool) {
-      await cleanup();
+      await dropWorkspaces();
       await pool.end();
     }
   });
 
-  async function cleanup(): Promise<void> {
+  async function dropWorkspaces(): Promise<void> {
     for (const ws of [WS, OTHER]) {
       await pool.query('DELETE FROM domain_senders WHERE workspace_id = $1', [ws]);
+      await pool.query('DELETE FROM sending_domains WHERE workspace_id = $1', [ws]);
       await pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [ws]);
       await pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
     }
   }
 
-  const add = (token: string, name: string, email: string) =>
-    dispatch({ method: 'POST', path: '/domain-senders', authorization: token, query: {}, body: { name, email } }, e());
-  const list = (token: string) =>
-    dispatch({ method: 'GET', path: '/domain-senders', authorization: token, query: {}, body: {} }, e());
+  it('a domain is added UNVERIFIED, then verified; a bad domain is rejected', async () => {
+    const created = await addDomain(tok(), 'mail.acme.com');
+    expect(created.status).toBe(201);
+    expect((created.body as { domain: { verified: boolean } }).domain.verified).toBe(false);
 
-  it('adds senders, derives the domain, lists them; rejects bad input', async () => {
-    const r1 = await add(tok(), 'Support', 'support@mail.acme.com');
-    expect(r1.status).toBe(201);
-    expect((r1.body as { sender: { domain: string } }).sender.domain).toBe('mail.acme.com');
-    await add(tok(), 'Sales', 'sales@mail.acme.com');
+    expect((await addDomain(tok(), 'not a domain')).status).toBe(400);
+    expect((await addDomain(tok(), 'mail.acme.com')).status).toBe(409); // duplicate
 
-    const l = await list(tok());
-    const senders = (l.body as { senders: Array<{ name: string; domain: string; email: string }> }).senders;
-    expect(senders).toHaveLength(2);
-    expect(senders.every((s) => s.domain === 'mail.acme.com')).toBe(true);
-
-    // Validation: missing name, malformed email.
-    expect((await add(tok(), '', 'x@y.com')).status).toBe(400);
-    expect((await add(tok(), 'No Domain', 'not-an-email')).status).toBe(400);
+    const id = (created.body as { domain: { id: string } }).domain.id;
+    expect((await verifyDomain(tok(), id)).status).toBe(200);
+    const after = (await listDomains(tok())).body as { domains: Array<{ verified: boolean }> };
+    expect(after.domains[0]!.verified).toBe(true);
   });
 
-  it('rejects a duplicate address with 409', async () => {
-    const dup = await add(tok(), 'Support Again', 'support@mail.acme.com');
-    expect(dup.status).toBe(409);
+  it('a sender requires a VERIFIED sending domain', async () => {
+    // No domain → rejected.
+    expect((await addSender(tok(), 'Support', 'support@mail.acme.com')).status).toBe(400);
+    // Added but unverified → still rejected.
+    const created = await addDomain(tok(), 'mail.acme.com');
+    const id = (created.body as { domain: { id: string } }).domain.id;
+    expect((await addSender(tok(), 'Support', 'support@mail.acme.com')).status).toBe(400);
+    // Verified → allowed; domain derived from the address.
+    await verifyDomain(tok(), id);
+    const ok = await addSender(tok(), 'Support', 'support@mail.acme.com');
+    expect(ok.status).toBe(201);
+    expect((ok.body as { sender: { domain: string } }).sender.domain).toBe('mail.acme.com');
   });
 
-  it('is workspace-scoped: another workspace neither sees nor can delete these', async () => {
-    // The other workspace's list is empty (isolation).
-    const otherList = await list(tokenFor(OTHER_OWNER, OTHER));
-    expect((otherList.body as { senders: unknown[] }).senders).toHaveLength(0);
+  it('adds senders, lists them, rejects bad input + duplicate address', async () => {
+    await verifiedDomain('mail.acme.com');
+    expect((await addSender(tok(), 'Support', 'support@mail.acme.com')).status).toBe(201);
+    await addSender(tok(), 'Sales', 'sales@mail.acme.com');
 
-    // The other owner cannot delete a sender belonging to WS (scoped → 404).
-    const mine = (await list(tok())).body as { senders: Array<{ id: string }> };
-    const id = mine.senders[0]!.id;
-    const del = await dispatch(
-      { method: 'DELETE', path: `/domain-senders/${id}`, authorization: tokenFor(OTHER_OWNER, OTHER), query: {}, body: {} },
+    const senders = (await listSenders(tok())).body as { senders: unknown[] };
+    expect(senders.senders).toHaveLength(2);
+
+    expect((await addSender(tok(), '', 'x@mail.acme.com')).status).toBe(400); // no name
+    expect((await addSender(tok(), 'Bad', 'not-an-email')).status).toBe(400); // bad email
+    expect((await addSender(tok(), 'Dup', 'support@mail.acme.com')).status).toBe(409); // duplicate
+  });
+
+  it("a domain with senders can't be deleted until they're removed", async () => {
+    const id = await verifiedDomain('mail.acme.com');
+    await addSender(tok(), 'Support', 'support@mail.acme.com');
+    expect((await delDomain(tok(), id)).status).toBe(409); // in use
+
+    const senders = (await listSenders(tok())).body as { senders: Array<{ id: string }> };
+    await dispatch(
+      { method: 'DELETE', path: `/domain-senders/${senders.senders[0]!.id}`, authorization: tok(), query: {}, body: {} },
       e(),
     );
-    expect(del.status).toBe(404);
+    expect((await delDomain(tok(), id)).status).toBe(200); // now removable
+  });
 
-    // The owner can delete it.
-    const okDel = await dispatch(
-      { method: 'DELETE', path: `/domain-senders/${id}`, authorization: tok(), query: {}, body: {} },
-      e(),
-    );
-    expect(okDel.status).toBe(200);
+  it('is workspace-scoped: another workspace neither sees nor can mutate these', async () => {
+    const id = await verifiedDomain('mail.acme.com');
+    await addSender(tok(), 'Support', 'support@mail.acme.com');
+
+    const otherTok = tokenFor(OTHER_OWNER, OTHER);
+    expect(((await listDomains(otherTok)).body as { domains: unknown[] }).domains).toHaveLength(0);
+    expect(((await listSenders(otherTok)).body as { senders: unknown[] }).senders).toHaveLength(0);
+    // The other owner can't verify or delete WS's domain (scoped → 404).
+    expect((await verifyDomain(otherTok, id)).status).toBe(404);
+    expect((await delDomain(otherTok, id)).status).toBe(404);
   });
 });

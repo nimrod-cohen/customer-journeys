@@ -6,6 +6,7 @@
 import { useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { Badge, Button, Card, Input, PageHeader, toneFor } from '../ui/kit.js';
+import { SendingDomains } from './SendingDomains.tsx';
 import { DomainSenders } from './DomainSenders.tsx';
 import type { ComponentChildren } from 'preact';
 
@@ -165,8 +166,9 @@ export function OnboardingWizard() {
           ) : null}
         </Step>
 
-        {/* Named senders for the verified domain — managed any time, not part of
-            the one-time verification stepper. */}
+        {/* The sending-domain LIST and the named senders for verified domains —
+            managed any time, not part of the one-time verification stepper. */}
+        <SendingDomains />
         <DomainSenders />
       </div>
     </section>

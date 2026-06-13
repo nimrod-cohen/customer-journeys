@@ -298,9 +298,90 @@ export const sendingDomainCheck: Handler = async (ctx, _pool, _req, deps) => {
   return ok(out);
 };
 
-export const sendingDomainActivate: Handler = async (ctx, _pool, _req, deps) => {
+export const sendingDomainActivate: Handler = async (ctx, pool, _req, deps) => {
   const out = await activate(deps.onboarding, { workspaceId: ctx.workspaceId });
+  // On a successful activation, record the wizard's primary domain in the
+  // sending-domains list as VERIFIED so it appears there and can host senders.
+  if ((out as { decision?: { allowed?: boolean } }).decision?.allowed) {
+    const { rows } = await pool.query<{ sending_identity: { from_domain?: string } | null }>(
+      'SELECT sending_identity FROM workspaces WHERE id = $1',
+      [ctx.workspaceId],
+    );
+    const fromDomain = rows[0]?.sending_identity?.from_domain;
+    if (fromDomain) {
+      await pool.query(
+        `INSERT INTO sending_domains (workspace_id, domain, verified, verified_at)
+         VALUES ($1, $2, true, now())
+         ON CONFLICT (workspace_id, domain)
+         DO UPDATE SET verified = true, verified_at = now()`,
+        [ctx.workspaceId, fromDomain.toLowerCase()],
+      );
+    }
+  }
   return ok(out);
+};
+
+// --- sending domains (the LIST; a workspace may have several, §10) -------------
+const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
+
+/** GET /sending-domains — the workspace's sending domains + verification state. */
+export const listSendingDomains: Handler = async (ctx, pool) => {
+  const q = scopedQuery(ctx.workspaceId, 'SELECT id, domain, verified, verified_at FROM sending_domains');
+  const { rows } = await pool.query(`${q.text} ORDER BY domain`, q.values);
+  return ok({ domains: rows });
+};
+
+/** POST /sending-domains — add a domain to the list, UNVERIFIED. */
+export const createSendingDomain: Handler = async (ctx, pool, req) => {
+  const domain = String(asObject(req.body).domain ?? '').trim().toLowerCase();
+  if (!DOMAIN_RE.test(domain)) return ok({ error: 'a valid domain is required (e.g. mail.acme.com)' }, 400);
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO sending_domains (workspace_id, domain) VALUES ($1, $2)
+       RETURNING id, domain, verified, verified_at`,
+      [ctx.workspaceId, domain],
+    );
+    return ok({ domain: rows[0] }, 201);
+  } catch (e) {
+    if ((e as { code?: string }).code === '23505') return ok({ error: 'that domain is already in the list' }, 409);
+    throw e;
+  }
+};
+
+/**
+ * POST /sending-domains/:id/verify — mark a domain verified. In this dev harness
+ * SES/DNS are mocked, so this is the stand-in for a confirmed DKIM/DNS check;
+ * production gates this on the real SES verification result (see the onboarding
+ * service). Scoped.
+ */
+export const verifySendingDomain: Handler = async (ctx, pool, req) => {
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'UPDATE sending_domains SET verified = true, verified_at = now() WHERE id = $1',
+    [req.params.id!],
+  );
+  const { rowCount } = await pool.query(`${q.text} RETURNING id`, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ verified: true });
+};
+
+/** DELETE /sending-domains/:id — remove a domain; blocked if it still has senders. */
+export const deleteSendingDomain: Handler = async (ctx, pool, req) => {
+  const sel = scopedQuery(ctx.workspaceId, 'SELECT domain FROM sending_domains WHERE id = $1', [req.params.id!]);
+  const { rows } = await pool.query<{ domain: string }>(sel.text, sel.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  const cnt = scopedQuery(
+    ctx.workspaceId,
+    'SELECT count(*)::int AS n FROM domain_senders WHERE domain = $1',
+    [rows[0].domain],
+  );
+  const { rows: cntRows } = await pool.query<{ n: number }>(cnt.text, cnt.values);
+  if ((cntRows[0]?.n ?? 0) > 0) {
+    return ok({ error: 'remove this domain’s senders before deleting it' }, 409);
+  }
+  const del = scopedQuery(ctx.workspaceId, 'DELETE FROM sending_domains WHERE id = $1', [req.params.id!]);
+  const { rowCount } = await pool.query(del.text, del.values);
+  return ok({ deleted: rowCount });
 };
 
 // --- domain senders (named "From" identities per sending domain, §10) ----------
@@ -324,6 +405,20 @@ export const createDomainSender: Handler = async (ctx, pool, req) => {
   const m = SENDER_EMAIL_RE.exec(email);
   if (!m) return ok({ error: 'a valid email address is required' }, 400);
   const domain = m[1]!;
+  // Gate: the address's domain must be a VERIFIED sending domain (§10) — you can
+  // queue an unverified domain in the list, but not send as it yet.
+  const v = scopedQuery(
+    ctx.workspaceId,
+    'SELECT verified FROM sending_domains WHERE domain = $1',
+    [domain],
+  );
+  const { rows: vRows } = await pool.query<{ verified: boolean }>(v.text, v.values);
+  if (vRows.length === 0) {
+    return ok({ error: `add the domain ${domain} to your sending domains first` }, 400);
+  }
+  if (!vRows[0]!.verified) {
+    return ok({ error: `the domain ${domain} is not verified yet` }, 400);
+  }
   try {
     const { rows } = await pool.query(
       `INSERT INTO domain_senders (workspace_id, domain, name, email) VALUES ($1, $2, $3, $4)
@@ -2044,6 +2139,10 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /sending-domain/start': sendingDomainStart,
   'POST /sending-domain/check': sendingDomainCheck,
   'POST /sending-domain/activate': sendingDomainActivate,
+  'GET /sending-domains': listSendingDomains,
+  'POST /sending-domains': createSendingDomain,
+  'POST /sending-domains/:id/verify': verifySendingDomain,
+  'DELETE /sending-domains/:id': deleteSendingDomain,
   'GET /domain-senders': listDomainSenders,
   'POST /domain-senders': createDomainSender,
   'DELETE /domain-senders/:id': deleteDomainSender,

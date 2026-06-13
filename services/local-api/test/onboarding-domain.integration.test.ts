@@ -62,6 +62,8 @@ describeMaybe('onboarding domain wizard via API (real Postgres)', () => {
   });
 
   async function cleanup(): Promise<void> {
+    // activate() now records the verified domain in sending_domains (FK → workspace).
+    await pool.query('DELETE FROM sending_domains WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM workspaces WHERE id = $1', [WS]);
   }
