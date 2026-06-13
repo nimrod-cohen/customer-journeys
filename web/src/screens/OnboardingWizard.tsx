@@ -53,6 +53,9 @@ export function OnboardingWizard() {
   const [dkimVerified, setDkimVerified] = useState<boolean | null>(null);
   const [activated, setActivated] = useState<boolean | null>(null);
   const [reason, setReason] = useState('');
+  // Bump to re-mount (re-fetch) the domains table after the wizard activates a
+  // domain (activate upserts it into the list as verified, server-side).
+  const [domainsKey, setDomainsKey] = useState(0);
 
   const start = async () => {
     const r = await api.post<{ records: { records: DnsRecord[] } }>('/sending-domain/start', {
@@ -77,15 +80,31 @@ export function OnboardingWizard() {
     );
     setActivated(r.decision.allowed);
     setReason(r.decision.reason ?? '');
+    if (r.decision.allowed) setDomainsKey((k) => k + 1); // surfaces the now-verified domain in the table
   };
 
   const statusFor = (name: string) => checks.find((c) => c.name === name)?.status ?? 'pending';
 
   return (
     <section data-testid="onboarding-wizard">
-      <PageHeader title="Sending domain onboarding" subtitle="Verify your domain so this workspace can send." />
+      <PageHeader
+        title="Sending domains"
+        subtitle="Add every domain you send from. Add now, verify when DNS is ready — you can only create senders for a verified domain."
+      />
 
       <div class="space-y-5">
+        {/* PRIMARY: the domains list (add + save here) and senders for verified domains. */}
+        <SendingDomains key={domainsKey} />
+        <DomainSenders />
+
+        <div class="pt-2">
+          <h2 class="text-sm font-bold uppercase tracking-wide text-stone-500">Verify a domain via DNS</h2>
+          <p class="mt-1 text-sm text-stone-500">
+            Generate the DNS records for a domain, publish them, then check &amp; activate. Activating records the
+            domain as verified in the list above.
+          </p>
+        </div>
+
         <Step n={1} title="Enter sending domain" testId="step-1">
           <div class="flex max-w-lg gap-2">
             <Input
@@ -165,11 +184,6 @@ export function OnboardingWizard() {
             </p>
           ) : null}
         </Step>
-
-        {/* The sending-domain LIST and the named senders for verified domains —
-            managed any time, not part of the one-time verification stepper. */}
-        <SendingDomains />
-        <DomainSenders />
       </div>
     </section>
   );
