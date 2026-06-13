@@ -111,32 +111,42 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
   const exec = async (btn: RteButton): Promise<void> => {
     if (btn.sizeDelta) {
       const sel = window.getSelection();
-      const node = sel?.anchorNode;
-      const el = node?.nodeType === 3 ? node.parentElement : (node as HTMLElement | null);
-      const current = el ? parseFloat(getComputedStyle(el).fontSize) || 16 : 16;
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      if (range.collapsed) return;
+
+      // Current size = the COMPUTED font-size of the element actually at the
+      // selection start (a previously-sized span when stepping repeatedly), NOT
+      // the anchorNode's container — which would always read the base size and
+      // make A+/A− stall after one step.
+      const startNode = range.startContainer;
+      const startEl =
+        (startNode.nodeType === 3 ? startNode.parentElement : (startNode as HTMLElement)) ?? ref.current;
+      const current = startEl ? parseFloat(getComputedStyle(startEl).fontSize) || 16 : 16;
       const next =
         btn.sizeDelta > 0
           ? (RTE_SIZES.find((x) => x > current) ?? RTE_SIZES[RTE_SIZES.length - 1])
           : ([...RTE_SIZES].reverse().find((x) => x < current) ?? RTE_SIZES[0]);
-      document.execCommand('fontSize', false, '7');
-      // Swapping <font size=7> for sized <span>s rebuilds the DOM and drops the
-      // selection — collect the new spans and re-select across them so the
-      // highlight stays and the user can click A+/A− repeatedly.
-      const spans: HTMLElement[] = [];
-      ref.current?.querySelectorAll('font[size="7"]').forEach((f) => {
-        const span = document.createElement('span');
-        span.style.fontSize = `${next}px`;
-        span.innerHTML = (f as HTMLElement).innerHTML;
-        f.replaceWith(span);
-        spans.push(span);
+
+      // Wrap the selection in a SINGLE sized span. Strip any font-size inside the
+      // extracted fragment first so sizes don't nest/stack (which broke detection
+      // and made repeated steps stop changing). Then re-select the span so the
+      // highlight stays and the next click steps from the new size.
+      const frag = range.extractContents();
+      frag.querySelectorAll('font[size]').forEach((f) => f.removeAttribute('size'));
+      frag.querySelectorAll<HTMLElement>('[style*="font-size"]').forEach((n) => {
+        n.style.fontSize = '';
+        if (!n.getAttribute('style')) n.removeAttribute('style');
       });
-      if (spans.length && sel) {
-        const range = document.createRange();
-        range.setStartBefore(spans[0]!);
-        range.setEndAfter(spans[spans.length - 1]!);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
+      const span = document.createElement('span');
+      span.style.fontSize = `${next}px`;
+      span.appendChild(frag);
+      range.insertNode(span);
+
+      sel.removeAllRanges();
+      const r2 = document.createRange();
+      r2.selectNodeContents(span);
+      sel.addRange(r2);
     } else if (btn.prompt) {
       // Preserve the text selection across the styled dialog: block the blur
       // handler (no hide/save → the DOM stays intact), and after the dialog

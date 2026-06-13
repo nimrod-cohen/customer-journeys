@@ -256,7 +256,7 @@ test('asset manager: upload multiple files at once', async ({ page }) => {
   await expect(page.getByTestId('am-item').filter({ hasText: 'batch-3.png' })).toHaveCount(1);
 });
 
-test('text editor: increasing font size keeps the selection (repeatable)', async ({ page }) => {
+test('text editor: font size steps up and down repeatedly, keeping the selection', async ({ page }) => {
   await openDesigner(page);
   await page.getByTestId('toolbox-text').click();
 
@@ -276,18 +276,42 @@ test('text editor: increasing font size keeps the selection (repeatable)', async
   expect(selectedText.length).toBeGreaterThan(0);
 
   await page.getByTestId('rte-toolbar').waitFor();
-  const bump = page.getByTestId('rte-toolbar').getByTitle('A+', { exact: true });
+  const up = page.getByTestId('rte-toolbar').getByTitle('A+', { exact: true });
+  const down = page.getByTestId('rte-toolbar').getByTitle('A−', { exact: true });
 
-  // First A+ resizes AND keeps the same selection (not collapsed).
-  await bump.click();
-  expect(await page.evaluate(() => window.getSelection()!.toString())).toBe(selectedText);
-  await expect(editable.locator('span[style*="font-size"]')).toHaveCount(1);
+  // Computed font-size of the element at the selection start (what the user sees).
+  const sizeOf = (): Promise<number> =>
+    page.evaluate(() => {
+      const n = window.getSelection()!.getRangeAt(0).startContainer;
+      const el = (n.nodeType === 3 ? n.parentElement : (n as HTMLElement))!;
+      return parseFloat(getComputedStyle(el).fontSize);
+    });
+  const selKept = async (): Promise<void> => {
+    expect(await page.evaluate(() => window.getSelection()!.toString())).toBe(selectedText);
+  };
 
-  // Because the selection survives, a second A+ enlarges again (no re-select).
-  await bump.click();
-  expect(await page.evaluate(() => window.getSelection()!.toString())).toBe(selectedText);
-  const size = await editable.locator('span[style*="font-size"]').last().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-  expect(size).toBeGreaterThan(16);
+  // Three A+ clicks step UP monotonically (selection kept the whole time).
+  await up.click();
+  await selKept();
+  const u1 = await sizeOf();
+  await up.click();
+  await selKept();
+  const u2 = await sizeOf();
+  await up.click();
+  await selKept();
+  const u3 = await sizeOf();
+  expect(u2).toBeGreaterThan(u1);
+  expect(u3).toBeGreaterThan(u2);
+
+  // Now A− steps back DOWN (the old bug: it stalled / jumped back up).
+  await down.click();
+  await selKept();
+  const d1 = await sizeOf();
+  await down.click();
+  await selKept();
+  const d2 = await sizeOf();
+  expect(d1).toBeLessThan(u3);
+  expect(d2).toBeLessThan(d1);
 });
 
 test('text editor: adding a link via the styled dialog applies to the selection', async ({ page }) => {
