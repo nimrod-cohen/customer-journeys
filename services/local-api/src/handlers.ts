@@ -581,6 +581,34 @@ export const cloneTemplate: Handler = async (ctx, pool, req) => {
   return ok({ template: rows[0] }, 201);
 };
 
+/**
+ * DELETE /templates/:id — delete a LIBRARY template. Per-broadcast/campaign
+ * working copies (kind='copy') are NOT user-deletable here; they live and die
+ * with their broadcast/campaign. First detach any copies that point home (so the
+ * self-FK source_template_id doesn't block the delete); if some other row still
+ * references it directly (FK), report it as in-use rather than 500. Scoped.
+ */
+export const deleteTemplate: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const detach = scopedQuery(
+    ctx.workspaceId,
+    'UPDATE email_templates SET source_template_id = NULL WHERE source_template_id = $1',
+    [id],
+  );
+  await pool.query(detach.text, detach.values);
+  const del = scopedQuery(ctx.workspaceId, "DELETE FROM email_templates WHERE id = $1 AND kind = 'library'", [id]);
+  try {
+    const { rowCount } = await pool.query(del.text, del.values);
+    if (!rowCount) return ok({ error: 'not found' }, 404);
+    return ok({ deleted: rowCount });
+  } catch (e) {
+    if ((e as { code?: string }).code === '23503') {
+      return ok({ error: 'This template is in use and cannot be deleted.' }, 409);
+    }
+    throw e;
+  }
+};
+
 // ---------------------------------------------------------------------------
 // assets (uploaded email images; §11)
 // ---------------------------------------------------------------------------
@@ -1985,6 +2013,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /templates': createTemplate,
   'GET /templates/:id': getTemplate,
   'PUT /templates/:id': updateTemplate,
+  'DELETE /templates/:id': deleteTemplate,
   'POST /templates/:id/clone': cloneTemplate,
   'POST /assets': uploadAsset,
   'GET /assets': listAssets,

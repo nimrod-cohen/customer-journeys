@@ -6,6 +6,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Button, Card, PageHeader, EmptyState } from '../ui/kit.js';
+import { askConfirm } from '../ui/dialog.tsx';
 import { AssetManagerPanel } from '../email-designer/AssetManager.tsx';
 
 interface Template {
@@ -23,10 +24,30 @@ function fmtDate(ts: string | null): string {
 export function TemplatesList() {
   const [tab, setTab] = useState<'templates' | 'gallery'>('templates');
   const [templates, setTemplates] = useState<Template[] | null>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     void api.get<{ templates: Template[] }>('/templates').then((r) => setTemplates(r.templates));
   }, []);
+
+  const deleteTemplate = async (t: Template): Promise<void> => {
+    const ok = await askConfirm({
+      title: 'Delete template',
+      message: `Delete “${t.name}”? This can't be undone. Broadcasts and campaigns keep their own copy, so they're unaffected.`,
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    setError('');
+    try {
+      await api.del(`/templates/${t.id}`);
+      setTemplates((list) => (list ?? []).filter((x) => x.id !== t.id));
+    } catch (e) {
+      // The client throws { status, error } on non-2xx (e.g. 409 in-use).
+      const msg = (e as { error?: string })?.error ?? (e instanceof Error ? e.message : 'Could not delete the template.');
+      setError(msg);
+    }
+  };
 
   return (
     <section data-testid="templates-screen">
@@ -66,6 +87,12 @@ export function TemplatesList() {
         </button>
       </div>
 
+      {tab === 'templates' && error ? (
+        <p data-testid="templates-error" class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {error}
+        </p>
+      ) : null}
+
       {tab === 'gallery' ? (
         <Card class="flex h-[70vh] flex-col overflow-hidden p-2">
           <AssetManagerPanel />
@@ -84,9 +111,14 @@ export function TemplatesList() {
                 <span class="truncate font-medium text-ink-900">{t.name}</span>
                 {t.updated_at ? <span class="text-xs text-stone-500">updated {fmtDate(t.updated_at)}</span> : null}
               </span>
-              <Button data-testid="template-edit" variant="secondary" size="sm" onClick={() => navigate(`/editor/${t.id}`)}>
-                Edit
-              </Button>
+              <span class="flex shrink-0 items-center gap-2">
+                <Button data-testid="template-edit" variant="secondary" size="sm" onClick={() => navigate(`/editor/${t.id}`)}>
+                  Edit
+                </Button>
+                <Button data-testid="template-delete" variant="danger" size="sm" onClick={() => void deleteTemplate(t)}>
+                  Delete
+                </Button>
+              </span>
             </li>
           ))}
         </ul>

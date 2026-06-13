@@ -34,6 +34,35 @@ test('create a template in the designer, then re-open it to edit', async ({ page
   await expect(page.getByTestId('mjml-output')).toHaveValue(/<mj-button/);
 });
 
+test('delete an email template from the list (styled confirm)', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-templates').click();
+  await page.getByTestId('templates-screen').waitFor();
+
+  // Create one to delete (autosaved), then return to the list.
+  await page.getByTestId('new-template').click();
+  await page.getByTestId('email-editor').waitFor();
+  await page.getByTestId('template-name').fill('Disposable');
+  await page.getByTestId('toolbox-heading').click();
+  await expect(page.getByTestId('template-saved')).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId('editor-back').click();
+  await page.getByTestId('templates-screen').waitFor();
+
+  const row = page.getByTestId('template-item').filter({ hasText: 'Disposable' });
+  await expect(row).toHaveCount(1);
+
+  // Delete → styled confirm (no native dialog) → row disappears.
+  await row.getByTestId('template-delete').click();
+  await page.getByTestId('app-dialog').waitFor();
+  await page.getByTestId('dialog-confirm').click();
+  await expect(page.getByTestId('template-item').filter({ hasText: 'Disposable' })).toHaveCount(0);
+
+  // Survives a reload (actually deleted server-side).
+  await page.reload();
+  await page.getByTestId('templates-screen').waitFor();
+  await expect(page.getByTestId('template-item').filter({ hasText: 'Disposable' })).toHaveCount(0);
+});
+
 test('Asset management screen: templates and image-gallery tabs share the screen', async ({ page }) => {
   await loginAs(page, DEV_MKT);
 

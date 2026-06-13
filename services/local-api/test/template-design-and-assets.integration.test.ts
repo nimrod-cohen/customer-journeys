@@ -106,6 +106,48 @@ describeMaybe('template design + clone + assets (real Postgres)', () => {
     expect(ids).not.toContain(copyId);
   });
 
+  it('delete a library template detaches its copies; copies survive; cross-ws blocked', async () => {
+    const c = await call(world.env, 'POST', '/templates', {
+      token: tok(),
+      body: { name: 'Deletable', mjml: MJML, design: DESIGN },
+    });
+    const libId = (c.body as { template: { id: string } }).template.id;
+    // Clone it (a broadcast's working copy points home via source_template_id).
+    const cl = await call(world.env, 'POST', `/templates/${libId}/clone`, { token: tok(), body: {} });
+    const copyId = (cl.body as { template: { id: string } }).template.id;
+
+    // A foreign user cannot delete it (workspace-scoped → not found / forbidden).
+    const foreign = tokenFor(USER, OTHER);
+    expect([403, 404]).toContain(
+      (await call(world.env, 'DELETE', `/templates/${libId}`, { token: foreign })).status,
+    );
+
+    // Owner deletes the library template (the self-FK from the copy is detached).
+    const del = await call(world.env, 'DELETE', `/templates/${libId}`, { token: tok() });
+    expect(del.status).toBe(200);
+
+    // It's gone from the library, but the broadcast's COPY still exists.
+    expect((await call(world.env, 'GET', `/templates/${libId}`, { token: tok() })).status).toBe(404);
+    const gc = await call(world.env, 'GET', `/templates/${copyId}`, { token: tok() });
+    expect(gc.status).toBe(200);
+    expect((gc.body as { template: { source_template_id: string | null } }).template.source_template_id).toBeNull();
+
+    // Deleting again is a clean 404.
+    expect((await call(world.env, 'DELETE', `/templates/${libId}`, { token: tok() })).status).toBe(404);
+  });
+
+  it('a working COPY is not user-deletable via DELETE /templates (library only)', async () => {
+    const c = await call(world.env, 'POST', '/templates', { token: tok(), body: { name: 'Lib2', mjml: MJML } });
+    const libId = (c.body as { template: { id: string } }).template.id;
+    const cl = await call(world.env, 'POST', `/templates/${libId}/clone`, { token: tok(), body: {} });
+    const copyId = (cl.body as { template: { id: string } }).template.id;
+
+    // The DELETE only targets kind='library' → a copy id is a no-op 404…
+    expect((await call(world.env, 'DELETE', `/templates/${copyId}`, { token: tok() })).status).toBe(404);
+    // …and the copy is still there.
+    expect((await call(world.env, 'GET', `/templates/${copyId}`, { token: tok() })).status).toBe(200);
+  });
+
   it('cloning a cross-workspace template id is 404', async () => {
     const c = await call(world.env, 'POST', '/templates', {
       token: tok(),
