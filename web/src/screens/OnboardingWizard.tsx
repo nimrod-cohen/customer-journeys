@@ -7,7 +7,6 @@ import { useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { Badge, Button, Card, Input, PageHeader, toneFor } from '../ui/kit.js';
 import { SendingDomains } from './SendingDomains.tsx';
-import { DomainSenders } from './DomainSenders.tsx';
 import type { ComponentChildren } from 'preact';
 
 interface DnsRecord {
@@ -93,9 +92,9 @@ export function OnboardingWizard() {
       />
 
       <div class="space-y-5">
-        {/* PRIMARY: the domains list (add + save here) and senders for verified domains. */}
+        {/* PRIMARY: the domains list — add a domain, verify it, and manage its
+            senders inline under each domain. */}
         <SendingDomains key={domainsKey} />
-        <DomainSenders />
 
         <div class="pt-2">
           <h2 class="text-sm font-bold uppercase tracking-wide text-stone-500">Verify a domain via DNS</h2>

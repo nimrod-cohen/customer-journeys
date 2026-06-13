@@ -1,68 +1,54 @@
-// E2E (real Chromium): manage sending domains + their named senders (§10). An
-// owner opens Domain onboarding, adds a sending domain (initially pending), can't
-// add a sender until it's verified, then verifies it, adds two senders grouped by
-// domain, and removes one via the styled confirm (no native dialog).
+// E2E (real Chromium): sending domains, each with its OWN senders (§10). An owner
+// opens Domain onboarding, adds a domain (pending — no sender form yet), verifies
+// it, then adds/removes senders inline UNDER that domain. Uses a local-part input
+// that's always at the domain. Styled confirm for removal (no native dialog).
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_OWNER } from './seed.js';
 
-test('sending domains list: add → verify gates senders; add & remove senders', async ({ page }) => {
+test('senders live under a specific (verified) domain', async ({ page }) => {
   await loginAs(page, DEV_OWNER);
   await page.getByTestId('nav-onboarding').click();
   await page.getByTestId('onboarding-wizard').waitFor();
   await page.getByTestId('sending-domains').waitFor();
-  await page.getByTestId('domain-senders').waitFor();
 
-  // Add a sending domain — it starts PENDING (unverified).
+  // Add a sending domain — starts PENDING; no sender form while unverified.
   await page.getByTestId('domain-add-input').fill('mail.acme.com');
   await page.getByTestId('add-domain').click();
-  await expect(page.getByTestId('domain-row')).toHaveCount(1);
-  await expect(page.getByTestId('domain-status')).toHaveText('pending');
+  const row = page.getByTestId('domain-row').filter({ hasText: 'mail.acme.com' });
+  await expect(row).toHaveCount(1);
+  await expect(row.getByTestId('domain-status')).toHaveText('pending');
+  await expect(row.getByTestId('add-sender')).toHaveCount(0);
+  await expect(row).toContainText('Verify this domain to add senders');
 
-  // A sender can't be added while the domain is unverified.
-  await page.getByTestId('sender-name-input').fill('Support');
-  await page.getByTestId('sender-email-input').fill('support@mail.acme.com');
-  await page.getByTestId('add-sender').click();
-  await expect(page.getByTestId('senders-error')).toBeVisible();
-  await expect(page.getByTestId('sender-row')).toHaveCount(0);
+  // Verify → badge flips and the per-domain sender form appears.
+  await row.getByTestId('domain-verify').click();
+  await expect(row.getByTestId('domain-status')).toHaveText('verified');
+  await expect(row.getByTestId('add-sender')).toBeVisible();
 
-  // Verify the domain → badge flips, Verify button gone.
-  await page.getByTestId('domain-verify').click();
-  await expect(page.getByTestId('domain-status')).toHaveText('verified');
+  // Add two senders UNDER this domain (local part only; domain is fixed).
+  await row.getByTestId('sender-name-input').fill('Support');
+  await row.getByTestId('sender-local-input').fill('support');
+  await row.getByTestId('add-sender').click();
+  await expect(row.getByTestId('sender-row')).toHaveCount(1);
+  await expect(row.getByTestId('sender-row')).toContainText('support@mail.acme.com');
 
-  // Now the two senders at that domain are accepted.
-  await page.getByTestId('sender-name-input').fill('Support');
-  await page.getByTestId('sender-email-input').fill('support@mail.acme.com');
-  await page.getByTestId('add-sender').click();
-  await expect(page.getByTestId('sender-row')).toHaveCount(1);
-
-  await page.getByTestId('sender-name-input').fill('Sales');
-  await page.getByTestId('sender-email-input').fill('sales@mail.acme.com');
-  await page.getByTestId('add-sender').click();
-  await expect(page.getByTestId('sender-row')).toHaveCount(2);
-
-  // Both group under the single derived domain.
-  await expect(page.getByTestId('sender-domain-group')).toHaveCount(1);
-  await expect(page.getByTestId('sender-domain-group')).toContainText('mail.acme.com');
-  await expect(page.getByTestId('sender-row').filter({ hasText: 'support@mail.acme.com' })).toHaveCount(1);
-
-  // A malformed email is rejected with an inline error (no row added).
-  await page.getByTestId('sender-name-input').fill('Bad');
-  await page.getByTestId('sender-email-input').fill('not-an-email');
-  await page.getByTestId('add-sender').click();
-  await expect(page.getByTestId('senders-error')).toBeVisible();
-  await expect(page.getByTestId('sender-row')).toHaveCount(2);
+  await row.getByTestId('sender-name-input').fill('Sales');
+  await row.getByTestId('sender-local-input').fill('sales');
+  await row.getByTestId('add-sender').click();
+  await expect(row.getByTestId('sender-row')).toHaveCount(2);
 
   // Remove one via the styled confirm.
-  await page.getByTestId('sender-row').filter({ hasText: 'Support' }).getByTestId('sender-delete').click();
+  await row.getByTestId('sender-row').filter({ hasText: 'Support' }).getByTestId('sender-delete').click();
   await page.getByTestId('app-dialog').waitFor();
   await page.getByTestId('dialog-confirm').click();
-  await expect(page.getByTestId('sender-row')).toHaveCount(1);
-  await expect(page.getByTestId('sender-row').filter({ hasText: 'Sales' })).toHaveCount(1);
+  await expect(row.getByTestId('sender-row')).toHaveCount(1);
+  await expect(row.getByTestId('sender-row')).toContainText('sales@mail.acme.com');
 
-  // Persists across a reload (saved server-side).
+  // Persists across a reload, still under its domain.
   await page.reload();
-  await page.getByTestId('domain-senders').waitFor();
-  await expect(page.getByTestId('sender-row')).toHaveCount(1);
-  await expect(page.getByTestId('sender-row')).toContainText('sales@mail.acme.com');
+  await page.getByTestId('sending-domains').waitFor();
+  const row2 = page.getByTestId('domain-row').filter({ hasText: 'mail.acme.com' });
+  await expect(row2.getByTestId('sender-row')).toHaveCount(1);
+  await expect(row2.getByTestId('sender-row')).toContainText('sales@mail.acme.com');
 });
