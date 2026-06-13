@@ -303,6 +303,50 @@ export const sendingDomainActivate: Handler = async (ctx, _pool, _req, deps) => 
   return ok(out);
 };
 
+// --- domain senders (named "From" identities per sending domain, §10) ----------
+// Each row is a display name + a full address; the address's domain is captured
+// so the UI can group senders by domain. The address must parse as an email.
+const SENDER_EMAIL_RE = /^[^\s@]+@([^\s@]+\.[^\s@]+)$/;
+
+/** GET /domain-senders — the workspace's named senders (grouped client-side by domain). */
+export const listDomainSenders: Handler = async (ctx, pool) => {
+  const q = scopedQuery(ctx.workspaceId, 'SELECT id, domain, name, email, created_at FROM domain_senders');
+  const { rows } = await pool.query(`${q.text} ORDER BY domain, lower(name)`, q.values);
+  return ok({ senders: rows });
+};
+
+/** POST /domain-senders — add {name, email}; the domain is derived from the address. */
+export const createDomainSender: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const name = String(b.name ?? '').trim();
+  const email = String(b.email ?? '').trim().toLowerCase();
+  if (!name) return ok({ error: 'sender name is required' }, 400);
+  const m = SENDER_EMAIL_RE.exec(email);
+  if (!m) return ok({ error: 'a valid email address is required' }, 400);
+  const domain = m[1]!;
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO domain_senders (workspace_id, domain, name, email) VALUES ($1, $2, $3, $4)
+       RETURNING id, domain, name, email, created_at`,
+      [ctx.workspaceId, domain, name, email],
+    );
+    return ok({ sender: rows[0] }, 201);
+  } catch (e) {
+    if ((e as { code?: string }).code === '23505') {
+      return ok({ error: 'that email is already a sender' }, 409);
+    }
+    throw e;
+  }
+};
+
+/** DELETE /domain-senders/:id — remove a sender. Scoped. */
+export const deleteDomainSender: Handler = async (ctx, pool, req) => {
+  const q = scopedQuery(ctx.workspaceId, 'DELETE FROM domain_senders WHERE id = $1', [req.params.id!]);
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ deleted: rowCount });
+};
+
 // ---------------------------------------------------------------------------
 // segments + audiences (manage_content)
 // ---------------------------------------------------------------------------
@@ -2000,6 +2044,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /sending-domain/start': sendingDomainStart,
   'POST /sending-domain/check': sendingDomainCheck,
   'POST /sending-domain/activate': sendingDomainActivate,
+  'GET /domain-senders': listDomainSenders,
+  'POST /domain-senders': createDomainSender,
+  'DELETE /domain-senders/:id': deleteDomainSender,
   'GET /segments': listSegments,
   'GET /segments/:id': getSegment,
   'POST /segments': createSegment,

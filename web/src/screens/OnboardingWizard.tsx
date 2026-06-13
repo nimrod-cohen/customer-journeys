@@ -6,6 +6,7 @@
 import { useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { Badge, Button, Card, Input, PageHeader, toneFor } from '../ui/kit.js';
+import { DomainSenders } from './DomainSenders.tsx';
 import type { ComponentChildren } from 'preact';
 
 interface DnsRecord {
@@ -163,6 +164,10 @@ export function OnboardingWizard() {
             </p>
           ) : null}
         </Step>
+
+        {/* Named senders for the verified domain — managed any time, not part of
+            the one-time verification stepper. */}
+        <DomainSenders />
       </div>
     </section>
   );

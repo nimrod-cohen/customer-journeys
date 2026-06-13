@@ -35,6 +35,9 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /sending-domain/start': 'manage_sending_domain',
   'POST /sending-domain/check': 'manage_sending_domain',
   'POST /sending-domain/activate': 'manage_sending_domain',
+  'GET /domain-senders': 'manage_sending_domain',
+  'POST /domain-senders': 'manage_sending_domain',
+  'DELETE /domain-senders/:id': 'manage_sending_domain',
 
   // --- segments + audiences (manage_content) ---
   'GET /segments': 'manage_content',
