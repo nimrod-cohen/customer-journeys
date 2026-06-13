@@ -27,6 +27,32 @@ test('changes autosave without clicking save', async ({ page }) => {
   await expect(page.getByTestId('canvas-element')).toHaveCount(1);
 });
 
+test('the Back button is disabled while a save is in flight', async ({ page }) => {
+  // Slow the template save so the (normally brief) 'saving' state is observable.
+  await page.route(/\/templates(\/[0-9a-f-]+)?$/, async (route) => {
+    const m = route.request().method();
+    if (m === 'POST' || m === 'PUT') await new Promise((r) => setTimeout(r, 800));
+    await route.continue();
+  });
+
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-templates').click();
+  await page.getByTestId('templates-screen').waitFor();
+  await page.getByTestId('new-template').click();
+  await page.getByTestId('email-editor').waitFor();
+
+  // Make a change → after the debounce a save fires; while it's in flight Back
+  // is disabled so you can't leave mid-write.
+  await page.getByTestId('template-name').fill('Slow save');
+  await page.getByTestId('toolbox-text').click();
+  await expect(page.getByTestId('save-status')).toContainText('Saving', { timeout: 5_000 });
+  await expect(page.getByTestId('editor-back')).toBeDisabled();
+
+  // Once the save completes, Back is usable again.
+  await expect(page.getByTestId('template-saved')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('editor-back')).toBeEnabled();
+});
+
 test('the History tab lists changes; preview + restore work', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-templates').click();

@@ -193,7 +193,12 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
 
   return (
     <section data-testid="email-editor">
-      <button data-testid="editor-back" class="btn-ghost mb-4 btn-sm" onClick={() => void goBack()}>
+      <button
+        data-testid="editor-back"
+        class="btn-ghost mb-4 btn-sm disabled:cursor-default disabled:opacity-50"
+        onClick={() => void goBack()}
+        disabled={status === 'saving'}
+      >
         ← {backLabel}
       </button>
       <PageHeader
