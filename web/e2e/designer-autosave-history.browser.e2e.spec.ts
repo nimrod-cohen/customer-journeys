@@ -61,3 +61,30 @@ test('the History tab lists changes; preview + restore work', async ({ page }) =
   await page.getByTestId('history-exit-preview').click();
   await expect(page.getByTestId('canvas-element')).toHaveCount(2);
 });
+
+test('history: the FIRST change can be reverted via the Original baseline', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-templates').click();
+  await page.getByTestId('templates-screen').waitFor();
+  await page.getByTestId('new-template').click();
+  await page.getByTestId('email-editor').waitFor();
+
+  // A SINGLE change — previously this lone entry was "current" with no way back.
+  await page.getByTestId('toolbox-heading').click();
+  await expect(page.getByTestId('canvas-element')).toHaveCount(1);
+
+  await page.getByTestId('tab-history').click();
+  await expect(page.getByTestId('history-item')).toHaveCount(1);
+
+  // The "Original" row previews the empty pre-change state…
+  await page.getByTestId('history-original').locator('.nm-history-row').click();
+  await expect(page.getByTestId('canvas-element')).toHaveCount(0);
+
+  // …and restoring it commits the original (undoing the first change).
+  await page.getByTestId('history-restore-original').click();
+  await expect(page.getByTestId('canvas-element')).toHaveCount(0);
+
+  // The restore is itself undoable — the heading comes back.
+  await page.getByTestId('designer-undo').click();
+  await expect(page.getByTestId('canvas-element')).toHaveCount(1);
+});

@@ -150,9 +150,11 @@ function applyWithoutNotify(s: string): void {
   }
 }
 
-/** Preview the state after history entry i (read-only peek; live state is kept). */
+/** Preview the state after history entry i (read-only peek; live state is kept).
+ *  i = -1 is the ORIGINAL baseline (the state before the first recorded change),
+ *  so even the first change can be reverted. */
 export function previewVersion(i: number): void {
-  if (i < 0 || i >= undoStack.value.length) return;
+  if (i < -1 || i >= undoStack.value.length) return;
   if (previewIndex.value === null) _liveSnapshot = snapshot();
   applyWithoutNotify(snapshotAfter(i));
   previewIndex.value = i;
@@ -165,12 +167,13 @@ export function exitPreview(): void {
   previewIndex.value = null;
 }
 
-/** Commit history entry i's after-state as the new live document (undoable). */
+/** Commit history entry i's after-state as the new live document (undoable).
+ *  i = -1 restores the original baseline (before the first change). */
 export function revertToVersion(i: number): void {
-  if (i < 0 || i >= undoStack.value.length) return;
+  if (i < -1 || i >= undoStack.value.length) return;
   const target = snapshotAfter(i);
   exitPreview();
-  mutate(`Restore version ${i + 1}`, () => applyWithoutNotify(target));
+  mutate(i < 0 ? 'Restore original' : `Restore version ${i + 1}`, () => applyWithoutNotify(target));
 }
 
 function applySnapshot(s: string): void {

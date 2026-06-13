@@ -68,6 +68,35 @@ export function History(): JSX.Element {
               </li>
             );
           })}
+          {/* The original baseline (state before the first change) — lets you
+              revert even the first change, which otherwise has no earlier row. */}
+          <li
+            data-testid="history-original"
+            class={`nm-history-item ${previewing === -1 ? 'nm-active' : ''}`}
+          >
+            <button
+              type="button"
+              class="nm-history-row"
+              onClick={() => previewVersion(-1)}
+              title="Preview the original (before any change)"
+            >
+              <span class="nm-history-time">
+                <Clock size={11} /> original
+              </span>
+              <span class="nm-history-action">Before any changes</span>
+            </button>
+            {previewing === -1 ? (
+              <button
+                type="button"
+                data-testid="history-restore-original"
+                class="nm-mini-btn"
+                title="Restore the original"
+                onClick={() => revertToVersion(-1)}
+              >
+                <RotateCcw size={12} /> Restore
+              </button>
+            ) : null}
+          </li>
         </ul>
       )}
     </div>
