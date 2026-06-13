@@ -119,12 +119,24 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
           ? (RTE_SIZES.find((x) => x > current) ?? RTE_SIZES[RTE_SIZES.length - 1])
           : ([...RTE_SIZES].reverse().find((x) => x < current) ?? RTE_SIZES[0]);
       document.execCommand('fontSize', false, '7');
+      // Swapping <font size=7> for sized <span>s rebuilds the DOM and drops the
+      // selection — collect the new spans and re-select across them so the
+      // highlight stays and the user can click A+/A− repeatedly.
+      const spans: HTMLElement[] = [];
       ref.current?.querySelectorAll('font[size="7"]').forEach((f) => {
         const span = document.createElement('span');
         span.style.fontSize = `${next}px`;
         span.innerHTML = (f as HTMLElement).innerHTML;
         f.replaceWith(span);
+        spans.push(span);
       });
+      if (spans.length && sel) {
+        const range = document.createRange();
+        range.setStartBefore(spans[0]!);
+        range.setEndAfter(spans[spans.length - 1]!);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
     } else if (btn.prompt) {
       // Preserve the text selection across the styled dialog: block the blur
       // handler (no hide/save → the DOM stays intact), and after the dialog

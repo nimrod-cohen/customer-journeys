@@ -256,6 +256,40 @@ test('asset manager: upload multiple files at once', async ({ page }) => {
   await expect(page.getByTestId('am-item').filter({ hasText: 'batch-3.png' })).toHaveCount(1);
 });
 
+test('text editor: increasing font size keeps the selection (repeatable)', async ({ page }) => {
+  await openDesigner(page);
+  await page.getByTestId('toolbox-text').click();
+
+  const editable = page.getByTestId('text-editable');
+  await editable.click();
+  const selectAll = (): Promise<void> =>
+    page.evaluate(() => {
+      const el = document.querySelector('[data-testid="text-editable"]')!;
+      const sel = window.getSelection()!;
+      sel.removeAllRanges();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.addRange(range);
+    });
+  await selectAll();
+  const selectedText = await page.evaluate(() => window.getSelection()!.toString());
+  expect(selectedText.length).toBeGreaterThan(0);
+
+  await page.getByTestId('rte-toolbar').waitFor();
+  const bump = page.getByTestId('rte-toolbar').getByTitle('A+', { exact: true });
+
+  // First A+ resizes AND keeps the same selection (not collapsed).
+  await bump.click();
+  expect(await page.evaluate(() => window.getSelection()!.toString())).toBe(selectedText);
+  await expect(editable.locator('span[style*="font-size"]')).toHaveCount(1);
+
+  // Because the selection survives, a second A+ enlarges again (no re-select).
+  await bump.click();
+  expect(await page.evaluate(() => window.getSelection()!.toString())).toBe(selectedText);
+  const size = await editable.locator('span[style*="font-size"]').last().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+  expect(size).toBeGreaterThan(16);
+});
+
 test('text editor: adding a link via the styled dialog applies to the selection', async ({ page }) => {
   await openDesigner(page);
   await page.getByTestId('toolbox-text').click();
