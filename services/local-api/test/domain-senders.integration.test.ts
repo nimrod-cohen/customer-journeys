@@ -47,6 +47,8 @@ describeMaybe('sending domains + senders via API (real Postgres)', () => {
   }
 
   beforeAll(async () => {
+    // The verify endpoint does a REAL DNS lookup; stub it to "found" for the test.
+    process.env.CDP_DNS_VERIFY_STUB = '1';
     pool = adminPool();
     await dropWorkspaces();
     for (const [ws, owner] of [[WS, OWNER], [OTHER, OTHER_OWNER]] as const) {
@@ -66,6 +68,7 @@ describeMaybe('sending domains + senders via API (real Postgres)', () => {
   });
 
   afterAll(async () => {
+    delete process.env.CDP_DNS_VERIFY_STUB;
     if (pool) {
       await dropWorkspaces();
       await pool.end();

@@ -10,6 +10,7 @@
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import type { Pool } from 'pg';
+import { promises as dns } from 'node:dns';
 import { DEV_USERS, OPEN_EVENT_TYPES, PURCHASE_EVENT_TYPES, type WorkspaceContext } from '@cdp/shared';
 import { scopedQuery } from '@cdp/db';
 
@@ -348,54 +349,63 @@ export const createSendingDomain: Handler = async (ctx, pool, req) => {
   }
 };
 
-/** A deterministic, display-only set of DNS records to publish for a domain
- *  (SPF + 3 DKIM CNAMEs + DMARC). The dev harness shows these on the domain setup
- *  screen; production returns the real SES identity records. */
-function dnsRecordsFor(domain: string): Array<{ role: string; type: string; name: string; value: string }> {
-  let h = 0;
-  for (let i = 0; i < domain.length; i++) h = (h * 31 + domain.charCodeAt(i)) >>> 0;
-  const tok = (n: number): string => (h ^ (n * 2654435761)).toString(16).padStart(8, '0').repeat(2).slice(0, 16);
-  return [
-    { role: 'spf', type: 'TXT', name: domain, value: 'v=spf1 include:amazonses.com ~all' },
-    ...[0, 1, 2].map((i) => ({
-      role: `dkim${i + 1}`,
-      type: 'CNAME',
-      name: `${tok(i)}._domainkey.${domain}`,
-      value: `${tok(i)}.dkim.amazonses.com`,
-    })),
-    { role: 'dmarc', type: 'TXT', name: `_dmarc.${domain}`, value: 'v=DMARC1; p=none;' },
-  ];
+/** The ownership-verification TXT record the user must publish for a domain. */
+function verifyRecordFor(domain: string, token: string): { role: string; type: string; name: string; value: string } {
+  return { role: 'verify', type: 'TXT', name: `_cdp-verify.${domain}`, value: `cdp-verify=${token}` };
 }
 
-/** GET /sending-domains/:id — one domain + the DNS records to publish (setup screen). */
+/**
+ * Look the verification TXT record up in REAL DNS and report whether it carries
+ * the domain's token. `CDP_DNS_VERIFY_STUB=1` short-circuits to found — set ONLY
+ * for tests/e2e, never on a server a human verifies real domains against.
+ */
+async function dnsHasVerifyToken(domain: string, token: string): Promise<boolean> {
+  if (process.env.CDP_DNS_VERIFY_STUB === '1') return true;
+  try {
+    const txts = await dns.resolveTxt(`_cdp-verify.${domain}`);
+    return txts.some((parts) => parts.join('').includes(`cdp-verify=${token}`));
+  } catch {
+    return false; // NXDOMAIN / no record / lookup error → not verified
+  }
+}
+
+/** GET /sending-domains/:id — one domain + the DNS record to publish (setup screen). */
 export const getSendingDomain: Handler = async (ctx, pool, req) => {
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, domain, verified, verified_at FROM sending_domains WHERE id = $1',
+    'SELECT id, domain, verified, verified_at, verify_token FROM sending_domains WHERE id = $1',
     [req.params.id!],
   );
-  const { rows } = await pool.query<{ id: string; domain: string; verified: boolean; verified_at: string | null }>(
-    q.text,
-    q.values,
-  );
-  if (!rows[0]) return ok({ error: 'not found' }, 404);
-  return ok({ domain: rows[0], records: dnsRecordsFor(rows[0].domain) });
+  const { rows } = await pool.query<{
+    id: string;
+    domain: string;
+    verified: boolean;
+    verified_at: string | null;
+    verify_token: string;
+  }>(q.text, q.values);
+  const row = rows[0];
+  if (!row) return ok({ error: 'not found' }, 404);
+  const { verify_token, ...domainOut } = row;
+  return ok({ domain: domainOut, records: [verifyRecordFor(row.domain, verify_token)] });
 };
 
 /**
- * POST /sending-domains/:id/check — the system looks up the domain's DNS records.
- * A domain is verified ONLY when the records are found; there is no manual flip.
- * In this dev harness SES/DNS are mocked to resolve, so the lookup succeeds (the
- * same convention the onboarding wizard uses); production performs the real DNS
- * lookup here. Scoped.
+ * POST /sending-domains/:id/check — the system LOOKS UP the verification TXT in
+ * DNS and verifies the domain ONLY if the token is found. There is no manual flip;
+ * an unpublished/incorrect record leaves the domain pending. Once verified it
+ * stays verified. Scoped.
  */
 export const checkSendingDomain: Handler = async (ctx, pool, req) => {
-  const sel = scopedQuery(ctx.workspaceId, 'SELECT domain FROM sending_domains WHERE id = $1', [req.params.id!]);
-  const { rows } = await pool.query<{ domain: string }>(sel.text, sel.values);
-  if (!rows[0]) return ok({ error: 'not found' }, 404);
-  // Dev harness: the records are considered found in DNS.
-  const found = true;
-  if (found) {
+  const sel = scopedQuery(
+    ctx.workspaceId,
+    'SELECT domain, verified, verify_token FROM sending_domains WHERE id = $1',
+    [req.params.id!],
+  );
+  const { rows } = await pool.query<{ domain: string; verified: boolean; verify_token: string }>(sel.text, sel.values);
+  const row = rows[0];
+  if (!row) return ok({ error: 'not found' }, 404);
+  const found = await dnsHasVerifyToken(row.domain, row.verify_token);
+  if (found && !row.verified) {
     const upd = scopedQuery(
       ctx.workspaceId,
       'UPDATE sending_domains SET verified = true, verified_at = now() WHERE id = $1',
@@ -403,8 +413,7 @@ export const checkSendingDomain: Handler = async (ctx, pool, req) => {
     );
     await pool.query(upd.text, upd.values);
   }
-  const records = dnsRecordsFor(rows[0].domain).map((r) => ({ ...r, status: found ? 'found' : 'pending' }));
-  return ok({ verified: found, records });
+  return ok({ verified: found || row.verified, found, record: verifyRecordFor(row.domain, row.verify_token) });
 };
 
 /** DELETE /sending-domains/:id — remove a domain; blocked if it still has senders. */
