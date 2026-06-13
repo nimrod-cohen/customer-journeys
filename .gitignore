@@ -10,6 +10,14 @@ cdk.out/
 .env.*
 !.env.example
 
+# Secrets / credentials — NEVER commit
+# AWS access-key CSVs downloaded from the IAM console, and any local AWS config.
+*accessKeys*.csv
+*_accessKeys.csv
+*credentials*.csv
+.aws/
+secrets/
+
 # Supabase local
 supabase/.temp/
 **/supabase/.temp/
