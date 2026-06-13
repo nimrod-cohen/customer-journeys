@@ -337,11 +337,30 @@ test('text editor: adding a link via the styled dialog applies to the selection'
   await page.getByTestId('dialog-confirm').click();
 
   // The link is applied in the editable DOM…
-  await expect(editable.locator('a[href="https://example.com/promo"]')).toHaveCount(1);
-  // …and survives into the emitted MJML once the edit commits (blur).
-  await page.getByTestId('canvas-empty').waitFor({ state: 'hidden' });
+  const link = editable.locator('a[href="https://example.com/promo"]');
+  await expect(link).toHaveCount(1);
+  // …and is visibly underlined at design time (Tailwind preflight restored).
+  await expect(link).toHaveCSS('text-decoration', /underline/);
+
+  // Re-selecting the linked text and clicking "link" PRE-FILLS the URL and
+  // updates it in place (the old bug: empty dialog, no change).
+  await page.evaluate(() => {
+    const a = document.querySelector('[data-testid="text-editable"] a')!;
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(a);
+    sel.addRange(range);
+  });
+  await page.getByTestId('rte-toolbar').getByTitle('link', { exact: true }).click();
+  await expect(page.getByTestId('dialog-input')).toHaveValue('https://example.com/promo');
+  await page.getByTestId('dialog-input').fill('https://example.com/updated');
+  await page.getByTestId('dialog-confirm').click();
+  await expect(editable.locator('a[href="https://example.com/updated"]')).toHaveCount(1);
+
+  // …and the updated URL survives into the emitted MJML once the edit commits.
   await page.getByTestId('template-name').click(); // blur the editable → save
-  await expect(page.getByTestId('mjml-output')).toHaveValue(/https:\/\/example\.com\/promo/);
+  await expect(page.getByTestId('mjml-output')).toHaveValue(/https:\/\/example\.com\/updated/);
 });
 
 test('text editor: lists are visible at design time and the toolbar clamps to the canvas', async ({ page }) => {

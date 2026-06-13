@@ -155,15 +155,38 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
       linkDialogActive.current = true;
       const sel = window.getSelection();
       const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+      // If the selection sits inside an existing link, pre-fill its URL (and
+      // update that anchor on confirm) instead of opening an empty dialog.
+      const anchor = (() => {
+        let n: Node | null = sel?.anchorNode ?? null;
+        while (n && n !== ref.current) {
+          if (n.nodeType === 1 && (n as HTMLElement).tagName === 'A') return n as HTMLAnchorElement;
+          n = n.parentNode;
+        }
+        return null;
+      })();
+      const existing = anchor?.getAttribute('href') ?? '';
       try {
-        const url = await askText({ title: 'Link URL', placeholder: 'https://…', confirmLabel: 'Add link' });
+        const url = await askText({
+          title: existing ? 'Edit link' : 'Link URL',
+          placeholder: 'https://…',
+          initial: existing,
+          confirmLabel: existing ? 'Update link' : 'Add link',
+        });
         await new Promise((r) => setTimeout(r, 0)); // let the dialog unmount settle
         ref.current?.focus();
         if (range && sel) {
           sel.removeAllRanges();
           sel.addRange(range);
         }
-        if (url && btn.cmd) document.execCommand(btn.cmd, false, url);
+        if (url === null) return; // cancelled
+        if (anchor) {
+          // Re-point the existing link (createLink won't reliably replace it).
+          if (url) anchor.setAttribute('href', url);
+          else document.execCommand('unlink', false);
+        } else if (url && btn.cmd) {
+          document.execCommand(btn.cmd, false, url);
+        }
       } finally {
         linkDialogActive.current = false;
       }

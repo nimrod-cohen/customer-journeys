@@ -542,6 +542,9 @@
 .nm-text-editable ul { list-style: disc; }
 .nm-text-editable ol { list-style: decimal; }
 .nm-text-editable ul ul { list-style: circle; }
+/* Tailwind preflight strips link styling — restore it so linked text is
+   visibly underlined/colored at design time (matches how it renders in mail). */
+.nm-text-editable a { color: #2563eb; text-decoration: underline; }
 
 /* ── Image editor (crop / resize / circle) ─────────────────────────────────── */
 .nm-imgedit {
