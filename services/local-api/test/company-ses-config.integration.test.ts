@@ -3,7 +3,7 @@
 // (never returned), a blank secret on update keeps the stored one, and one
 // company can't read another's config.
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
-import { hasDatabaseUrl, adminPool } from '@cdp/db';
+import { hasDatabaseUrl, adminPool, decryptSecret, isEncryptedSecret } from '@cdp/db';
 import { makePgLookups, makeLocalDeps, dispatch, type DispatchEnv } from '../src/index.js';
 import { tokenFor } from './seed.js';
 import type { Pool } from 'pg';
@@ -76,12 +76,16 @@ describeMaybe('company SES config via API (real Postgres)', () => {
     expect(got.access_key_id).toBe('AKIAA');
     expect(got.secret_access_key).toBeUndefined(); // write-only
 
-    // Verify in the DB that the secret really persisted.
+    // In the DB the secret is ENVELOPE-ENCRYPTED at rest (not plaintext), and
+    // decrypts back to the original.
     const row = await pool.query<{ secret_access_key: string }>(
       'SELECT secret_access_key FROM company_ses_config WHERE company_id = $1',
       [CO_A],
     );
-    expect(row.rows[0]!.secret_access_key).toBe('secretA');
+    const stored = row.rows[0]!.secret_access_key;
+    expect(stored).not.toBe('secretA');
+    expect(isEncryptedSecret(stored)).toBe(true);
+    expect(decryptSecret(stored)).toBe('secretA');
   });
 
   it('a blank secret on update keeps the stored one; region/key can change', async () => {
@@ -94,7 +98,8 @@ describeMaybe('company SES config via API (real Postgres)', () => {
       'SELECT region, access_key_id, secret_access_key FROM company_ses_config WHERE company_id = $1',
       [CO_A],
     );
-    expect(row.rows[0]).toMatchObject({ region: 'eu-west-1', access_key_id: 'AKIAB', secret_access_key: 'secretA' });
+    expect(row.rows[0]).toMatchObject({ region: 'eu-west-1', access_key_id: 'AKIAB' });
+    expect(decryptSecret(row.rows[0]!.secret_access_key)).toBe('secretA'); // original secret kept
   });
 
   it("company isolation: B does not see A's config", async () => {

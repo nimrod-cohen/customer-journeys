@@ -12,7 +12,7 @@
 import type { Pool } from 'pg';
 import { createSesClient, type SesEmailClient } from '@cdp/email';
 import { DEV_USERS, OPEN_EVENT_TYPES, PURCHASE_EVENT_TYPES, type WorkspaceContext } from '@cdp/shared';
-import { scopedQuery } from '@cdp/db';
+import { scopedQuery, encryptSecret, decryptSecret, isEncryptedSecret } from '@cdp/db';
 
 // Resolve an app user's email from the dev credential fixture (in production this
 // is the Supabase user's email). userId → email for display; email → userId for
@@ -351,8 +351,12 @@ async function sesForWorkspace(
   );
   const cfg = rows[0];
   if (cfg) {
+    // Stored secret is an encryption envelope (legacy plaintext tolerated).
+    const secretAccessKey = isEncryptedSecret(cfg.secret_access_key)
+      ? decryptSecret(cfg.secret_access_key)
+      : cfg.secret_access_key;
     return {
-      ses: createSesClient({ region: cfg.region, accessKeyId: cfg.access_key_id, secretAccessKey: cfg.secret_access_key }),
+      ses: createSesClient({ region: cfg.region, accessKeyId: cfg.access_key_id, secretAccessKey }),
       configured: true,
     };
   }
@@ -385,7 +389,9 @@ export const putCompanySesConfig: Handler = async (ctx, pool, req) => {
     'SELECT secret_access_key FROM company_ses_config WHERE company_id = $1',
     [companyId],
   );
-  const effectiveSecret = secret || existing.rows[0]?.secret_access_key;
+  // A new secret is envelope-encrypted before storage; a blank one keeps the
+  // already-encrypted stored value (so you can change region/key alone).
+  const effectiveSecret = secret ? encryptSecret(secret) : existing.rows[0]?.secret_access_key;
   if (!effectiveSecret) return ok({ error: 'secret access key is required' }, 400);
   await pool.query(
     `INSERT INTO company_ses_config (company_id, region, access_key_id, secret_access_key, updated_at)

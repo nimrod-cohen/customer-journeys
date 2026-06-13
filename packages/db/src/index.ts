@@ -10,3 +10,4 @@ export {
   type SessionClaims,
 } from './testutil.js';
 export { applyMigrations, MIGRATIONS_DIR } from './migrate.js';
+export { encryptSecret, decryptSecret, isEncryptedSecret } from './secret-crypto.js';
