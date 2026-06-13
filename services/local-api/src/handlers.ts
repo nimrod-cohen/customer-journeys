@@ -348,21 +348,63 @@ export const createSendingDomain: Handler = async (ctx, pool, req) => {
   }
 };
 
-/**
- * POST /sending-domains/:id/verify — mark a domain verified. In this dev harness
- * SES/DNS are mocked, so this is the stand-in for a confirmed DKIM/DNS check;
- * production gates this on the real SES verification result (see the onboarding
- * service). Scoped.
- */
-export const verifySendingDomain: Handler = async (ctx, pool, req) => {
+/** A deterministic, display-only set of DNS records to publish for a domain
+ *  (SPF + 3 DKIM CNAMEs + DMARC). The dev harness shows these on the domain setup
+ *  screen; production returns the real SES identity records. */
+function dnsRecordsFor(domain: string): Array<{ role: string; type: string; name: string; value: string }> {
+  let h = 0;
+  for (let i = 0; i < domain.length; i++) h = (h * 31 + domain.charCodeAt(i)) >>> 0;
+  const tok = (n: number): string => (h ^ (n * 2654435761)).toString(16).padStart(8, '0').repeat(2).slice(0, 16);
+  return [
+    { role: 'spf', type: 'TXT', name: domain, value: 'v=spf1 include:amazonses.com ~all' },
+    ...[0, 1, 2].map((i) => ({
+      role: `dkim${i + 1}`,
+      type: 'CNAME',
+      name: `${tok(i)}._domainkey.${domain}`,
+      value: `${tok(i)}.dkim.amazonses.com`,
+    })),
+    { role: 'dmarc', type: 'TXT', name: `_dmarc.${domain}`, value: 'v=DMARC1; p=none;' },
+  ];
+}
+
+/** GET /sending-domains/:id — one domain + the DNS records to publish (setup screen). */
+export const getSendingDomain: Handler = async (ctx, pool, req) => {
   const q = scopedQuery(
     ctx.workspaceId,
-    'UPDATE sending_domains SET verified = true, verified_at = now() WHERE id = $1',
+    'SELECT id, domain, verified, verified_at FROM sending_domains WHERE id = $1',
     [req.params.id!],
   );
-  const { rowCount } = await pool.query(`${q.text} RETURNING id`, q.values);
-  if (!rowCount) return ok({ error: 'not found' }, 404);
-  return ok({ verified: true });
+  const { rows } = await pool.query<{ id: string; domain: string; verified: boolean; verified_at: string | null }>(
+    q.text,
+    q.values,
+  );
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  return ok({ domain: rows[0], records: dnsRecordsFor(rows[0].domain) });
+};
+
+/**
+ * POST /sending-domains/:id/check — the system looks up the domain's DNS records.
+ * A domain is verified ONLY when the records are found; there is no manual flip.
+ * In this dev harness SES/DNS are mocked to resolve, so the lookup succeeds (the
+ * same convention the onboarding wizard uses); production performs the real DNS
+ * lookup here. Scoped.
+ */
+export const checkSendingDomain: Handler = async (ctx, pool, req) => {
+  const sel = scopedQuery(ctx.workspaceId, 'SELECT domain FROM sending_domains WHERE id = $1', [req.params.id!]);
+  const { rows } = await pool.query<{ domain: string }>(sel.text, sel.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  // Dev harness: the records are considered found in DNS.
+  const found = true;
+  if (found) {
+    const upd = scopedQuery(
+      ctx.workspaceId,
+      'UPDATE sending_domains SET verified = true, verified_at = now() WHERE id = $1',
+      [req.params.id!],
+    );
+    await pool.query(upd.text, upd.values);
+  }
+  const records = dnsRecordsFor(rows[0].domain).map((r) => ({ ...r, status: found ? 'found' : 'pending' }));
+  return ok({ verified: found, records });
 };
 
 /** DELETE /sending-domains/:id — remove a domain; blocked if it still has senders. */
@@ -2141,7 +2183,8 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /sending-domain/activate': sendingDomainActivate,
   'GET /sending-domains': listSendingDomains,
   'POST /sending-domains': createSendingDomain,
-  'POST /sending-domains/:id/verify': verifySendingDomain,
+  'GET /sending-domains/:id': getSendingDomain,
+  'POST /sending-domains/:id/check': checkSendingDomain,
   'DELETE /sending-domains/:id': deleteSendingDomain,
   'GET /domain-senders': listDomainSenders,
   'POST /domain-senders': createDomainSender,

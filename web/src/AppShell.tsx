@@ -15,7 +15,8 @@ import { BroadcastComposer, BroadcastWizard } from './screens/BroadcastComposer.
 import { CampaignBuilder } from './screens/CampaignBuilder.js';
 import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
 import { CompanySettings } from './screens/CompanySettings.js';
-import { OnboardingWizard } from './screens/OnboardingWizard.js';
+import { SendingDomainsList } from './screens/SendingDomainsList.tsx';
+import { SendingDomainDetail } from './screens/SendingDomainDetail.tsx';
 import { SystemAdminConsole } from './screens/SystemAdminConsole.js';
 import {
   Dashboards,
@@ -58,6 +59,13 @@ function screenFor(path: string): JSX.Element {
   if (path.startsWith('/editor/')) {
     return <TemplateEditor id={path.slice('/editor/'.length)} />;
   }
+  // Sending domains: list at /onboarding; the per-domain setup screen at
+  // /onboarding/new and /onboarding/:id.
+  if (path === '/onboarding') return <SendingDomainsList />;
+  if (path.startsWith('/onboarding/')) {
+    const rest = path.slice('/onboarding/'.length);
+    return rest === 'new' ? <SendingDomainDetail /> : <SendingDomainDetail id={rest} />;
+  }
   switch (path) {
     case '/broadcasts':
       return <BroadcastComposer />;
@@ -77,8 +85,6 @@ function screenFor(path: string): JSX.Element {
       return <WorkspaceSettings />;
     case '/company':
       return <CompanySettings />;
-    case '/onboarding':
-      return <OnboardingWizard />;
     case '/admin':
       return <SystemAdminConsole />;
     case '/help':

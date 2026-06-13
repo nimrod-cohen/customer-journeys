@@ -34,7 +34,7 @@ describeMaybe('sending domains + senders via API (real Postgres)', () => {
   const listDomains = (token: string) =>
     dispatch({ method: 'GET', path: '/sending-domains', authorization: token, query: {}, body: {} }, e());
   const verifyDomain = (token: string, id: string) =>
-    dispatch({ method: 'POST', path: `/sending-domains/${id}/verify`, authorization: token, query: {}, body: {} }, e());
+    dispatch({ method: 'POST', path: `/sending-domains/${id}/check`, authorization: token, query: {}, body: {} }, e());
   const delDomain = (token: string, id: string) =>
     dispatch({ method: 'DELETE', path: `/sending-domains/${id}`, authorization: token, query: {}, body: {} }, e());
 
