@@ -24,7 +24,9 @@ import {
 } from './state.js';
 import { FONT_SIZE_EMS, type Align, type Border, type Radius, type Spacing } from './model.js';
 import { AssetPicker } from './AssetPicker.tsx';
+import { ImageEditor } from './ImageEditor.tsx';
 import { AlignLeft, AlignCenter, AlignRight, Copy, Trash2 } from './icons.tsx';
+import { Crop } from 'lucide-preact';
 
 type Patch = Record<string, unknown>;
 
@@ -291,6 +293,40 @@ function CellPanel({ id }: { id: string }): JSX.Element {
   );
 }
 
+/** Image element editor: source + crop/resize/circle editor + the usual props. */
+function ImagePanel({ id }: { id: string }): JSX.Element {
+  const el = findElement(id)! as { type: 'image'; props: import('./model.js').ImageProps };
+  const commit = (patch: Patch): void => mutate('Edit image', () => updateElementProps(id, patch));
+  const [editing, setEditing] = useState(false);
+
+  return (
+    <>
+      <AssetPicker value={el.props.src} onCommit={(v) => commit({ src: v })} />
+      {el.props.src ? (
+        <button type="button" data-testid="image-edit-open" class="nm-btn nm-am-open" onClick={() => setEditing(true)}>
+          <Crop size={14} /> Crop / resize…
+        </button>
+      ) : null}
+      <TextField label="Alt text" value={el.props.alt ?? ''} onCommit={(v) => commit({ alt: v })} />
+      <NumberField label="Width (px)" value={el.props.width} onCommit={(v) => commit({ width: v })} />
+      <AlignField value={el.props.align} onCommit={(v) => commit({ align: v })} />
+      <TextField label="Link URL" value={el.props.href ?? ''} onCommit={(v) => commit({ href: v || undefined })} />
+      <RadiusField value={el.props.radius} onCommit={(v) => commit({ radius: v })} />
+      <PaddingField value={el.props.padding} onCommit={(v) => commit({ padding: v })} />
+      {editing ? (
+        <ImageEditor
+          src={el.props.src}
+          onApply={(src, width) => {
+            commit({ src, width });
+            setEditing(false);
+          }}
+          onClose={() => setEditing(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
 function ElementPanel({ id }: { id: string }): JSX.Element {
   const el = findElement(id)!;
   const commit = (patch: Patch): void => mutate(`Edit ${el.type}`, () => updateElementProps(id, patch));
@@ -325,17 +361,7 @@ function ElementPanel({ id }: { id: string }): JSX.Element {
         </>
       ) : null}
 
-      {el.type === 'image' ? (
-        <>
-          <AssetPicker value={el.props.src} onCommit={(v) => commit({ src: v })} />
-          <TextField label="Alt text" value={el.props.alt ?? ''} onCommit={(v) => commit({ alt: v })} />
-          <NumberField label="Width (px)" value={el.props.width} onCommit={(v) => commit({ width: v })} />
-          <AlignField value={el.props.align} onCommit={(v) => commit({ align: v })} />
-          <TextField label="Link URL" value={el.props.href ?? ''} onCommit={(v) => commit({ href: v || undefined })} />
-          <RadiusField value={el.props.radius} onCommit={(v) => commit({ radius: v })} />
-          <PaddingField value={el.props.padding} onCommit={(v) => commit({ padding: v })} />
-        </>
-      ) : null}
+      {el.type === 'image' ? <ImagePanel id={id} /> : null}
 
       {el.type === 'button' ? (
         <>

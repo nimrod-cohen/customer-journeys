@@ -433,6 +433,8 @@
   cursor: pointer;
 }
 .nm-am-btn:hover { border-color: #14b8a6; color: #0f766e; }
+.nm-am-btn:disabled { opacity: 0.5; cursor: default; }
+.nm-am-btn.nm-active { background: #ccfbf1; border-color: #14b8a6; color: #0f766e; }
 .nm-am-primary { background: #134e4a; border-color: #134e4a; color: #fff; }
 .nm-am-primary:hover { background: #115e59; color: #fff; }
 .nm-am-subbar {
@@ -540,3 +542,57 @@
 .nm-text-editable ul { list-style: disc; }
 .nm-text-editable ol { list-style: decimal; }
 .nm-text-editable ul ul { list-style: circle; }
+
+/* ── Image editor (crop / resize / circle) ─────────────────────────────────── */
+.nm-imgedit {
+  background: #fff;
+  border-radius: 14px;
+  width: min(900px, 100%);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 0.3);
+  overflow: hidden;
+}
+.nm-imgedit-body {
+  display: flex;
+  gap: 18px;
+  padding: 18px 22px 22px;
+  overflow: auto;
+}
+.nm-imgedit-stage {
+  position: relative;
+  flex: 0 0 auto;
+  background: #f5f5f4
+    repeating-conic-gradient(#e7e5e4 0% 25%, transparent 0% 50%) 0 / 18px 18px; /* checker = transparency */
+  border-radius: 8px;
+  user-select: none;
+  touch-action: none;
+  align-self: flex-start;
+}
+.nm-imgedit-img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.nm-imgedit-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #a8a29e; font-size: 13px; }
+.nm-imgedit-cropbox {
+  position: absolute;
+  border: 2px solid #14b8a6;
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 0.45); /* dims everything outside the crop */
+  cursor: move;
+  box-sizing: border-box;
+}
+.nm-imgedit-cropbox.nm-circle { border-radius: 50%; }
+.nm-imgedit-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border: 2px solid #14b8a6;
+  border-radius: 3px;
+}
+.nm-imgedit-handle.nm-nw { left: -8px; top: -8px; cursor: nwse-resize; }
+.nm-imgedit-handle.nm-ne { right: -8px; top: -8px; cursor: nesw-resize; }
+.nm-imgedit-handle.nm-sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
+.nm-imgedit-handle.nm-se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+.nm-imgedit-controls { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 16px; }
+.nm-imgedit-group { display: flex; flex-direction: column; gap: 6px; }
+.nm-imgedit-aspects { display: flex; flex-wrap: wrap; gap: 6px; }
+.nm-imgedit-actions { margin-top: auto; display: flex; justify-content: flex-end; gap: 8px; }

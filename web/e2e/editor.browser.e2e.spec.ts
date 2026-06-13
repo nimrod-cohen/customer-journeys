@@ -6,6 +6,11 @@ import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
+// A real 48×48 RGB gradient PNG (so the image editor's crop + canvas work on
+// meaningful pixels, unlike the 1×1 fixtures used by the gallery tests).
+const BIG_PNG_B64 =
+  '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';
+
 async function openDesigner(page: import('@playwright/test').Page): Promise<void> {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-templates').click();
@@ -173,6 +178,40 @@ test('asset manager: rename, drag-to-move and delete images and folders', async 
   await page.getByTestId('am-folder-card').filter({ hasText: 'archive' }).getByTestId('am-folder-delete').click();
   await page.getByTestId('dialog-confirm').click();
   await expect(page.getByTestId('am-folder-card').filter({ hasText: 'archive' })).toHaveCount(0);
+});
+
+test('image editor: crop to a circle bakes a new asset and resizes the image', async ({ page }) => {
+  await openDesigner(page);
+
+  // Add an image and select a real (48×48) uploaded asset.
+  await page.getByTestId('toolbox-image').click();
+  await page.getByTestId('canvas-element').click();
+  await page.getByTestId('asset-select').click();
+  await page.getByTestId('asset-manager').waitFor();
+  await page.getByTestId('am-file-input').setInputFiles({
+    name: 'photo.png',
+    mimeType: 'image/png',
+    // 48×48 gradient PNG (real dimensions so crop/canvas are meaningful).
+    buffer: Buffer.from(BIG_PNG_B64, 'base64'),
+  });
+  await page.getByTestId('am-item').filter({ hasText: 'photo.png' }).click();
+  const srcBefore = await page.getByTestId('asset-url').inputValue();
+  expect(srcBefore).toMatch(/\/assets\//);
+
+  // Open the crop/resize editor → choose Circle → set output width → Apply.
+  await page.getByTestId('image-edit-open').click();
+  await page.getByTestId('image-editor').waitFor();
+  await page.getByTestId('imgedit-circle').click();
+  await page.getByTestId('imgedit-width').fill('64');
+  await page.getByTestId('imgedit-apply').click();
+
+  // The editor closes and the element now points at a NEW (edited) asset…
+  await expect(page.getByTestId('image-editor')).toHaveCount(0);
+  await expect(page.getByTestId('asset-url')).toHaveValue(/\/assets\//);
+  const srcAfter = await page.getByTestId('asset-url').inputValue();
+  expect(srcAfter).not.toBe(srcBefore);
+  // …and it still serializes as an mj-image at the chosen 64px width.
+  await expect(page.getByTestId('mjml-output')).toHaveValue(/<mj-image[^>]*width="64px"/);
 });
 
 test('the text toolbar sits right above the text element, right-aligned', async ({ page }) => {
