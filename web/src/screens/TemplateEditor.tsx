@@ -18,7 +18,7 @@ import {
   peekEditorReturn,
   setReturnedTemplate,
 } from '../store/editorReturn.js';
-import { Button, Field, Input, PageHeader } from '../ui/kit.js';
+import { Field, Input, PageHeader } from '../ui/kit.js';
 import { EmailDesigner } from '../email-designer/EmailDesigner.tsx';
 import { designToMjml } from '../email-designer/mjml-serializer.js';
 import { emptyDesign, isEmailDesign, type EmailDesign } from '../email-designer/model.js';
@@ -157,32 +157,45 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
     setMjml(designToMjml(liveDesign.current));
   }, [loadedKey]);
 
-  /** Explicit save: flush now; if opened from a broadcast flow, return there. */
-  const saveNow = async (): Promise<void> => {
+  const returnTarget = peekEditorReturn()?.returnPath ?? '';
+  const returnPending = returnTarget !== '';
+  // "Instance" = a broadcast/campaign's own copy of an email (reached via the
+  // "Design email" return flow, or a row whose kind is 'copy'). It is NOT a
+  // library template — it reads as an email, and its Back goes to that
+  // broadcast/campaign, not the template library.
+  const instance = returnPending || kind === 'copy';
+  const backLabel = returnTarget.startsWith('/campaigns')
+    ? 'Back to campaign'
+    : returnTarget.startsWith('/broadcasts')
+      ? 'Back to broadcast'
+      : instance
+        ? 'Back'
+        : 'Back to templates';
+
+  /** Leave the editor. Everything autosaves, but a change made within the
+   *  debounce window isn't persisted yet — so flush any pending change first
+   *  (staying put if that save fails), then navigate back: to the originating
+   *  broadcast/campaign when opened from there, else to the template library. */
+  const goBack = async (): Promise<void> => {
     if (timerRef.current) clearTimeout(timerRef.current);
-    const okSave = await persist();
-    if (!okSave) return;
+    if (dirtyRef.current || savingRef.current || queuedRef.current) {
+      const okSave = await persist();
+      if (!okSave) return;
+    }
     const ret = takeEditorReturn();
     if (ret) {
       setReturnedTemplate(idRef.current ?? null);
       navigate(ret.returnPath);
+    } else {
+      navigate('/templates');
     }
   };
 
-  const returnPending = peekEditorReturn() !== null;
-  // "Instance" = a broadcast/campaign's own copy of an email (reached via the
-  // "Design email" return flow, or a row whose kind is 'copy'). It is NOT a
-  // library template — so it has no "Back to templates" exit and reads as an
-  // email, not a template.
-  const instance = returnPending || kind === 'copy';
-
   return (
     <section data-testid="email-editor">
-      {instance ? null : (
-        <button data-testid="editor-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/templates')}>
-          ← Back to templates
-        </button>
-      )}
+      <button data-testid="editor-back" class="btn-ghost mb-4 btn-sm" onClick={() => void goBack()}>
+        ← {backLabel}
+      </button>
       <PageHeader
         title={instance ? 'Edit email' : editing ? 'Edit email template' : 'New email template'}
         subtitle={
@@ -191,7 +204,7 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
             : 'Design the email — changes save automatically and compile to cross-client HTML via MJML.'
         }
         actions={
-          <div class="flex items-end gap-2">
+          <div class="flex items-end gap-3">
             <Field label={instance ? 'Email name' : 'Template name'}>
               <Input
                 data-testid="template-name"
@@ -204,25 +217,18 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
                 }}
               />
             </Field>
-            {/* Button + save status share one bottom-aligned row, with the
-                status vertically centered against the button (not floating up
-                toward the field label). */}
-            <div class="flex items-center gap-2">
-              <Button data-testid="save-template" onClick={() => void saveNow()} disabled={status === 'saving'}>
-                {returnPending ? 'Save & return' : 'Save now'}
-              </Button>
-              <span data-testid="save-status" class="min-w-[4.5rem] text-sm font-medium">
-                {status === 'saving' ? (
-                  <span class="text-stone-500">Saving…</span>
-                ) : status === 'saved' ? (
-                  <span data-testid="template-saved" class="text-emerald-600">Saved ✓</span>
-                ) : status === 'error' ? (
-                  <span class="text-rose-600">Save failed</span>
-                ) : status === 'dirty' ? (
-                  <span class="text-stone-400">…</span>
-                ) : null}
-              </span>
-            </div>
+            {/* No manual save — every change autosaves; this just reflects status. */}
+            <span data-testid="save-status" class="min-w-[5rem] pb-2 text-sm font-medium">
+              {status === 'saving' ? (
+                <span class="text-stone-500">Saving…</span>
+              ) : status === 'saved' ? (
+                <span data-testid="template-saved" class="text-emerald-600">Saved ✓</span>
+              ) : status === 'error' ? (
+                <span class="text-rose-600">Save failed</span>
+              ) : status === 'dirty' ? (
+                <span class="text-stone-400">Unsaved…</span>
+              ) : null}
+            </span>
           </div>
         }
       />

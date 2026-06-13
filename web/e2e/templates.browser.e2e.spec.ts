@@ -17,10 +17,10 @@ test('create a template in the designer, then re-open it to edit', async ({ page
   await expect(page.getByTestId('canvas-element')).toHaveCount(2);
 
   await page.getByTestId('template-name').fill('Newsletter');
-  await page.getByTestId('save-template').click();
 
-  // Save STAYS in the designer (a new template moves to its /editor/:id URL).
-  await expect(page.getByTestId('template-saved')).toBeVisible();
+  // No manual save — changes autosave; wait for the Saved ✓ status, staying in
+  // the designer the whole time (a new template moves to its /editor/:id URL).
+  await expect(page.getByTestId('template-saved')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('email-editor')).toBeVisible();
 
   // It's in the Templates list; re-opening hydrates the DESIGN (both elements).
@@ -84,8 +84,7 @@ test('mark a template RTL (right-to-left) and it round-trips', async ({ page }) 
   await expect(page.getByTestId('mjml-output')).toHaveValue(/cdp-rtl/);
   await expect(page.locator('.nm-canvas-page')).toHaveAttribute('dir', 'rtl');
 
-  await page.getByTestId('save-template').click();
-  await expect(page.getByTestId('template-saved')).toBeVisible();
+  await expect(page.getByTestId('template-saved')).toBeVisible({ timeout: 10_000 });
 
   // Re-open → RTL came back from the stored design.
   await page.getByTestId('editor-back').click();
