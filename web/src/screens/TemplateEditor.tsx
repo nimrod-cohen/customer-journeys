@@ -38,6 +38,7 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
   const [design, setDesign] = useState<EmailDesign | null>(null);
   const [loadedKey, setLoadedKey] = useState(id ? '' : 'new'); // designer mounts when set
   const [legacy, setLegacy] = useState(false); // stored template has no design (old editor)
+  const [kind, setKind] = useState(''); // 'library' | 'copy' — a copy is a broadcast/campaign's own email instance
   const [status, setStatus] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState('');
   // Live values in refs so the debounced persist always reads current state.
@@ -62,6 +63,7 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
       .then((r) => {
         setName(r.template.name);
         nameRef.current = r.template.name;
+        setKind(r.template.kind);
         if (isEmailDesign(r.template.design)) {
           setDesign(r.template.design);
           liveDesign.current = r.template.design;
@@ -168,18 +170,29 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
   };
 
   const returnPending = peekEditorReturn() !== null;
+  // "Instance" = a broadcast/campaign's own copy of an email (reached via the
+  // "Design email" return flow, or a row whose kind is 'copy'). It is NOT a
+  // library template — so it has no "Back to templates" exit and reads as an
+  // email, not a template.
+  const instance = returnPending || kind === 'copy';
 
   return (
     <section data-testid="email-editor">
-      <button data-testid="editor-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/templates')}>
-        ← Back to templates
-      </button>
+      {instance ? null : (
+        <button data-testid="editor-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/templates')}>
+          ← Back to templates
+        </button>
+      )}
       <PageHeader
-        title={editing ? 'Edit email template' : 'New email template'}
-        subtitle="Design the email — changes save automatically and compile to cross-client HTML via MJML."
+        title={instance ? 'Edit email' : editing ? 'Edit email template' : 'New email template'}
+        subtitle={
+          instance
+            ? "This is this broadcast's own copy of the email — changes here don't affect the template library."
+            : 'Design the email — changes save automatically and compile to cross-client HTML via MJML.'
+        }
         actions={
           <div class="flex items-end gap-2">
-            <Field label="Template name">
+            <Field label={instance ? 'Email name' : 'Template name'}>
               <Input
                 data-testid="template-name"
                 value={name}

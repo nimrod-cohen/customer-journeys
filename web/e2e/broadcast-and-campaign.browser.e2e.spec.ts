@@ -79,6 +79,10 @@ test('design an email from the broadcast wizard and return with it selected', as
   // Step 2 — "Design email" persists a draft and opens the designer.
   await page.getByTestId('design-email').click();
   await page.getByTestId('email-editor').waitFor();
+  // This is the broadcast's OWN email copy, not a library template: no
+  // "Back to templates" exit, and it reads as an email.
+  await expect(page.getByTestId('editor-back')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Edit email', exact: true })).toBeVisible();
   await page.getByTestId('toolbox-text').click();
   await expect(page.getByTestId('mjml-output')).toHaveValue(/^<mjml>/);
   await page.getByTestId('template-name').fill('Designed in wizard');
