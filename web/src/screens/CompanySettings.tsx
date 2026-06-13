@@ -7,6 +7,7 @@ import { createPortal } from 'preact/compat';
 import { useStore } from '../store/store.js';
 import { api, sessionStore, refreshMe, switchWorkspace } from '../store/session.js';
 import { Button, Card, Field, Input, PageHeader } from '../ui/kit.js';
+import { CompanySesConfig } from './CompanySesConfig.tsx';
 
 export function CompanySettings() {
   const session = useStore(sessionStore);
@@ -122,6 +123,8 @@ export function CompanySettings() {
         )}
         {companyErr ? <p data-testid="company-error" class="mt-2 text-sm text-rose-600">{companyErr}</p> : null}
       </Card>
+
+      <CompanySesConfig />
 
       <Card data-testid="company-workspaces" class="p-5">
         <h2 class="text-base font-bold text-ink-900">Workspaces</h2>

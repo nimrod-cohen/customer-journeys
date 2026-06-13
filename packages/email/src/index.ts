@@ -21,6 +21,8 @@ export {
 
 export {
   ProdSesEmailClient,
+  createSesClient,
+  type SesClientConfig,
   type SesEmailClient,
   type CreateDomainIdentityResult,
   type IdentityVerificationAttributes,

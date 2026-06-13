@@ -65,6 +65,11 @@ describeMaybe('sending domains + senders via API (real Postgres)', () => {
       await pool.query('DELETE FROM domain_senders WHERE workspace_id = $1', [ws]);
       await pool.query('DELETE FROM sending_domains WHERE workspace_id = $1', [ws]);
     }
+    // No company SES config by default → handlers use the local mock SES (SUCCESS).
+    await pool.query(
+      'DELETE FROM company_ses_config WHERE company_id IN (SELECT company_id FROM workspaces WHERE id = ANY($1))',
+      [[WS, OTHER]],
+    );
   });
 
   afterAll(async () => {

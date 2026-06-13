@@ -179,3 +179,24 @@ export class ProdSesEmailClient implements SesEmailClient {
     return { sesMessageId: out.MessageId ?? '' };
   }
 }
+
+/** Explicit credentials + region for a per-company SES client (§10). */
+export interface SesClientConfig {
+  readonly region: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+}
+
+/**
+ * Build a real SES client bound to a SPECIFIC AWS account + region — used when a
+ * company brings its own SES credentials (stored per company). Each company's
+ * domains are verified/sent through its OWN account.
+ */
+export function createSesClient(cfg: SesClientConfig): SesEmailClient {
+  return new ProdSesEmailClient(
+    new SESv2Client({
+      region: cfg.region,
+      credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
+    }),
+  );
+}

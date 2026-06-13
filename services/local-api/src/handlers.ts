@@ -10,7 +10,7 @@
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import type { Pool } from 'pg';
-import type { SesEmailClient } from '@cdp/email';
+import { createSesClient, type SesEmailClient } from '@cdp/email';
 import { DEV_USERS, OPEN_EVENT_TYPES, PURCHASE_EVENT_TYPES, type WorkspaceContext } from '@cdp/shared';
 import { scopedQuery } from '@cdp/db';
 
@@ -322,6 +322,89 @@ export const sendingDomainActivate: Handler = async (ctx, pool, _req, deps) => {
   return ok(out);
 };
 
+// --- per-company Amazon SES credentials (§10) ----------------------------------
+// Each company brings its own SES account (key/secret/region). The secret is
+// write-only over the API. The sending-domain handlers build an SES client from
+// the active workspace's company config; with no config they fall back to the
+// local mock (so dev/tests verify deterministically).
+
+/** The company that owns the active workspace (workspaceId is trusted from the token). */
+async function companyIdForWorkspace(pool: Pool, workspaceId: string): Promise<string | null> {
+  const { rows } = await pool.query<{ company_id: string | null }>(
+    'SELECT company_id FROM workspaces WHERE id = $1',
+    [workspaceId],
+  );
+  return rows[0]?.company_id ?? null;
+}
+
+/** Build the SES client for a workspace from its company's config; mock if none. */
+async function sesForWorkspace(
+  pool: Pool,
+  workspaceId: string,
+  deps: LocalApiDeps,
+): Promise<{ ses: SesEmailClient; configured: boolean }> {
+  const { rows } = await pool.query<{ region: string; access_key_id: string; secret_access_key: string }>(
+    `SELECT s.region, s.access_key_id, s.secret_access_key
+       FROM company_ses_config s JOIN workspaces w ON w.company_id = s.company_id
+      WHERE w.id = $1`,
+    [workspaceId],
+  );
+  const cfg = rows[0];
+  if (cfg) {
+    return {
+      ses: createSesClient({ region: cfg.region, accessKeyId: cfg.access_key_id, secretAccessKey: cfg.secret_access_key }),
+      configured: true,
+    };
+  }
+  return { ses: deps.onboarding.ses, configured: false };
+}
+
+/** GET /company/ses-config — region + access key id + whether a secret is set (NEVER the secret). */
+export const getCompanySesConfig: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ configured: false });
+  const { rows } = await pool.query<{ region: string; access_key_id: string }>(
+    'SELECT region, access_key_id FROM company_ses_config WHERE company_id = $1',
+    [companyId],
+  );
+  const c = rows[0];
+  return ok(c ? { configured: true, region: c.region, access_key_id: c.access_key_id } : { configured: false });
+};
+
+/** PUT /company/ses-config — set the company's SES credentials. A blank secret on
+ *  update keeps the stored one (so you can change region/key without re-entering it). */
+export const putCompanySesConfig: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ error: 'no company for this workspace' }, 400);
+  const b = asObject(req.body);
+  const region = String(b.region ?? '').trim();
+  const accessKeyId = String(b.access_key_id ?? '').trim();
+  const secret = typeof b.secret_access_key === 'string' ? b.secret_access_key.trim() : '';
+  if (!region || !accessKeyId) return ok({ error: 'region and access key id are required' }, 400);
+  const existing = await pool.query<{ secret_access_key: string }>(
+    'SELECT secret_access_key FROM company_ses_config WHERE company_id = $1',
+    [companyId],
+  );
+  const effectiveSecret = secret || existing.rows[0]?.secret_access_key;
+  if (!effectiveSecret) return ok({ error: 'secret access key is required' }, 400);
+  await pool.query(
+    `INSERT INTO company_ses_config (company_id, region, access_key_id, secret_access_key, updated_at)
+     VALUES ($1, $2, $3, $4, now())
+     ON CONFLICT (company_id)
+     DO UPDATE SET region = $2, access_key_id = $3, secret_access_key = $4, updated_at = now()`,
+    [companyId, region, accessKeyId, effectiveSecret],
+  );
+  return ok({ configured: true, region, access_key_id: accessKeyId });
+};
+
+/** DELETE /company/ses-config — clear the company's SES credentials. */
+export const deleteCompanySesConfig: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ deleted: 0 });
+  const { rowCount } = await pool.query('DELETE FROM company_ses_config WHERE company_id = $1', [companyId]);
+  return ok({ deleted: rowCount });
+};
+
 // --- sending domains (the LIST; a workspace may have several, §10) -------------
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
 
@@ -424,27 +507,34 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const { ses_identity, dkim_tokens, ...domainOut } = row;
   void ses_identity;
   void dkim_tokens;
+  const { ses, configured } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   try {
-    const { tokens } = await ensureSesIdentity(deps.onboarding.ses, pool, ctx.workspaceId, row);
-    return ok({ domain: domainOut, records: dkimRecordsFor(row.domain, tokens) });
+    const { tokens } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
+    return ok({ domain: domainOut, records: dkimRecordsFor(row.domain, tokens), sesConfigured: configured });
   } catch (e) {
-    // SES unreachable (e.g. no AWS credentials) — return the domain without records.
-    return ok({ domain: domainOut, records: [], sesError: e instanceof Error ? e.message : 'SES unavailable' });
+    // SES unreachable (bad/missing company credentials) — return without records.
+    return ok({
+      domain: domainOut,
+      records: [],
+      sesConfigured: configured,
+      sesError: e instanceof Error ? e.message : 'SES unavailable',
+    });
   }
 };
 
 /**
- * POST /sending-domains/:id/check — ask Amazon SES whether the domain's Easy-DKIM
- * is verified (the records have been published & propagated). The domain verifies
- * ONLY when SES reports DkimStatus = SUCCESS; there is no manual flip. Once
- * verified it stays verified. Scoped.
+ * POST /sending-domains/:id/check — ask the company's Amazon SES whether the
+ * domain's Easy-DKIM is verified. The domain verifies ONLY when SES reports
+ * DkimStatus = SUCCESS; there is no manual flip. Once verified it stays verified.
+ * With no company SES configured, the local mock is used (dev/tests). Scoped.
  */
 export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const row = await loadSendingDomain(pool, ctx.workspaceId, req.params.id!);
   if (!row) return ok({ error: 'not found' }, 404);
+  const { ses, configured } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   try {
-    const { identity, tokens } = await ensureSesIdentity(deps.onboarding.ses, pool, ctx.workspaceId, row);
-    const attrs = await deps.onboarding.ses.getIdentityVerificationAttributes(identity);
+    const { identity, tokens } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
+    const attrs = await ses.getIdentityVerificationAttributes(identity);
     const verified = attrs.dkimStatus === 'SUCCESS';
     if (verified && !row.verified) {
       const upd = scopedQuery(
@@ -458,9 +548,10 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
       verified: verified || row.verified,
       dkimStatus: attrs.dkimStatus,
       records: dkimRecordsFor(row.domain, tokens),
+      sesConfigured: configured,
     });
   } catch (e) {
-    return ok({ verified: row.verified, error: e instanceof Error ? e.message : 'SES check failed' });
+    return ok({ verified: row.verified, sesConfigured: configured, error: e instanceof Error ? e.message : 'SES check failed' });
   }
 };
 
@@ -2238,6 +2329,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /sending-domain/start': sendingDomainStart,
   'POST /sending-domain/check': sendingDomainCheck,
   'POST /sending-domain/activate': sendingDomainActivate,
+  'GET /company/ses-config': getCompanySesConfig,
+  'PUT /company/ses-config': putCompanySesConfig,
+  'DELETE /company/ses-config': deleteCompanySesConfig,
   'GET /sending-domains': listSendingDomains,
   'POST /sending-domains': createSendingDomain,
   'GET /sending-domains/:id': getSendingDomain,

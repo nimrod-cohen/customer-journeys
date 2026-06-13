@@ -95,6 +95,7 @@ function DomainEditor({ id }: { id: string }) {
   const [checking, setChecking] = useState(false);
   const [checkMsg, setCheckMsg] = useState('');
   const [error, setError] = useState('');
+  const [sesConfigured, setSesConfigured] = useState(true);
   // sender inputs
   const [sName, setSName] = useState('');
   const [sLocal, setSLocal] = useState('');
@@ -102,9 +103,12 @@ function DomainEditor({ id }: { id: string }) {
   const [sError, setSError] = useState('');
 
   const load = async (): Promise<void> => {
-    const d = await api.get<{ domain: DomainDetail; records: DnsRecord[]; sesError?: string }>(`/sending-domains/${id}`);
+    const d = await api.get<{ domain: DomainDetail; records: DnsRecord[]; sesError?: string; sesConfigured?: boolean }>(
+      `/sending-domains/${id}`,
+    );
     setDomain(d.domain);
     setRecords(d.records);
+    setSesConfigured(d.sesConfigured ?? true);
     if (d.sesError) setCheckMsg(`Couldn't reach SES: ${d.sesError}`);
     if (d.domain.verified) {
       const s = await api.get<{ senders: Sender[] }>('/domain-senders');
@@ -221,6 +225,15 @@ function DomainEditor({ id }: { id: string }) {
             Add these CNAME records at your DNS provider, then check. Amazon SES verifies the domain once it detects the
             DKIM records (this can take from minutes to a few hours to propagate).
           </p>
+          {!sesConfigured ? (
+            <p
+              data-testid="ses-not-configured"
+              class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-200"
+            >
+              This company has no Amazon SES credentials set, so verification is <strong>simulated</strong>. Add them in
+              Company settings to verify against real SES.
+            </p>
+          ) : null}
           <div class="mt-3 overflow-hidden rounded-lg border border-stone-200">
             <table class="w-full text-sm">
               <thead class="bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
