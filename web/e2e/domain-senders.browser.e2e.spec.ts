@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_OWNER } from './seed.js';
 
-test('domains list → setup screen: save, verify via DNS, then manage senders', async ({ page }) => {
+test('domains list → setup screen: save, verify via SES DKIM, then manage senders', async ({ page }) => {
   await loginAs(page, DEV_OWNER);
   await page.getByTestId('nav-onboarding').click();
   await page.getByTestId('sending-domains').waitFor();
@@ -27,7 +27,7 @@ test('domains list → setup screen: save, verify via DNS, then manage senders',
   await expect(page.getByTestId('senders-locked')).toBeVisible();
   await expect(page.getByTestId('add-sender')).toHaveCount(0);
 
-  // Verify is ONLY via the DNS check (the system finds the records).
+  // Verify is via SES — the local mock reports DKIM SUCCESS so it verifies.
   await page.getByTestId('check-dns').click();
   await expect(page.getByTestId('domain-status')).toHaveText('verified');
   await expect(page.getByTestId('add-sender')).toBeVisible();

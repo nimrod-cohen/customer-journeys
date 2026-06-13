@@ -50,11 +50,9 @@ export default defineConfig({
       env: {
         DATABASE_URL: E2E_DATABASE_URL,
         LOCAL_API_PORT: API_PORT,
-        // Local SES reports DKIM verified so the onboarding wizard can activate.
+        // Local (mock) SES reports DKIM SUCCESS so the onboarding wizard can
+        // activate AND sending-domain verification succeeds deterministically.
         LOCAL_SES_DKIM_STATUS: 'SUCCESS',
-        // Sending-domain verification does a REAL DNS lookup; stub it to "found"
-        // for deterministic e2e (a human-run dev server must NOT set this).
-        CDP_DNS_VERIFY_STUB: '1',
       },
     },
     {

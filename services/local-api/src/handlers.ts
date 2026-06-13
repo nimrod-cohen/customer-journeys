@@ -10,7 +10,7 @@
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import type { Pool } from 'pg';
-import { promises as dns } from 'node:dns';
+import type { SesEmailClient } from '@cdp/email';
 import { DEV_USERS, OPEN_EVENT_TYPES, PURCHASE_EVENT_TYPES, type WorkspaceContext } from '@cdp/shared';
 import { scopedQuery } from '@cdp/db';
 
@@ -349,71 +349,119 @@ export const createSendingDomain: Handler = async (ctx, pool, req) => {
   }
 };
 
-/** The ownership-verification TXT record the user must publish for a domain. */
-function verifyRecordFor(domain: string, token: string): { role: string; type: string; name: string; value: string } {
-  return { role: 'verify', type: 'TXT', name: `_cdp-verify.${domain}`, value: `cdp-verify=${token}` };
+interface SendingDomainRow {
+  id: string;
+  domain: string;
+  verified: boolean;
+  verified_at: string | null;
+  ses_identity: string | null;
+  dkim_tokens: string[];
+}
+
+/** The 3 DKIM CNAME records Amazon SES Easy-DKIM requires for a domain identity. */
+function dkimRecordsFor(
+  domain: string,
+  tokens: readonly string[],
+): Array<{ role: string; type: string; name: string; value: string }> {
+  return tokens.map((t, i) => ({
+    role: `dkim${i + 1}`,
+    type: 'CNAME',
+    name: `${t}._domainkey.${domain}`,
+    value: `${t}.dkim.amazonses.com`,
+  }));
 }
 
 /**
- * Look the verification TXT record up in REAL DNS and report whether it carries
- * the domain's token. `CDP_DNS_VERIFY_STUB=1` short-circuits to found — set ONLY
- * for tests/e2e, never on a server a human verifies real domains against.
+ * Ensure the domain has an SES identity + DKIM tokens, provisioning ONCE and
+ * persisting them. Creating the SES identity returns the tokens; if it already
+ * exists, read them back. Re-uses the stored tokens on subsequent calls.
  */
-async function dnsHasVerifyToken(domain: string, token: string): Promise<boolean> {
-  if (process.env.CDP_DNS_VERIFY_STUB === '1') return true;
+async function ensureSesIdentity(
+  ses: SesEmailClient,
+  pool: Pool,
+  workspaceId: string,
+  row: SendingDomainRow,
+): Promise<{ identity: string; tokens: string[] }> {
+  if (row.dkim_tokens.length > 0) return { identity: row.ses_identity ?? row.domain, tokens: row.dkim_tokens };
+  let identity = row.domain;
+  let tokens: string[] = [];
   try {
-    const txts = await dns.resolveTxt(`_cdp-verify.${domain}`);
-    return txts.some((parts) => parts.join('').includes(`cdp-verify=${token}`));
+    const r = await ses.createDomainIdentity(row.domain);
+    identity = r.identity;
+    tokens = [...r.dkimTokens];
   } catch {
-    return false; // NXDOMAIN / no record / lookup error → not verified
+    // Identity already exists (or transient) — read the tokens back.
+    const a = await ses.getIdentityVerificationAttributes(row.domain);
+    tokens = [...a.dkimTokens];
   }
+  const upd = scopedQuery(
+    workspaceId,
+    'UPDATE sending_domains SET ses_identity = $1, dkim_tokens = $2 WHERE id = $3',
+    [identity, tokens, row.id],
+  );
+  await pool.query(upd.text, upd.values);
+  return { identity, tokens };
 }
 
-/** GET /sending-domains/:id — one domain + the DNS record to publish (setup screen). */
-export const getSendingDomain: Handler = async (ctx, pool, req) => {
+async function loadSendingDomain(
+  pool: Pool,
+  workspaceId: string,
+  id: string,
+): Promise<SendingDomainRow | undefined> {
   const q = scopedQuery(
-    ctx.workspaceId,
-    'SELECT id, domain, verified, verified_at, verify_token FROM sending_domains WHERE id = $1',
-    [req.params.id!],
+    workspaceId,
+    'SELECT id, domain, verified, verified_at, ses_identity, dkim_tokens FROM sending_domains WHERE id = $1',
+    [id],
   );
-  const { rows } = await pool.query<{
-    id: string;
-    domain: string;
-    verified: boolean;
-    verified_at: string | null;
-    verify_token: string;
-  }>(q.text, q.values);
-  const row = rows[0];
+  const { rows } = await pool.query<SendingDomainRow>(q.text, q.values);
+  return rows[0];
+}
+
+/** GET /sending-domains/:id — one domain + the SES DKIM CNAME records to publish. */
+export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
+  const row = await loadSendingDomain(pool, ctx.workspaceId, req.params.id!);
   if (!row) return ok({ error: 'not found' }, 404);
-  const { verify_token, ...domainOut } = row;
-  return ok({ domain: domainOut, records: [verifyRecordFor(row.domain, verify_token)] });
+  const { ses_identity, dkim_tokens, ...domainOut } = row;
+  void ses_identity;
+  void dkim_tokens;
+  try {
+    const { tokens } = await ensureSesIdentity(deps.onboarding.ses, pool, ctx.workspaceId, row);
+    return ok({ domain: domainOut, records: dkimRecordsFor(row.domain, tokens) });
+  } catch (e) {
+    // SES unreachable (e.g. no AWS credentials) — return the domain without records.
+    return ok({ domain: domainOut, records: [], sesError: e instanceof Error ? e.message : 'SES unavailable' });
+  }
 };
 
 /**
- * POST /sending-domains/:id/check — the system LOOKS UP the verification TXT in
- * DNS and verifies the domain ONLY if the token is found. There is no manual flip;
- * an unpublished/incorrect record leaves the domain pending. Once verified it
- * stays verified. Scoped.
+ * POST /sending-domains/:id/check — ask Amazon SES whether the domain's Easy-DKIM
+ * is verified (the records have been published & propagated). The domain verifies
+ * ONLY when SES reports DkimStatus = SUCCESS; there is no manual flip. Once
+ * verified it stays verified. Scoped.
  */
-export const checkSendingDomain: Handler = async (ctx, pool, req) => {
-  const sel = scopedQuery(
-    ctx.workspaceId,
-    'SELECT domain, verified, verify_token FROM sending_domains WHERE id = $1',
-    [req.params.id!],
-  );
-  const { rows } = await pool.query<{ domain: string; verified: boolean; verify_token: string }>(sel.text, sel.values);
-  const row = rows[0];
+export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
+  const row = await loadSendingDomain(pool, ctx.workspaceId, req.params.id!);
   if (!row) return ok({ error: 'not found' }, 404);
-  const found = await dnsHasVerifyToken(row.domain, row.verify_token);
-  if (found && !row.verified) {
-    const upd = scopedQuery(
-      ctx.workspaceId,
-      'UPDATE sending_domains SET verified = true, verified_at = now() WHERE id = $1',
-      [req.params.id!],
-    );
-    await pool.query(upd.text, upd.values);
+  try {
+    const { identity, tokens } = await ensureSesIdentity(deps.onboarding.ses, pool, ctx.workspaceId, row);
+    const attrs = await deps.onboarding.ses.getIdentityVerificationAttributes(identity);
+    const verified = attrs.dkimStatus === 'SUCCESS';
+    if (verified && !row.verified) {
+      const upd = scopedQuery(
+        ctx.workspaceId,
+        'UPDATE sending_domains SET verified = true, verified_at = now() WHERE id = $1',
+        [req.params.id!],
+      );
+      await pool.query(upd.text, upd.values);
+    }
+    return ok({
+      verified: verified || row.verified,
+      dkimStatus: attrs.dkimStatus,
+      records: dkimRecordsFor(row.domain, tokens),
+    });
+  } catch (e) {
+    return ok({ verified: row.verified, error: e instanceof Error ? e.message : 'SES check failed' });
   }
-  return ok({ verified: found || row.verified, found, record: verifyRecordFor(row.domain, row.verify_token) });
 };
 
 /** DELETE /sending-domains/:id — remove a domain; blocked if it still has senders. */

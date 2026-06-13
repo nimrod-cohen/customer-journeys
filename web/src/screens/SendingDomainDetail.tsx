@@ -102,9 +102,10 @@ function DomainEditor({ id }: { id: string }) {
   const [sError, setSError] = useState('');
 
   const load = async (): Promise<void> => {
-    const d = await api.get<{ domain: DomainDetail; records: DnsRecord[] }>(`/sending-domains/${id}`);
+    const d = await api.get<{ domain: DomainDetail; records: DnsRecord[]; sesError?: string }>(`/sending-domains/${id}`);
     setDomain(d.domain);
     setRecords(d.records);
+    if (d.sesError) setCheckMsg(`Couldn't reach SES: ${d.sesError}`);
     if (d.domain.verified) {
       const s = await api.get<{ senders: Sender[] }>('/domain-senders');
       setSenders(s.senders.filter((x) => x.domain === d.domain.domain));
@@ -120,11 +121,22 @@ function DomainEditor({ id }: { id: string }) {
     setChecking(true);
     setCheckMsg('');
     try {
-      const r = await api.post<{ verified: boolean }>(`/sending-domains/${id}/check`, {});
-      setCheckMsg(r.verified ? 'Verified — the DNS records were found.' : 'Records not found yet — publish them and check again.');
+      const r = await api.post<{ verified: boolean; dkimStatus?: string; error?: string }>(
+        `/sending-domains/${id}/check`,
+        {},
+      );
+      if (r.error) {
+        setCheckMsg(`Couldn't reach SES: ${r.error}`);
+      } else if (r.verified) {
+        setCheckMsg('Verified — Amazon SES confirmed DKIM for this domain.');
+      } else {
+        setCheckMsg(
+          `Amazon SES DKIM status: ${r.dkimStatus ?? 'pending'}. Publish the records below, then check again (DNS can take a while to propagate).`,
+        );
+      }
       await load();
     } catch (e) {
-      setCheckMsg((e as { error?: string })?.error ?? 'Could not check DNS.');
+      setCheckMsg((e as { error?: string })?.error ?? 'Could not check with SES.');
     } finally {
       setChecking(false);
     }
@@ -202,12 +214,12 @@ function DomainEditor({ id }: { id: string }) {
       {error ? <p class="mb-3 text-sm text-rose-600">{error}</p> : null}
 
       <div class="space-y-5">
-        {/* DNS records + verification */}
+        {/* SES DKIM records + verification */}
         <Card data-testid="dns-section" class="p-5">
-          <h2 class="text-base font-bold text-ink-900">DNS records</h2>
+          <h2 class="text-base font-bold text-ink-900">DNS records (Amazon SES DKIM)</h2>
           <p class="mt-1 text-sm text-stone-500">
-            Add these records at your DNS provider, then check. The domain verifies automatically when the records are
-            found.
+            Add these CNAME records at your DNS provider, then check. Amazon SES verifies the domain once it detects the
+            DKIM records (this can take from minutes to a few hours to propagate).
           </p>
           <div class="mt-3 overflow-hidden rounded-lg border border-stone-200">
             <table class="w-full text-sm">
@@ -231,7 +243,7 @@ function DomainEditor({ id }: { id: string }) {
           </div>
           <div class="mt-3 flex items-center gap-3">
             <Button data-testid="check-dns" variant="secondary" onClick={() => void check()} disabled={checking}>
-              {checking ? 'Checking…' : domain.verified ? 'Re-check DNS' : 'Check DNS'}
+              {checking ? 'Checking…' : domain.verified ? 'Re-check with SES' : 'Check with SES'}
             </Button>
             {checkMsg ? <span class="text-sm text-stone-600">{checkMsg}</span> : null}
           </div>

@@ -8,7 +8,7 @@
 // deterministic and never hit AWS.
 import type { Pool } from 'pg';
 import { getPool } from '@cdp/db';
-import { compileMjml } from '@cdp/email';
+import { compileMjml, ProdSesEmailClient } from '@cdp/email';
 import type {
   SesEmailClient,
   CreateDomainIdentityResult,
@@ -106,10 +106,14 @@ function makeIdentityReader(pool: Pool): ProdOnboardingDeps['identity'] {
   };
 }
 
-/** Build the default local deps: real PG pool, mocked SES/DNS/SQS. */
+/** Build the default local deps: real PG pool, mocked SES/DNS/SQS.
+ *  Set `USE_REAL_SES=1` (with AWS credentials + AWS_REGION in the environment) to
+ *  use the REAL Amazon SES client — so sending-domain verification provisions a
+ *  real SES identity and gates on SES's own DKIM status. Everything else stays
+ *  local. Never set this for tests/e2e (they rely on the deterministic mock). */
 export function makeLocalDeps(pool: Pool = getPool()): LocalApiDeps {
   const region = process.env.AWS_REGION ?? 'us-east-1';
-  const ses = makeLocalSes();
+  const ses = process.env.USE_REAL_SES === '1' ? new ProdSesEmailClient() : makeLocalSes();
   const dns = makeLocalDns();
   const onboarding: ProdOnboardingDeps = {
     ses,
