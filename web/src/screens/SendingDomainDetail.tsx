@@ -60,7 +60,7 @@ export function SendingDomainDetail({ id }: { id?: string }) {
             <Input
               data-testid="domain-name-input"
               class="flex-1 font-mono text-sm"
-              placeholder="mail.yourcompany.com"
+              placeholder="yourcompany.com"
               value={name}
               onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
               onKeyDown={(e: KeyboardEvent) => {
