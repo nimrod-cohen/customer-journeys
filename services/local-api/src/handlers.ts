@@ -447,17 +447,49 @@ interface SendingDomainRow {
   dkim_tokens: string[];
 }
 
-/** The 3 DKIM CNAME records Amazon SES Easy-DKIM requires for a domain identity. */
-function dkimRecordsFor(
-  domain: string,
-  tokens: readonly string[],
-): Array<{ role: string; type: string; name: string; value: string }> {
-  return tokens.map((t, i) => ({
-    role: `dkim${i + 1}`,
-    type: 'CNAME',
-    name: `${t}._domainkey.${domain}`,
-    value: `${t}.dkim.amazonses.com`,
-  }));
+interface DnsRecordOut {
+  role: string;
+  type: string;
+  name: string;
+  value: string;
+  required: boolean; // required for SES verification (DKIM) vs recommended (SPF/DMARC)
+  note?: string;
+}
+
+/**
+ * The DNS records to publish for a sending domain:
+ *  - 3 DKIM CNAMEs (Amazon SES Easy-DKIM) — REQUIRED; SES verifies the domain on
+ *    these, and DKIM alignment alone makes DMARC pass.
+ *  - SPF (TXT) — recommended; authorizes SES and helps deliverability. Must be
+ *    MERGED with any existing SPF (only one SPF record is allowed per name).
+ *  - DMARC (TXT) — recommended; sets a policy + enables reporting.
+ */
+function dnsRecordsFor(domain: string, tokens: readonly string[]): DnsRecordOut[] {
+  return [
+    ...tokens.map((t, i) => ({
+      role: `dkim${i + 1}`,
+      type: 'CNAME',
+      name: `${t}._domainkey.${domain}`,
+      value: `${t}.dkim.amazonses.com`,
+      required: true,
+    })),
+    {
+      role: 'spf',
+      type: 'TXT',
+      name: domain,
+      value: 'v=spf1 include:amazonses.com ~all',
+      required: false,
+      note: 'If the domain already has an SPF record, merge this into it — keep only one SPF (TXT) record.',
+    },
+    {
+      role: 'dmarc',
+      type: 'TXT',
+      name: `_dmarc.${domain}`,
+      value: 'v=DMARC1; p=none;',
+      required: false,
+      note: 'Start with p=none (monitor); tighten to quarantine/reject once you’re confident.',
+    },
+  ];
 }
 
 /**
@@ -516,7 +548,7 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const { ses, configured } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   try {
     const { tokens } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
-    return ok({ domain: domainOut, records: dkimRecordsFor(row.domain, tokens), sesConfigured: configured });
+    return ok({ domain: domainOut, records: dnsRecordsFor(row.domain, tokens), sesConfigured: configured });
   } catch (e) {
     // SES unreachable (bad/missing company credentials) — return without records.
     return ok({
@@ -553,7 +585,7 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
     return ok({
       verified: verified || row.verified,
       dkimStatus: attrs.dkimStatus,
-      records: dkimRecordsFor(row.domain, tokens),
+      records: dnsRecordsFor(row.domain, tokens),
       sesConfigured: configured,
     });
   } catch (e) {

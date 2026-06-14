@@ -27,6 +27,11 @@ test('domains list → setup screen: save, verify via SES DKIM, then manage send
   // Now on the saved domain's setup: pending, DNS records shown, senders locked.
   await expect(page.getByTestId('domain-status')).toHaveText('pending');
   await expect(page.getByTestId('dns-record').first()).toBeVisible();
+  // DKIM (required) + SPF + DMARC (recommended) are all listed.
+  await expect(page.getByTestId('dns-section')).toContainText('_domainkey'); // DKIM CNAMEs
+  await expect(page.getByTestId('dns-section')).toContainText('v=spf1'); // SPF
+  await expect(page.getByTestId('dns-section')).toContainText('_dmarc'); // DMARC
+  await expect(page.getByTestId('dns-section')).toContainText('recommended');
   await expect(page.getByTestId('senders-locked')).toBeVisible();
   await expect(page.getByTestId('add-sender')).toHaveCount(0);
 

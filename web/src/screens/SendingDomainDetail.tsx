@@ -16,6 +16,8 @@ interface DnsRecord {
   name: string;
   value: string;
   status?: string;
+  required?: boolean;
+  note?: string;
 }
 interface DomainDetail {
   id: string;
@@ -220,10 +222,12 @@ function DomainEditor({ id }: { id: string }) {
       <div class="space-y-5">
         {/* SES DKIM records + verification */}
         <Card data-testid="dns-section" class="p-5">
-          <h2 class="text-base font-bold text-ink-900">DNS records (Amazon SES DKIM)</h2>
+          <h2 class="text-base font-bold text-ink-900">DNS records</h2>
           <p class="mt-1 text-sm text-stone-500">
-            Add these CNAME records at your DNS provider, then check. Amazon SES verifies the domain once it detects the
-            DKIM records (this can take from minutes to a few hours to propagate).
+            Add these records at your DNS provider, then check. The <b>DKIM (CNAME)</b> records are{' '}
+            <b>required</b> — Amazon SES verifies the domain on them, and DKIM alignment makes DMARC pass. <b>SPF</b> and{' '}
+            <b>DMARC</b> are recommended for deliverability but not needed to verify. Propagation can take from minutes
+            to a few hours.
           </p>
           {!sesConfigured ? (
             <p
@@ -241,14 +245,23 @@ function DomainEditor({ id }: { id: string }) {
                   <th class="px-3 py-2 font-semibold">Type</th>
                   <th class="px-3 py-2 font-semibold">Name</th>
                   <th class="px-3 py-2 font-semibold">Value</th>
+                  <th class="px-3 py-2 font-semibold">Required</th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-stone-100 font-mono text-xs">
+              <tbody class="divide-y divide-stone-100 text-xs">
                 {records.map((rec, i) => (
                   <tr data-testid="dns-record" key={i}>
-                    <td class="px-3 py-2 text-stone-500">{rec.type}</td>
-                    <td class="max-w-[16rem] truncate px-3 py-2 text-ink-900">{rec.name}</td>
-                    <td class="max-w-[18rem] truncate px-3 py-2 text-stone-600">{rec.value}</td>
+                    <td class="px-3 py-2 font-mono text-stone-500">{rec.type}</td>
+                    <td class="max-w-[16rem] truncate px-3 py-2 font-mono text-ink-900">{rec.name}</td>
+                    <td class="px-3 py-2 font-mono text-stone-600">
+                      <span class="block max-w-[18rem] truncate">{rec.value}</span>
+                      {rec.note ? <span class="mt-0.5 block font-sans text-[11px] text-stone-400">{rec.note}</span> : null}
+                    </td>
+                    <td class="px-3 py-2">
+                      <Badge tone={rec.required ? 'warn' : 'neutral'}>
+                        {rec.required ? 'required' : 'recommended'}
+                      </Badge>
+                    </td>
                   </tr>
                 ))}
               </tbody>
