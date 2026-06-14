@@ -17,15 +17,55 @@ interface Template {
   id: string;
   name: string;
 }
+interface BroadcastStats {
+  sent: number;
+  delivered: number;
+  failed: number;
+  clicked: number;
+}
 interface Broadcast {
   id: string;
   name: string;
   status: string;
   scheduled_at: string | null;
   sent_at: string | null;
+  updated_at: string | null;
+  stats?: BroadcastStats;
 }
 
 const EDITABLE = new Set(['draft', 'scheduled']);
+
+/** "today at 8:15 AM" / "tomorrow at 10:45 AM" / "Jun 7 at 8:22 PM" + the tz abbr. */
+function whenLabel(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const day0 = (x: Date) => Math.floor(new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime() / 86_400_000);
+  const diff = day0(d) - day0(new Date());
+  const rel = diff === 0 ? 'today' : diff === 1 ? 'tomorrow' : diff === -1 ? 'yesterday' : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const tz = new Intl.DateTimeFormat([], { timeZoneName: 'short' }).formatToParts(d).find((p) => p.type === 'timeZoneName')?.value ?? '';
+  return `${rel} at ${time}${tz ? ` (${tz})` : ''}`;
+}
+
+/** "a day ago" / "3 hours ago" via Intl.RelativeTimeFormat. */
+function agoLabel(ts: string | null): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  const secs = Math.round((d.getTime() - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat([], { numeric: 'auto' });
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ['year', 31_536_000], ['month', 2_592_000], ['day', 86_400], ['hour', 3_600], ['minute', 60],
+  ];
+  for (const [unit, s] of units) {
+    if (Math.abs(secs) >= s || unit === 'minute') return rtf.format(Math.round(secs / s), unit);
+  }
+  return 'just now';
+}
+
+function pct(n: number, d: number): string {
+  return d > 0 ? `${((n / d) * 100).toFixed(1)}%` : '—';
+}
 
 function fmtDate(ts: string | null): string {
   if (!ts) return '';
@@ -81,31 +121,66 @@ export function BroadcastComposer() {
         <ul data-testid="broadcast-list" class="space-y-2">
           {broadcasts.map((b) => {
             const editable = EDITABLE.has(b.status);
+            const subtitle =
+              b.status === 'scheduled' && b.scheduled_at
+                ? `Scheduled to send ${whenLabel(b.scheduled_at)}`
+                : b.status === 'sent' && b.sent_at
+                  ? `Sent ${whenLabel(b.sent_at)}`
+                  : b.status === 'sending'
+                    ? 'Sending…'
+                    : 'Draft — not scheduled';
+            const s = b.stats;
             return (
               <li
                 data-testid="broadcast-item"
                 key={b.id}
-                class="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+                class="flex items-center justify-between gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
               >
-                <span data-testid="broadcast-status" class="flex min-w-0 items-center gap-3">
-                  <span class="truncate font-medium text-ink-900">{b.name}</span>
-                  <Badge tone={toneFor(b.status)}>{b.status}</Badge>
-                  {b.status === 'scheduled' && b.scheduled_at ? (
-                    <span class="text-xs text-stone-500">for {fmtDate(b.scheduled_at)}</span>
-                  ) : null}
-                  {b.status === 'sent' && b.sent_at ? (
-                    <span class="text-xs text-stone-500">sent {fmtDate(b.sent_at)}</span>
-                  ) : null}
-                </span>
-                <span class="flex shrink-0 items-center gap-2">
-                  {editable ? (
-                    <Button
-                      data-testid="broadcast-edit"
-                      variant="ghost"
-                      size="sm"
+                {/* Left: icon + name + subtitle + edited */}
+                <span class="flex min-w-0 items-start gap-3">
+                  <svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-5 w-5 shrink-0 text-stone-400" stroke="currentColor" stroke-width="1.8">
+                    <rect x="3" y="5" width="18" height="14" rx="2" />
+                    <path d="m4 7 8 6 8-6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <span class="flex min-w-0 flex-col">
+                    <a
+                      data-testid="broadcast-open"
+                      class="cursor-pointer truncate font-semibold text-ink-900 hover:text-brand-700"
                       onClick={() => navigate(`/broadcasts/${b.id}`)}
                     >
-                      Edit
+                      {b.name}
+                    </a>
+                    <span class="truncate text-xs text-stone-500">{subtitle}</span>
+                    {b.updated_at ? <span class="truncate text-[11px] text-stone-400">Edited {agoLabel(b.updated_at)}</span> : null}
+                  </span>
+                </span>
+
+                {/* Status badge */}
+                <Badge data-testid="broadcast-status" tone={toneFor(b.status)}>
+                  {b.status}
+                </Badge>
+
+                {/* Right: metrics (sent only) + actions */}
+                <span class="flex shrink-0 items-center gap-5">
+                  {b.status === 'sent' && s ? (
+                    <span data-testid="broadcast-metrics" class="flex items-center gap-5 text-center text-sm tabular-nums">
+                      <span class="flex flex-col">
+                        <span class="text-[11px] uppercase tracking-wide text-stone-400">Failed</span>
+                        <span class={s.failed > 0 ? 'font-semibold text-rose-600' : 'text-stone-500'}>{s.failed}</span>
+                      </span>
+                      <span class="flex flex-col">
+                        <span class="text-[11px] uppercase tracking-wide text-stone-400">Delivered</span>
+                        <span class="font-semibold text-ink-900">{s.delivered}</span>
+                      </span>
+                      <span class="flex flex-col" title={`${s.clicked} clicks`}>
+                        <span class="text-[11px] uppercase tracking-wide text-stone-400">Clicked</span>
+                        <span class="font-semibold text-emerald-700">{pct(s.clicked, s.delivered)}</span>
+                      </span>
+                    </span>
+                  ) : null}
+                  {editable ? (
+                    <Button data-testid="broadcast-edit" variant="secondary" size="sm" onClick={() => navigate(`/broadcasts/${b.id}`)}>
+                      {b.status === 'scheduled' ? 'Continue editing' : 'Edit'}
                     </Button>
                   ) : null}
                   {editable ? (

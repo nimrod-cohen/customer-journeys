@@ -154,6 +154,9 @@ export async function dispatchOutbox(
 
     const payload = ob.payload ?? {};
     const subject = typeof payload['subject'] === 'string' ? payload['subject'] : '';
+    // Broadcasts tag their outbox rows with broadcast_id (campaigns use ob.campaign_id);
+    // carry it into messages_log so per-broadcast stats are a simple GROUP BY.
+    const broadcastId = typeof payload['broadcast_id'] === 'string' ? (payload['broadcast_id'] as string) : null;
     // The recipient's own data populates the `customer.*` namespace; an explicit
     // per-send `payload.merge` provides any extra tags. Profile-derived customer
     // values are authoritative (override a stale payload customer key).
@@ -219,7 +222,7 @@ export async function dispatchOutbox(
 
     // 7. ONE tx: messages_log + usage_counters(emails_sent) + mark outbox sent.
     await deps.runInWorkspaceTx(workspaceId, [
-      buildMessagesLogInsert(workspaceId, profile.id, ob.campaign_id, sesMessageId),
+      buildMessagesLogInsert(workspaceId, profile.id, ob.campaign_id, sesMessageId, broadcastId),
       buildUsageCounterIncrement(workspaceId, now),
       buildOutboxMarkSent(workspaceId, outboxId),
     ]);

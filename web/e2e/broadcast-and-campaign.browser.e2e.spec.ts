@@ -32,6 +32,10 @@ test('create a broadcast via the wizard, then send it', async ({ page }) => {
   const item = page.getByTestId('broadcast-item').filter({ hasText: 'Spring sale' });
   await item.getByTestId('send-broadcast').click();
   await expect(page.getByTestId('send-result')).toBeVisible();
+  // Once sent, the row shows its metrics columns (0s locally — the dispatcher
+  // that records delivered/clicked doesn't run in dev).
+  await expect(item.getByTestId('broadcast-metrics')).toBeVisible();
+  await expect(item.getByTestId('broadcast-metrics')).toContainText('Delivered');
 });
 
 test('edit a draft broadcast (rename) — only drafts/scheduled are editable', async ({ page }) => {

@@ -353,18 +353,20 @@ export function buildLastSoftBounceQuery(workspaceId: string, email: string): Sq
   };
 }
 
-/** A successful send's messages_log row (§9 step 7). workspace_id bound at $1. */
+/** A successful send's messages_log row (§9 step 7). workspace_id bound at $1.
+ *  Attributed to its campaign OR broadcast (whichever queued it) for per-send stats. */
 export function buildMessagesLogInsert(
   workspaceId: string,
   profileId: string,
   campaignId: string | null,
   sesMessageId: string,
+  broadcastId: string | null = null,
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildMessagesLogInsert: workspaceId is required');
   return {
-    text: `INSERT INTO messages_log (workspace_id, profile_id, campaign_id, ses_message_id, status)
-           VALUES ($1, $2, $3, $4, 'sent')`,
-    values: [workspaceId, profileId, campaignId, sesMessageId],
+    text: `INSERT INTO messages_log (workspace_id, profile_id, campaign_id, broadcast_id, ses_message_id, status)
+           VALUES ($1, $2, $3, $4, $5, 'sent')`,
+    values: [workspaceId, profileId, campaignId, broadcastId, sesMessageId],
   };
 }
 

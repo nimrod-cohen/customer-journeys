@@ -1242,10 +1242,55 @@ export const listBroadcasts: Handler = async (ctx, pool) => {
   // otherwise inject its WHERE after the ORDER BY → invalid SQL).
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, sent_at FROM broadcasts',
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, sent_at, updated_at FROM broadcasts',
   );
-  const { rows } = await pool.query(`${q.text} ORDER BY created_at DESC`, q.values);
-  return ok({ broadcasts: rows });
+  const { rows } = await pool.query<Record<string, unknown>>(`${q.text} ORDER BY created_at DESC`, q.values);
+
+  // Per-broadcast metrics. Delivered/Failed come from SES feedback (email_events
+  // joined to messages_log by ses_message_id); Clicked sums our tracked-link hits.
+  // count(distinct m.id) avoids over-counting when a message has several events.
+  // (Workspace-scoped explicitly — scopedQuery can't wrap a GROUP BY/JOIN. At
+  // scale these would be denormalized counters; a grouped query is fine for now.)
+  const { rows: statRows } = await pool.query<{
+    broadcast_id: string;
+    sent: number;
+    delivered: number;
+    failed: number;
+  }>(
+    `SELECT m.broadcast_id,
+            count(DISTINCT m.id)::int AS sent,
+            count(DISTINCT m.id) FILTER (WHERE ev.type = 'delivery')::int AS delivered,
+            count(DISTINCT m.id) FILTER (WHERE ev.type IN ('bounce','complaint'))::int AS failed
+       FROM messages_log m
+       LEFT JOIN email_events ev
+         ON ev.workspace_id = m.workspace_id AND ev.ses_message_id = m.ses_message_id
+      WHERE m.workspace_id = $1 AND m.broadcast_id IS NOT NULL
+      GROUP BY m.broadcast_id`,
+    [ctx.workspaceId],
+  );
+  const { rows: clickRows } = await pool.query<{ broadcast_id: string; clicked: number }>(
+    `SELECT broadcast_id, sum(clicks)::int AS clicked
+       FROM tracked_links
+      WHERE workspace_id = $1 AND broadcast_id IS NOT NULL
+      GROUP BY broadcast_id`,
+    [ctx.workspaceId],
+  );
+  const statBy = new Map(statRows.map((s) => [s.broadcast_id, s]));
+  const clickBy = new Map(clickRows.map((c) => [c.broadcast_id, c.clicked]));
+
+  const broadcasts = rows.map((b) => {
+    const s = statBy.get(b.id as string);
+    return {
+      ...b,
+      stats: {
+        sent: s?.sent ?? 0,
+        delivered: s?.delivered ?? 0,
+        failed: s?.failed ?? 0,
+        clicked: clickBy.get(b.id as string) ?? 0,
+      },
+    };
+  });
+  return ok({ broadcasts });
 };
 
 /** GET /broadcasts/:id — one broadcast for the editor (scoped). */
@@ -1309,7 +1354,8 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
        audience_ref = COALESCE($3, audience_ref),
        template_id = $4,
        scheduled_at = $5,
-       status = $6
+       status = $6,
+       updated_at = now()
      WHERE id = $7`,
     [
       b.name !== undefined ? String(b.name) : null,
