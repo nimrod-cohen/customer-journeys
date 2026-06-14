@@ -6,11 +6,20 @@ import { useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { useStore } from '../store/store.js';
 import { api, sessionStore, refreshMe, switchWorkspace } from '../store/session.js';
+import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader } from '../ui/kit.js';
+import { can } from '@cdp/tenancy';
 import { CompanySesConfig } from './CompanySesConfig.tsx';
+import { BillingUsagePanel } from './SimpleScreens.tsx';
 
-export function CompanySettings() {
+type CompanyTab = 'company' | 'billing';
+
+export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
   const session = useStore(sessionStore);
+  const canCompany = session.role ? can(session.role, 'manage_workspace_users') : false;
+  const canBilling = session.role ? can(session.role, 'view_billing') : false;
+  // Clamp the requested tab to one the role can actually see (accounting → billing).
+  const activeTab: CompanyTab = tab === 'company' && !canCompany ? 'billing' : tab;
   const [newWsName, setNewWsName] = useState('');
   const [wsError, setWsError] = useState('');
   const [delTarget, setDelTarget] = useState<{ id: string; name: string } | null>(null);
@@ -82,9 +91,41 @@ export function CompanySettings() {
     <section data-testid="company-settings">
       <PageHeader
         title={session.companyName ? `${session.companyName} — company settings` : 'Company settings'}
-        subtitle="Workspaces owned by this company."
+        subtitle="Company, workspaces, and billing & usage."
       />
 
+      {/* Tabs (only those the role can see) */}
+      <div class="mb-5 flex gap-1 border-b border-stone-200">
+        {canCompany ? (
+          <button
+            type="button"
+            data-testid="company-tab-company"
+            class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+              activeTab === 'company' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+            }`}
+            onClick={() => navigate('/company')}
+          >
+            Company
+          </button>
+        ) : null}
+        {canBilling ? (
+          <button
+            type="button"
+            data-testid="company-tab-billing"
+            class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+              activeTab === 'billing' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+            }`}
+            onClick={() => navigate('/company/billing')}
+          >
+            Billing &amp; usage
+          </button>
+        ) : null}
+      </div>
+
+      {activeTab === 'billing' ? <BillingUsagePanel /> : null}
+
+      {activeTab === 'company' && canCompany ? (
+      <>
       <Card class="mb-6 p-5">
         <h2 class="text-base font-bold text-ink-900">Company name</h2>
         {editingCompany ? (
@@ -272,6 +313,8 @@ export function CompanySettings() {
             document.body,
           )
         : null}
+      </>
+      ) : null}
     </section>
   );
 }

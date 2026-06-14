@@ -17,12 +17,7 @@ import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
 import { CompanySettings } from './screens/CompanySettings.js';
 import { SendingDomainDetail } from './screens/SendingDomainDetail.tsx';
 import { SystemAdminConsole } from './screens/SystemAdminConsole.js';
-import {
-  Dashboards,
-  ProfileExplorer,
-  SuppressionList,
-  BillingUsageView,
-} from './screens/SimpleScreens.js';
+import { Dashboards, ProfileExplorer, SuppressionList } from './screens/SimpleScreens.js';
 import { ProfileDetail } from './screens/ProfileDetail.js';
 import { TemplatesList } from './screens/TemplatesList.js';
 import { Help } from './screens/Help.js';
@@ -67,6 +62,10 @@ function screenFor(path: string): JSX.Element {
     const rest = path.slice('/settings/domains/'.length);
     return rest === 'new' ? <SendingDomainDetail /> : <SendingDomainDetail id={rest} />;
   }
+  // Company settings tabs: /company (company) and /company/billing (billing & usage,
+  // moved here from the old top-level /billing).
+  if (path === '/company') return <CompanySettings tab="company" />;
+  if (path === '/company/billing') return <CompanySettings tab="billing" />;
   switch (path) {
     case '/broadcasts':
       return <BroadcastComposer />;
@@ -80,10 +79,6 @@ function screenFor(path: string): JSX.Element {
       return <ProfileExplorer />;
     case '/suppressions':
       return <SuppressionList />;
-    case '/billing':
-      return <BillingUsageView />;
-    case '/company':
-      return <CompanySettings />;
     case '/admin':
       return <SystemAdminConsole />;
     case '/help':

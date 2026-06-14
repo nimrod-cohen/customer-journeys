@@ -14,17 +14,21 @@ describe('capability-driven nav (buildNav via can())', () => {
     expect(ids).not.toContain('admin');
   });
 
-  it('accounting sees billing only (no content/settings/admin)', () => {
+  it('accounting reaches billing via Company settings (no content/workspace-settings/admin)', () => {
     const ids = buildNav('accounting').map((n) => n.id);
-    expect(ids).toContain('billing');
+    // Billing & usage is a tab inside Company settings — accounting sees that item
+    // (via the any-of capability) but not the standalone billing item (removed).
+    expect(ids).toContain('company');
+    expect(ids).not.toContain('billing');
     expect(ids).not.toContain('segments');
     expect(ids).not.toContain('settings');
     expect(ids).not.toContain('admin');
   });
 
-  it('owner sees content + billing + settings (sending domains live in a settings tab; no admin console)', () => {
+  it('owner sees content + company + settings (billing & sending domains are tabs; no admin console)', () => {
     const ids = buildNav('owner').map((n) => n.id);
-    expect(ids).toEqual(expect.arrayContaining(['segments', 'billing', 'settings']));
+    expect(ids).toEqual(expect.arrayContaining(['segments', 'company', 'settings']));
+    expect(ids).not.toContain('billing'); // folded into Company settings → Billing & usage tab
     expect(ids).not.toContain('onboarding'); // folded into Workspace settings → Sending domains tab
     expect(ids).not.toContain('admin');
   });
@@ -32,7 +36,7 @@ describe('capability-driven nav (buildNav via can())', () => {
   it('system-admin sees everything including the cross-company console', () => {
     const ids = buildNav('system-admin').map((n) => n.id);
     expect(ids).toContain('admin');
-    expect(ids).toContain('billing');
+    expect(ids).toContain('company');
     expect(ids).toContain('settings');
   });
 

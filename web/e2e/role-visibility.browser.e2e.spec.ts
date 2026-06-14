@@ -7,18 +7,23 @@ import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
 import { DEV_MKT, DEV_OWNER } from './seed.js';
 
-test('marketer nav hides billing/settings/admin', async ({ page }) => {
+test('marketer nav hides company/settings/admin (no billing item anywhere)', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await expect(page.getByTestId('nav-segments')).toBeVisible();
-  await expect(page.getByTestId('nav-billing')).toHaveCount(0);
+  await expect(page.getByTestId('nav-billing')).toHaveCount(0); // billing is a tab in Company settings now
+  await expect(page.getByTestId('nav-company')).toHaveCount(0);
   await expect(page.getByTestId('nav-settings')).toHaveCount(0);
   await expect(page.getByTestId('nav-admin')).toHaveCount(0);
 });
 
-test('owner nav shows billing + settings', async ({ page }) => {
+test('owner: Billing & usage lives as a tab in Company settings', async ({ page }) => {
   await loginAs(page, DEV_OWNER);
-  await expect(page.getByTestId('nav-billing')).toBeVisible();
   await expect(page.getByTestId('nav-settings')).toBeVisible();
+  await expect(page.getByTestId('nav-billing')).toHaveCount(0); // no standalone billing item
+  await page.getByTestId('nav-company').click();
+  await page.getByTestId('company-settings').waitFor();
+  await page.getByTestId('company-tab-billing').click();
+  await expect(page.getByTestId('billing-usage')).toBeVisible();
 });
 
 test('server 403s a marketer on billing even when the UI route is hidden', async ({ page }) => {

@@ -634,7 +634,9 @@ interface Usage {
   value: number;
 }
 
-export function BillingUsageView() {
+/** The usage table only (no page header) — embedded in the Company-settings
+ *  "Billing & usage" tab. */
+export function BillingUsagePanel() {
   const [usage, setUsage] = useState<Usage[]>([]);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -644,8 +646,8 @@ export function BillingUsageView() {
       .catch((e) => setError((e as { error?: string })?.error ?? 'error'));
   }, []);
   return (
-    <section data-testid="billing-usage">
-      <PageHeader title="Billing & usage" subtitle="Per-workspace metered usage and cost." />
+    <div data-testid="billing-usage">
+      <p class="mb-4 text-sm text-stone-500">Per-workspace metered usage and cost.</p>
       {error ? (
         <p
           data-testid="billing-error"
@@ -676,6 +678,6 @@ export function BillingUsageView() {
           {usage.length === 0 ? <div class="p-4"><EmptyState>No usage recorded yet.</EmptyState></div> : null}
         </Card>
       )}
-    </section>
+    </div>
   );
 }

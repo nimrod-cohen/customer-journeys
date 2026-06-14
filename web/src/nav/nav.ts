@@ -11,8 +11,9 @@ export interface NavItem {
   readonly id: string;
   readonly label: string;
   readonly path: string;
-  /** The capability required to SEE this item (null = always visible). */
-  readonly capability: Capability | null;
+  /** Capability required to SEE this item: a single capability, an ANY-OF list,
+   *  or null (always visible). */
+  readonly capability: Capability | readonly Capability[] | null;
 }
 
 /** The full nav catalogue (§12 screens). Order is the sidebar order. */
@@ -28,8 +29,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // from the Templates list and from the "Design email" action on Broadcasts.
   { id: 'profiles', label: 'Profiles', path: '/profiles', capability: 'manage_content' },
   { id: 'suppressions', label: 'Suppressions', path: '/suppressions', capability: 'manage_content' },
-  { id: 'billing', label: 'Billing & usage', path: '/billing', capability: 'view_billing' },
-  { id: 'company', label: 'Company settings', path: '/company', capability: 'manage_workspace_users' },
+  // Company settings holds the company/workspaces tab AND the Billing & usage tab.
+  // Visible to anyone who can manage the company OR view billing (e.g. accounting).
+  { id: 'company', label: 'Company settings', path: '/company', capability: ['manage_workspace_users', 'view_billing'] },
   // Workspace settings holds members/roles AND the per-workspace sending domains
   // (the "Sending domains" tab at /settings/domains) — no separate nav item.
   { id: 'settings', label: 'Workspace settings', path: '/settings', capability: 'manage_workspace_users' },
@@ -44,5 +46,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
  */
 export function buildNav(role: Role | null): NavItem[] {
   if (role === null) return [];
-  return NAV_ITEMS.filter((item) => item.capability === null || can(role, item.capability));
+  const allowed = (cap: NavItem['capability']): boolean =>
+    cap === null || (Array.isArray(cap) ? cap.some((c) => can(role, c)) : can(role, cap as Capability));
+  return NAV_ITEMS.filter((item) => allowed(item.capability));
 }
