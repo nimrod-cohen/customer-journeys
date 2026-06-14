@@ -1,6 +1,6 @@
 // Sending-domain SETUP screen (§10). Reached from the domains list. Two modes:
-//   • new  (/onboarding/new): name the domain and save it (pending) → its setup.
-//   • edit (/onboarding/:id): publish the DNS records, run a DNS CHECK (the only
+//   • new  (/settings/domains/new): name the domain and save it (pending) → its setup.
+//   • edit (/settings/domains/:id): publish the DNS records, run a DNS CHECK (the only
 //     way to verify — the system looks the records up), and ONLY once verified,
 //     manage the domain's named "From" senders here. "← Back to domains" returns
 //     to the list; the domain is saved whether or not it's verified.
@@ -42,7 +42,7 @@ export function SendingDomainDetail({ id }: { id?: string }) {
     setCreating(true);
     try {
       const r = await api.post<{ domain: { id: string } }>('/sending-domains', { body: { domain: name.trim() } });
-      navigate(`/onboarding/${r.domain.id}`); // continue setup on the saved domain
+      navigate(`/settings/domains/${r.domain.id}`); // continue setup on the saved domain
     } catch (e) {
       setCreateError((e as { error?: string })?.error ?? 'Could not add the domain.');
       setCreating(false);
@@ -82,7 +82,7 @@ export function SendingDomainDetail({ id }: { id?: string }) {
 
 function BackLink() {
   return (
-    <button data-testid="domain-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/onboarding')}>
+    <button data-testid="domain-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/settings/domains')}>
       ← Back to domains
     </button>
   );
@@ -118,7 +118,7 @@ function DomainEditor({ id }: { id: string }) {
     }
   };
   useEffect(() => {
-    void load().catch(() => navigate('/onboarding'));
+    void load().catch(() => navigate('/settings/domains'));
   }, [id]);
 
   const check = async (): Promise<void> => {
@@ -157,7 +157,7 @@ function DomainEditor({ id }: { id: string }) {
     if (!ok) return;
     try {
       await api.del(`/sending-domains/${id}`);
-      navigate('/onboarding');
+      navigate('/settings/domains');
     } catch (e) {
       setError((e as { error?: string })?.error ?? 'Could not remove the domain.');
     }

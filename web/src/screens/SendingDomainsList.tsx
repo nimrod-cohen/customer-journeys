@@ -1,12 +1,12 @@
-// Sending domains — the LIST screen (§10). Just the domains and an "Add domain"
-// action. Adding opens the domain setup screen (/onboarding/new); clicking a row
-// opens that domain's setup screen (/onboarding/:id) where it's verified (via a
-// DNS lookup) and — once verified — its senders are managed. Nothing else lives
-// on this screen.
+// Sending domains — the LIST, rendered as a panel inside Workspace settings
+// (sending domains are per-workspace, §10). Just the domains + "Add domain".
+// Adding opens the per-domain setup screen (/settings/domains/new); clicking a
+// row opens that domain's setup screen (/settings/domains/:id) where it's
+// verified (via SES) and its senders are managed.
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { Badge, Button, PageHeader, EmptyState } from '../ui/kit.js';
+import { Badge, Button, EmptyState } from '../ui/kit.js';
 
 interface SendingDomain {
   id: string;
@@ -14,7 +14,7 @@ interface SendingDomain {
   verified: boolean;
 }
 
-export function SendingDomainsList() {
+export function SendingDomainsPanel() {
   const [domains, setDomains] = useState<SendingDomain[] | null>(null);
 
   useEffect(() => {
@@ -22,16 +22,15 @@ export function SendingDomainsList() {
   }, []);
 
   return (
-    <section data-testid="sending-domains">
-      <PageHeader
-        title="Sending domains"
-        subtitle="The domains this workspace sends from. Open one to verify it and manage its senders."
-        actions={
-          <Button data-testid="add-domain" onClick={() => navigate('/onboarding/new')}>
-            Add domain
-          </Button>
-        }
-      />
+    <div data-testid="sending-domains">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <p class="text-sm text-stone-500">
+          The domains this workspace sends from. Open one to verify it and manage its senders.
+        </p>
+        <Button data-testid="add-domain" onClick={() => navigate('/settings/domains/new')}>
+          Add domain
+        </Button>
+      </div>
 
       {domains === null ? (
         <p class="text-sm text-stone-500">Loading…</p>
@@ -42,7 +41,7 @@ export function SendingDomainsList() {
               data-testid="domain-row"
               key={d.id}
               class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card hover:border-brand-300"
-              onClick={() => navigate(`/onboarding/${d.id}`)}
+              onClick={() => navigate(`/settings/domains/${d.id}`)}
             >
               <span class="flex min-w-0 items-center gap-2">
                 <span class="truncate font-mono text-sm font-semibold text-ink-900">{d.domain}</span>
@@ -59,6 +58,6 @@ export function SendingDomainsList() {
           <EmptyState>No sending domains yet — add one to get started.</EmptyState>
         </div>
       )}
-    </section>
+    </div>
   );
 }

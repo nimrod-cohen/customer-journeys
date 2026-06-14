@@ -12,4 +12,7 @@ test('Help is in the nav and explains email status vs consent vs suppression', a
   await expect(page.getByTestId('help')).toContainText('soft-bounce');
   // The CSV-import behaviour is documented too.
   await expect(page.getByTestId('help-import')).toContainText('import an existing profile');
+  // And how to set up Amazon SES.
+  await expect(page.getByTestId('help-ses')).toContainText('Setting up your Amazon SES account');
+  await expect(page.getByTestId('help-ses')).toContainText('AmazonSESFullAccess');
 });

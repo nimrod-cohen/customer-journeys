@@ -5,13 +5,12 @@ import { describe, it, expect } from 'vitest';
 import { buildNav } from '../src/nav/nav.js';
 
 describe('capability-driven nav (buildNav via can())', () => {
-  it('marketer sees content nav but NOT billing/settings/domain/admin', () => {
+  it('marketer sees content nav but NOT billing/settings/admin', () => {
     const ids = buildNav('marketer').map((n) => n.id);
     expect(ids).toContain('segments');
     expect(ids).toContain('campaigns');
     expect(ids).not.toContain('billing');
-    expect(ids).not.toContain('settings');
-    expect(ids).not.toContain('onboarding');
+    expect(ids).not.toContain('settings'); // settings (with the sending-domains tab) is owner-only
     expect(ids).not.toContain('admin');
   });
 
@@ -23,9 +22,10 @@ describe('capability-driven nav (buildNav via can())', () => {
     expect(ids).not.toContain('admin');
   });
 
-  it('owner sees content + billing + settings + domain (no admin console)', () => {
+  it('owner sees content + billing + settings (sending domains live in a settings tab; no admin console)', () => {
     const ids = buildNav('owner').map((n) => n.id);
-    expect(ids).toEqual(expect.arrayContaining(['segments', 'billing', 'settings', 'onboarding']));
+    expect(ids).toEqual(expect.arrayContaining(['segments', 'billing', 'settings']));
+    expect(ids).not.toContain('onboarding'); // folded into Workspace settings → Sending domains tab
     expect(ids).not.toContain('admin');
   });
 

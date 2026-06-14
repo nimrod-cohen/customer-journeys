@@ -15,7 +15,6 @@ import { BroadcastComposer, BroadcastWizard } from './screens/BroadcastComposer.
 import { CampaignBuilder } from './screens/CampaignBuilder.js';
 import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
 import { CompanySettings } from './screens/CompanySettings.js';
-import { SendingDomainsList } from './screens/SendingDomainsList.tsx';
 import { SendingDomainDetail } from './screens/SendingDomainDetail.tsx';
 import { SystemAdminConsole } from './screens/SystemAdminConsole.js';
 import {
@@ -59,11 +58,13 @@ function screenFor(path: string): JSX.Element {
   if (path.startsWith('/editor/')) {
     return <TemplateEditor id={path.slice('/editor/'.length)} />;
   }
-  // Sending domains: list at /onboarding; the per-domain setup screen at
-  // /onboarding/new and /onboarding/:id.
-  if (path === '/onboarding') return <SendingDomainsList />;
-  if (path.startsWith('/onboarding/')) {
-    const rest = path.slice('/onboarding/'.length);
+  // Workspace settings tabs: /settings (workspace) and /settings/domains (sending
+  // domains, per-workspace). The per-domain setup screen is /settings/domains/new
+  // and /settings/domains/:id.
+  if (path === '/settings') return <WorkspaceSettings tab="workspace" />;
+  if (path === '/settings/domains') return <WorkspaceSettings tab="domains" />;
+  if (path.startsWith('/settings/domains/')) {
+    const rest = path.slice('/settings/domains/'.length);
     return rest === 'new' ? <SendingDomainDetail /> : <SendingDomainDetail id={rest} />;
   }
   switch (path) {
@@ -81,8 +82,6 @@ function screenFor(path: string): JSX.Element {
       return <SuppressionList />;
     case '/billing':
       return <BillingUsageView />;
-    case '/settings':
-      return <WorkspaceSettings />;
     case '/company':
       return <CompanySettings />;
     case '/admin':

@@ -192,6 +192,61 @@ export function Help() {
           overwrite-the-whole-record and never duplicate.
         </p>
       </Card>
+
+      {/* Setting up Amazon SES */}
+      <Card data-testid="help-ses" class="mt-6 p-6">
+        <h2 class="text-lg font-bold text-ink-950">Setting up your Amazon SES account</h2>
+        <p class="mt-2 text-sm text-stone-600">
+          Each <b>company</b> sends through its <b>own</b> Amazon SES account. You create the AWS
+          credentials once, save them under <b>Company settings → Amazon SES</b>, then verify each
+          sending domain under <b>Workspace settings → Sending domains</b>. Here’s the whole path.
+        </p>
+
+        <h3 class="mt-5 font-bold text-ink-900">1. Create / sign in to AWS</h3>
+        <p class="mt-1 text-sm text-stone-600">
+          Go to <Code>https://console.aws.amazon.com</Code> and sign in (or create an account). The
+          “console” is Amazon’s web UI — not a terminal.
+        </p>
+
+        <h3 class="mt-4 font-bold text-ink-900">2. Pick a region — and keep it consistent</h3>
+        <p class="mt-1 text-sm text-stone-600">
+          SES is <b>regional</b>: an identity verified in one region doesn’t exist in another. Use
+          the <b>region dropdown at the top-right</b> of the console (e.g. <Code>il-central-1</Code>{' '}
+          Tel Aviv, <Code>eu-west-1</Code> Ireland). The region you choose must match the{' '}
+          <b>AWS region</b> you enter in Company settings.
+        </p>
+
+        <h3 class="mt-4 font-bold text-ink-900">3. Create an access key (IAM)</h3>
+        <ul class="mt-1 space-y-1.5 text-sm text-stone-700">
+          <li>• Open <b>IAM</b> (search “IAM” in the top bar) → <b>Users → Create user</b> (e.g. <Code>cdp-ses</Code>), no console access needed.</li>
+          <li>• <b>Attach policies directly</b> → tick <Code>AmazonSESFullAccess</Code> → create.</li>
+          <li>• Open the user → <b>Security credentials → Create access key</b> → “Application running outside AWS”.</li>
+          <li>• Copy the <b>Access key ID</b> and <b>Secret access key</b> (the secret is shown once).</li>
+        </ul>
+
+        <h3 class="mt-4 font-bold text-ink-900">4. Save the credentials in this app</h3>
+        <p class="mt-1 text-sm text-stone-600">
+          <b>Company settings → Amazon SES</b>: enter the region, access key ID, and secret, then{' '}
+          <b>Save</b>. The secret is encrypted at rest and never shown again (leave it blank when you
+          edit the region/key later to keep it).
+        </p>
+
+        <h3 class="mt-4 font-bold text-ink-900">5. Verify a sending domain</h3>
+        <p class="mt-1 text-sm text-stone-600">
+          <b>Workspace settings → Sending domains → Add domain</b>. Open it to see the{' '}
+          <b>DKIM CNAME records</b>, add them at your DNS provider, then <b>Check with SES</b>. SES
+          verifies the domain once it detects the records (minutes to a few hours). Only a{' '}
+          <b>verified</b> domain can have senders and send mail.
+        </p>
+
+        <p class="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-200">
+          <b>SES sandbox:</b> new SES accounts start in the <b>sandbox</b>. Verifying a domain works
+          there immediately, but you can only <i>send</i> to verified addresses until you request{' '}
+          <b>production access</b> (SES console → <b>Account dashboard → Request production access</b>).
+          Until your company has saved SES credentials, verification here is <b>simulated</b> (a
+          local test mode) so you can explore the flow.
+        </p>
+      </Card>
     </section>
   );
 }

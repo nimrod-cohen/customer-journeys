@@ -30,8 +30,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'suppressions', label: 'Suppressions', path: '/suppressions', capability: 'manage_content' },
   { id: 'billing', label: 'Billing & usage', path: '/billing', capability: 'view_billing' },
   { id: 'company', label: 'Company settings', path: '/company', capability: 'manage_workspace_users' },
+  // Workspace settings holds members/roles AND the per-workspace sending domains
+  // (the "Sending domains" tab at /settings/domains) — no separate nav item.
   { id: 'settings', label: 'Workspace settings', path: '/settings', capability: 'manage_workspace_users' },
-  { id: 'onboarding', label: 'Sending domains', path: '/onboarding', capability: 'manage_sending_domain' },
   { id: 'admin', label: 'System admin', path: '/admin', capability: 'view_all_workspaces' },
   // Help is reference material — always visible to any authenticated user.
   { id: 'help', label: 'Help', path: '/help', capability: null },

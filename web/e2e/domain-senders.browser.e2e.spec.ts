@@ -8,10 +8,13 @@ import { DEV_OWNER } from './seed.js';
 
 test('domains list → setup screen: save, verify via SES DKIM, then manage senders', async ({ page }) => {
   await loginAs(page, DEV_OWNER);
-  await page.getByTestId('nav-onboarding').click();
+  // Sending domains live as a TAB in Workspace settings (per-workspace).
+  await page.getByTestId('nav-settings').click();
+  await page.getByTestId('workspace-settings').waitFor();
+  await page.getByTestId('settings-tab-domains').click();
   await page.getByTestId('sending-domains').waitFor();
 
-  // The list is empty; nothing but the list + Add domain lives here (no wizard).
+  // The tab is just the list + Add domain (no wizard, no detail yet).
   await expect(page.getByTestId('dns-section')).toHaveCount(0);
   await expect(page.getByTestId('senders-section')).toHaveCount(0);
 

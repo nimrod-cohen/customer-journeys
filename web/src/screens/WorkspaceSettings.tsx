@@ -1,11 +1,15 @@
-// WorkspaceSettings (§12, owner): members + roles for the ACTIVE workspace, the
-// lowercase-emails policy, and a link to sending-domain onboarding. Company-level
-// workspace management lives on the Company settings page. Scoped to the token.
+// WorkspaceSettings (§12, owner): TABS for the ACTIVE workspace — "Workspace"
+// (members + roles + lowercase-emails policy) and "Sending domains" (per-workspace
+// domains, §10). Company-level workspace management lives on the Company settings
+// page. Scoped to the token.
 import { useEffect, useState } from 'preact/hooks';
 import { useStore } from '../store/store.js';
 import { api, sessionStore } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader, Select } from '../ui/kit.js';
+import { SendingDomainsPanel } from './SendingDomainsList.tsx';
+
+type SettingsTab = 'workspace' | 'domains';
 
 interface Member {
   user_id: string;
@@ -15,7 +19,7 @@ interface Member {
 
 const ROLES = ['owner', 'marketer', 'accounting'];
 
-export function WorkspaceSettings() {
+export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) {
   const session = useStore(sessionStore);
   const [members, setMembers] = useState<Member[]>([]);
   const [newEmail, setNewEmail] = useState('');
@@ -62,8 +66,36 @@ export function WorkspaceSettings() {
 
   return (
     <section data-testid="workspace-settings">
-      <PageHeader title="Workspace settings" subtitle="Members, roles, and sending domain." />
+      <PageHeader title="Workspace settings" subtitle="Members, roles, and sending domains for this workspace." />
 
+      {/* Tabs */}
+      <div class="mb-5 flex gap-1 border-b border-stone-200">
+        <button
+          type="button"
+          data-testid="settings-tab-workspace"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'workspace' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => navigate('/settings')}
+        >
+          Workspace
+        </button>
+        <button
+          type="button"
+          data-testid="settings-tab-domains"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'domains' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => navigate('/settings/domains')}
+        >
+          Sending domains
+        </button>
+      </div>
+
+      {tab === 'domains' ? (
+        <SendingDomainsPanel />
+      ) : (
+      <>
       <Card class="overflow-hidden">
         <div class="border-b border-stone-100 px-5 py-4">
           <h2 class="text-base font-bold text-ink-900">Members</h2>
@@ -167,17 +199,8 @@ export function WorkspaceSettings() {
         </button>
       </Card>
 
-      <Card class="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
-        <div>
-          <h2 class="text-base font-bold text-ink-900">Sending domain</h2>
-          <p class="mt-1 text-sm text-stone-500">
-            Verify a domain (DKIM/SPF/DMARC) before this workspace can send.
-          </p>
-        </div>
-        <Button data-testid="goto-onboarding" variant="secondary" onClick={() => navigate('/onboarding')}>
-          Configure sending domain
-        </Button>
-      </Card>
+      </>
+      )}
     </section>
   );
 }
