@@ -256,3 +256,40 @@ test('edit a segment from the list: builder hydrates and the rename reflects', a
   await page.getByTestId('segments-list').waitFor();
   await expect(page.getByTestId('segment-list')).toContainText('Seg Edited');
 });
+
+test('unsaved edits gate leaving the builder (cancel stays, discard leaves)', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+
+  // A pristine (untouched) builder does NOT prompt — leaving goes straight back.
+  await page.getByTestId('segments-back').click();
+  await page.getByTestId('segments-list').waitFor();
+
+  // Re-enter and make an edit → now dirty.
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+  await page.getByTestId('segment-name').fill('Unsaved seg');
+  await page.getByTestId('rule-field').first().fill('attributes.tier');
+
+  // Back button → discard dialog. Cancel → we stay on the builder.
+  await page.getByTestId('segments-back').click();
+  await page.getByTestId('app-dialog').waitFor();
+  await page.getByTestId('dialog-cancel').click();
+  await expect(page.getByTestId('segment-builder')).toBeVisible();
+  await expect(page.getByTestId('segment-name')).toHaveValue('Unsaved seg');
+
+  // Sidebar navigation is gated too. Cancel again → still on the builder.
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('app-dialog').waitFor();
+  await page.getByTestId('dialog-cancel').click();
+  await expect(page.getByTestId('segment-builder')).toBeVisible();
+
+  // Confirm discard → the navigation proceeds.
+  await page.getByTestId('segments-back').click();
+  await page.getByTestId('app-dialog').waitFor();
+  await page.getByTestId('dialog-confirm').click();
+  await page.getByTestId('segments-list').waitFor();
+});

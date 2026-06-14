@@ -5,7 +5,8 @@
 // all data-testid attributes preserved.)
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
-import { navigate } from '../router.js';
+import { navigate, setNavGuard } from '../router.js';
+import { askConfirm } from '../ui/dialog.js';
 import {
   buildAstFromGroup,
   groupFromAst,
@@ -496,15 +497,59 @@ export function SegmentBuilder({ id }: { id?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memVersion]);
 
-  // Editing the rules marks the (saved) members list stale until the next save.
+  // Editing the rules/name marks the editor dirty (members list stale until the
+  // next save, and gates leaving the screen). Skip the initial mount run so an
+  // untouched segment — or the post-hydrate state restore in edit mode — isn't
+  // falsely flagged; only genuine edits set it.
+  const seededDirty = useRef(false);
   useEffect(() => {
+    if (!seededDirty.current) {
+      seededDirty.current = true;
+      return;
+    }
     setDirty(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, combinator, groups, csv]);
+  }, [rows, combinator, groups, csv, name]);
+
+  // Block leaving the screen with unsaved changes. `dirtyRef` mirrors `dirty` so
+  // the guard/beforeunload closures aren't stale. The nav guard (in-app links,
+  // back button, browser back/forward) asks for confirmation; beforeunload covers
+  // refresh/tab-close (native browser prompt — can't be styled).
+  const dirtyRef = useRef(false);
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  }, [dirty]);
+
+  useEffect(() => {
+    setNavGuard(async () =>
+      dirtyRef.current
+        ? askConfirm({
+            title: 'Discard changes?',
+            message: 'You have unsaved changes to this segment. Leave without saving?',
+            danger: true,
+            confirmLabel: 'Discard',
+          })
+        : true,
+    );
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (dirtyRef.current) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    globalThis.addEventListener?.('beforeunload', onBeforeUnload);
+    return () => {
+      setNavGuard(null);
+      globalThis.removeEventListener?.('beforeunload', onBeforeUnload);
+    };
+  }, []);
 
   const save = async () => {
     setSaving(true);
     try {
+      // A successful save clears the unsaved-changes flag synchronously — the
+      // members panel reloads (loadMembers) asynchronously, but the leave-guard
+      // must release the moment the save lands, not after the preview fetch.
       const segName = name || 'Untitled segment';
       if (segmentKind === 'manual') {
         // Manual: create (or update) the segment, then import the pasted emails.
@@ -526,6 +571,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
           await api.post(`/segments/${sid}/import-csv`, { body: { emails } });
           setCsv(''); // imported — clear the box (members panel now reflects them)
         }
+        setDirty(false);
         setMemVersion((v) => v + 1); // refresh the members panel in place
         return;
       }
@@ -539,6 +585,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
         });
         setSavedId(res.segment.id);
       }
+      setDirty(false);
       setMemVersion((v) => v + 1); // refresh the members panel in place
     } finally {
       setSaving(false);
