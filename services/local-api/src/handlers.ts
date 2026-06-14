@@ -461,16 +461,35 @@ interface DnsRecordOut {
 
 const stripDot = (s: string): string => s.replace(/\.$/, '').toLowerCase();
 
-/** Resolve ONE record in real DNS and report whether the checker sees it. */
+// Resolve against PUBLIC DNS (Cloudflare/Google), not the machine's system
+// resolver. The system/ISP resolver can lag or negatively-cache a freshly
+// published record that's already globally visible — which is why a tool like
+// dnschecker.org (which queries public resolvers) finds a record we'd otherwise
+// miss. Override with CDP_DNS_SERVERS (comma-separated) if those are blocked.
+const DNS_SERVERS = (process.env.CDP_DNS_SERVERS ?? '1.1.1.1,8.8.8.8,1.0.0.1')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+let _resolver: InstanceType<typeof dns.Resolver> | null = null;
+function dnsResolver(): InstanceType<typeof dns.Resolver> {
+  if (!_resolver) {
+    _resolver = new dns.Resolver({ timeout: 4000, tries: 2 });
+    if (DNS_SERVERS.length) _resolver.setServers(DNS_SERVERS);
+  }
+  return _resolver;
+}
+
+/** Resolve ONE record in real (public) DNS and report whether the checker sees it. */
 async function lookupRecordStatus(rec: DnsRecordOut): Promise<DnsRecordStatus> {
+  const resolver = dnsResolver();
   try {
     if (rec.type === 'CNAME') {
-      const cnames = await dns.resolveCname(rec.name);
+      const cnames = await resolver.resolveCname(rec.name);
       if (cnames.some((c) => stripDot(c) === stripDot(rec.value))) return 'found';
       return cnames.length ? 'mismatch' : 'missing';
     }
     if (rec.type === 'TXT') {
-      const txts = (await dns.resolveTxt(rec.name)).map((parts) => parts.join('').trim());
+      const txts = (await resolver.resolveTxt(rec.name)).map((parts) => parts.join('').trim());
       if (rec.role === 'spf') {
         const spf = txts.find((t) => t.toLowerCase().startsWith('v=spf1'));
         if (!spf) return 'missing';
