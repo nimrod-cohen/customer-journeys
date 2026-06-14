@@ -4,10 +4,10 @@ import preact from '@preact/preset-vite';
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-// App version surfaced in the UI: the package version + the git short SHA of the
-// build (a real, changing build id). Git is best-effort — falls back to the
-// version alone outside a repo.
-const pkgVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version as string;
+// App version surfaced in the UI: the PROJECT version (the ROOT package.json —
+// the single source of truth we bump per change) + the git short SHA of the
+// build. Git is best-effort — falls back to the version alone outside a repo.
+const pkgVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
 let commit = '';
 try {
   commit = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
