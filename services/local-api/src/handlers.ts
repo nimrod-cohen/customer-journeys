@@ -10,6 +10,7 @@
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import type { Pool } from 'pg';
+import { promises as dns } from 'node:dns';
 import { createSesClient, type SesEmailClient } from '@cdp/email';
 import { DEV_USERS, OPEN_EVENT_TYPES, PURCHASE_EVENT_TYPES, type WorkspaceContext } from '@cdp/shared';
 import { scopedQuery, encryptSecret, decryptSecret, isEncryptedSecret } from '@cdp/db';
@@ -447,6 +448,7 @@ interface SendingDomainRow {
   dkim_tokens: string[];
 }
 
+type DnsRecordStatus = 'found' | 'missing' | 'mismatch';
 interface DnsRecordOut {
   role: string;
   type: string;
@@ -454,6 +456,45 @@ interface DnsRecordOut {
   value: string;
   required: boolean; // required for SES verification (DKIM) vs recommended (SPF/DMARC)
   note?: string;
+  status?: DnsRecordStatus; // whether the checker can currently see this record in DNS
+}
+
+const stripDot = (s: string): string => s.replace(/\.$/, '').toLowerCase();
+
+/** Resolve ONE record in real DNS and report whether the checker sees it. */
+async function lookupRecordStatus(rec: DnsRecordOut): Promise<DnsRecordStatus> {
+  try {
+    if (rec.type === 'CNAME') {
+      const cnames = await dns.resolveCname(rec.name);
+      if (cnames.some((c) => stripDot(c) === stripDot(rec.value))) return 'found';
+      return cnames.length ? 'mismatch' : 'missing';
+    }
+    if (rec.type === 'TXT') {
+      const txts = (await dns.resolveTxt(rec.name)).map((parts) => parts.join('').trim());
+      if (rec.role === 'spf') {
+        const spf = txts.find((t) => t.toLowerCase().startsWith('v=spf1'));
+        if (!spf) return 'missing';
+        return spf.toLowerCase().includes('amazonses.com') ? 'found' : 'mismatch';
+      }
+      if (rec.role === 'dmarc') {
+        return txts.some((t) => t.toLowerCase().startsWith('v=dmarc1')) ? 'found' : 'missing';
+      }
+      return txts.includes(rec.value) ? 'found' : txts.length ? 'mismatch' : 'missing';
+    }
+  } catch {
+    return 'missing'; // NXDOMAIN / no record / lookup error
+  }
+  return 'missing';
+}
+
+/**
+ * Annotate each record with its live DNS status. With a real company SES config
+ * we do real DNS lookups; in simulated mode (no SES creds) we report 'found' to
+ * stay consistent with the simulated verification.
+ */
+async function withDnsStatus(records: DnsRecordOut[], configured: boolean): Promise<DnsRecordOut[]> {
+  if (!configured) return records.map((r) => ({ ...r, status: 'found' as DnsRecordStatus }));
+  return Promise.all(records.map(async (r) => ({ ...r, status: await lookupRecordStatus(r) })));
 }
 
 /**
@@ -548,7 +589,8 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const { ses, configured } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   try {
     const { tokens } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
-    return ok({ domain: domainOut, records: dnsRecordsFor(row.domain, tokens), sesConfigured: configured });
+    const records = await withDnsStatus(dnsRecordsFor(row.domain, tokens), configured);
+    return ok({ domain: domainOut, records, sesConfigured: configured });
   } catch (e) {
     // SES unreachable (bad/missing company credentials) — return without records.
     return ok({
@@ -585,7 +627,7 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
     return ok({
       verified: verified || row.verified,
       dkimStatus: attrs.dkimStatus,
-      records: dnsRecordsFor(row.domain, tokens),
+      records: await withDnsStatus(dnsRecordsFor(row.domain, tokens), configured),
       sesConfigured: configured,
     });
   } catch (e) {

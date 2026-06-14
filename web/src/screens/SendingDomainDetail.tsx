@@ -15,10 +15,27 @@ interface DnsRecord {
   type: string;
   name: string;
   value: string;
-  status?: string;
+  status?: 'found' | 'missing' | 'mismatch';
   required?: boolean;
   note?: string;
 }
+type RecordStatus = 'found' | 'missing' | 'mismatch' | undefined;
+const recordStatusMark = (s: RecordStatus): string => (s === 'found' ? '✓' : s === 'mismatch' ? '!' : '○');
+const recordStatusLabel = (s: RecordStatus): string =>
+  s === 'found'
+    ? 'Found in DNS'
+    : s === 'mismatch'
+      ? 'A record exists but its value doesn’t match — fix it'
+      : 'Not visible yet — publish this record';
+const recordStatusClass = (s: RecordStatus): string =>
+  `inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${
+    s === 'found'
+      ? 'bg-emerald-100 text-emerald-700'
+      : s === 'mismatch'
+        ? 'bg-amber-100 text-amber-700'
+        : 'bg-stone-100 text-stone-400'
+  }`;
+
 interface DomainDetail {
   id: string;
   domain: string;
@@ -242,6 +259,7 @@ function DomainEditor({ id }: { id: string }) {
             <table class="w-full text-sm">
               <thead class="bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
                 <tr>
+                  <th class="px-3 py-2 font-semibold">Seen</th>
                   <th class="px-3 py-2 font-semibold">Type</th>
                   <th class="px-3 py-2 font-semibold">Name</th>
                   <th class="px-3 py-2 font-semibold">Value</th>
@@ -251,6 +269,11 @@ function DomainEditor({ id }: { id: string }) {
               <tbody class="divide-y divide-stone-100 text-xs">
                 {records.map((rec, i) => (
                   <tr data-testid="dns-record" key={i}>
+                    <td class="px-3 py-2" title={recordStatusLabel(rec.status)}>
+                      <span data-testid="dns-record-status" data-status={rec.status ?? 'unknown'} class={recordStatusClass(rec.status)}>
+                        {recordStatusMark(rec.status)}
+                      </span>
+                    </td>
                     <td class="px-3 py-2 font-mono text-stone-500">{rec.type}</td>
                     <td class="max-w-[16rem] truncate px-3 py-2 font-mono text-ink-900">{rec.name}</td>
                     <td class="px-3 py-2 font-mono text-stone-600">
@@ -267,6 +290,11 @@ function DomainEditor({ id }: { id: string }) {
               </tbody>
             </table>
           </div>
+          <p class="mt-2 text-xs text-stone-400">
+            <span class={recordStatusClass('found')}>✓</span> found in DNS &nbsp;·&nbsp;
+            <span class={recordStatusClass('missing')}>○</span> not visible yet &nbsp;·&nbsp;
+            <span class={recordStatusClass('mismatch')}>!</span> value doesn’t match
+          </p>
           <div class="mt-3 flex items-center gap-3">
             <Button data-testid="check-dns" variant="secondary" onClick={() => void check()} disabled={checking}>
               {checking ? 'Checking…' : domain.verified ? 'Re-check with SES' : 'Check with SES'}

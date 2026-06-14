@@ -32,6 +32,8 @@ test('domains list → setup screen: save, verify via SES DKIM, then manage send
   await expect(page.getByTestId('dns-section')).toContainText('v=spf1'); // SPF
   await expect(page.getByTestId('dns-section')).toContainText('_dmarc'); // DMARC
   await expect(page.getByTestId('dns-section')).toContainText('recommended');
+  // Each record carries a "seen in DNS" mark (simulated mode → all found).
+  await expect(page.getByTestId('dns-record-status').first()).toHaveAttribute('data-status', 'found');
   await expect(page.getByTestId('senders-locked')).toBeVisible();
   await expect(page.getByTestId('add-sender')).toHaveCount(0);
 
