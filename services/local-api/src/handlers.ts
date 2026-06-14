@@ -131,9 +131,12 @@ export const getMe: Handler = async (ctx, pool) => {
     companyId = wn.rows[0]?.company_id ?? null;
     companyName = wn.rows[0]?.cname ?? null;
   }
+  // App-owned profile (display name); identity/email live in the auth provider.
+  const prof = await pool.query<{ name: string | null }>('SELECT name FROM users WHERE id = $1', [ctx.userId ?? '']);
   return ok({
     sub: ctx.userId,
     email: emailForUser(ctx.userId),
+    name: prof.rows[0]?.name ?? null,
     workspace_id: ctx.workspaceId || null,
     workspace_name: workspaceName,
     company_id: companyId,
@@ -142,6 +145,20 @@ export const getMe: Handler = async (ctx, pool) => {
     is_platform_admin: ctx.isPlatformAdmin,
     memberships: rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role, name: r.name })),
   });
+};
+
+/** PATCH /me — the signed-in user edits their OWN profile (display name). Email
+ *  and password are managed by the auth provider, not here. Scoped to ctx.userId
+ *  (from the token), never a body-supplied id. */
+export const updateMe: Handler = async (ctx, pool, req) => {
+  if (!ctx.userId) return ok({ error: 'no user' }, 400);
+  const name = String(asObject(req.body).name ?? '').trim();
+  await pool.query(
+    `INSERT INTO users (id, name, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (id) DO UPDATE SET name = $2, updated_at = now()`,
+    [ctx.userId, name || null],
+  );
+  return ok({ name: name || null });
 };
 
 // ---------------------------------------------------------------------------
@@ -2416,6 +2433,7 @@ export const adminGetWorkspace: Handler = async (ctx, pool, req) => {
 /** Map a route key → its handler. */
 export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /me': getMe,
+  'PATCH /me': updateMe,
   'GET /workspace/members': listMembers,
   'POST /workspaces': createWorkspace,
   'PATCH /company': renameCompany,

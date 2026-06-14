@@ -16,6 +16,7 @@ import { CampaignBuilder } from './screens/CampaignBuilder.js';
 import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
 import { CompanySettings } from './screens/CompanySettings.js';
 import { SendingDomainDetail } from './screens/SendingDomainDetail.tsx';
+import { AccountSettings } from './screens/AccountSettings.tsx';
 import { SystemAdminConsole } from './screens/SystemAdminConsole.js';
 import { Dashboards, ProfileExplorer, SuppressionList } from './screens/SimpleScreens.js';
 import { ProfileDetail } from './screens/ProfileDetail.js';
@@ -66,6 +67,7 @@ function screenFor(path: string): JSX.Element {
   // moved here from the old top-level /billing).
   if (path === '/company') return <CompanySettings tab="company" />;
   if (path === '/company/billing') return <CompanySettings tab="billing" />;
+  if (path === '/account') return <AccountSettings />;
   switch (path) {
     case '/broadcasts':
       return <BroadcastComposer />;
@@ -102,7 +104,9 @@ export function AppShell(): JSX.Element {
   // The email editor has no nav item (reached from Broadcasts/Campaigns), but is
   // still permitted for anyone who can manage content (i.e. has those screens).
   const canEditor = (route === '/editor' || route.startsWith('/editor/')) && nav.some((n) => n.id === 'broadcasts');
-  const permitted = canEditor || nav.some((n) => underNav(route, n.path));
+  // The account screen has no nav item — any signed-in user may edit their own details.
+  const canAccount = route === '/account';
+  const permitted = canEditor || canAccount || nav.some((n) => underNav(route, n.path));
   const effectiveRoute = permitted ? route : (nav[0]?.path ?? route);
   useEffect(() => {
     if (!permitted && nav[0] && route !== nav[0].path) navigate(nav[0].path);
@@ -127,6 +131,17 @@ export function AppShell(): JSX.Element {
             <div class="text-[11px] text-stone-400">Marketing CDP</div>
           </div>
         </div>
+
+        {/* Company name, above the workspace selector. */}
+        {session.companyName ? (
+          <div
+            data-testid="sidebar-company"
+            class="truncate px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-300/90"
+            title={session.companyName}
+          >
+            {session.companyName}
+          </div>
+        ) : null}
 
         {/* Platform admins get a Company → Workspace picker (pick a company, then
             a workspace within it). Everyone else gets the membership switcher. */}
@@ -153,21 +168,27 @@ export function AppShell(): JSX.Element {
           })}
         </nav>
 
-        {/* Footer: role + logout */}
+        {/* Footer: the signed-in user (click to edit account) + logout */}
         <div class="mt-2 border-t border-white/10 px-2 pt-3">
-          <div class="mb-2 flex items-center gap-2">
+          <button
+            data-testid="account-link"
+            type="button"
+            onClick={() => navigate('/account')}
+            class="mb-2 flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left transition hover:bg-white/5"
+            title="Edit my account"
+          >
             <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/10 text-xs font-bold uppercase text-brand-300">
-              {(session.email ?? session.role ?? '?').slice(0, 2)}
+              {(session.name ?? session.email ?? session.role ?? '?').slice(0, 2)}
             </span>
             <div class="min-w-0 leading-tight">
               <div class="truncate text-sm font-semibold text-white" title={session.email ?? ''}>
-                {session.email ?? 'Signed in'}
+                {session.name ?? session.email ?? 'Signed in'}
               </div>
               <div data-testid="active-role" class="text-[11px] capitalize text-stone-400">
                 {session.role ?? '—'}
               </div>
             </div>
-          </div>
+          </button>
           <button
             data-testid="logout"
             type="button"

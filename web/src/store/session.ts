@@ -20,6 +20,8 @@ export interface Session {
   readonly sub: string | null;
   /** The signed-in user's email (shown instead of the internal user id). */
   readonly email: string | null;
+  /** The user's editable display name (app-owned; null until they set one). */
+  readonly name: string | null;
   readonly workspaceId: string | null;
   /** Human-friendly name of the ACTIVE workspace (even if not a membership). */
   readonly workspaceName: string | null;
@@ -36,6 +38,7 @@ const EMPTY: Session = {
   token: null,
   sub: null,
   email: null,
+  name: null,
   workspaceId: null,
   workspaceName: null,
   companyId: null,
@@ -112,6 +115,7 @@ interface LoginResponse {
 interface MeResponse {
   sub: string;
   email: string;
+  name: string | null;
   workspace_id: string;
   workspace_name: string | null;
   company_id: string | null;
@@ -147,6 +151,7 @@ export async function refreshMe(): Promise<void> {
     ...s,
     sub: me.sub,
     email: me.email,
+    name: me.name ?? null,
     workspaceId: me.workspace_id,
     workspaceName: me.workspace_name ?? null,
     companyId: me.company_id ?? null,

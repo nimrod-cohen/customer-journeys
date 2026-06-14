@@ -18,6 +18,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   // --- session / identity (authenticated-only) ---
   'POST /auth/dev-login': null, // pre-auth; handled before enforcement
   'GET /me': null,
+  'PATCH /me': null,
   'POST /workspace/switch': null,
 
   // --- workspace users + roles (manage_workspace_users) ---

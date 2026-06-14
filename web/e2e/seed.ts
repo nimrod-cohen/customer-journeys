@@ -217,4 +217,6 @@ export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void>
   await pool.query('DELETE FROM companies WHERE id NOT IN (SELECT company_id FROM workspaces)');
   await pool.query('DELETE FROM admin_audit_log WHERE user_id = $1', [USER_ADMIN]);
   await pool.query('DELETE FROM platform_admins WHERE user_id = $1', [USER_ADMIN]);
+  // App-owned user profiles (display names set via /account).
+  await pool.query('DELETE FROM users WHERE id = ANY($1)', [[USER_MULTI, USER_MKT, USER_ADMIN]]);
 }
