@@ -48,9 +48,14 @@ export function BroadcastComposer() {
   }, []);
 
   const send = async (id: string) => {
-    const res = await api.post<{ result: { result?: string } }>(`/broadcasts/${id}/send`, {});
-    setLastResult(JSON.stringify(res.result));
-    await reload();
+    try {
+      const res = await api.post<{ result: { result?: string } }>(`/broadcasts/${id}/send`, {});
+      setLastResult(JSON.stringify(res.result));
+      await reload();
+    } catch (e) {
+      // e.g. 409 when the workspace has no verified sending domain.
+      setLastResult((e as { error?: string })?.error ?? 'Could not send the broadcast.');
+    }
   };
 
   return (

@@ -84,6 +84,11 @@ export async function seed(): Promise<void> {
       "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html) VALUES ($1,$2,'Welcome','<mjml/>','<html>Hi</html>')",
       [TPL_A, WS_A],
     );
+    // A VERIFIED sending domain so WS_A broadcasts can be sent (the send gate).
+    await pool.query(
+      "INSERT INTO sending_domains (workspace_id, domain, verified, verified_at) VALUES ($1,'mail.acme.test',true,now())",
+      [WS_A],
+    );
     await pool.query(
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
       [SEG_A, WS_A, SEG_A_NAME, 'manual'],

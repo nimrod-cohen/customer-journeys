@@ -50,6 +50,11 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
       "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'marketer')",
       [WS_A, MKT_A],
     );
+    // A verified sending domain in WS-A so its own broadcast passes the send gate.
+    await world.pool.query(
+      "INSERT INTO sending_domains (workspace_id, domain, verified, verified_at) VALUES ($1,'mail.a.test',true,now())",
+      [WS_A],
+    );
 
     // --- Seed WS-B's content: a manual segment with one member, a template, and a
     // sendable (draft, has template) broadcast targeting that segment. ---
@@ -101,6 +106,7 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
     ]);
     await world.pool.query('DELETE FROM segments WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
     await world.pool.query('DELETE FROM profiles WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
+    await world.pool.query('DELETE FROM sending_domains WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
     await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = ANY($1)', [
       [WS_A, WS_B],
     ]);

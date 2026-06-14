@@ -1336,6 +1336,18 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
   const guard = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM broadcasts WHERE id = $1', [id]);
   const { rowCount } = await pool.query(guard.text, guard.values);
   if (!rowCount) return ok({ error: 'not found' }, 404);
+  // Pre-send gate (§10/inv.7): refuse to send unless this workspace has a VERIFIED
+  // sending domain. (Sends ultimately go through the Dispatcher, but enforce here
+  // too so a broadcast is never queued/marked sent with no way to actually send.)
+  // (No LIMIT in the fragment — scopedQuery wraps everything after WHERE.)
+  const vq = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM sending_domains WHERE verified = true');
+  const verified = await pool.query(vq.text, vq.values);
+  if (!verified.rowCount) {
+    return ok(
+      { error: 'No verified sending domain. Verify one in Workspace settings → Sending domains before sending.' },
+      409,
+    );
+  }
   const result = await runBroadcast(deps.broadcast, id);
   return ok({ result });
 };
