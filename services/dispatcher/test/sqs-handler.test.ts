@@ -47,13 +47,14 @@ function makeDeps(scn: Scenario): HandlerDeps {
         scn.outboxStatus = 'sending';
         return { rows: [{ id: 'ob-1' } as unknown as T] };
       }
-      if (t.startsWith('SELECT id, status, sending_identity FROM workspaces')) {
+      if (t.startsWith('SELECT id, status, sending_identity, settings FROM workspaces')) {
         return {
           rows: [
             {
               id: WS,
               status: 'active',
               sending_identity: { verified: true, from_domain: 'mail.acme.com', config_set: 'cs' },
+              settings: null,
             } as unknown as T,
           ],
         };
@@ -84,6 +85,7 @@ function makeDeps(scn: Scenario): HandlerDeps {
     },
     now: () => new Date('2026-06-10T12:00:00.000Z'),
     unsubscribeBaseUrl: 'https://api.cdp.example/unsubscribe',
+    linkTrackingBaseUrl: 'https://api.cdp.example',
   };
 }
 

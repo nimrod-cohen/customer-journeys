@@ -22,10 +22,13 @@ import {
   buildUsageCounterIncrement,
   buildOutboxMarkSent,
   buildSendEmailInput,
+  rewriteTrackingLinks,
+  buildTrackedLinkInsert,
   type DispatchContext,
   type DispatchDecision,
   type QuietHoursConfig,
   type SqlStatement,
+  type TrackedLink,
 } from './core.js';
 import { customerMerge } from '@cdp/shared';
 
@@ -49,6 +52,8 @@ export interface DispatchDeps {
   now(): Date;
   /** Public base URL of the unsubscribe endpoint (§9 step 5). */
   readonly unsubscribeBaseUrl: string;
+  /** Public base URL the click-tracking redirect (/t/<token>) is served from. */
+  readonly linkTrackingBaseUrl: string;
 }
 
 /** The terminal result of dispatching one outbox id. */
@@ -124,9 +129,11 @@ export async function dispatchOutbox(
       id: string;
       status: string;
       sending_identity: Record<string, unknown> | null;
-    }>(`SELECT id, status, sending_identity FROM workspaces WHERE id = $1`, [workspaceId]);
+      settings: Record<string, unknown> | null;
+    }>(`SELECT id, status, sending_identity, settings FROM workspaces WHERE id = $1`, [workspaceId]);
     const ws = wsRows[0];
     if (!ws) return { result: 'noop', reason: 'workspace not found' };
+    const linkTrackingOn = ws.settings?.['link_tracking'] === true;
 
     const { rows: profRows } = await deps.reader.query<{
       id: string;
@@ -166,6 +173,21 @@ export async function dispatchOutbox(
         ? (payload['frequency_cap_per_days'] as number)
         : null;
     const quietHours = parseQuietHours(payload['quiet_hours']);
+
+    // Click tracking (§10): when the workspace enables it, rewrite every link in
+    // the email to a /t/<token> tracking link. Applies to EVERY outgoing email
+    // (broadcast or campaign) — this is the one place all sends pass through.
+    let trackedLinks: TrackedLink[] = [];
+    if (linkTrackingOn && compiledHtml) {
+      const rw = rewriteTrackingLinks(compiledHtml, {
+        baseUrl: deps.linkTrackingBaseUrl,
+        workspaceId,
+        broadcastId,
+        campaignId: ob.campaign_id ?? null,
+      });
+      compiledHtml = rw.html;
+      trackedLinks = rw.links;
+    }
 
     const now = deps.now();
 
@@ -220,8 +242,9 @@ export async function dispatchOutbox(
     const input: SendEmailInput = buildSendEmailInput(ctx);
     const { sesMessageId } = await deps.ses.sendEmail(input);
 
-    // 7. ONE tx: messages_log + usage_counters(emails_sent) + mark outbox sent.
+    // 7. ONE tx: tracked links (idempotent) + messages_log + usage + mark sent.
     await deps.runInWorkspaceTx(workspaceId, [
+      ...trackedLinks.map((l) => buildTrackedLinkInsert(workspaceId, l, broadcastId, ob.campaign_id ?? null)),
       buildMessagesLogInsert(workspaceId, profile.id, ob.campaign_id, sesMessageId, broadcastId),
       buildUsageCounterIncrement(workspaceId, now),
       buildOutboxMarkSent(workspaceId, outboxId),

@@ -283,7 +283,13 @@ function applyEmailPolicy(email: string, lowercase: boolean): string {
 export const getWorkspaceSettings: Handler = async (ctx, pool) => {
   const { rows } = await pool.query('SELECT settings FROM workspaces WHERE id = $1', [ctx.workspaceId]);
   const settings = (rows[0]?.settings as Record<string, unknown>) ?? {};
-  return ok({ settings: { lowercase_emails: settings.lowercase_emails !== false, ...settings } });
+  return ok({
+    settings: {
+      ...settings,
+      lowercase_emails: settings.lowercase_emails !== false, // default ON
+      link_tracking: settings.link_tracking === true, // default OFF
+    },
+  });
 };
 
 /** PUT /workspace/settings — merge allowed settings (owner). */
@@ -291,6 +297,7 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const patch: Record<string, unknown> = {};
   if (b.lowercase_emails !== undefined) patch.lowercase_emails = Boolean(b.lowercase_emails);
+  if (b.link_tracking !== undefined) patch.link_tracking = Boolean(b.link_tracking);
   if (Object.keys(patch).length === 0) return ok({ error: 'no recognized settings' }, 400);
   const { rows } = await pool.query(
     `UPDATE workspaces SET settings = settings || $2::jsonb WHERE id = $1 RETURNING settings`,

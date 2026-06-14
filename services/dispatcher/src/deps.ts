@@ -72,5 +72,6 @@ export function makeProdDeps(): HandlerDeps {
     now: () => new Date(),
     unsubscribeBaseUrl:
       process.env.UNSUBSCRIBE_BASE_URL ?? 'https://api.cdp.example/unsubscribe',
+    linkTrackingBaseUrl: process.env.LINK_TRACKING_BASE_URL ?? process.env.APP_BASE_URL ?? 'https://api.cdp.example',
   };
 }

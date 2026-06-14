@@ -93,6 +93,7 @@ describe.skipIf(!RUN)('dispatcher dedupe / idempotency (real Postgres)', () => {
         runStatementsInWorkspaceTx(admin, workspaceId, statements),
       now: () => new Date('2026-06-10T12:00:00.000Z'),
       unsubscribeBaseUrl: 'https://api.cdp.example/unsubscribe',
+    linkTrackingBaseUrl: 'https://api.cdp.example',
     };
   }
 

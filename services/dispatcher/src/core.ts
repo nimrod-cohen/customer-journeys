@@ -8,6 +8,7 @@
 // decideDispatch runs them in that fixed order and SHORT-CIRCUITS at the first
 // block (lazy — later predicates are not evaluated once blocked). SES SendEmail
 // is reached ONLY on the all-pass 'send' path.
+import { createHash } from 'node:crypto';
 import { canSend, buildListUnsubscribeHeaders, type SendingIdentity } from '@cdp/email';
 import type { SendEmailInput } from '@cdp/email';
 import { expandCustomerToken, type WorkspaceStatus } from '@cdp/shared';
@@ -173,6 +174,51 @@ export function renderTemplateBody(
     const value = merge[expandCustomerToken(key)] ?? merge[key];
     return value === undefined ? match : value;
   });
+}
+
+/**
+ * Rewrite http(s) links in an email body to tracked `/<baseUrl>/t/<token>` links
+ * (§10 click tracking). The token is DETERMINISTIC per (workspace, source, url)
+ * so every recipient of the same send shares it (we count total clicks per link),
+ * and re-sends/retries are idempotent. Returns the rewritten HTML + the unique
+ * links to persist. Pure (sha256-based token; no randomness → safe to re-run).
+ */
+export interface TrackedLink {
+  readonly token: string;
+  readonly url: string;
+}
+export function rewriteTrackingLinks(
+  html: string,
+  opts: { baseUrl: string; workspaceId: string; broadcastId: string | null; campaignId: string | null },
+): { html: string; links: TrackedLink[] } {
+  const seen = new Map<string, string>(); // url → token
+  const links: TrackedLink[] = [];
+  const source = opts.broadcastId ?? opts.campaignId ?? '';
+  const out = html.replace(/(\bhref\s*=\s*)(["'])(https?:\/\/[^"']+)\2/gi, (_m, pre: string, q: string, url: string) => {
+    let token = seen.get(url);
+    if (!token) {
+      token = createHash('sha256').update(`${opts.workspaceId}|${source}|${url}`).digest('hex').slice(0, 16);
+      seen.set(url, token);
+      links.push({ token, url });
+    }
+    return `${pre}${q}${opts.baseUrl.replace(/\/$/, '')}/t/${token}${q}`;
+  });
+  return { html: out, links };
+}
+
+/** Upsert a tracked link (idempotent on the token PK). workspace_id at $1. */
+export function buildTrackedLinkInsert(
+  workspaceId: string,
+  link: TrackedLink,
+  broadcastId: string | null,
+  campaignId: string | null,
+): SqlStatement {
+  return {
+    text: `INSERT INTO tracked_links (token, workspace_id, broadcast_id, campaign_id, url)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (token) DO NOTHING`,
+    values: [link.token, workspaceId, broadcastId, campaignId, link.url],
+  };
 }
 
 /** Derive the From address from the workspace sending identity (§10). */

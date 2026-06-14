@@ -172,6 +172,7 @@ describeMaybe('cross-phase campaign journey (real Postgres)', () => {
       runInWorkspaceTx: (w, s) => dispatcherTx(admin, w, s),
       now: () => now,
       unsubscribeBaseUrl: 'https://api.cdp.example/unsubscribe',
+      linkTrackingBaseUrl: 'https://api.cdp.example',
     };
   }
 

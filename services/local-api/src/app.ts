@@ -73,6 +73,21 @@ export function createApp(opts: CreateAppOptions): Hono {
     });
   });
 
+  // Click tracking (§10): a tracked link is `/t/<token>` — look it up, count the
+  // click, and 302 to the real destination. Public (the token is in delivered
+  // mail); unknown tokens 404.
+  app.get('/t/:token', async (c) => {
+    const token = c.req.param('token');
+    if (!/^[a-z0-9]{6,64}$/i.test(token)) return c.notFound();
+    const { rows } = await opts.pool.query<{ url: string }>(
+      'UPDATE tracked_links SET clicks = clicks + 1 WHERE token = $1 RETURNING url',
+      [token],
+    );
+    const url = rows[0]?.url;
+    if (!url) return c.notFound();
+    return c.redirect(url, 302);
+  });
+
   // --- everything else flows through the dispatch pipeline ---
   app.all('*', async (c) => {
     const url = new URL(c.req.url);

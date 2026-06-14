@@ -26,6 +26,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   const [newRole, setNewRole] = useState('marketer');
   const [addError, setAddError] = useState('');
   const [lowercaseEmails, setLowercaseEmails] = useState(true);
+  const [linkTracking, setLinkTracking] = useState(false);
 
   const reload = async () => {
     const r = await api.get<{ members: Member[] }>('/workspace/members');
@@ -34,9 +35,22 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   useEffect(() => {
     void reload();
     void api
-      .get<{ settings: { lowercase_emails?: boolean } }>('/workspace/settings')
-      .then((r) => setLowercaseEmails(r.settings.lowercase_emails !== false));
+      .get<{ settings: { lowercase_emails?: boolean; link_tracking?: boolean } }>('/workspace/settings')
+      .then((r) => {
+        setLowercaseEmails(r.settings.lowercase_emails !== false);
+        setLinkTracking(r.settings.link_tracking === true);
+      });
   }, []);
+
+  const toggleLinkTracking = async () => {
+    const next = !linkTracking;
+    setLinkTracking(next); // optimistic
+    try {
+      await api.put('/workspace/settings', { body: { link_tracking: next } });
+    } catch {
+      setLinkTracking(!next);
+    }
+  };
 
   const toggleLowercase = async () => {
     const next = !lowercaseEmails;
@@ -194,6 +208,32 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           <span
             class={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
               lowercaseEmails ? 'translate-x-5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </Card>
+
+      <Card class="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
+        <div>
+          <h2 class="text-base font-bold text-ink-900">Link tracking</h2>
+          <p class="mt-1 text-sm text-stone-500">
+            Rewrite links in outgoing emails through <code class="font-mono">/t/…</code> on your app domain to count
+            clicks (the Clicked metric on broadcasts). Off by default.
+          </p>
+        </div>
+        <button
+          data-testid="toggle-link-tracking"
+          type="button"
+          role="switch"
+          aria-checked={linkTracking}
+          onClick={toggleLinkTracking}
+          class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+            linkTracking ? 'bg-brand-500' : 'bg-stone-300'
+          }`}
+        >
+          <span
+            class={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+              linkTracking ? 'translate-x-5' : 'translate-x-0.5'
             }`}
           />
         </button>

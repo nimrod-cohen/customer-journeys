@@ -24,6 +24,7 @@ interface FakeState {
   verified: boolean;
   quietHours: unknown;
   capPerDays: number | null;
+  linkTracking?: boolean;
 }
 
 function makeReader(state: FakeState): { reader: Reader; claimAttempts: number } {
@@ -59,7 +60,7 @@ function makeReader(state: FakeState): { reader: Reader; claimAttempts: number }
         state.outboxStatus = 'sending';
         return { rows: [{ id: OUTBOX, workspace_id: WS, profile_id: PROFILE } as unknown as T] };
       }
-      if (t.startsWith('SELECT id, status, sending_identity FROM workspaces')) {
+      if (t.startsWith('SELECT id, status, sending_identity, settings FROM workspaces')) {
         return {
           rows: [
             {
@@ -70,6 +71,7 @@ function makeReader(state: FakeState): { reader: Reader; claimAttempts: number }
                 from_domain: 'mail.acme.com',
                 config_set: 'ws-cfgset',
               },
+              settings: state.linkTracking ? { link_tracking: true } : null,
             } as unknown as T,
           ],
         };
@@ -89,7 +91,7 @@ function makeReader(state: FakeState): { reader: Reader; claimAttempts: number }
         };
       }
       if (t.startsWith('SELECT compiled_html FROM email_templates')) {
-        return { rows: [{ compiled_html: '<html>Hi {{first_name}}</html>' } as unknown as T] };
+        return { rows: [{ compiled_html: '<html>Hi {{first_name}} <a href="https://acme.com/sale">Sale</a></html>' } as unknown as T] };
       }
       if (t.startsWith('SELECT EXISTS')) {
         return { rows: [{ suppressed: state.suppressed } as unknown as T] };
@@ -122,6 +124,7 @@ function makeDeps(state: FakeState): {
     },
     now: () => new Date('2026-06-10T12:00:00.000Z'),
     unsubscribeBaseUrl: 'https://api.cdp.example/unsubscribe',
+    linkTrackingBaseUrl: 'https://api.cdp.example',
   };
   return { deps, txCalls };
 }
@@ -157,6 +160,21 @@ describe('dispatchOutbox — SES call count proves guard order', () => {
     expect(txCalls[0]![0]!.text).toContain('INSERT INTO messages_log');
     expect(txCalls[0]![1]!.text).toContain('INSERT INTO usage_counters');
     expect(txCalls[0]![2]!.text).toContain("SET status = 'sent'");
+  });
+
+  it('link tracking ON → rewrites the email links and records tracked_links in the tx', async () => {
+    const { deps, txCalls } = makeDeps(freshState({ linkTracking: true }));
+    const out = await dispatchOutbox(deps, OUTBOX);
+    expect(out.result).toBe('send');
+    // The SENT html routes links through /t/<token>, not the raw destination.
+    const input = ses.commandCalls(SendEmailCommand)[0]!.args[0]!.input as {
+      Content: { Simple: { Body: { Html: { Data: string } } } };
+    };
+    const html = input.Content.Simple.Body.Html.Data;
+    expect(html).toContain('/t/');
+    expect(html).not.toContain('https://acme.com/sale');
+    // A tracked_links row is upserted (before messages_log) in the same tx.
+    expect(txCalls[0]!.some((s) => s.text.includes('INSERT INTO tracked_links'))).toBe(true);
   });
 
   it('workspace not verified → refuse, SES NOT called', async () => {

@@ -23,6 +23,7 @@ function base(overrides: Partial<DispatchContext> = {}): DispatchContext {
     isSuppressed: false,
     now: new Date('2026-06-10T12:00:00.000Z'),
     unsubscribeBaseUrl: 'https://api.cdp.example/unsubscribe',
+    linkTrackingBaseUrl: 'https://api.cdp.example',
     ...overrides,
   };
 }

@@ -145,6 +145,7 @@ function dispatchDeps(pool: Pool, ses: CountingSes, now: Date): DispatchDeps {
     runInWorkspaceTx: (ws, statements) => runStatementsInWorkspaceTx(pool, ws, statements),
     now: () => now,
     unsubscribeBaseUrl: UNSUB_BASE,
+    linkTrackingBaseUrl: 'https://api.cdp.example',
   };
 }
 
