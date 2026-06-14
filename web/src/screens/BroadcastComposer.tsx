@@ -134,34 +134,38 @@ export function BroadcastComposer() {
               <li
                 data-testid="broadcast-item"
                 key={b.id}
-                class="flex items-center justify-between gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+                // Fixed grid columns so the status badge and the right-hand slot
+                // line up across rows (icon · name/1fr · status · right slot).
+                class="grid grid-cols-[auto_minmax(0,1fr)_8rem_17rem] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
               >
-                {/* Left: icon + name + subtitle + edited */}
-                <span class="flex min-w-0 items-start gap-3">
-                  <svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-5 w-5 shrink-0 text-stone-400" stroke="currentColor" stroke-width="1.8">
-                    <rect x="3" y="5" width="18" height="14" rx="2" />
-                    <path d="m4 7 8 6 8-6" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  <span class="flex min-w-0 flex-col">
-                    <a
-                      data-testid="broadcast-open"
-                      class="cursor-pointer truncate font-semibold text-ink-900 hover:text-brand-700"
-                      onClick={() => navigate(`/broadcasts/${b.id}`)}
-                    >
-                      {b.name}
-                    </a>
-                    <span class="truncate text-xs text-stone-500">{subtitle}</span>
-                    {b.updated_at ? <span class="truncate text-[11px] text-stone-400">Edited {agoLabel(b.updated_at)}</span> : null}
-                  </span>
+                {/* Icon */}
+                <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5 shrink-0 self-start text-stone-400" stroke="currentColor" stroke-width="1.8">
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <path d="m4 7 8 6 8-6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+
+                {/* Name + subtitle + edited */}
+                <span class="flex min-w-0 flex-col">
+                  <a
+                    data-testid="broadcast-open"
+                    class="cursor-pointer truncate font-semibold text-ink-900 hover:text-brand-700"
+                    onClick={() => navigate(`/broadcasts/${b.id}`)}
+                  >
+                    {b.name}
+                  </a>
+                  <span class="truncate text-xs text-stone-500">{subtitle}</span>
+                  {b.updated_at ? <span class="truncate text-[11px] text-stone-400">Edited {agoLabel(b.updated_at)}</span> : null}
                 </span>
 
-                {/* Status badge */}
-                <Badge data-testid="broadcast-status" tone={toneFor(b.status)}>
-                  {b.status}
-                </Badge>
+                {/* Status badge — fixed column → aligned across rows */}
+                <span class="justify-self-start">
+                  <Badge data-testid="broadcast-status" tone={toneFor(b.status)}>
+                    {b.status}
+                  </Badge>
+                </span>
 
-                {/* Right: metrics (sent only) + actions */}
-                <span class="flex shrink-0 items-center gap-5">
+                {/* Right slot: metrics (sent) OR actions (draft/scheduled), right-aligned */}
+                <span class="flex items-center justify-end gap-4">
                   {b.status === 'sent' && s ? (
                     <span data-testid="broadcast-metrics" class="flex items-center gap-5 text-center text-sm tabular-nums">
                       <span class="flex flex-col">
