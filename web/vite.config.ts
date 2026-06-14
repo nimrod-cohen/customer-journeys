@@ -1,19 +1,41 @@
 /// <reference types="vitest" />
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import preact from '@preact/preset-vite';
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-// App version surfaced in the UI: the PROJECT version (the ROOT package.json —
-// the single source of truth we bump per change) + the git short SHA of the
+// THE single source of truth for the app version is the ROOT package.json (the
+// one we bump per change). It is the only place a version is defined; web's own
+// package.json version is unused for display.
+const rootPkgUrl = new URL('../package.json', import.meta.url);
+const rootPkgPath = fileURLToPath(rootPkgUrl);
+
+// App version surfaced in the UI: the PROJECT version + the git short SHA of the
 // build. Git is best-effort — falls back to the version alone outside a repo.
-const pkgVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
+const pkgVersion = JSON.parse(readFileSync(rootPkgUrl, 'utf8')).version as string;
 let commit = '';
 try {
   commit = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
 } catch {
   /* not a git checkout — show the version only */
 }
+
+// `define` substitutes the version at server-start / build time, so a bump made
+// while the dev server is running would otherwise go stale (Vite only auto-
+// restarts on vite.config.ts changes, not on package.json). Watch the root
+// package.json and restart the dev server when it changes, so the footer always
+// reflects the single source of truth without a manual restart. (Production
+// builds re-read it fresh each build — nothing to do there.)
+const watchRootVersion = (): Plugin => ({
+  name: 'watch-root-version',
+  configureServer(server) {
+    server.watcher.add(rootPkgPath);
+    server.watcher.on('change', (file) => {
+      if (file === rootPkgPath) void server.restart();
+    });
+  },
+});
 
 // Vite + Preact SPA (§12 bootstrap, scoped to §11 this phase). The dev/preview
 // server is what Playwright drives in the browser e2e. `grapesjs` ships CSS we
@@ -23,7 +45,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkgVersion),
     __APP_COMMIT__: JSON.stringify(commit),
   },
-  plugins: [preact()],
+  plugins: [preact(), watchRootVersion()],
   server: { port: 5173, strictPort: true },
   preview: { port: 4173, strictPort: true },
   build: { outDir: 'dist' },
