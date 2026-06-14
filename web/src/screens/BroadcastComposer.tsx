@@ -8,6 +8,7 @@ import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { setEditorReturn, takeReturnedTemplate } from '../store/editorReturn.js';
 import { Badge, Button, Card, Field, Input, PageHeader, Select, EmptyState, toneFor } from '../ui/kit.js';
+import { showToast } from '../ui/toast.tsx';
 
 interface Segment {
   id: string;
@@ -77,7 +78,10 @@ function fmtDate(ts: string | null): string {
 
 export function BroadcastComposer() {
   const [broadcasts, setBroadcasts] = useState<Broadcast[] | null>(null);
-  const [lastResult, setLastResult] = useState('');
+  // Sending is refused server-side (409) unless the workspace has a verified
+  // sending domain. We learn this up front so we can warn + disable Send rather
+  // than letting the user click into the refusal. null = not yet known.
+  const [hasVerifiedDomain, setHasVerifiedDomain] = useState<boolean | null>(null);
 
   const reload = async () => {
     const b = await api.get<{ broadcasts: Broadcast[] }>('/broadcasts');
@@ -85,18 +89,27 @@ export function BroadcastComposer() {
   };
   useEffect(() => {
     void reload();
+    void api
+      .get<{ domains: Array<{ verified: boolean }> }>('/sending-domains')
+      .then((r) => setHasVerifiedDomain(r.domains.some((d) => d.verified)))
+      .catch(() => setHasVerifiedDomain(true)); // don't block on a fetch error — the server still gates
   }, []);
 
   const send = async (id: string) => {
     try {
       const res = await api.post<{ result: { result?: string } }>(`/broadcasts/${id}/send`, {});
-      setLastResult(JSON.stringify(res.result));
+      const outcome = res.result?.result ?? 'queued';
+      showToast(`Broadcast ${outcome}.`, { tone: 'success' });
       await reload();
     } catch (e) {
       // e.g. 409 when the workspace has no verified sending domain.
-      setLastResult((e as { error?: string })?.error ?? 'Could not send the broadcast.');
+      showToast((e as { error?: string })?.error ?? 'Could not send the broadcast.', { tone: 'error' });
     }
   };
+
+  // Don't disable Send while we're still discovering the domain state (null) —
+  // only once we KNOW there's no verified domain.
+  const blockSend = hasVerifiedDomain === false;
 
   return (
     <section data-testid="broadcast-composer">
@@ -114,6 +127,30 @@ export function BroadcastComposer() {
           </span>
         }
       />
+
+      {blockSend ? (
+        <div
+          data-testid="no-domain-banner"
+          role="alert"
+          class="mb-4 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <svg viewBox="0 0 20 20" fill="none" class="mt-0.5 h-5 w-5 shrink-0 text-amber-600" stroke="currentColor" stroke-width="2">
+            <path d="M10 2 1.5 17h17L10 2Z" stroke-linejoin="round" />
+            <path d="M10 8v4M10 14.5h.01" stroke-linecap="round" />
+          </svg>
+          <span class="min-w-0 flex-1">
+            No verified sending domain — broadcasts can’t be sent yet. Verify one in Workspace settings → Sending domains.
+          </span>
+          <button
+            type="button"
+            data-testid="no-domain-open-settings"
+            class="shrink-0 rounded-lg border border-amber-400 px-3 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+            onClick={() => navigate('/settings/domains')}
+          >
+            Open settings →
+          </button>
+        </div>
+      ) : null}
 
       {broadcasts === null ? (
         <p class="text-sm text-stone-500">Loading…</p>
@@ -188,7 +225,14 @@ export function BroadcastComposer() {
                     </Button>
                   ) : null}
                   {editable ? (
-                    <Button data-testid="send-broadcast" variant="secondary" size="sm" onClick={() => send(b.id)}>
+                    <Button
+                      data-testid="send-broadcast"
+                      variant="secondary"
+                      size="sm"
+                      disabled={blockSend}
+                      title={blockSend ? 'Verify a sending domain in Workspace settings before sending.' : undefined}
+                      onClick={() => send(b.id)}
+                    >
                       Send
                     </Button>
                   ) : null}
@@ -203,14 +247,6 @@ export function BroadcastComposer() {
         </div>
       )}
 
-      {lastResult ? (
-        <p
-          data-testid="send-result"
-          class="mt-4 rounded-lg bg-stone-900 px-3 py-2 font-mono text-xs text-brand-200"
-        >
-          {lastResult}
-        </p>
-      ) : null}
     </section>
   );
 }

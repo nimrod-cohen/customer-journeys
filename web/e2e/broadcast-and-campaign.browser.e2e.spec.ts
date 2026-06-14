@@ -31,7 +31,8 @@ test('create a broadcast via the wizard, then send it', async ({ page }) => {
   await expect(page.getByTestId('broadcast-list')).toContainText('Spring sale');
   const item = page.getByTestId('broadcast-item').filter({ hasText: 'Spring sale' });
   await item.getByTestId('send-broadcast').click();
-  await expect(page.getByTestId('send-result')).toBeVisible();
+  // Feedback is a floating toast (always in view, regardless of list length).
+  await expect(page.getByTestId('toast')).toBeVisible();
   // Once sent, the row shows its metrics columns (0s locally — the dispatcher
   // that records delivered/clicked doesn't run in dev).
   await expect(item.getByTestId('broadcast-metrics')).toBeVisible();
