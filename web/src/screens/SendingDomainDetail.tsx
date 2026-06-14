@@ -144,7 +144,7 @@ function DomainEditor({ id }: { id: string }) {
     setChecking(true);
     setCheckMsg('');
     try {
-      const r = await api.post<{ verified: boolean; dkimStatus?: string; error?: string }>(
+      const r = await api.post<{ verified: boolean; dkimStatus?: string; records?: DnsRecord[]; error?: string }>(
         `/sending-domains/${id}/check`,
         {},
       );
@@ -153,8 +153,15 @@ function DomainEditor({ id }: { id: string }) {
       } else if (r.verified) {
         setCheckMsg('Verified — Amazon SES confirmed DKIM for this domain.');
       } else {
+        // If the required (DKIM) records are already visible to us, SES just
+        // hasn't polled them yet — say so rather than "publish the records".
+        const dkim = (r.records ?? []).filter((x) => x.required);
+        const allDkimVisible = dkim.length > 0 && dkim.every((x) => x.status === 'found');
+        const status = r.dkimStatus ?? 'pending';
         setCheckMsg(
-          `Amazon SES DKIM status: ${r.dkimStatus ?? 'pending'}. Publish the records below, then check again (DNS can take a while to propagate).`,
+          allDkimVisible
+            ? `Your DKIM records are visible in DNS. Amazon SES (status: ${status}) verifies on its own schedule — usually minutes to a few hours after the records go live (up to 72h). Leave them in place and check again shortly.`
+            : `Amazon SES DKIM status: ${status}. Publish the required DKIM (CNAME) records above, then check again (DNS can take a while to propagate).`,
         );
       }
       await load();

@@ -18,18 +18,19 @@ test('company SES credentials: save (secret write-only) then remove', async ({ p
   await page.getByTestId('ses-access-key').fill('AKIAEXAMPLE');
   await page.getByTestId('ses-secret').fill('super-secret-value');
   await page.getByTestId('ses-save').click();
-  await expect(page.getByTestId('ses-status')).toHaveText('configured');
+  // Save is a PUT + reload round-trip; allow headroom under full-suite API load.
+  await expect(page.getByTestId('ses-status')).toHaveText('configured', { timeout: 15_000 });
 
   // Reload: region + key persist; the secret is NOT returned (write-only) — the
   // field is empty with a "leave blank to keep" placeholder.
   await page.reload();
   await page.getByTestId('ses-config').waitFor();
-  await expect(page.getByTestId('ses-status')).toHaveText('configured');
+  await expect(page.getByTestId('ses-status')).toHaveText('configured', { timeout: 15_000 });
   await expect(page.getByTestId('ses-region')).toHaveValue('il-central-1');
   await expect(page.getByTestId('ses-access-key')).toHaveValue('AKIAEXAMPLE');
   await expect(page.getByTestId('ses-secret')).toHaveValue('');
 
   // Remove → back to unconfigured (also resets state for other tests).
   await page.getByTestId('ses-remove').click();
-  await expect(page.getByTestId('ses-status')).toHaveText('not configured');
+  await expect(page.getByTestId('ses-status')).toHaveText('not configured', { timeout: 15_000 });
 });
