@@ -2205,6 +2205,95 @@ export const dashboardSummary: Handler = async (ctx, pool) => {
   });
 };
 
+/**
+ * GET /dashboards/delivery-health?days=N — workspace-level deliverability over a
+ * rolling window (default 30d, clamped 1..365): send/delivery/bounce/complaint
+ * counts + rates (for SES reputation), the current suppression-list size by
+ * reason, and a per-day sends/deliveries trend for a sparkline. All scoped to
+ * the token's workspace. Counts are 0 in local dev (the SES feedback pipeline
+ * that writes email_events doesn't run) — they populate in a deployed pipeline.
+ */
+export const dashboardDeliveryHealth: Handler = async (ctx, pool, req) => {
+  const ws = ctx.workspaceId;
+  const days = Math.min(365, Math.max(1, Math.floor(Number(req.query.days ?? '30')) || 30));
+  const since = `now() - ($2::numeric * interval '1 day')`;
+
+  // Outcomes over the window: sends from messages_log, delivery/bounce/complaint
+  // from email_events (each message has at most one of these terminal events).
+  const [sentRes, evRes, suppRes, trendRes] = await Promise.all([
+    pool.query<{ c: number }>(
+      `SELECT count(*)::int AS c FROM messages_log WHERE workspace_id = $1 AND sent_at >= ${since}`,
+      [ws, days],
+    ),
+    pool.query<{ type: string; c: number }>(
+      `SELECT type, count(*)::int AS c FROM email_events
+        WHERE workspace_id = $1 AND occurred_at >= ${since} AND type IN ('delivery','bounce','complaint')
+        GROUP BY type`,
+      [ws, days],
+    ),
+    pool.query<{ reason: string; c: number }>(
+      `SELECT reason, count(*)::int AS c FROM suppressions WHERE workspace_id = $1 GROUP BY reason`,
+      [ws],
+    ),
+    pool.query<{ day: string; sent: number; delivered: number }>(
+      // One row per day in the window (gap-filled via generate_series) so the
+      // sparkline has a continuous series even on days with no activity.
+      `WITH days AS (
+         SELECT generate_series(
+           date_trunc('day', now()) - (($2::int - 1) * interval '1 day'),
+           date_trunc('day', now()),
+           interval '1 day'
+         ) AS day
+       )
+       SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
+              coalesce(m.sent, 0)::int AS sent,
+              coalesce(e.delivered, 0)::int AS delivered
+         FROM days d
+         LEFT JOIN (
+           SELECT date_trunc('day', sent_at) AS day, count(*) AS sent
+             FROM messages_log WHERE workspace_id = $1 AND sent_at >= ${since}
+            GROUP BY 1
+         ) m ON m.day = d.day
+         LEFT JOIN (
+           SELECT date_trunc('day', occurred_at) AS day, count(*) AS delivered
+             FROM email_events
+            WHERE workspace_id = $1 AND occurred_at >= ${since} AND type = 'delivery'
+            GROUP BY 1
+         ) e ON e.day = d.day
+        ORDER BY d.day`,
+      [ws, days],
+    ),
+  ]);
+
+  const evBy = new Map(evRes.rows.map((r) => [r.type, r.c]));
+  const delivered = evBy.get('delivery') ?? 0;
+  const bounced = evBy.get('bounce') ?? 0;
+  const complained = evBy.get('complaint') ?? 0;
+  const sent = sentRes.rows[0]?.c ?? 0;
+  // Rates are over delivery attempts (delivered + bounced) — the standard SES
+  // denominator; complaints are measured against delivered mail.
+  const attempts = delivered + bounced;
+  const bounceRate = attempts > 0 ? bounced / attempts : 0;
+  const complaintRate = delivered > 0 ? complained / delivered : 0;
+
+  const suppBy = new Map(suppRes.rows.map((r) => [r.reason, r.c]));
+  const suppression = {
+    total: suppRes.rows.reduce((n, r) => n + r.c, 0),
+    hard_bounce: suppBy.get('hard_bounce') ?? 0,
+    complaint: suppBy.get('complaint') ?? 0,
+    unsubscribe: suppBy.get('unsubscribe') ?? 0,
+    manual: suppBy.get('manual') ?? 0,
+  };
+
+  return ok({
+    window_days: days,
+    outcomes: { sent, delivered, bounced, complained },
+    rates: { bounce: bounceRate, complaint: complaintRate },
+    suppression,
+    trend: trendRes.rows,
+  });
+};
+
 // ---------------------------------------------------------------------------
 // suppressions (manage_content)
 // ---------------------------------------------------------------------------
@@ -2600,6 +2689,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /profiles/:id/segments': listProfileSegments,
   'GET /activity': listActivity,
   'GET /dashboards/summary': dashboardSummary,
+  'GET /dashboards/delivery-health': dashboardDeliveryHealth,
   'GET /suppressions': listSuppressions,
   'GET /billing/usage': billingUsage,
   'GET /admin/companies': adminListCompanies,

@@ -4,14 +4,20 @@
 # [x] Soft bounces → permanent_soft_bounce after 3 DISTINCT days (no delivery in between);
 #     email_status flips to permanent_soft_bounce + suppression(permanent_soft_bounce); replaced the old 5-rule. commit fc0e18c
 
+# DONE (2026-06-15)
+# [x] Segment date-rule tenure guard: absence-based windowed rules (e.g. "never opened in 3 months")
+#     exclude profiles too new to qualify (p.created_at <= now - N days). v0.5.1.
+# [x] memorize: long-term quality bar (modern code, refactor, reuse, test) → saved to auto-memory (feedback-code-quality-bar).
+# [x] From/To/Subject per broadcast & campaign: subject + named sender (verified domain), To={{customer.email}};
+#     dispatcher resolves the From. migration 0028. v0.6.0.
+# [x] Workspace delivery-health on the dashboard: outcomes + bounce/complaint rates (SES thresholds) +
+#     suppression-by-reason + sends-per-day sparkline. GET /dashboards/delivery-health. v0.7.0.
+
 # REMAINING
-* Make sure that when a rule in segments is created about dates, than people that are not enough time in the system would not be counted in to avoid 
-false positives. for example - never opened emails in the past 3 months, would not count people that are less than 3 months in the system.
-* memorize this so it won't get lost ever even after compacting: this project is going to be big, make sure to write modern code, refactor code when needed, resume components to make the code as efficient as possible and test everyting all the time as needed. 
-* Add workspace level delivery health info indicators in the dashboard.
-* add from/to/subject fields to email editor, the default to is {{customer.email}}
-and the from field is one of the verified domain senders list 
 * proper campaign builder with if, wait, wait until, hour of day time window, send email, call webhook widgets.
+  (NOT started — the current builder is one lean trigger->wait->send->exit graph with a single send step.
+   This is a large, design-heavy effort: per-node editing UI + new node types (wait-until, hour-of-day
+   window, webhook action) + DSL/runner support + validation. Tackle as its own focused task.)
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).

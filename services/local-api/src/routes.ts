@@ -112,6 +112,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
 
   // --- dashboards (manage_content — marketer+ view) ---
   'GET /dashboards/summary': 'manage_content',
+  'GET /dashboards/delivery-health': 'manage_content',
 
   // --- suppressions (manage_content) ---
   'GET /suppressions': 'manage_content',

@@ -142,6 +142,12 @@ export async function seed(): Promise<void> {
         WHERE workspace_id = $1 AND external_id = 'a3'`,
       [WS_A],
     );
+    // a3 also carries a suppression (the unsubscribe) so the workspace's delivery-
+    // health "Suppression list" shows a real entry. (Suppressions aren't windowed.)
+    await pool.query(
+      "INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1,'a3@acme.com','unsubscribe','seed') ON CONFLICT DO NOTHING",
+      [WS_A],
+    );
     // a2 carries an extra "plan" key so the workspace has >1 attribute key — lets
     // the profile "quick-add" panel offer a key not yet on another profile.
     await pool.query(

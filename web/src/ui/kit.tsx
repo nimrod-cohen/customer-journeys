@@ -140,6 +140,40 @@ export function Stat({
   );
 }
 
+/**
+ * A tiny dependency-free SVG sparkline (a filled area + line). Scales the series
+ * to a 100×h viewBox; a flat/empty series renders a baseline. Decorative —
+ * aria-hidden, the numbers next to it carry the meaning.
+ */
+export function Sparkline({
+  data,
+  class: cls = '',
+  stroke = 'currentColor',
+  height = 36,
+}: {
+  data: readonly number[];
+  class?: string;
+  stroke?: string;
+  height?: number;
+}): JSX.Element {
+  const W = 100;
+  const H = height;
+  const n = data.length;
+  const max = Math.max(1, ...data);
+  const pad = 2;
+  const x = (i: number) => (n <= 1 ? 0 : (i / (n - 1)) * W);
+  const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
+  const pts = data.map((v, i) => `${x(i).toFixed(2)},${y(v).toFixed(2)}`);
+  const line = n ? `M${pts.join(' L')}` : '';
+  const area = n ? `M0,${H} L${pts.join(' L')} L${W},${H} Z` : '';
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" class={`block w-full ${cls}`} style={{ height: `${H}px` }} aria-hidden="true">
+      <path d={area} fill={stroke} opacity={0.12} />
+      <path d={line} fill="none" stroke={stroke} stroke-width={1.5} vector-effect="non-scaling-stroke" stroke-linejoin="round" />
+    </svg>
+  );
+}
+
 /** Drawer slide/scrim transition duration (ms) — kept in sync with the CSS. */
 const DRAWER_ANIM_MS = 300;
 

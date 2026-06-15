@@ -15,6 +15,7 @@ import {
   Input,
   PageHeader,
   Select,
+  Sparkline,
   Stat,
   toneFor,
 } from '../ui/kit.js';
@@ -36,11 +37,36 @@ function parseAttrValue(s: string): unknown {
   }
 }
 
+interface DeliveryHealth {
+  window_days: number;
+  outcomes: { sent: number; delivered: number; bounced: number; complained: number };
+  rates: { bounce: number; complaint: number };
+  suppression: { total: number; hard_bounce: number; complaint: number; unsubscribe: number; manual: number };
+  trend: { day: string; sent: number; delivered: number }[];
+}
+
+/** SES reputation thresholds (§10): bounce >5% warn / >10% danger; complaint >0.1% warn / >0.5% danger. */
+function rateTone(rate: number, warn: number, danger: number): 'success' | 'warn' | 'danger' {
+  if (rate >= danger) return 'danger';
+  if (rate >= warn) return 'warn';
+  return 'success';
+}
+const RATE_CLASS: Record<'success' | 'warn' | 'danger', string> = {
+  success: 'text-emerald-700',
+  warn: 'text-amber-600',
+  danger: 'text-rose-600',
+};
+const pct1 = (r: number) => `${(r * 100).toFixed(r > 0 && r < 0.001 ? 3 : 2)}%`;
+
 export function Dashboards() {
   const [s, setS] = useState<Record<string, number> | null>(null);
+  const [health, setHealth] = useState<DeliveryHealth | null>(null);
   useEffect(() => {
     void api.get<Record<string, number>>('/dashboards/summary').then(setS);
+    void api.get<DeliveryHealth>('/dashboards/delivery-health').then(setHealth);
   }, []);
+  const bounceTone = health ? rateTone(health.rates.bounce, 0.05, 0.1) : 'success';
+  const complaintTone = health ? rateTone(health.rates.complaint, 0.001, 0.005) : 'success';
   return (
     <section data-testid="dashboards">
       <PageHeader title="Dashboards" subtitle="Workspace activity at a glance." />
@@ -54,7 +80,99 @@ export function Dashboards() {
       ) : (
         <p class="text-sm text-stone-500">Loading…</p>
       )}
+
+      {/* Delivery health (§10): deliverability + reputation over a rolling window. */}
+      {health ? (
+        <section data-testid="delivery-health" class="mt-8">
+          <div class="mb-3 flex items-baseline justify-between">
+            <h2 class="text-base font-bold text-ink-900">Delivery health</h2>
+            <span class="text-xs text-stone-500">last {health.window_days} days</span>
+          </div>
+
+          <div class="grid gap-4 lg:grid-cols-3">
+            {/* Outcomes + sends trend */}
+            <Card class="p-5 lg:col-span-2">
+              <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <Metric label="Sent" value={health.outcomes.sent} testId="dh-sent" />
+                <Metric label="Delivered" value={health.outcomes.delivered} testId="dh-delivered" tone="text-ink-900" />
+                <Metric label="Bounced" value={health.outcomes.bounced} testId="dh-bounced" tone={health.outcomes.bounced > 0 ? 'text-rose-600' : 'text-ink-900'} />
+                <Metric label="Complained" value={health.outcomes.complained} testId="dh-complained" tone={health.outcomes.complained > 0 ? 'text-rose-600' : 'text-ink-900'} />
+              </div>
+              <div class="mt-4 text-brand-500" data-testid="dh-trend" title="Sends per day">
+                <Sparkline data={health.trend.map((t) => t.sent)} />
+                <p class="mt-1 text-[11px] text-stone-400">Sends per day</p>
+              </div>
+            </Card>
+
+            {/* Reputation rates */}
+            <Card class="p-5">
+              <p class="text-xs font-semibold uppercase tracking-wide text-stone-500">Reputation</p>
+              <div class="mt-3 space-y-3">
+                <div class="flex items-baseline justify-between">
+                  <span class="text-sm text-stone-600">Bounce rate</span>
+                  <span data-testid="dh-bounce-rate" class={`font-display text-2xl font-bold ${RATE_CLASS[bounceTone]}`}>
+                    {pct1(health.rates.bounce)}
+                  </span>
+                </div>
+                <div class="flex items-baseline justify-between">
+                  <span class="text-sm text-stone-600">Complaint rate</span>
+                  <span data-testid="dh-complaint-rate" class={`font-display text-2xl font-bold ${RATE_CLASS[complaintTone]}`}>
+                    {pct1(health.rates.complaint)}
+                  </span>
+                </div>
+                {bounceTone !== 'success' || complaintTone !== 'success' ? (
+                  <p data-testid="dh-reputation-warning" class="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Rates are above the healthy range — high bounces/complaints can hurt deliverability and risk SES suspension.
+                  </p>
+                ) : (
+                  <p class="text-xs text-stone-400">Within the healthy range.</p>
+                )}
+              </div>
+            </Card>
+          </div>
+
+          {/* Suppression list size by reason */}
+          <Card class="mt-4 p-5">
+            <div class="flex items-baseline justify-between">
+              <p class="text-xs font-semibold uppercase tracking-wide text-stone-500">Suppression list</p>
+              <span data-testid="dh-suppressed-total" class="font-display text-xl font-bold text-ink-900">
+                {health.suppression.total}
+              </span>
+            </div>
+            <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Metric label="Hard bounce" value={health.suppression.hard_bounce} testId="dh-supp-hard_bounce" small />
+              <Metric label="Complaint" value={health.suppression.complaint} testId="dh-supp-complaint" small />
+              <Metric label="Unsubscribe" value={health.suppression.unsubscribe} testId="dh-supp-unsubscribe" small />
+              <Metric label="Manual" value={health.suppression.manual} testId="dh-supp-manual" small />
+            </div>
+          </Card>
+        </section>
+      ) : null}
     </section>
+  );
+}
+
+/** A compact labelled number used inside the delivery-health cards. */
+function Metric({
+  label,
+  value,
+  testId,
+  tone = 'text-ink-900',
+  small,
+}: {
+  label: string;
+  value: number;
+  testId?: string;
+  tone?: string;
+  small?: boolean;
+}) {
+  return (
+    <div>
+      <p class="text-[11px] font-semibold uppercase tracking-wide text-stone-500">{label}</p>
+      <p class={`font-display font-bold ${small ? 'text-xl' : 'text-2xl'} ${tone}`} data-testid={testId}>
+        {value}
+      </p>
+    </div>
   );
 }
 
