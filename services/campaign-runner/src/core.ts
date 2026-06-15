@@ -37,10 +37,6 @@ export type SideEffect =
       readonly templateId: string;
       /** The node id this send originates from (drives the dedupe_key). */
       readonly nodeId: string;
-      /** Subject line for this send (merge tags allowed); undefined → empty. */
-      readonly subject?: string;
-      /** Optional named sender (a domain_senders id) for the From address. */
-      readonly senderId?: string;
     }
   | {
       /** Set a profile attribute (a workspace-scoped UPDATE). */
@@ -243,13 +239,7 @@ export function processNode(
 function actionSideEffect(node: ActionNode): SideEffect | null {
   if (node.kind === 'send') {
     if (!node.template_id) return null;
-    return {
-      kind: 'send',
-      templateId: node.template_id,
-      nodeId: '',
-      ...(node.subject ? { subject: node.subject } : {}),
-      ...(node.sender_id ? { senderId: node.sender_id } : {}),
-    };
+    return { kind: 'send', templateId: node.template_id, nodeId: '' };
   }
   if (node.kind === 'set_attribute') {
     if (!node.key) return null;

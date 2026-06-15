@@ -37,13 +37,14 @@ describeMaybe('broadcast send gate (real Postgres)', () => {
       "INSERT INTO segment_memberships (segment_id, profile_id, workspace_id, source) VALUES ($1,$2,$3,'manual')",
       [SEG, PROF, WS],
     );
+    // The subject lives on the EMAIL (template), not the broadcast.
     await pool.query(
-      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html) VALUES ($1,$2,'T','<mjml/>','<html/>')",
+      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html, subject) VALUES ($1,$2,'T','<mjml/>','<html/>','Hello there')",
       [TPL, WS],
     );
     await pool.query(
-      `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, subject, status)
-       VALUES ($1,$2,'B',$3,'manual',$4,'Hello there','draft')`,
+      `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, status)
+       VALUES ($1,$2,'B',$3,'manual',$4,'draft')`,
       [BCAST, WS, TPL, SEG],
     );
   });

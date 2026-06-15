@@ -18,7 +18,7 @@ import {
   peekEditorReturn,
   setReturnedTemplate,
 } from '../store/editorReturn.js';
-import { Field, Input, PageHeader } from '../ui/kit.js';
+import { Card, Field, Input, PageHeader, Select } from '../ui/kit.js';
 import { EmailDesigner } from '../email-designer/EmailDesigner.tsx';
 import { designToMjml } from '../email-designer/mjml-serializer.js';
 import { emptyDesign, isEmailDesign, type EmailDesign } from '../email-designer/model.js';
@@ -28,7 +28,17 @@ interface TemplateRow {
   readonly mjml: string;
   readonly design: unknown;
   readonly kind: string;
+  readonly subject: string | null;
+  readonly sender_id: string | null;
+  readonly to_address: string | null;
 }
+interface Sender {
+  id: string;
+  name: string;
+  email: string;
+}
+
+const DEFAULT_TO = '{{customer.email}}';
 
 const AUTOSAVE_MS = 800;
 
@@ -41,9 +51,17 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
   const [kind, setKind] = useState(''); // 'library' | 'copy' — a copy is a broadcast/campaign's own email instance
   const [status, setStatus] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState('');
+  // Envelope (From / To / Subject) — lives on this email instance, autosaved.
+  const [subject, setSubject] = useState('');
+  const [senderId, setSenderId] = useState('');
+  const [toAddress, setToAddress] = useState(DEFAULT_TO);
+  const [senders, setSenders] = useState<Sender[]>([]);
   // Live values in refs so the debounced persist always reads current state.
   const liveDesign = useRef<EmailDesign>(emptyDesign());
   const nameRef = useRef('Untitled');
+  const subjectRef = useRef('');
+  const senderIdRef = useRef('');
+  const toAddressRef = useRef(DEFAULT_TO);
   const idRef = useRef<string | undefined>(id); // becomes set on first auto-create
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
@@ -64,6 +82,12 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
         setName(r.template.name);
         nameRef.current = r.template.name;
         setKind(r.template.kind);
+        setSubject(r.template.subject ?? '');
+        subjectRef.current = r.template.subject ?? '';
+        setSenderId(r.template.sender_id ?? '');
+        senderIdRef.current = r.template.sender_id ?? '';
+        setToAddress(r.template.to_address ?? DEFAULT_TO);
+        toAddressRef.current = r.template.to_address ?? DEFAULT_TO;
         if (isEmailDesign(r.template.design)) {
           setDesign(r.template.design);
           liveDesign.current = r.template.design;
@@ -78,6 +102,14 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
       })
       .catch(() => navigate('/templates'));
   }, [id]);
+
+  // The From dropdown — verified-domain senders (optional; never blocks editing).
+  useEffect(() => {
+    void api
+      .get<{ senders: Sender[] }>('/domain-senders')
+      .then((r) => setSenders(r.senders))
+      .catch(() => undefined);
+  }, []);
 
   // Warn before a browser refresh/close while changes are not yet persisted
   // (autosave shrinks that window to ~a second).
@@ -112,6 +144,9 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
         name: nameRef.current || 'Untitled',
         design: d,
         mjml: designToMjml(d),
+        subject: subjectRef.current,
+        sender_id: senderIdRef.current || null,
+        to_address: toAddressRef.current || DEFAULT_TO,
       };
       if (idRef.current) {
         await api.put(`/templates/${idRef.current}`, { body });
@@ -237,6 +272,55 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
           </div>
         }
       />
+
+      {/* Envelope: From / To / Subject live on the email itself (autosaved). */}
+      <Card class="mb-4 grid gap-3 p-4 sm:grid-cols-2">
+        <Field label="From">
+          <Select
+            data-testid="email-sender"
+            value={senderId}
+            onChange={(e: Event) => {
+              const v = (e.target as HTMLSelectElement).value;
+              setSenderId(v);
+              senderIdRef.current = v;
+              scheduleAutosave();
+            }}
+          >
+            <option value="">Default (no-reply@your domain)</option>
+            {senders.map((sn) => (
+              <option key={sn.id} value={sn.id}>
+                {sn.name} &lt;{sn.email}&gt;
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="To">
+          <Input
+            data-testid="email-to"
+            value={toAddress}
+            placeholder={DEFAULT_TO}
+            onInput={(e: Event) => {
+              const v = (e.target as HTMLInputElement).value;
+              setToAddress(v);
+              toAddressRef.current = v;
+              scheduleAutosave();
+            }}
+          />
+        </Field>
+        <Field label="Subject" class="sm:col-span-2">
+          <Input
+            data-testid="email-subject"
+            value={subject}
+            placeholder="Your spring update is here"
+            onInput={(e: Event) => {
+              const v = (e.target as HTMLInputElement).value;
+              setSubject(v);
+              subjectRef.current = v;
+              scheduleAutosave();
+            }}
+          />
+        </Field>
+      </Card>
 
       {legacy ? (
         <p data-testid="legacy-template-note" class="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">

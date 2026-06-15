@@ -90,8 +90,17 @@ function makeReader(state: FakeState): { reader: Reader; claimAttempts: number }
           ],
         };
       }
-      if (t.startsWith('SELECT compiled_html FROM email_templates')) {
-        return { rows: [{ compiled_html: '<html>Hi {{first_name}} <a href="https://acme.com/sale">Sale</a></html>' } as unknown as T] };
+      if (t.startsWith('SELECT compiled_html, subject, sender_id, to_address FROM email_templates')) {
+        return {
+          rows: [
+            {
+              compiled_html: '<html>Hi {{first_name}} <a href="https://acme.com/sale">Sale</a></html>',
+              subject: 'Hi',
+              sender_id: null,
+              to_address: '{{customer.email}}',
+            } as unknown as T,
+          ],
+        };
       }
       if (t.startsWith('SELECT EXISTS')) {
         return { rows: [{ suppressed: state.suppressed } as unknown as T] };

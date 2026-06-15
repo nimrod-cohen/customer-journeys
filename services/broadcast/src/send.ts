@@ -66,8 +66,6 @@ interface BroadcastRow {
   readonly audience_ref: string;
   readonly scheduled_at: string | Date | null;
   readonly status: string;
-  readonly subject: string | null;
-  readonly sender_id: string | null;
 }
 
 const DEFAULT_BATCH_SIZE = 500;
@@ -85,7 +83,7 @@ export async function runBroadcast(
 ): Promise<RunBroadcastResult> {
   // 1. Load the broadcast row. workspace_id comes FROM the row (CLAUDE.md inv.2).
   const { rows } = await deps.reader.query<BroadcastRow>(
-    `SELECT id, workspace_id, template_id, audience_kind, audience_ref, scheduled_at, status, subject, sender_id
+    `SELECT id, workspace_id, template_id, audience_kind, audience_ref, scheduled_at, status
      FROM broadcasts WHERE id = $1`,
     [broadcastId],
   );
@@ -147,14 +145,9 @@ export async function runBroadcast(
     profileIds = members.map((m) => m.profile_id);
   }
 
-  // The subject + chosen named sender travel in the outbox payload; the
-  // Dispatcher resolves sender_id → From (the single place all sends cross, so
-  // resolution lives there for broadcasts AND campaigns alike).
-  const payload = {
-    broadcast_id: broadcastId,
-    ...(bc.subject ? { subject: bc.subject } : {}),
-    ...(bc.sender_id ? { sender_id: bc.sender_id } : {}),
-  };
+  // The envelope (subject / From / To) lives on the email instance (template),
+  // resolved by the Dispatcher at send. The payload only carries attribution.
+  const payload = { broadcast_id: broadcastId };
   const batchSize = deps.batchSize ?? DEFAULT_BATCH_SIZE;
   const batches = chunk(profileIds, batchSize);
 

@@ -960,10 +960,24 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
   // kind: 'library' (default — shows in the Templates list) or 'copy' (a working
   // copy created from a broadcast/campaign design flow; never listed).
   const kind = b.kind === 'copy' ? 'copy' : 'library';
+  // Envelope (lives on the email instance): subject + optional named sender; the
+  // To token defaults to {{customer.email}} when not supplied.
+  const sender = await validateSenderId(ctx.workspaceId, pool, b.sender_id);
+  if ('error' in sender) return ok({ error: sender.error }, 400);
   const { rows } = await pool.query(
-    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING id, name, updated_at`,
-    [ctx.workspaceId, name, mjml, compiled, b.design === undefined ? null : JSON.stringify(b.design), kind],
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, subject, sender_id, to_address)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, COALESCE($9, '{{customer.email}}')) RETURNING id, name, updated_at`,
+    [
+      ctx.workspaceId,
+      name,
+      mjml,
+      compiled,
+      b.design === undefined ? null : JSON.stringify(b.design),
+      kind,
+      b.subject !== undefined && b.subject !== null ? String(b.subject) : null,
+      sender.senderId,
+      b.to_address !== undefined && b.to_address !== null ? String(b.to_address) : null,
+    ],
   );
   return ok({ template: rows[0] }, 201);
 };
@@ -973,7 +987,7 @@ export const getTemplate: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, mjml, design, kind, source_template_id, updated_at FROM email_templates WHERE id = $1',
+    'SELECT id, name, mjml, design, kind, source_template_id, subject, sender_id, to_address, updated_at FROM email_templates WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -988,6 +1002,10 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
   const name = b.name !== undefined ? String(b.name) : null;
   const mjml = b.mjml !== undefined ? String(b.mjml) : null;
   const compiled = mjml !== null ? deps.compileMjml(mjml) : null;
+  // Envelope fields use present-flags (like design) so the editor can set/clear
+  // them — including unsetting the named sender back to the no-reply fallback.
+  const sender = await validateSenderId(ctx.workspaceId, pool, b.sender_id);
+  if ('error' in sender) return ok({ error: sender.error }, 400);
   const q = scopedQuery(
     ctx.workspaceId,
     `UPDATE email_templates SET
@@ -995,6 +1013,9 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
        mjml = COALESCE($2, mjml),
        compiled_html = COALESCE($3, compiled_html),
        design = CASE WHEN $4::boolean THEN $5::jsonb ELSE design END,
+       subject = CASE WHEN $7::boolean THEN $8 ELSE subject END,
+       sender_id = CASE WHEN $9::boolean THEN $10 ELSE sender_id END,
+       to_address = CASE WHEN $11::boolean THEN COALESCE($12, '{{customer.email}}') ELSE to_address END,
        updated_at = now()
      WHERE id = $6`,
     [
@@ -1004,6 +1025,12 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
       b.design !== undefined,
       b.design === undefined || b.design === null ? null : JSON.stringify(b.design),
       id,
+      b.subject !== undefined,
+      b.subject !== undefined && b.subject !== null ? String(b.subject) : null,
+      b.sender_id !== undefined,
+      sender.senderId,
+      b.to_address !== undefined,
+      b.to_address !== undefined && b.to_address !== null ? String(b.to_address) : null,
     ],
   );
   const { rowCount } = await pool.query(q.text, q.values);
@@ -1022,8 +1049,8 @@ export const cloneTemplate: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const q = scopedQuery(
     ctx.workspaceId,
-    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id)
-     SELECT workspace_id, COALESCE($2, name), mjml, compiled_html, design, 'copy', id
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address)
+     SELECT workspace_id, COALESCE($2, name), mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address
      FROM email_templates WHERE id = $1`,
     [id, b.name !== undefined ? String(b.name) : null],
   );
@@ -1249,7 +1276,7 @@ export const listBroadcasts: Handler = async (ctx, pool) => {
   // otherwise inject its WHERE after the ORDER BY → invalid SQL).
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, subject, sender_id, scheduled_at, sent_at, updated_at FROM broadcasts',
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, sent_at, updated_at FROM broadcasts',
   );
   const { rows } = await pool.query<Record<string, unknown>>(`${q.text} ORDER BY created_at DESC`, q.values);
 
@@ -1305,7 +1332,7 @@ export const getBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, subject, sender_id, scheduled_at FROM broadcasts WHERE id = $1',
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at FROM broadcasts WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -1339,19 +1366,15 @@ async function validateSenderId(
 export const createBroadcast: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
-  const sender = await validateSenderId(ctx.workspaceId, pool, b.sender_id);
-  if ('error' in sender) return ok({ error: sender.error }, 400);
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, subject, sender_id, scheduled_at, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, name, status`,
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, scheduled_at, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, status`,
     [
       ctx.workspaceId,
       String(b.name ?? 'Untitled'),
       b.template_id ?? null,
       String(b.audience_kind ?? 'segment'),
       b.audience_ref ?? null,
-      b.subject !== undefined && b.subject !== null ? String(b.subject) : null,
-      sender.senderId,
       scheduledAt,
       scheduleStatus(scheduledAt),
       ctx.userId ?? null,
@@ -1375,8 +1398,6 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
     return ok({ error: `a ${curRows[0].status} broadcast can no longer be edited` }, 409);
   }
   const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
-  const sender = await validateSenderId(ctx.workspaceId, pool, b.sender_id);
-  if ('error' in sender) return ok({ error: sender.error }, 400);
   const upd = scopedQuery(
     ctx.workspaceId,
     `UPDATE broadcasts SET
@@ -1384,19 +1405,15 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
        audience_kind = COALESCE($2, audience_kind),
        audience_ref = COALESCE($3, audience_ref),
        template_id = $4,
-       subject = $5,
-       sender_id = $6,
-       scheduled_at = $7,
-       status = $8,
+       scheduled_at = $5,
+       status = $6,
        updated_at = now()
-     WHERE id = $9`,
+     WHERE id = $7`,
     [
       b.name !== undefined ? String(b.name) : null,
       b.audience_kind !== undefined ? String(b.audience_kind) : null,
       b.audience_ref ?? null,
       b.template_id ?? null,
-      b.subject !== undefined && b.subject !== null ? String(b.subject) : null,
-      sender.senderId,
       scheduledAt,
       scheduleStatus(scheduledAt),
       id,
@@ -1414,12 +1431,21 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
   // active workspace. We MUST first confirm the target broadcast belongs to the
   // token's workspace (NEVER the body). If not, return 404 without revealing that
   // the id exists in another workspace, and never invoke the broadcast core.
-  const guard = scopedQuery(ctx.workspaceId, 'SELECT subject FROM broadcasts WHERE id = $1', [id]);
-  const { rows: guardRows } = await pool.query<{ subject: string | null }>(guard.text, guard.values);
+  // The subject lives on the email instance (template). Join it so we can both
+  // confirm the broadcast is in this workspace AND that its email has a subject.
+  // (Explicit b.workspace_id scope — scopedQuery's unqualified column would be
+  // ambiguous across the JOIN.)
+  const { rows: guardRows } = await pool.query<{ template_id: string | null; subject: string | null }>(
+    `SELECT b.template_id, t.subject FROM broadcasts b
+       LEFT JOIN email_templates t ON t.id = b.template_id AND t.workspace_id = b.workspace_id
+      WHERE b.workspace_id = $1 AND b.id = $2`,
+    [ctx.workspaceId, id],
+  );
   if (!guardRows[0]) return ok({ error: 'not found' }, 404);
   // A subject is required to send — an empty subject line is never intentional.
+  // (Subject is edited on the email itself, in the email editor.)
   if (!guardRows[0].subject || !guardRows[0].subject.trim()) {
-    return ok({ error: 'Add a subject line before sending.' }, 409);
+    return ok({ error: 'Add a subject line to the email before sending.' }, 409);
   }
   // Pre-send gate (§10/inv.7): refuse to send unless this workspace has a VERIFIED
   // sending domain. (Sends ultimately go through the Dispatcher, but enforce here

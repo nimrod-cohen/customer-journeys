@@ -24,16 +24,6 @@ describe('buildCampaignOutboxInsert', () => {
   it('throws on falsy workspaceId', () => {
     expect(() => buildCampaignOutboxInsert('', 'c', 'p', 't', 'n')).toThrow();
   });
-
-  it('carries the send envelope (subject + sender_id) in the outbox payload', () => {
-    const q = buildCampaignOutboxInsert('ws', 'c1', 'p1', 'tpl', 'sendNode', {
-      subject: 'Welcome aboard',
-      sender_id: 'snd-1',
-    });
-    const payload = JSON.parse(q.values[5] as string) as Record<string, unknown>;
-    expect(payload['subject']).toBe('Welcome aboard');
-    expect(payload['sender_id']).toBe('snd-1');
-  });
 });
 
 describe('buildSetAttribute', () => {

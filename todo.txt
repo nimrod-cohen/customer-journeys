@@ -8,8 +8,9 @@
 # [x] Segment date-rule tenure guard: absence-based windowed rules (e.g. "never opened in 3 months")
 #     exclude profiles too new to qualify (p.created_at <= now - N days). v0.5.1.
 # [x] memorize: long-term quality bar (modern code, refactor, reuse, test) → saved to auto-memory (feedback-code-quality-bar).
-# [x] From/To/Subject per broadcast & campaign: subject + named sender (verified domain), To={{customer.email}};
-#     dispatcher resolves the From. migration 0028. v0.6.0.
+# [x] From/To/Subject on the EMAIL INSTANCE (template), edited in the email editor — NOT on the
+#     broadcast/campaign. subject + named sender (verified domain) + To token (default {{customer.email}}).
+#     Cloned per broadcast/campaign; dispatcher reads them from the template. migration 0028. v0.6.0→v0.8.0.
 # [x] Workspace delivery-health on the dashboard: outcomes + bounce/complaint rates (SES thresholds) +
 #     suppression-by-reason + sends-per-day sparkline. GET /dashboards/delivery-health. v0.7.0.
 

@@ -6,16 +6,11 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { buildDefinition, starterNodes, type BuilderNode } from '../campaigns/builder.js';
-import { Badge, Button, Card, Field, Input, PageHeader, Select, EmptyState, toneFor } from '../ui/kit.js';
+import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor } from '../ui/kit.js';
 
 interface Template {
   id: string;
   name: string;
-}
-interface Sender {
-  id: string;
-  name: string;
-  email: string;
 }
 interface Campaign {
   id: string;
@@ -33,26 +28,18 @@ const NODE_STYLE: Record<string, string> = {
 
 export function CampaignBuilder() {
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [senders, setSenders] = useState<Sender[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [name, setName] = useState('');
   const [nodes, setNodes] = useState<BuilderNode[]>([]);
-  // The send step's envelope (applies to the journey's send action). To is always
-  // the enrolled profile's {{customer.email}}; From '' → no-reply fallback.
-  const [subject, setSubject] = useState('');
-  const [senderId, setSenderId] = useState('');
   const [error, setError] = useState('');
 
   const reload = async () => {
-    const [t, c, sn] = await Promise.all([
+    const [t, c] = await Promise.all([
       api.get<{ templates: Template[] }>('/templates'),
       api.get<{ campaigns: Campaign[] }>('/campaigns'),
-      // Senders are optional (the From dropdown) — never let them blank the builder.
-      api.get<{ senders: Sender[] }>('/domain-senders').catch(() => ({ senders: [] })),
     ]);
     setTemplates(t.templates);
     setCampaigns(c.campaigns);
-    setSenders(sn.senders);
     if (t.templates[0]) setNodes(starterNodes(t.templates[0].id));
   };
 
@@ -73,13 +60,7 @@ export function CampaignBuilder() {
   const save = async () => {
     setError('');
     try {
-      // Stamp the send step's envelope (subject/sender) onto the send action nodes.
-      const withEnvelope = nodes.map((n) =>
-        n.type === 'action' && n.kind === 'send'
-          ? { ...n, ...(subject ? { subject } : {}), ...(senderId ? { senderId } : {}) }
-          : n,
-      );
-      const def = buildDefinition(withEnvelope);
+      const def = buildDefinition(nodes);
       await api.post('/campaigns', { body: { name: name || 'Untitled campaign', definition: def } });
       await reload();
     } catch (err) {
@@ -108,35 +89,6 @@ export function CampaignBuilder() {
             onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
           />
         </Field>
-
-        {/* Send step envelope — From / To / Subject for the journey's email. */}
-        <div class="mt-4 grid gap-3 sm:grid-cols-2">
-          <Field label="From">
-            <Select
-              data-testid="campaign-sender"
-              value={senderId}
-              onChange={(e: Event) => setSenderId((e.target as HTMLSelectElement).value)}
-            >
-              <option value="">Default (no-reply@your domain)</option>
-              {senders.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} &lt;{s.email}&gt;
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="To">
-            <Input data-testid="campaign-to" value="{{customer.email}}" disabled readOnly />
-          </Field>
-          <Field label="Subject" class="sm:col-span-2">
-            <Input
-              data-testid="campaign-subject"
-              placeholder="Welcome aboard"
-              value={subject}
-              onInput={(e: Event) => setSubject((e.target as HTMLInputElement).value)}
-            />
-          </Field>
-        </div>
 
         <span class="label mt-5">Workflow</span>
         <div

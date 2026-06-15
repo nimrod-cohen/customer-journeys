@@ -150,22 +150,34 @@ export async function dispatchOutbox(
     const profile = profRows[0];
     if (!profile) return { result: 'noop', reason: 'profile not found' };
 
+    // The email instance (template) holds the body AND the envelope (subject /
+    // From sender / To token) — NOT the broadcast/campaign. Load all of them.
     let compiledHtml = '';
+    let subject = '';
+    let toAddress = '';
+    let senderId: string | null = null;
     if (ob.template_id) {
-      const { rows: tplRows } = await deps.reader.query<{ compiled_html: string }>(
-        `SELECT compiled_html FROM email_templates WHERE workspace_id = $1 AND id = $2`,
+      const { rows: tplRows } = await deps.reader.query<{
+        compiled_html: string;
+        subject: string | null;
+        sender_id: string | null;
+        to_address: string | null;
+      }>(
+        `SELECT compiled_html, subject, sender_id, to_address FROM email_templates WHERE workspace_id = $1 AND id = $2`,
         [workspaceId, ob.template_id],
       );
-      compiledHtml = tplRows[0]?.compiled_html ?? '';
+      const tpl = tplRows[0];
+      compiledHtml = tpl?.compiled_html ?? '';
+      subject = tpl?.subject ?? '';
+      toAddress = tpl?.to_address ?? '';
+      senderId = tpl?.sender_id ?? null;
     }
 
     const payload = ob.payload ?? {};
-    const subject = typeof payload['subject'] === 'string' ? payload['subject'] : '';
-    // Optional named-sender override (broadcast/campaign-chosen domain_senders id).
-    // Resolved HERE — the one point all sends cross — to its email/name for the From.
+    // Resolve the named sender (if any) → From email/name. Done HERE, the one
+    // point all sends cross. No sender → the no-reply@<domain> fallback.
     let fromEmail: string | null = null;
     let fromName: string | null = null;
-    const senderId = typeof payload['sender_id'] === 'string' ? (payload['sender_id'] as string) : null;
     if (senderId) {
       const { rows: sndRows } = await deps.reader.query<{ email: string; name: string }>(
         `SELECT email, name FROM domain_senders WHERE workspace_id = $1 AND id = $2`,
@@ -245,6 +257,7 @@ export async function dispatchOutbox(
       unsubscribeBaseUrl: deps.unsubscribeBaseUrl,
       fromEmail,
       fromName,
+      toAddress,
     };
 
     const decision: DispatchDecision = decideDispatch(ctx);

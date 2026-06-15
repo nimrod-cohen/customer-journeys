@@ -170,12 +170,12 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
       [SEG_A, PROF_A, WS_A],
     );
     await world.pool.query(
-      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html) VALUES ($1,$2,'A tpl','<mjml/>','<html/>')",
+      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html, subject) VALUES ($1,$2,'A tpl','<mjml/>','<html/>','Hello')",
       [TPL_A, WS_A],
     );
     await world.pool.query(
-      `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, subject, status)
-       VALUES ($1,$2,'A blast',$3,'segment',$4,'Hello','draft')`,
+      `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, status)
+       VALUES ($1,$2,'A blast',$3,'segment',$4,'draft')`,
       [BCAST_A, WS_A, TPL_A, SEG_A],
     );
 

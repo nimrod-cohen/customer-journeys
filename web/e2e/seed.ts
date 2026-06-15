@@ -79,9 +79,11 @@ export async function seed(): Promise<void> {
     );
     await pool.query('INSERT INTO platform_admins (user_id) VALUES ($1)', [USER_ADMIN]);
 
-    // A template + a saved segment + a couple of profiles in WS_A.
+    // A template + a saved segment + a couple of profiles in WS_A. The template
+    // carries a subject (the email envelope lives on the email instance) so a
+    // broadcast attaching it can be sent (the send gate requires a subject).
     await pool.query(
-      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html) VALUES ($1,$2,'Welcome','<mjml/>','<html>Hi</html>')",
+      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html, subject) VALUES ($1,$2,'Welcome','<mjml/>','<html>Hi</html>','Welcome aboard')",
       [TPL_A, WS_A],
     );
     // A VERIFIED sending domain so WS_A broadcasts can be sent (the send gate).

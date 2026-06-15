@@ -49,12 +49,9 @@ export interface ConditionNode {
 export interface ActionNode {
   readonly type: 'action';
   readonly kind: 'send' | 'set_attribute';
-  /** For kind='send': the email template to enqueue through the Dispatcher. */
+  /** For kind='send': the email template to enqueue through the Dispatcher.
+   * The envelope (subject / From / To) lives ON that template, not here. */
   readonly template_id?: string;
-  /** For kind='send': the email subject line (merge tags allowed). */
-  readonly subject?: string;
-  /** For kind='send': optional named sender (a domain_senders id) for the From. */
-  readonly sender_id?: string;
   /** For kind='set_attribute': the profile attribute key to set. */
   readonly key?: string;
   /** For kind='set_attribute': the value to set. */

@@ -82,6 +82,17 @@ describe('buildSendEmailInput', () => {
     expect(input.from).toBe('"A \\"B\\" C" <s@mail.acme.com>');
   });
 
+  it('renders the To token from the email instance (default {{customer.email}})', () => {
+    const merge = { 'customer.email': 'recipient@example.com' };
+    const input = buildSendEmailInput({ ...ctx(), merge, toAddress: '{{customer.email}}' });
+    expect(input.to).toBe('recipient@example.com');
+  });
+
+  it('falls back to the profile email when the To token is blank', () => {
+    const input = buildSendEmailInput({ ...ctx(), toAddress: '' });
+    expect(input.to).toBe('recipient@example.com'); // ctx profile email
+  });
+
   it('uses the workspace config_set as ConfigurationSetName', () => {
     expect(buildSendEmailInput(ctx()).configurationSetName).toBe('ws-1-cfgset');
   });

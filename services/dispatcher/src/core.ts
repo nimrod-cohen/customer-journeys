@@ -83,6 +83,12 @@ export interface DispatchContext {
    */
   readonly fromEmail?: string | null;
   readonly fromName?: string | null;
+  /**
+   * The recipient token from the email instance (default `{{customer.email}}`),
+   * rendered per recipient via the merge map. Falls back to the profile email
+   * when absent or when it renders empty.
+   */
+  readonly toAddress?: string | null;
 }
 
 /** Hours to hold off mailing an address after a soft bounce (give it time to clear). */
@@ -261,6 +267,11 @@ function quotePhrase(name: string): string {
 export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
   const email = ctx.profile.email;
   if (!email) throw new Error('buildSendEmailInput: profile has no email');
+  // The To token (default {{customer.email}}) renders to the recipient; fall back
+  // to the profile email when blank. Suppression/unsubscribe still key on the
+  // profile email — the person — regardless of the rendered To.
+  const renderedTo = ctx.toAddress ? renderTemplateBody(ctx.toAddress, ctx.merge).trim() : '';
+  const to = renderedTo || email;
   const headers = buildListUnsubscribeHeaders({
     baseUrl: ctx.unsubscribeBaseUrl,
     workspaceId: ctx.workspace.id,
@@ -269,7 +280,7 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
   const configSet = ctx.workspace.sending_identity?.config_set;
   return {
     from: fromAddress(ctx.workspace.sending_identity, ctx.fromEmail, ctx.fromName),
-    to: email,
+    to,
     subject: ctx.subject,
     html: renderTemplateBody(ctx.template.compiledHtml, ctx.merge),
     ...(configSet ? { configurationSetName: configSet } : {}),

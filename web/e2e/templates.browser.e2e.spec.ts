@@ -17,19 +17,26 @@ test('create a template in the designer, then re-open it to edit', async ({ page
   await expect(page.getByTestId('canvas-element')).toHaveCount(2);
 
   await page.getByTestId('template-name').fill('Newsletter');
+  // The email envelope lives on the email itself: To defaults to {{customer.email}};
+  // set a subject. Both autosave with the design.
+  await expect(page.getByTestId('email-to')).toHaveValue('{{customer.email}}');
+  await page.getByTestId('email-subject').fill('Our spring newsletter');
 
   // No manual save — changes autosave; wait for the Saved ✓ status, staying in
   // the designer the whole time (a new template moves to its /editor/:id URL).
   await expect(page.getByTestId('template-saved')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('email-editor')).toBeVisible();
 
-  // It's in the Templates list; re-opening hydrates the DESIGN (both elements).
+  // It's in the Templates list; re-opening hydrates the DESIGN (both elements)
+  // AND the envelope (subject + To).
   await page.getByTestId('editor-back').click();
   await page.getByTestId('templates-screen').waitFor();
   await expect(page.getByTestId('template-list')).toContainText('Newsletter');
   await page.getByTestId('template-item').filter({ hasText: 'Newsletter' }).getByTestId('template-edit').click();
   await page.getByTestId('email-editor').waitFor();
   await expect(page.getByTestId('template-name')).toHaveValue('Newsletter');
+  await expect(page.getByTestId('email-subject')).toHaveValue('Our spring newsletter');
+  await expect(page.getByTestId('email-to')).toHaveValue('{{customer.email}}');
   await expect(page.getByTestId('canvas-element')).toHaveCount(2);
   await expect(page.getByTestId('mjml-output')).toHaveValue(/<mj-button/);
 });

@@ -20,10 +20,8 @@ test('create a broadcast via the wizard, then send it', async ({ page }) => {
   await page.getByTestId('broadcast-name').fill('Spring sale');
   await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
-  // Step 2 — content: To defaults to {{customer.email}}; a subject is required;
-  // pick the seeded template.
-  await expect(page.getByTestId('broadcast-to')).toHaveValue('{{customer.email}}');
-  await page.getByTestId('broadcast-subject').fill('Spring sale is here');
+  // Step 2 — content: pick the seeded email (its subject/From/To live on the
+  // email instance, edited in the email editor — not here).
   await page.getByTestId('broadcast-template').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
   // Step 3 — schedule (send manually = draft) and save.
@@ -53,7 +51,6 @@ test('edit a draft broadcast (rename) — only drafts/scheduled are editable', a
   await page.getByTestId('broadcast-name').fill('Editable');
   await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
-  await page.getByTestId('broadcast-subject').fill('Draft subject');
   await page.getByTestId('broadcast-template').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('wizard-save').click();
@@ -85,9 +82,7 @@ test('design an email from the broadcast wizard and return with it selected', as
   await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
 
-  // Step 2 — set a subject (persisted with the draft), then "Design email"
-  // persists the draft and opens the designer.
-  await page.getByTestId('broadcast-subject').fill('Designed subject');
+  // Step 2 — "Design email" persists a draft and opens the designer.
   await page.getByTestId('design-email').click();
   await page.getByTestId('email-editor').waitFor();
   // This is the broadcast's OWN email copy, not a library template: it reads as
@@ -123,9 +118,6 @@ test('build and save a campaign workflow', async ({ page }) => {
   await page.getByTestId('campaign-builder').waitFor();
 
   await page.getByTestId('campaign-name').fill('Onboarding journey');
-  // The send step's envelope: To is fixed to {{customer.email}}; set a subject.
-  await expect(page.getByTestId('campaign-to')).toHaveValue('{{customer.email}}');
-  await page.getByTestId('campaign-subject').fill('Welcome aboard');
   // Add a wait step → graph becomes trigger→wait→send→exit.
   await page.getByTestId('add-wait-node').click();
   await expect(page.getByTestId('node-wait')).toBeVisible();
