@@ -112,14 +112,22 @@ export async function seed(): Promise<void> {
       [SEG_DYN_A, WS_A, SEG_DYN_A_NAME],
     );
     let firstProfileId = '';
-    for (const [ext, email, tier] of [
-      ['a1', 'a1@acme.com', 'vip'],
-      ['a2', 'a2@acme.com', 'vip'],
-      ['a3', 'a3@acme.com', 'std'],
+    // a1/a2/a3 are ESTABLISHED accounts (created long ago) — their events date to
+    // early 2026, so a months-old created_at is the faithful value. a4 is a
+    // BRAND-NEW account (created_at = now()): it exists to prove the segment
+    // tenure guard — absence-based windowed rules ("did NOT do X within N days")
+    // must NOT count a profile too new to have had the chance.
+    const ESTABLISHED = '2025-06-01T00:00:00Z';
+    for (const [ext, email, tier, createdAt] of [
+      ['a1', 'a1@acme.com', 'vip', ESTABLISHED],
+      ['a2', 'a2@acme.com', 'vip', ESTABLISHED],
+      ['a3', 'a3@acme.com', 'std', ESTABLISHED],
+      ['a4', 'a4@acme.com', 'free', null], // null → defaults to now() (too new for any window)
     ] as const) {
       const { rows: pr } = await pool.query<{ id: string }>(
-        'INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,$2,$3,$4::jsonb) RETURNING id',
-        [WS_A, ext, email, JSON.stringify({ tier })],
+        'INSERT INTO profiles (workspace_id, external_id, email, attributes, created_at) ' +
+          'VALUES ($1,$2,$3,$4::jsonb, COALESCE($5::timestamptz, now())) RETURNING id',
+        [WS_A, ext, email, JSON.stringify({ tier }), createdAt],
       );
       if (!firstProfileId) firstProfileId = pr[0]!.id;
       await pool.query(

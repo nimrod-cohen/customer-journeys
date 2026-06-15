@@ -56,8 +56,8 @@ test('filter the profiles list by manual and dynamic segments', async ({ page })
   await page.getByTestId('nav-profiles').click();
   await page.getByTestId('profile-explorer').waitFor();
 
-  // All three seeded A profiles are listed unfiltered.
-  await expect(page.getByTestId('profile-row')).toHaveCount(3);
+  // All four seeded A profiles are listed unfiltered (a1/a2/a3 established + a4 new).
+  await expect(page.getByTestId('profile-row')).toHaveCount(4);
   // a3 is unsubscribed → exactly one unsubscribed marker in the table.
   await expect(page.getByTestId('profile-unsub')).toHaveCount(1);
 
@@ -75,7 +75,7 @@ test('filter the profiles list by manual and dynamic segments', async ({ page })
 
   // Clearing the filter restores the full list.
   await page.getByTestId('profile-segment-filter').selectOption({ label: 'All segments' });
-  await expect(page.getByTestId('profile-row')).toHaveCount(3);
+  await expect(page.getByTestId('profile-row')).toHaveCount(4);
 });
 
 test('configure profile table columns: add an attribute column, toggle external_id', async ({ page }) => {

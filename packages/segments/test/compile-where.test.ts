@@ -349,17 +349,21 @@ describe('event time-window + negate (§ time-sensitive rules)', () => {
     expect(q.values).toEqual([WS, 'purchase']);
   });
 
-  it('did NOT occur within last N days → NOT EXISTS over the window', () => {
+  it('did NOT occur within last N days → NOT EXISTS over the window, GUARDED by tenure', () => {
+    // An absence-based windowed rule also requires the profile to have existed
+    // for the whole window (reusing the same $3 day param), so brand-new
+    // profiles aren't false positives. No new param is bound.
     const q = compileWhere(WS, { event: 'login', negate: true, withinDays: 7 } as AstNode);
     expect(q.text).toBe(
-      'p.workspace_id = $1 AND (NOT (EXISTS (SELECT 1 FROM events e WHERE ' +
+      'p.workspace_id = $1 AND ((NOT (EXISTS (SELECT 1 FROM events e WHERE ' +
         "e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $2 " +
-        "AND e.occurred_at >= now() - ($3::numeric * interval '1 day'))))",
+        "AND e.occurred_at >= now() - ($3::numeric * interval '1 day')))) " +
+        "AND p.created_at <= now() - ($3::numeric * interval '1 day'))",
     );
     expect(q.values).toEqual([WS, 'login', 7]);
   });
 
-  it('count threshold scoped by the window: ">= 3 times within 30 days"', () => {
+  it('count threshold scoped by the window: ">= 3 times within 30 days" (positive → NO tenure guard)', () => {
     const q = compileWhere(WS, { event: 'purchase', operator: '>=', value: 3, withinDays: 30 } as AstNode);
     expect(q.text).toBe(
       'p.workspace_id = $1 AND ((SELECT count(*) FROM events e WHERE ' +
@@ -367,6 +371,30 @@ describe('event time-window + negate (§ time-sensitive rules)', () => {
         "AND e.occurred_at >= now() - ($3::numeric * interval '1 day')) >= $4)",
     );
     expect(q.values).toEqual([WS, 'purchase', 30, 3]);
+    expect(q.text).not.toMatch(/created_at/);
+  });
+
+  it('"fewer than 2 times within 30 days" is absence-based → tenure-guarded', () => {
+    // 0 < 2 holds, so a profile with no events would match → guard required.
+    const q = compileWhere(WS, { event: 'open', operator: '<', value: 2, withinDays: 30 } as AstNode);
+    expect(q.text).toBe(
+      'p.workspace_id = $1 AND (((SELECT count(*) FROM events e WHERE ' +
+        "e.workspace_id = $1 AND e.profile_id = p.id AND e.type = $2 " +
+        "AND e.occurred_at >= now() - ($3::numeric * interval '1 day')) < $4) " +
+        "AND p.created_at <= now() - ($3::numeric * interval '1 day'))",
+    );
+    expect(q.values).toEqual([WS, 'open', 30, 2]);
+  });
+
+  it('"occurred within last N days" (positive EXISTS) → NO tenure guard', () => {
+    const q = compileWhere(WS, { event: 'purchase', withinDays: 30 } as AstNode);
+    expect(q.text).not.toMatch(/created_at/);
+  });
+
+  it('absence WITHOUT a window (never occurred, ever) → NO tenure guard', () => {
+    // No window → tenure is irrelevant (there is no "too new for the window").
+    const q = compileWhere(WS, { event: 'purchase', negate: true } as AstNode);
+    expect(q.text).not.toMatch(/created_at/);
   });
 
   it('rejects a non-positive withinDays', () => {

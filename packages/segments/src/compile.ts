@@ -378,15 +378,20 @@ function compileEvent(node: EventNode, params: ParamBuilder): string {
   }
   // Optional rolling time window: only events in the last N days count. The day
   // count is a bound param (never interpolated); now() makes it slide over time.
+  let daysParam: string | null = null;
   if (node.withinDays !== undefined) {
     if (typeof node.withinDays !== 'number' || !Number.isFinite(node.withinDays) || node.withinDays <= 0) {
       throw new Error('compileWhere: event.withinDays must be a positive number of days');
     }
-    const daysParam = params.bind(node.withinDays);
+    daysParam = params.bind(node.withinDays);
     preds.push(`e.occurred_at >= now() - (${daysParam}::numeric * interval '1 day')`);
   }
   const subWhere = preds.join(' AND ');
   let predicate: string;
+  // Whether a profile with ZERO matching events in the window would satisfy the
+  // predicate (BEFORE negation). For absence-based rules this is true, and such
+  // rules need the tenure guard below to avoid counting too-new profiles.
+  let zeroSatisfies: boolean;
   if (node.operator !== undefined) {
     if (!EVENT_COUNT_OPERATORS.has(node.operator)) {
       throw new Error(`compileWhere: invalid event count operator "${node.operator}"`);
@@ -396,12 +401,44 @@ function compileEvent(node: EventNode, params: ParamBuilder): string {
     }
     const valParam = params.bind(node.value);
     predicate = `(SELECT count(*) FROM events e WHERE ${subWhere}) ${node.operator} ${valParam}`;
+    zeroSatisfies = countComparisonHoldsForZero(node.operator, node.value);
   } else {
     // No count test → "occurred at least once".
     predicate = `EXISTS (SELECT 1 FROM events e WHERE ${subWhere})`;
+    zeroSatisfies = false; // EXISTS needs ≥1 event
   }
   // negate → "did NOT occur" (NOT EXISTS) / NOT(count op N).
-  return node.negate ? `NOT (${predicate})` : predicate;
+  if (node.negate) {
+    predicate = `NOT (${predicate})`;
+    zeroSatisfies = !zeroSatisfies;
+  }
+  // Tenure guard (§ false-positive fix): an absence-based windowed rule — e.g.
+  // "did NOT open within the last 90 days" — would otherwise match profiles too
+  // new to have had the chance. Require the profile to have existed for the WHOLE
+  // window before it can satisfy such a rule. Applies only when the window is set
+  // AND zero in-window events satisfies the (possibly negated) predicate.
+  if (daysParam !== null && zeroSatisfies) {
+    predicate = `(${predicate}) AND p.created_at <= now() - (${daysParam}::numeric * interval '1 day')`;
+  }
+  return predicate;
+}
+
+/** Does `0 <op> value` hold? Used to detect absence-based count rules. */
+function countComparisonHoldsForZero(op: string, value: number): boolean {
+  switch (op) {
+    case '>':
+      return 0 > value;
+    case '>=':
+      return 0 >= value;
+    case '=':
+      return value === 0;
+    case '<=':
+      return 0 <= value;
+    case '<':
+      return 0 < value;
+    default:
+      return false;
+  }
 }
 
 /** Compile any AST node (group / event / leaf) to a parameterized SQL boolean expression. */

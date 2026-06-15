@@ -213,12 +213,17 @@ test('event rule with a time window (occurred within last N days)', async ({ pag
   await page.getByTestId('save-segment').click();
   await expect(page.getByTestId('segment-size')).toContainText('1');
 
-  // "did not occur within 7 days" is the dual — a1 (no recent purchase) is included.
+  // "did not occur within 7 days" is the dual — a1 (established, no recent
+  // purchase) is included.
   await page.getByTestId('event-op').first().selectOption('not_occurred');
   await page.getByTestId('event-window-days').fill('7');
   await page.getByTestId('save-segment').click();
   // At least a1; exact count depends on workspace size, so assert a1 is present.
   await expect(page.getByTestId('member-preview-row').filter({ hasText: 'a1@acme.com' })).toHaveCount(1);
+  // TENURE GUARD: a4 was created just now — it hasn't been in the system for the
+  // full 7-day window, so an absence-based rule must NOT count it (no false
+  // positive), even though it has never purchased.
+  await expect(page.getByTestId('member-preview-row').filter({ hasText: 'a4@acme.com' })).toHaveCount(0);
 });
 
 test('edit a segment from the list: builder hydrates and the rename reflects', async ({ page }) => {

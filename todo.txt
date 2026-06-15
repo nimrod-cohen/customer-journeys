@@ -5,12 +5,15 @@
 #     email_status flips to permanent_soft_bounce + suppression(permanent_soft_bounce); replaced the old 5-rule. commit fc0e18c
 
 # REMAINING
-* Streamed/bulk CSV import for very large files (current import parses client-side).
-  (Skipped on 2026-06-10 — needs a design decision: upload transport + async processing
-  + progress/status. Best done together; pick the approach and I'll build it.)
 * Make sure that when a rule in segments is created about dates, than people that are not enough time in the system would not be counted in to avoid 
 false positives. for example - never opened emails in the past 3 months, would not count people that are less than 3 months in the system.
 * memorize this so it won't get lost ever even after compacting: this project is going to be big, make sure to write modern code, refactor code when needed, resume components to make the code as efficient as possible and test everyting all the time as needed. 
 * Add workspace level delivery health info indicators in the dashboard.
 * add from/to/subject fields to email editor, the default to is {{customer.email}}
 and the from field is one of the verified domain senders list 
+* proper campaign builder with if, wait, wait until, hour of day time window, send email, call webhook widgets.
+
+# TBD - FUTURE , NOT TO BE DONE NOW
+* Streamed/bulk CSV import for very large files (current import parses client-side).
+  (Skipped on 2026-06-10 — needs a design decision: upload transport + async processing
+  + progress/status.
