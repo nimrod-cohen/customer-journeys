@@ -216,6 +216,10 @@ async function chainTick(
             row.profile_id,
             eff.templateId,
             currentNodeId,
+            {
+              ...(eff.subject ? { subject: eff.subject } : {}),
+              ...(eff.senderId ? { sender_id: eff.senderId } : {}),
+            },
           ),
         );
       } else {

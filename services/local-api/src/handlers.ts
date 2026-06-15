@@ -1249,7 +1249,7 @@ export const listBroadcasts: Handler = async (ctx, pool) => {
   // otherwise inject its WHERE after the ORDER BY → invalid SQL).
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, sent_at, updated_at FROM broadcasts',
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, subject, sender_id, scheduled_at, sent_at, updated_at FROM broadcasts',
   );
   const { rows } = await pool.query<Record<string, unknown>>(`${q.text} ORDER BY created_at DESC`, q.values);
 
@@ -1305,7 +1305,7 @@ export const getBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at FROM broadcasts WHERE id = $1',
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, subject, sender_id, scheduled_at FROM broadcasts WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -1318,18 +1318,40 @@ function scheduleStatus(scheduledAt: string | null): 'draft' | 'scheduled' {
   return scheduledAt ? 'scheduled' : 'draft';
 }
 
+/**
+ * Validate a client-supplied sender_id: it must be one of the WORKSPACE's named
+ * senders (never trust a cross-workspace id — inv.2). Returns the id (or null
+ * when absent/blank), or an error string when it isn't this workspace's sender.
+ */
+async function validateSenderId(
+  workspaceId: string,
+  pool: Pool,
+  raw: unknown,
+): Promise<{ senderId: string | null } | { error: string }> {
+  if (raw === undefined || raw === null || raw === '') return { senderId: null };
+  const senderId = String(raw);
+  const q = scopedQuery(workspaceId, 'SELECT 1 FROM domain_senders WHERE id = $1', [senderId]);
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return { error: 'sender_id is not a sender in this workspace' };
+  return { senderId };
+}
+
 export const createBroadcast: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
+  const sender = await validateSenderId(ctx.workspaceId, pool, b.sender_id);
+  if ('error' in sender) return ok({ error: sender.error }, 400);
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, scheduled_at, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, status`,
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, subject, sender_id, scheduled_at, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, name, status`,
     [
       ctx.workspaceId,
       String(b.name ?? 'Untitled'),
       b.template_id ?? null,
       String(b.audience_kind ?? 'segment'),
       b.audience_ref ?? null,
+      b.subject !== undefined && b.subject !== null ? String(b.subject) : null,
+      sender.senderId,
       scheduledAt,
       scheduleStatus(scheduledAt),
       ctx.userId ?? null,
@@ -1353,6 +1375,8 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
     return ok({ error: `a ${curRows[0].status} broadcast can no longer be edited` }, 409);
   }
   const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
+  const sender = await validateSenderId(ctx.workspaceId, pool, b.sender_id);
+  if ('error' in sender) return ok({ error: sender.error }, 400);
   const upd = scopedQuery(
     ctx.workspaceId,
     `UPDATE broadcasts SET
@@ -1360,15 +1384,19 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
        audience_kind = COALESCE($2, audience_kind),
        audience_ref = COALESCE($3, audience_ref),
        template_id = $4,
-       scheduled_at = $5,
-       status = $6,
+       subject = $5,
+       sender_id = $6,
+       scheduled_at = $7,
+       status = $8,
        updated_at = now()
-     WHERE id = $7`,
+     WHERE id = $9`,
     [
       b.name !== undefined ? String(b.name) : null,
       b.audience_kind !== undefined ? String(b.audience_kind) : null,
       b.audience_ref ?? null,
       b.template_id ?? null,
+      b.subject !== undefined && b.subject !== null ? String(b.subject) : null,
+      sender.senderId,
       scheduledAt,
       scheduleStatus(scheduledAt),
       id,
@@ -1386,9 +1414,13 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
   // active workspace. We MUST first confirm the target broadcast belongs to the
   // token's workspace (NEVER the body). If not, return 404 without revealing that
   // the id exists in another workspace, and never invoke the broadcast core.
-  const guard = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM broadcasts WHERE id = $1', [id]);
-  const { rowCount } = await pool.query(guard.text, guard.values);
-  if (!rowCount) return ok({ error: 'not found' }, 404);
+  const guard = scopedQuery(ctx.workspaceId, 'SELECT subject FROM broadcasts WHERE id = $1', [id]);
+  const { rows: guardRows } = await pool.query<{ subject: string | null }>(guard.text, guard.values);
+  if (!guardRows[0]) return ok({ error: 'not found' }, 404);
+  // A subject is required to send — an empty subject line is never intentional.
+  if (!guardRows[0].subject || !guardRows[0].subject.trim()) {
+    return ok({ error: 'Add a subject line before sending.' }, 409);
+  }
   // Pre-send gate (§10/inv.7): refuse to send unless this workspace has a VERIFIED
   // sending domain. (Sends ultimately go through the Dispatcher, but enforce here
   // too so a broadcast is never queued/marked sent with no way to actually send.)

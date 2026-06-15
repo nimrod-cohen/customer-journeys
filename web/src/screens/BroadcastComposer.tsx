@@ -18,6 +18,11 @@ interface Template {
   id: string;
   name: string;
 }
+interface Sender {
+  id: string;
+  name: string;
+  email: string;
+}
 interface BroadcastStats {
   sent: number;
   delivered: number;
@@ -269,9 +274,13 @@ export function BroadcastWizard({ id }: { id?: string }) {
   const [step, setStep] = useState(0);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [senders, setSenders] = useState<Sender[]>([]);
   const [name, setName] = useState('');
   const [segId, setSegId] = useState('');
   const [tplId, setTplId] = useState('');
+  const [subject, setSubject] = useState('');
+  // The "From": a verified domain sender, or '' → the no-reply@<domain> fallback.
+  const [senderId, setSenderId] = useState('');
   // The broadcast's WORKING COPY of a template (kind='copy'): picking a library
   // template clones it so this broadcast's content is independently editable and
   // the library original stays pristine.
@@ -285,9 +294,12 @@ export function BroadcastWizard({ id }: { id?: string }) {
     void Promise.all([
       api.get<{ segments: Segment[] }>('/segments'),
       api.get<{ templates: Template[] }>('/templates'),
-    ]).then(([s, t]) => {
+      // Senders are optional (the From dropdown) — never let them blank the wizard.
+      api.get<{ senders: Sender[] }>('/domain-senders').catch(() => ({ senders: [] })),
+    ]).then(([s, t, sn]) => {
       setSegments(s.segments);
       setTemplates(t.templates);
+      setSenders(sn.senders);
     });
   }, []);
 
@@ -296,7 +308,14 @@ export function BroadcastWizard({ id }: { id?: string }) {
   useEffect(() => {
     if (!id) return;
     void api
-      .get<{ broadcast: Broadcast & { audience_ref: string; template_id: string | null } }>(`/broadcasts/${id}`)
+      .get<{
+        broadcast: Broadcast & {
+          audience_ref: string;
+          template_id: string | null;
+          subject: string | null;
+          sender_id: string | null;
+        };
+      }>(`/broadcasts/${id}`)
       .then((r) => {
         const b = r.broadcast;
         if (!EDITABLE.has(b.status)) {
@@ -306,6 +325,8 @@ export function BroadcastWizard({ id }: { id?: string }) {
         setName(b.name);
         setSegId(b.audience_ref ?? '');
         setTplId(b.template_id ?? '');
+        setSubject(b.subject ?? '');
+        setSenderId(b.sender_id ?? '');
         if (b.scheduled_at) {
           setScheduleMode('later');
           setScheduledAt(isoToLocalInput(b.scheduled_at));
@@ -366,6 +387,8 @@ export function BroadcastWizard({ id }: { id?: string }) {
       audience_kind: 'segment',
       audience_ref: segId,
       template_id: tplId || null,
+      subject,
+      sender_id: senderId || null,
       scheduled_at: scheduleMode === 'later' && scheduledAt ? new Date(scheduledAt).toISOString() : null,
     };
     let bid = id;
@@ -392,9 +415,18 @@ export function BroadcastWizard({ id }: { id?: string }) {
       ? `${attachedCopy.name} (this broadcast's copy)`
       : (templates.find((t) => t.id === tplId)?.name ?? '—');
 
-  const canNext = step === 0 ? name.trim().length > 0 && segId !== '' : step === 1 ? tplId !== '' : true;
+  const canNext =
+    step === 0
+      ? name.trim().length > 0 && segId !== ''
+      : step === 1
+        ? tplId !== '' && subject.trim().length > 0
+        : true;
   const canSave =
-    name.trim().length > 0 && segId !== '' && tplId !== '' && (scheduleMode === 'now' || scheduledAt !== '');
+    name.trim().length > 0 &&
+    segId !== '' &&
+    tplId !== '' &&
+    subject.trim().length > 0 &&
+    (scheduleMode === 'now' || scheduledAt !== '');
 
   const save = async () => {
     setSaving(true);
@@ -405,6 +437,8 @@ export function BroadcastWizard({ id }: { id?: string }) {
         audience_kind: 'segment',
         audience_ref: segId,
         template_id: tplId,
+        subject,
+        sender_id: senderId || null,
         scheduled_at: scheduleMode === 'later' && scheduledAt ? new Date(scheduledAt).toISOString() : null,
       };
       if (editing && id) {
@@ -479,27 +513,60 @@ export function BroadcastWizard({ id }: { id?: string }) {
             </Field>
           </div>
         ) : step === 1 ? (
-          <div class="flex items-end justify-between gap-3">
-            <Field label="Email template" class="flex-1">
+          <div class="space-y-4">
+            <Field label="From">
               <Select
-                data-testid="broadcast-template"
-                value={tplId}
-                onChange={(e: Event) => void pickTemplate((e.target as HTMLSelectElement).value)}
+                data-testid="broadcast-sender"
+                value={senderId}
+                onChange={(e: Event) => setSenderId((e.target as HTMLSelectElement).value)}
               >
-                <option value="">Select template</option>
-                {attachedCopy ? (
-                  <option value={attachedCopy.id}>{attachedCopy.name} — this broadcast's copy</option>
-                ) : null}
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
+                <option value="">Default (no-reply@your domain)</option>
+                {senders.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} &lt;{s.email}&gt;
                   </option>
                 ))}
               </Select>
+              {senders.length === 0 ? (
+                <p class="mt-1 text-xs text-stone-500">
+                  Add named senders in a verified domain’s setup screen to choose a friendly From address.
+                </p>
+              ) : null}
             </Field>
-            <Button data-testid="design-email" variant="secondary" onClick={designEmail}>
-              Design email
-            </Button>
+            <Field label="To">
+              {/* The CDP always sends to each recipient's own email; this is fixed. */}
+              <Input data-testid="broadcast-to" value="{{customer.email}}" disabled readOnly />
+            </Field>
+            <Field label="Subject">
+              <Input
+                data-testid="broadcast-subject"
+                placeholder="Your spring update is here"
+                value={subject}
+                onInput={(e: Event) => setSubject((e.target as HTMLInputElement).value)}
+              />
+            </Field>
+            <div class="flex items-end justify-between gap-3">
+              <Field label="Email template" class="flex-1">
+                <Select
+                  data-testid="broadcast-template"
+                  value={tplId}
+                  onChange={(e: Event) => void pickTemplate((e.target as HTMLSelectElement).value)}
+                >
+                  <option value="">Select template</option>
+                  {attachedCopy ? (
+                    <option value={attachedCopy.id}>{attachedCopy.name} — this broadcast's copy</option>
+                  ) : null}
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Button data-testid="design-email" variant="secondary" onClick={designEmail}>
+                Design email
+              </Button>
+            </div>
           </div>
         ) : (
           <div class="space-y-4">

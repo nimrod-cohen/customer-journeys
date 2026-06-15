@@ -161,6 +161,21 @@ export async function dispatchOutbox(
 
     const payload = ob.payload ?? {};
     const subject = typeof payload['subject'] === 'string' ? payload['subject'] : '';
+    // Optional named-sender override (broadcast/campaign-chosen domain_senders id).
+    // Resolved HERE — the one point all sends cross — to its email/name for the From.
+    let fromEmail: string | null = null;
+    let fromName: string | null = null;
+    const senderId = typeof payload['sender_id'] === 'string' ? (payload['sender_id'] as string) : null;
+    if (senderId) {
+      const { rows: sndRows } = await deps.reader.query<{ email: string; name: string }>(
+        `SELECT email, name FROM domain_senders WHERE workspace_id = $1 AND id = $2`,
+        [workspaceId, senderId],
+      );
+      if (sndRows[0]) {
+        fromEmail = sndRows[0].email;
+        fromName = sndRows[0].name;
+      }
+    }
     // Broadcasts tag their outbox rows with broadcast_id (campaigns use ob.campaign_id);
     // carry it into messages_log so per-broadcast stats are a simple GROUP BY.
     const broadcastId = typeof payload['broadcast_id'] === 'string' ? (payload['broadcast_id'] as string) : null;
@@ -228,6 +243,8 @@ export async function dispatchOutbox(
       lastSoftBounceAt,
       now,
       unsubscribeBaseUrl: deps.unsubscribeBaseUrl,
+      fromEmail,
+      fromName,
     };
 
     const decision: DispatchDecision = decideDispatch(ctx);

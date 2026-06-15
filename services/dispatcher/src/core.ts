@@ -75,6 +75,14 @@ export interface DispatchContext {
   readonly now: Date;
   /** Public base URL of the unsubscribe endpoint (§9 step 5). */
   readonly unsubscribeBaseUrl: string;
+  /**
+   * Optional named-sender override (a domain_senders row chosen on the broadcast
+   * or campaign send-node). When present the From becomes `"name" <email>`
+   * instead of the no-reply@<domain> fallback. The email must be on a verified
+   * workspace domain (domain_senders are verified-domain-only).
+   */
+  readonly fromEmail?: string | null;
+  readonly fromName?: string | null;
 }
 
 /** Hours to hold off mailing an address after a soft bounce (give it time to clear). */
@@ -221,11 +229,26 @@ export function buildTrackedLinkInsert(
   };
 }
 
-/** Derive the From address from the workspace sending identity (§10). */
-function fromAddress(identity: SendingIdentity | null | undefined): string {
+/**
+ * Derive the From address: a chosen named sender (`"Name" <email>`) when set on
+ * the send, otherwise the workspace's no-reply@<verified-domain> fallback (§10).
+ */
+function fromAddress(
+  identity: SendingIdentity | null | undefined,
+  fromEmail?: string | null,
+  fromName?: string | null,
+): string {
+  if (fromEmail) {
+    return fromName ? `${quotePhrase(fromName)} <${fromEmail}>` : fromEmail;
+  }
   const domain = identity?.from_domain;
   if (!domain) throw new Error('buildSendEmailInput: workspace has no sending from_domain');
   return `no-reply@${domain}`;
+}
+
+/** Quote a display name for an RFC 5322 From phrase, escaping embedded quotes. */
+function quotePhrase(name: string): string {
+  return `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 /**
@@ -245,7 +268,7 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
   });
   const configSet = ctx.workspace.sending_identity?.config_set;
   return {
-    from: fromAddress(ctx.workspace.sending_identity),
+    from: fromAddress(ctx.workspace.sending_identity, ctx.fromEmail, ctx.fromName),
     to: email,
     subject: ctx.subject,
     html: renderTemplateBody(ctx.template.compiledHtml, ctx.merge),

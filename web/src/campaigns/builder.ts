@@ -16,6 +16,10 @@ export interface BuilderNode {
   readonly delaySeconds?: number;
   /** action send template id. */
   readonly templateId?: string;
+  /** action send subject line. */
+  readonly subject?: string;
+  /** action send named sender (domain_senders id) for the From. */
+  readonly senderId?: string;
   /** condition rule AST. */
   readonly ast?: unknown;
   /** primary next edge (trigger/wait/action). */
@@ -43,7 +47,14 @@ export function nodeToDef(node: BuilderNode): Record<string, unknown> {
     case 'action':
       return node.kind === 'set_attribute'
         ? { type: 'action', kind: 'set_attribute', key: node.templateId ?? '', next: node.next }
-        : { type: 'action', kind: 'send', template_id: node.templateId, next: node.next };
+        : {
+            type: 'action',
+            kind: 'send',
+            template_id: node.templateId,
+            ...(node.subject ? { subject: node.subject } : {}),
+            ...(node.senderId ? { sender_id: node.senderId } : {}),
+            next: node.next,
+          };
     case 'exit':
       return { type: 'exit' };
   }

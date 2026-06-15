@@ -59,4 +59,31 @@ describe('campaign workflow builder', () => {
       nodeToDef({ id: 's', type: 'action', kind: 'send', templateId: TPL, next: 'n' }),
     ).toEqual({ type: 'action', kind: 'send', template_id: TPL, next: 'n' });
   });
+
+  it('threads the send envelope (subject + sender_id) onto the send action def', () => {
+    const def = nodeToDef({
+      id: 's',
+      type: 'action',
+      kind: 'send',
+      templateId: TPL,
+      subject: 'Welcome aboard',
+      senderId: 'snd-1',
+      next: 'n',
+    });
+    expect(def).toEqual({
+      type: 'action',
+      kind: 'send',
+      template_id: TPL,
+      subject: 'Welcome aboard',
+      sender_id: 'snd-1',
+      next: 'n',
+    });
+    // And the emitted graph still passes the backend validator.
+    const full = buildDefinition([
+      { id: 'trigger', type: 'trigger', kind: 'segment_entry', next: 's' },
+      { id: 's', type: 'action', kind: 'send', templateId: TPL, subject: 'Hi', senderId: 'snd-1', next: 'done' },
+      { id: 'done', type: 'exit' },
+    ]);
+    expect(() => validateCampaignDefinition(full)).not.toThrow();
+  });
 });

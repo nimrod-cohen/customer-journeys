@@ -42,8 +42,8 @@ describeMaybe('broadcast send gate (real Postgres)', () => {
       [TPL, WS],
     );
     await pool.query(
-      `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, status)
-       VALUES ($1,$2,'B',$3,'manual',$4,'draft')`,
+      `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, subject, status)
+       VALUES ($1,$2,'B',$3,'manual',$4,'Hello there','draft')`,
       [BCAST, WS, TPL, SEG],
     );
   });

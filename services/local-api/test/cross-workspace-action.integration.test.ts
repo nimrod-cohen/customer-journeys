@@ -174,8 +174,8 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
       [TPL_A, WS_A],
     );
     await world.pool.query(
-      `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, status)
-       VALUES ($1,$2,'A blast',$3,'segment',$4,'draft')`,
+      `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, subject, status)
+       VALUES ($1,$2,'A blast',$3,'segment',$4,'Hello','draft')`,
       [BCAST_A, WS_A, TPL_A, SEG_A],
     );
 

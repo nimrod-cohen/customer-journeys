@@ -61,10 +61,25 @@ function ctx(): DispatchContext {
 }
 
 describe('buildSendEmailInput', () => {
-  it('sets From from the sending identity from_domain', () => {
+  it('sets From from the sending identity from_domain (no named sender)', () => {
     const input = buildSendEmailInput(ctx());
-    expect(input.from).toContain('@mail.acme.com');
+    expect(input.from).toBe('no-reply@mail.acme.com');
     expect(input.to).toBe('recipient@example.com');
+  });
+
+  it('uses a named sender override as `"Name" <email>` when present', () => {
+    const input = buildSendEmailInput({ ...ctx(), fromEmail: 'sales@mail.acme.com', fromName: 'Acme Sales' });
+    expect(input.from).toBe('"Acme Sales" <sales@mail.acme.com>');
+  });
+
+  it('uses a bare sender email when it has no display name', () => {
+    const input = buildSendEmailInput({ ...ctx(), fromEmail: 'sales@mail.acme.com', fromName: null });
+    expect(input.from).toBe('sales@mail.acme.com');
+  });
+
+  it('escapes quotes in a sender display name', () => {
+    const input = buildSendEmailInput({ ...ctx(), fromEmail: 's@mail.acme.com', fromName: 'A "B" C' });
+    expect(input.from).toBe('"A \\"B\\" C" <s@mail.acme.com>');
   });
 
   it('uses the workspace config_set as ConfigurationSetName', () => {

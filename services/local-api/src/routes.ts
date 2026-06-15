@@ -44,7 +44,10 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /sending-domains/:id': 'manage_sending_domain',
   'POST /sending-domains/:id/check': 'manage_sending_domain',
   'DELETE /sending-domains/:id': 'manage_sending_domain',
-  'GET /domain-senders': 'manage_sending_domain',
+  // Listing senders is a READ needed when composing a broadcast/campaign (the
+  // From dropdown), so it's allowed with manage_content; creating/deleting a
+  // sender stays an owner-level manage_sending_domain action.
+  'GET /domain-senders': 'manage_content',
   'POST /domain-senders': 'manage_sending_domain',
   'DELETE /domain-senders/:id': 'manage_sending_domain',
 
