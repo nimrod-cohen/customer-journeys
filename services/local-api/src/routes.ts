@@ -33,9 +33,6 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'PUT /workspace/settings': 'manage_workspace_users',
 
   // --- sending domain (manage_sending_domain) ---
-  'POST /sending-domain/start': 'manage_sending_domain',
-  'POST /sending-domain/check': 'manage_sending_domain',
-  'POST /sending-domain/activate': 'manage_sending_domain',
   'GET /company/ses-config': 'manage_sending_domain',
   'PUT /company/ses-config': 'manage_sending_domain',
   'DELETE /company/ses-config': 'manage_sending_domain',

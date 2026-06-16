@@ -52,7 +52,7 @@ describeMaybe('router role enforcement (real Postgres)', () => {
     const t = tokenFor(MKT, WS);
     const billing = await call(world.env, 'GET', '/billing/usage', { token: t });
     const members = await call(world.env, 'GET', '/workspace/members', { token: t });
-    const domain = await call(world.env, 'POST', '/sending-domain/check', { token: t });
+    const domain = await call(world.env, 'GET', '/sending-domains', { token: t });
     expect(billing.status).toBe(403);
     expect(members.status).toBe(403);
     expect(domain.status).toBe(403);

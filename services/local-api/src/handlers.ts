@@ -46,11 +46,6 @@ import {
   DEFAULT_PRICES,
   type MeteringDeps,
 } from '@cdp/service-metering';
-import {
-  startDomain,
-  checkDomain,
-  activate,
-} from '@cdp/service-onboarding';
 import type { LocalApiDeps } from './deps.js';
 
 /** A handler's request shape (already parsed by the server). */
@@ -306,46 +301,6 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
   return ok({ settings: rows[0]?.settings ?? {} });
 };
 
-// ---------------------------------------------------------------------------
-// sending domain (manage_sending_domain) — onboarding cores, SES/DNS injected
-// ---------------------------------------------------------------------------
-
-export const sendingDomainStart: Handler = async (ctx, _pool, req, deps) => {
-  const b = asObject(req.body);
-  const out = await startDomain(deps.onboarding, {
-    workspaceId: ctx.workspaceId,
-    fromDomain: String(b.from_domain ?? ''),
-  });
-  return ok(out);
-};
-
-export const sendingDomainCheck: Handler = async (ctx, _pool, _req, deps) => {
-  const out = await checkDomain(deps.onboarding, { workspaceId: ctx.workspaceId });
-  return ok(out);
-};
-
-export const sendingDomainActivate: Handler = async (ctx, pool, _req, deps) => {
-  const out = await activate(deps.onboarding, { workspaceId: ctx.workspaceId });
-  // On a successful activation, record the wizard's primary domain in the
-  // sending-domains list as VERIFIED so it appears there and can host senders.
-  if ((out as { decision?: { allowed?: boolean } }).decision?.allowed) {
-    const { rows } = await pool.query<{ sending_identity: { from_domain?: string } | null }>(
-      'SELECT sending_identity FROM workspaces WHERE id = $1',
-      [ctx.workspaceId],
-    );
-    const fromDomain = rows[0]?.sending_identity?.from_domain;
-    if (fromDomain) {
-      await pool.query(
-        `INSERT INTO sending_domains (workspace_id, domain, verified, verified_at)
-         VALUES ($1, $2, true, now())
-         ON CONFLICT (workspace_id, domain)
-         DO UPDATE SET verified = true, verified_at = now()`,
-        [ctx.workspaceId, fromDomain.toLowerCase()],
-      );
-    }
-  }
-  return ok(out);
-};
 
 // --- per-company Amazon SES credentials (§10) ----------------------------------
 // Each company brings its own SES account (key/secret/region). The secret is
@@ -2711,9 +2666,6 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PATCH /workspace/members': updateMember,
   'GET /workspace/settings': getWorkspaceSettings,
   'PUT /workspace/settings': updateWorkspaceSettings,
-  'POST /sending-domain/start': sendingDomainStart,
-  'POST /sending-domain/check': sendingDomainCheck,
-  'POST /sending-domain/activate': sendingDomainActivate,
   'GET /company/ses-config': getCompanySesConfig,
   'PUT /company/ses-config': putCompanySesConfig,
   'DELETE /company/ses-config': deleteCompanySesConfig,
