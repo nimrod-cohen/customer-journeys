@@ -12,6 +12,7 @@
 import type { Pool } from 'pg';
 import { promises as dns } from 'node:dns';
 import { createSesClient, type SesEmailClient } from '@cdp/email';
+import { dispatchOutbox, type DispatchDeps } from '@cdp/service-dispatcher';
 import { DEV_USERS, OPEN_EVENT_TYPES, PURCHASE_EVENT_TYPES, type WorkspaceContext } from '@cdp/shared';
 import { scopedQuery, encryptSecret, decryptSecret, isEncryptedSecret } from '@cdp/db';
 
@@ -342,6 +343,48 @@ async function sesForWorkspace(
     };
   }
   return { ses: deps.onboarding.ses, configured: false, region: null };
+}
+
+/**
+ * Send a broadcast's queued outbox rows for REAL, right now — mirroring what the
+ * deployed Dispatcher Lambda does (suppression → freq-cap → quiet-hours → SES
+ * SendEmail → messages_log). In production the dispatcher drains the SQS queue
+ * asynchronously; locally there's no queue/loop, so we run the SAME dispatcher
+ * core synchronously after the broadcast is queued. Only fires when the
+ * workspace's company has REAL SES credentials — with no creds we leave the rows
+ * pending (the long-standing local no-op, so dev/e2e are unaffected).
+ */
+async function dispatchBroadcastNow(
+  workspaceId: string,
+  pool: Pool,
+  deps: LocalApiDeps,
+  broadcastId: string,
+): Promise<void> {
+  const { ses, configured } = await sesForWorkspace(pool, workspaceId, deps);
+  if (!configured) return; // no real SES creds → keep the local no-op behavior
+  const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
+  const dispatchDeps: DispatchDeps = {
+    reader: {
+      query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+        const r = await pool.query(text, values ? [...values] : undefined);
+        return { rows: r.rows as T[] };
+      },
+    },
+    ses,
+    runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
+    now: () => new Date(),
+    unsubscribeBaseUrl: `${base}/unsubscribe`,
+    linkTrackingBaseUrl: base,
+  };
+  const { rows } = await pool.query<{ id: string }>(
+    `SELECT id FROM outbox WHERE workspace_id = $1 AND status = 'pending' AND payload->>'broadcast_id' = $2 ORDER BY created_at`,
+    [workspaceId, broadcastId],
+  );
+  // dispatchOutbox never throws on a send failure (it returns retryable-failure
+  // and resets the claim), so one bad recipient can't abort the batch.
+  for (const r of rows) {
+    await dispatchOutbox(dispatchDeps, r.id);
+  }
 }
 
 /** GET /company/ses-config — region + access key id + whether a secret is set (NEVER the secret). */
@@ -1489,6 +1532,9 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
     );
   }
   const result = await runBroadcast(deps.broadcast, id);
+  // Production parity: actually deliver via SES now (when the workspace has SES
+  // creds). With no creds this is a no-op and the rows stay queued.
+  await dispatchBroadcastNow(ctx.workspaceId, pool, deps, id);
   return ok({ result });
 };
 

@@ -26,6 +26,7 @@
     "@cdp/service-authorizer": "workspace:*",
     "@cdp/service-broadcast": "workspace:*",
     "@cdp/service-campaign-runner": "workspace:*",
+    "@cdp/service-dispatcher": "workspace:*",
     "@cdp/service-metering": "workspace:*",
     "@cdp/service-onboarding": "workspace:*",
     "@cdp/shared": "workspace:*",

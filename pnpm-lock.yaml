@@ -390,6 +390,9 @@ importers:
       '@cdp/service-campaign-runner':
         specifier: workspace:*
         version: link:../campaign-runner
+      '@cdp/service-dispatcher':
+        specifier: workspace:*
+        version: link:../dispatcher
       '@cdp/service-metering':
         specifier: workspace:*
         version: link:../metering
