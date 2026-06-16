@@ -492,9 +492,22 @@ async function lookupRecordStatus(rec: DnsRecordOut): Promise<DnsRecordStatus> {
  * we do real DNS lookups; in simulated mode (no SES creds) we report 'found' to
  * stay consistent with the simulated verification.
  */
-async function withDnsStatus(records: DnsRecordOut[], configured: boolean): Promise<DnsRecordOut[]> {
+async function withDnsStatus(
+  records: DnsRecordOut[],
+  configured: boolean,
+  verified: boolean,
+): Promise<DnsRecordOut[]> {
   if (!configured) return records.map((r) => ({ ...r, status: 'found' as DnsRecordStatus }));
-  return Promise.all(records.map(async (r) => ({ ...r, status: await lookupRecordStatus(r) })));
+  return Promise.all(
+    records.map(async (r) => {
+      // SES is the source of truth for the required DKIM records: once it has
+      // CONFIRMED the domain, those records ARE correct — don't let our own
+      // resolver (which can lag/cache/diverge from what SES sees) contradict the
+      // "verified" status with a scary mismatch. SPF/DMARC keep their real lookup.
+      if (verified && r.required) return { ...r, status: 'found' as DnsRecordStatus };
+      return { ...r, status: await lookupRecordStatus(r) };
+    }),
+  );
 }
 
 /**
@@ -640,7 +653,11 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const { ses, configured, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   try {
     const { tokens, signingHostedZone } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
-    const records = await withDnsStatus(dnsRecordsFor(row.domain, tokens, signingHostedZone, region), configured);
+    const records = await withDnsStatus(
+      dnsRecordsFor(row.domain, tokens, signingHostedZone, region),
+      configured,
+      row.verified,
+    );
     return ok({ domain: domainOut, records, sesConfigured: configured });
   } catch (e) {
     // SES unreachable (bad/missing company credentials) — return without records.
@@ -681,6 +698,7 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
       records: await withDnsStatus(
         dnsRecordsFor(row.domain, tokens, attrs.signingHostedZone ?? signingHostedZone, region),
         configured,
+        verified || row.verified,
       ),
       sesConfigured: configured,
     });
