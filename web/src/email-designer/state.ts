@@ -33,6 +33,10 @@ export const viewportMode = signal<'desktop' | 'tablet' | 'mobile'>('desktop');
 /** Drag state: a toolbox item being dragged onto the canvas. */
 export const dragging = signal<{ type: DesignElement['type'] } | null>(null);
 export const dropTargetId = signal<string | null>(null);
+/** Navigator drag: the id of an EXISTING element being dragged to relocate it. */
+export const navDragId = signal<string | null>(null);
+/** Navigator drag: the row/element/cell id currently hovered as a drop target. */
+export const navDropTargetId = signal<string | null>(null);
 
 // ── ids ──────────────────────────────────────────────────────────────────────
 

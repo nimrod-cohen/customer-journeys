@@ -56,6 +56,26 @@ test('duplicate / delete an element via the Actions dropdown', async ({ page }) 
   await expect(page.getByTestId('canvas-element')).toHaveCount(1);
 });
 
+test('drag an element to another row via the Structure sidebar', async ({ page }) => {
+  await openDesigner(page);
+
+  // Two elements → two rows (each toolbox click adds a new row once an element
+  // is selected). The Structure (Navigator) lists both elements.
+  await page.getByTestId('toolbox-image').click();
+  await page.getByTestId('toolbox-button').click();
+  await expect(page.getByTestId('nav-row')).toHaveCount(2);
+  await expect(page.getByTestId('nav-element')).toHaveCount(2);
+
+  const order = () =>
+    page.getByTestId('nav-element').evaluateAll((els) => els.map((e) => e.getAttribute('data-element-id')));
+  const before = await order();
+
+  // Drag the 2nd element onto the 1st → it moves into the 1st row, before it.
+  await page.getByTestId('nav-element').nth(1).dragTo(page.getByTestId('nav-element').nth(0));
+
+  await expect.poll(order).toEqual([before[1], before[0]]);
+});
+
 test('an image element serializes as <mj-image src> referencing its URL', async ({ page }) => {
   await openDesigner(page);
 

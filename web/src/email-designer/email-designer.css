@@ -332,6 +332,10 @@
 .nm-nav-item.nm-active { background: #ccfbf1; color: #0f766e; }
 .nm-nav-actions { display: flex; gap: 2px; opacity: 0; }
 .nm-nav-item:hover .nm-nav-actions { opacity: 1; }
+/* Draggable elements in the structure tree + the drop-target highlight. */
+.nm-nav-item.nm-draggable { cursor: grab; }
+.nm-nav-item.nm-draggable:active { cursor: grabbing; }
+.nm-nav-item.nm-droptarget { box-shadow: inset 0 -2px 0 0 #14b8a6; background: #f0fdfa; }
 
 /* ── Viewport preview ── */
 .nm-vp-group { display: flex; gap: 2px; margin-inline-end: 10px; }
