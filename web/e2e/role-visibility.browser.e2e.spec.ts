@@ -31,9 +31,9 @@ test('server 403s a marketer on billing even when the UI route is hidden', async
   // Call the API directly from the browser with the marketer's stored token —
   // the SERVER must enforce the capability regardless of the hidden nav link.
   const status = await page.evaluate(async () => {
-    // The apiClient stores the token in the session store; read it from a fresh
-    // dev-login is overkill — instead just re-login via the API to get a token.
-    const base = 'http://localhost:8787';
+    // Hit the E2E API (its own port + seeded cdp_e2e), not the dev stack — the
+    // server must enforce the capability regardless of the hidden nav link.
+    const base = 'http://localhost:8788';
     const login = await fetch(`${base}/auth/dev-login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

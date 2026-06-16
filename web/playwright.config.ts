@@ -53,6 +53,9 @@ export default defineConfig({
         // Local (mock) SES reports DKIM SUCCESS so the onboarding wizard can
         // activate AND sending-domain verification succeeds deterministically.
         LOCAL_SES_DKIM_STATUS: 'SUCCESS',
+        // Allow the mock SES for the e2e (no AWS account). Without this, a
+        // workspace with no SES credentials BLOCKS domain setup (no simulation).
+        LOCAL_SES_FORCE_MOCK: '1',
       },
     },
     {

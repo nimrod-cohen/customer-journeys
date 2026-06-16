@@ -114,7 +114,9 @@ function DomainEditor({ id }: { id: string }) {
   const [checking, setChecking] = useState(false);
   const [checkMsg, setCheckMsg] = useState('');
   const [error, setError] = useState('');
-  const [sesConfigured, setSesConfigured] = useState(true);
+  // Set when SES can't be reached — most importantly when the company has NO SES
+  // credentials. We then BLOCK setup (no records, no verify) rather than simulate.
+  const [sesError, setSesError] = useState('');
   // sender inputs
   const [sName, setSName] = useState('');
   const [sLocal, setSLocal] = useState('');
@@ -122,13 +124,12 @@ function DomainEditor({ id }: { id: string }) {
   const [sError, setSError] = useState('');
 
   const load = async (): Promise<void> => {
-    const d = await api.get<{ domain: DomainDetail; records: DnsRecord[]; sesError?: string; sesConfigured?: boolean }>(
+    const d = await api.get<{ domain: DomainDetail; records: DnsRecord[]; sesError?: string }>(
       `/sending-domains/${id}`,
     );
     setDomain(d.domain);
     setRecords(d.records);
-    setSesConfigured(d.sesConfigured ?? true);
-    if (d.sesError) setCheckMsg(`Couldn't reach SES: ${d.sesError}`);
+    setSesError(d.sesError ?? '');
     if (d.domain.verified) {
       const s = await api.get<{ senders: Sender[] }>('/domain-senders');
       setSenders(s.senders.filter((x) => x.domain === d.domain.domain));
@@ -149,8 +150,9 @@ function DomainEditor({ id }: { id: string }) {
         {},
       );
       if (r.error) {
-        setCheckMsg(`Couldn't reach SES: ${r.error}`);
+        setSesError(r.error);
       } else if (r.verified) {
+        setSesError('');
         setCheckMsg('Verified — Amazon SES confirmed DKIM for this domain.');
       } else {
         // If the required (DKIM) records are already visible to us, SES just
@@ -267,61 +269,74 @@ function DomainEditor({ id }: { id: string }) {
             <b>DMARC</b> are recommended for deliverability but not needed to verify. Propagation can take from minutes
             to a few hours.
           </p>
-          {!sesConfigured ? (
-            <p
-              data-testid="ses-not-configured"
-              class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-200"
+          {sesError ? (
+            // No SES credentials (or SES unreachable) → block setup; do NOT
+            // simulate. The owner must configure SES first.
+            <div
+              data-testid="ses-error"
+              class="mt-3 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-800 ring-1 ring-inset ring-rose-200"
             >
-              This company has no Amazon SES credentials set, so verification is <strong>simulated</strong>. Add them in
-              Company settings to verify against real SES.
-            </p>
-          ) : null}
-          <div class="mt-3 overflow-hidden rounded-lg border border-stone-200">
-            <table class="w-full text-sm">
-              <thead class="bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
-                <tr>
-                  <th class="px-3 py-2 font-semibold">Seen</th>
-                  <th class="px-3 py-2 font-semibold">Type</th>
-                  <th class="px-3 py-2 font-semibold">Name</th>
-                  <th class="px-3 py-2 font-semibold">Value</th>
-                  <th class="px-3 py-2 font-semibold">Required</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-stone-100 text-xs">
-                {records.map((rec, i) => (
-                  <tr data-testid="dns-record" key={i}>
-                    <td class="px-3 py-2" title={recordStatusLabel(rec.status)}>
-                      <span data-testid="dns-record-status" data-status={rec.status ?? 'unknown'} class={recordStatusClass(rec.status)}>
-                        {recordStatusMark(rec.status)}
-                      </span>
-                    </td>
-                    <td class="px-3 py-2 font-mono text-stone-500">{rec.type}</td>
-                    <td class="max-w-[16rem] truncate px-3 py-2 font-mono text-ink-900">{rec.name}</td>
-                    <td class="px-3 py-2 font-mono text-stone-600">
-                      <span class="block max-w-[18rem] truncate">{rec.value}</span>
-                      {rec.note ? <span class="mt-0.5 block font-sans text-[11px] text-stone-400">{rec.note}</span> : null}
-                    </td>
-                    <td class="px-3 py-2">
-                      <Badge tone={rec.required ? 'warn' : 'neutral'}>
-                        {rec.required ? 'required' : 'recommended'}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p class="mt-2 text-xs text-stone-400">
-            <span class={recordStatusClass('found')}>✓</span> found in DNS &nbsp;·&nbsp;
-            <span class={recordStatusClass('missing')}>○</span> not visible yet &nbsp;·&nbsp;
-            <span class={recordStatusClass('mismatch')}>!</span> value doesn’t match
-          </p>
-          <div class="mt-3 flex items-center gap-3">
-            <Button data-testid="check-dns" variant="secondary" onClick={() => void check()} disabled={checking}>
-              {checkLabel}
-            </Button>
-            {checkMsg ? <span class="text-sm text-stone-600">{checkMsg}</span> : null}
-          </div>
+              <p>{sesError}</p>
+              <Button
+                data-testid="go-to-ses-config"
+                variant="secondary"
+                size="sm"
+                class="mt-3"
+                onClick={() => navigate('/company')}
+              >
+                Open Company settings →
+              </Button>
+            </div>
+          ) : (
+            <>
+              <div class="mt-3 overflow-hidden rounded-lg border border-stone-200">
+                <table class="w-full text-sm">
+                  <thead class="bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
+                    <tr>
+                      <th class="px-3 py-2 font-semibold">Seen</th>
+                      <th class="px-3 py-2 font-semibold">Type</th>
+                      <th class="px-3 py-2 font-semibold">Name</th>
+                      <th class="px-3 py-2 font-semibold">Value</th>
+                      <th class="px-3 py-2 font-semibold">Required</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-stone-100 text-xs">
+                    {records.map((rec, i) => (
+                      <tr data-testid="dns-record" key={i}>
+                        <td class="px-3 py-2" title={recordStatusLabel(rec.status)}>
+                          <span data-testid="dns-record-status" data-status={rec.status ?? 'unknown'} class={recordStatusClass(rec.status)}>
+                            {recordStatusMark(rec.status)}
+                          </span>
+                        </td>
+                        <td class="px-3 py-2 font-mono text-stone-500">{rec.type}</td>
+                        <td class="max-w-[16rem] truncate px-3 py-2 font-mono text-ink-900">{rec.name}</td>
+                        <td class="px-3 py-2 font-mono text-stone-600">
+                          <span class="block max-w-[18rem] truncate">{rec.value}</span>
+                          {rec.note ? <span class="mt-0.5 block font-sans text-[11px] text-stone-400">{rec.note}</span> : null}
+                        </td>
+                        <td class="px-3 py-2">
+                          <Badge tone={rec.required ? 'warn' : 'neutral'}>
+                            {rec.required ? 'required' : 'recommended'}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p class="mt-2 text-xs text-stone-400">
+                <span class={recordStatusClass('found')}>✓</span> found in DNS &nbsp;·&nbsp;
+                <span class={recordStatusClass('missing')}>○</span> not visible yet &nbsp;·&nbsp;
+                <span class={recordStatusClass('mismatch')}>!</span> value doesn’t match
+              </p>
+              <div class="mt-3 flex items-center gap-3">
+                <Button data-testid="check-dns" variant="secondary" onClick={() => void check()} disabled={checking}>
+                  {checkLabel}
+                </Button>
+                {checkMsg ? <span class="text-sm text-stone-600">{checkMsg}</span> : null}
+              </div>
+            </>
+          )}
         </Card>
 
         {/* Senders — ONLY for a verified domain */}

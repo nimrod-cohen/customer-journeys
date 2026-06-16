@@ -344,12 +344,20 @@ async function companyIdForWorkspace(pool: Pool, workspaceId: string): Promise<s
   return rows[0]?.company_id ?? null;
 }
 
-/** Build the SES client for a workspace from its company's config; mock if none. */
+/**
+ * Resolve how to talk to SES for a workspace:
+ *   - 'real' — the company has Amazon SES credentials → a real SES client.
+ *   - 'mock' — ONLY when LOCAL_SES_FORCE_MOCK is set (tests / offline dev): a
+ *     deterministic mock so the verify flow can be exercised without AWS.
+ *   - 'none' — no credentials and no force-mock → callers must REFUSE to
+ *     provision/verify (no simulation), surfacing an error instead.
+ */
+type SesMode = 'real' | 'mock' | 'none';
 async function sesForWorkspace(
   pool: Pool,
   workspaceId: string,
   deps: LocalApiDeps,
-): Promise<{ ses: SesEmailClient; configured: boolean; region: string | null }> {
+): Promise<{ ses: SesEmailClient; mode: SesMode; region: string | null }> {
   const { rows } = await pool.query<{ region: string; access_key_id: string; secret_access_key: string }>(
     `SELECT s.region, s.access_key_id, s.secret_access_key
        FROM company_ses_config s JOIN workspaces w ON w.company_id = s.company_id
@@ -364,12 +372,20 @@ async function sesForWorkspace(
       : cfg.secret_access_key;
     return {
       ses: createSesClient({ region: cfg.region, accessKeyId: cfg.access_key_id, secretAccessKey }),
-      configured: true,
+      mode: 'real',
       region: cfg.region,
     };
   }
-  return { ses: deps.onboarding.ses, configured: false, region: null };
+  // No real credentials. The local mock is allowed ONLY when explicitly forced
+  // (tests / offline dev); otherwise the company must configure SES first.
+  if (process.env.LOCAL_SES_FORCE_MOCK) {
+    return { ses: deps.onboarding.ses, mode: 'mock', region: process.env.LOCAL_SES_REGION ?? 'il-central-1' };
+  }
+  return { ses: deps.onboarding.ses, mode: 'none', region: null };
 }
+
+const SES_NOT_CONFIGURED =
+  'This company has no Amazon SES credentials. Add them in Company settings before setting up a sending domain.';
 
 /**
  * Send a broadcast's queued outbox rows for REAL, right now — mirroring what the
@@ -386,8 +402,8 @@ async function dispatchBroadcastNow(
   deps: LocalApiDeps,
   broadcastId: string,
 ): Promise<void> {
-  const { ses, configured } = await sesForWorkspace(pool, workspaceId, deps);
-  if (!configured) return; // no real SES creds → keep the local no-op behavior
+  const { ses, mode } = await sesForWorkspace(pool, workspaceId, deps);
+  if (mode !== 'real') return; // only real SES creds actually deliver (mock/none → no-op)
   const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
   const dispatchDeps: DispatchDeps = {
     reader: {
@@ -719,21 +735,26 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const { ses_identity, dkim_tokens, ...domainOut } = row;
   void ses_identity;
   void dkim_tokens;
-  const { ses, configured, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
+  const { ses, mode, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
+  // No SES credentials → don't simulate. Surface the error and show no records so
+  // the UI blocks setup until the company configures SES.
+  if (mode === 'none') {
+    return ok({ domain: domainOut, records: [], sesConfigured: false, sesError: SES_NOT_CONFIGURED });
+  }
   try {
     const { tokens, signingHostedZone } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
     const records = await withDnsStatus(
       dnsRecordsFor(row.domain, tokens, signingHostedZone, region),
-      configured,
+      mode === 'real', // real → live DNS lookups; mock → marked found
       row.verified,
     );
-    return ok({ domain: domainOut, records, sesConfigured: configured });
+    return ok({ domain: domainOut, records, sesConfigured: mode === 'real' });
   } catch (e) {
-    // SES unreachable (bad/missing company credentials) — return without records.
+    // SES unreachable (e.g. bad company credentials) — return without records.
     return ok({
       domain: domainOut,
       records: [],
-      sesConfigured: configured,
+      sesConfigured: mode === 'real',
       sesError: e instanceof Error ? e.message : 'SES unavailable',
     });
   }
@@ -748,7 +769,11 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
 export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const row = await loadSendingDomain(pool, ctx.workspaceId, req.params.id!);
   if (!row) return ok({ error: 'not found' }, 404);
-  const { ses, configured, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
+  const { ses, mode, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
+  // No SES credentials → don't simulate a verification; require SES first.
+  if (mode === 'none') {
+    return ok({ verified: row.verified, sesConfigured: false, error: SES_NOT_CONFIGURED });
+  }
   try {
     const { identity, tokens, signingHostedZone } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
     const attrs = await ses.getIdentityVerificationAttributes(identity);
@@ -766,13 +791,13 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
       dkimStatus: attrs.dkimStatus,
       records: await withDnsStatus(
         dnsRecordsFor(row.domain, tokens, attrs.signingHostedZone ?? signingHostedZone, region),
-        configured,
+        mode === 'real',
         verified || row.verified,
       ),
-      sesConfigured: configured,
+      sesConfigured: mode === 'real',
     });
   } catch (e) {
-    return ok({ verified: row.verified, sesConfigured: configured, error: e instanceof Error ? e.message : 'SES check failed' });
+    return ok({ verified: row.verified, sesConfigured: mode === 'real', error: e instanceof Error ? e.message : 'SES check failed' });
   }
 };
 

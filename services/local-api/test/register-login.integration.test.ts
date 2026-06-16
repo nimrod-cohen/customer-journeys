@@ -19,6 +19,14 @@ describeMaybe('register + login (real Postgres)', () => {
     app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const get = (path: string, token: string) =>
     app.request(path, { headers: { authorization: `Bearer ${token}` } });
+  const postAuth = (path: string, token: string, body: unknown) =>
+    app.request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+  const tokenFor = async () =>
+    ((await (await post('/auth/dev-login', { email: EMAIL, password: 'sup3r-secret-pw' })).json()) as { token: string }).token;
 
   beforeAll(async () => {
     pool = adminPool();
@@ -42,6 +50,8 @@ describeMaybe('register + login (real Postgres)', () => {
       await pool.query('DELETE FROM workspace_users WHERE user_id = $1', [u.id]);
       for (const w of ws) {
         const { rows: cmp } = await pool.query<{ company_id: string }>('SELECT company_id FROM workspaces WHERE id = $1', [w.workspace_id]);
+        await pool.query('DELETE FROM domain_senders WHERE workspace_id = $1', [w.workspace_id]);
+        await pool.query('DELETE FROM sending_domains WHERE workspace_id = $1', [w.workspace_id]);
         await pool.query('DELETE FROM workspaces WHERE id = $1', [w.workspace_id]);
         for (const cm of cmp) await pool.query('DELETE FROM companies WHERE id = $1', [cm.company_id]);
       }
@@ -96,5 +106,28 @@ describeMaybe('register + login (real Postgres)', () => {
   it('a user with NO workspace access (not platform admin) is rejected at login', async () => {
     const r = await post('/auth/dev-login', { user_id: ORPHAN });
     expect(r.status).toBe(403);
+  });
+
+  it('with NO SES credentials, domain setup is BLOCKED (no simulation)', async () => {
+    // The registered company has no company_ses_config and LOCAL_SES_FORCE_MOCK
+    // is not set here → setup must surface an error and produce NO records.
+    const token = await tokenFor();
+    const created = await postAuth('/sending-domains', token, { domain: 'mail.regtest.example' });
+    expect(created.status).toBe(201);
+    const id = ((await created.json()) as { domain: { id: string } }).domain.id;
+
+    const detail = (await (await get(`/sending-domains/${id}`, token)).json()) as {
+      records: unknown[];
+      sesError?: string;
+    };
+    expect(detail.records).toHaveLength(0);
+    expect(detail.sesError).toBeTruthy();
+
+    const check = (await (await postAuth(`/sending-domains/${id}/check`, token, {})).json()) as {
+      verified: boolean;
+      error?: string;
+    };
+    expect(check.verified).toBe(false);
+    expect(check.error).toBeTruthy();
   });
 });

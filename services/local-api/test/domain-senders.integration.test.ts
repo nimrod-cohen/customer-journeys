@@ -47,8 +47,11 @@ describeMaybe('sending domains + senders via API (real Postgres)', () => {
   }
 
   beforeAll(async () => {
-    // The verify endpoint asks SES for DKIM status; the local mock SES reports
-    // SUCCESS (LOCAL_SES_DKIM_STATUS default), so a check verifies deterministically.
+    // No AWS account in tests: force the mock SES so the verify flow is exercised
+    // deterministically (without it, a workspace with no SES creds BLOCKS setup).
+    process.env.LOCAL_SES_FORCE_MOCK = '1';
+    // The verify endpoint asks SES for DKIM status; the mock reports SUCCESS
+    // (LOCAL_SES_DKIM_STATUS default), so a check verifies deterministically.
     pool = adminPool();
     await dropWorkspaces();
     for (const [ws, owner] of [[WS, OWNER], [OTHER, OTHER_OWNER]] as const) {
@@ -73,6 +76,7 @@ describeMaybe('sending domains + senders via API (real Postgres)', () => {
   });
 
   afterAll(async () => {
+    delete process.env.LOCAL_SES_FORCE_MOCK;
     if (pool) {
       await dropWorkspaces();
       await pool.end();
