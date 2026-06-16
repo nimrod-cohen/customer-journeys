@@ -28,6 +28,18 @@ function userIdForEmail(email: string): string | null {
   const e = email.trim().toLowerCase();
   return DEV_USERS.find((d) => d.email.toLowerCase() === e)?.userId ?? null;
 }
+/** Resolve a user's email for display: the registered users.email (migration 0031)
+ *  first, then the seeded DEV_USERS fixture, then a short non-GUID label. */
+async function resolveEmail(pool: Pool, userId: string | undefined): Promise<string> {
+  if (!userId) return 'unknown';
+  const { rows } = await pool.query<{ email: string | null }>('SELECT email FROM users WHERE id = $1', [userId]);
+  return rows[0]?.email ?? emailForUser(userId);
+}
+/** Resolve an email → user id: a registered user (users.email) first, else DEV_USERS. */
+async function resolveUserIdByEmail(pool: Pool, email: string): Promise<string | null> {
+  const { rows } = await pool.query<{ id: string }>('SELECT id FROM users WHERE email = $1', [email.trim()]);
+  return rows[0]?.id ?? userIdForEmail(email);
+}
 import { handleAdminAccess, writeAuditEntry } from '@cdp/service-api';
 import { recordCrossTenantAccess } from '@cdp/tenancy';
 import {
@@ -131,7 +143,7 @@ export const getMe: Handler = async (ctx, pool) => {
   const prof = await pool.query<{ name: string | null }>('SELECT name FROM users WHERE id = $1', [ctx.userId ?? '']);
   return ok({
     sub: ctx.userId,
-    email: emailForUser(ctx.userId),
+    email: await resolveEmail(pool, ctx.userId),
     name: prof.rows[0]?.name ?? null,
     workspace_id: ctx.workspaceId || null,
     workspace_name: workspaceName,
@@ -163,13 +175,27 @@ export const updateMe: Handler = async (ctx, pool, req) => {
 
 /** GET /workspace/members — members of the ACTIVE workspace only (scoped). */
 export const listMembers: Handler = async (ctx, pool) => {
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<{ user_id: string; role: string }>(
     'SELECT user_id, role, created_at FROM workspace_users WHERE workspace_id = $1 ORDER BY created_at',
     [ctx.workspaceId],
   );
-  // Surface the member's EMAIL (resolved) rather than the internal user id.
+  // Surface each member's EMAIL (registered users.email → DEV_USERS → label),
+  // resolved in one batch query rather than per-row.
+  const emailById = new Map<string, string>();
+  const ids = rows.map((r) => r.user_id);
+  if (ids.length) {
+    const { rows: urows } = await pool.query<{ id: string; email: string | null }>(
+      'SELECT id, email FROM users WHERE id = ANY($1::uuid[])',
+      [ids],
+    );
+    for (const u of urows) if (u.email) emailById.set(u.id, u.email);
+  }
   return ok({
-    members: rows.map((r) => ({ user_id: r.user_id, role: r.role, email: emailForUser(r.user_id) })),
+    members: rows.map((r) => ({
+      user_id: r.user_id,
+      role: r.role,
+      email: emailById.get(r.user_id) ?? emailForUser(r.user_id),
+    })),
   });
 };
 
@@ -180,7 +206,7 @@ export const addMember: Handler = async (ctx, pool, req) => {
   // Resolve the member by email (the user-facing identifier); user_id is internal
   // and still accepted as a fallback (e.g. direct/e2e callers).
   const email = typeof b.email === 'string' ? b.email : '';
-  const userId = email ? userIdForEmail(email) : String(b.user_id ?? '');
+  const userId = email ? await resolveUserIdByEmail(pool, email) : String(b.user_id ?? '');
   if (!userId) {
     return ok({ error: email ? `no user with email ${email}` : 'email required' }, 400);
   }
@@ -207,7 +233,7 @@ export const addMember: Handler = async (ctx, pool, req) => {
      ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
     [ctx.workspaceId, userId, role],
   );
-  return ok({ workspaceId: ctx.workspaceId, userId, email: emailForUser(userId), role }, 201);
+  return ok({ workspaceId: ctx.workspaceId, userId, email: await resolveEmail(pool, userId), role }, 201);
 };
 
 /**

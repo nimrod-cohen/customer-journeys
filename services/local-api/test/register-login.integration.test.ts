@@ -17,6 +17,8 @@ describeMaybe('register + login (real Postgres)', () => {
   let app: ReturnType<typeof createApp>;
   const post = (path: string, body: unknown) =>
     app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const get = (path: string, token: string) =>
+    app.request(path, { headers: { authorization: `Bearer ${token}` } });
 
   beforeAll(async () => {
     pool = adminPool();
@@ -66,6 +68,17 @@ describeMaybe('register + login (real Postgres)', () => {
     const r = await post('/auth/dev-login', { email: EMAIL, password: 'sup3r-secret-pw' });
     expect(r.status).toBe(200);
     expect(((await r.json()) as { workspace_id: string }).workspace_id).toBeTruthy();
+  });
+
+  it('identity + members show the registered EMAIL (not a user-<id> label)', async () => {
+    const login = (await (await post('/auth/dev-login', { email: EMAIL, password: 'sup3r-secret-pw' })).json()) as {
+      token: string;
+    };
+    const me = (await (await get('/me', login.token)).json()) as { email: string };
+    expect(me.email).toBe(EMAIL);
+    const mem = (await (await get('/workspace/members', login.token)).json()) as { members: { email: string; role: string }[] };
+    expect(mem.members.find((m) => m.role === 'owner')?.email).toBe(EMAIL);
+    expect(mem.members.some((m) => m.email.startsWith('user-'))).toBe(false);
   });
 
   it('rejects a wrong password and a duplicate registration', async () => {
