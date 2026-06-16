@@ -37,23 +37,23 @@ test('the designer renders and emits MJML rooted at <mjml>', async ({ page }) =>
   expect(mjml).not.toMatch(/<!DOCTYPE|<html/i);
 });
 
-test('duplicate an element — via the Properties button and the Cmd/Ctrl+D shortcut', async ({ page }) => {
+test('duplicate / delete an element via the Actions dropdown', async ({ page }) => {
   await openDesigner(page);
 
-  // Use an image (not contenteditable) so neither the floating text toolbar nor
-  // focus suppresses the canvas keyboard shortcut.
   await page.getByTestId('toolbox-image').click();
   await expect(page.getByTestId('canvas-element')).toHaveCount(1);
 
-  // Select it → the Properties "Duplicate" button clones it.
+  // Select it → open the Actions menu → Duplicate clones it.
   await page.getByTestId('canvas-element').first().click();
+  await page.getByTestId('node-actions').click();
   await page.getByTestId('duplicate-node').click();
   await expect(page.getByTestId('canvas-element')).toHaveCount(2);
 
-  // The keyboard shortcut duplicates the SELECTED element too.
+  // Actions → Delete removes the selected element.
   await page.getByTestId('canvas-element').last().click();
-  await page.keyboard.press('ControlOrMeta+d');
-  await expect(page.getByTestId('canvas-element')).toHaveCount(3);
+  await page.getByTestId('node-actions').click();
+  await page.getByTestId('delete-node').click();
+  await expect(page.getByTestId('canvas-element')).toHaveCount(1);
 });
 
 test('an image element serializes as <mj-image src> referencing its URL', async ({ page }) => {

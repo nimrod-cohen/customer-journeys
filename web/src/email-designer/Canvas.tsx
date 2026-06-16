@@ -15,8 +15,6 @@ import {
   dropOnRow,
   removeRow,
   removeElement,
-  duplicateRow,
-  duplicateElement,
   findRow,
   mutate,
   viewportMode,
@@ -38,25 +36,18 @@ export function Canvas(): JSX.Element {
     return null;
   }, []);
 
-  // Keyboard shortcuts on the selected node (row or element):
-  //   Delete / Backspace → remove,  Cmd/Ctrl+D → duplicate.
-  // Skipped while typing in a text element / input so editing isn't hijacked.
+  // Delete key removes the selected node (row or element).
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent): void {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const active = document.activeElement as HTMLElement | null;
       if (active?.isContentEditable || active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA') return;
       const sel = selectedId.value;
       if (!sel) return;
-      const isRow = Boolean(findRow(sel));
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'd' || e.key === 'D')) {
-        e.preventDefault(); // override the browser's "bookmark" shortcut
-        if (isRow) mutate('Duplicate row', () => duplicateRow(sel));
-        else mutate('Duplicate element', () => duplicateElement(sel));
-        return;
-      }
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (isRow) mutate('Remove row', () => removeRow(sel));
-        else mutate('Remove element', () => removeElement(sel));
+      if (findRow(sel)) {
+        mutate('Remove row', () => removeRow(sel));
+      } else {
+        mutate('Remove element', () => removeElement(sel));
       }
     }
     document.addEventListener('keydown', onKeyDown);
