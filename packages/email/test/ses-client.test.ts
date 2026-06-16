@@ -18,12 +18,18 @@ describe('ProdSesEmailClient', () => {
 
   it('createDomainIdentity requests Easy DKIM and returns the tokens', async () => {
     ses.on(CreateEmailIdentityCommand).resolves({
-      DkimAttributes: { Status: 'PENDING', Tokens: ['t1', 't2', 't3'] },
+      DkimAttributes: {
+        Status: 'PENDING',
+        Tokens: ['t1', 't2', 't3'],
+        SigningHostedZone: 'dkim.il-central-1.amazonses.com',
+      },
     });
     const client = new ProdSesEmailClient(ses as unknown as SESv2Client);
     const res = await client.createDomainIdentity('mail.acme.com');
     expect(res.identity).toBe('mail.acme.com');
     expect(res.dkimTokens).toEqual(['t1', 't2', 't3']);
+    // The region-specific signing hosted zone is captured from SES (authoritative).
+    expect(res.signingHostedZone).toBe('dkim.il-central-1.amazonses.com');
 
     const calls = ses.commandCalls(CreateEmailIdentityCommand);
     expect(calls).toHaveLength(1);
@@ -36,13 +42,19 @@ describe('ProdSesEmailClient', () => {
 
   it('getIdentityVerificationAttributes reads DKIM status (the gate)', async () => {
     ses.on(GetEmailIdentityCommand).resolves({
-      DkimAttributes: { Status: 'SUCCESS', SigningEnabled: true, Tokens: ['t1'] },
+      DkimAttributes: {
+        Status: 'SUCCESS',
+        SigningEnabled: true,
+        Tokens: ['t1'],
+        SigningHostedZone: 'dkim.il-central-1.amazonses.com',
+      },
     });
     const client = new ProdSesEmailClient(ses as unknown as SESv2Client);
     const attrs = await client.getIdentityVerificationAttributes('mail.acme.com');
     expect(attrs.dkimStatus).toBe('SUCCESS');
     expect(attrs.signingEnabled).toBe(true);
     expect(attrs.dkimTokens).toEqual(['t1']);
+    expect(attrs.signingHostedZone).toBe('dkim.il-central-1.amazonses.com');
   });
 
   it('normalizes an unknown/absent DKIM status to NOT_STARTED', async () => {

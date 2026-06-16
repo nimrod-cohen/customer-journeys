@@ -26,6 +26,14 @@ export interface CreateDomainIdentityResult {
   readonly identity: string;
   /** Easy-DKIM CNAME selector tokens (3) to publish as DKIM records (§10A). */
   readonly dkimTokens: readonly string[];
+  /**
+   * The DKIM "signing hosted zone" SES reports (`DkimAttributes.SigningHostedZone`):
+   * the exact CNAME target host the customer must point selectors at —
+   * `<token>.<signingHostedZone>`. AUTHORITATIVE (region-specific); use this
+   * instead of constructing `dkim.<region>.amazonses.com` ourselves. Absent on
+   * older API versions → caller falls back.
+   */
+  readonly signingHostedZone?: string;
 }
 
 /** The DKIM verification attributes SES reports for an identity (§10A gate). */
@@ -36,6 +44,8 @@ export interface IdentityVerificationAttributes {
   readonly signingEnabled: boolean;
   /** The DKIM tokens (echoed back; useful for re-rendering records). */
   readonly dkimTokens: readonly string[];
+  /** The authoritative CNAME target host (see CreateDomainIdentityResult). */
+  readonly signingHostedZone?: string;
 }
 
 /**
@@ -127,6 +137,7 @@ export class ProdSesEmailClient implements SesEmailClient {
     return {
       identity: domain,
       dkimTokens: out.DkimAttributes?.Tokens ?? [],
+      ...(out.DkimAttributes?.SigningHostedZone ? { signingHostedZone: out.DkimAttributes.SigningHostedZone } : {}),
     };
   }
 
@@ -140,6 +151,7 @@ export class ProdSesEmailClient implements SesEmailClient {
       dkimStatus: normalizeDkimStatus(out.DkimAttributes?.Status),
       signingEnabled: out.DkimAttributes?.SigningEnabled ?? false,
       dkimTokens: out.DkimAttributes?.Tokens ?? [],
+      ...(out.DkimAttributes?.SigningHostedZone ? { signingHostedZone: out.DkimAttributes.SigningHostedZone } : {}),
     };
   }
 

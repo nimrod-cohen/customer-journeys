@@ -44,10 +44,10 @@ export function makeLocalSes(): SesEmailClient {
   const status = (process.env.LOCAL_SES_DKIM_STATUS as IdentityVerificationAttributes['dkimStatus']) ?? 'SUCCESS';
   return {
     async createDomainIdentity(domain: string): Promise<CreateDomainIdentityResult> {
-      return { identity: domain, dkimTokens: ['tok1', 'tok2', 'tok3'] };
+      return { identity: domain, dkimTokens: ['tok1', 'tok2', 'tok3'], signingHostedZone: 'dkim.amazonses.com' };
     },
     async getIdentityVerificationAttributes(): Promise<IdentityVerificationAttributes> {
-      return { dkimStatus: status, signingEnabled: true, dkimTokens: ['tok1', 'tok2', 'tok3'] };
+      return { dkimStatus: status, signingEnabled: true, dkimTokens: ['tok1', 'tok2', 'tok3'], signingHostedZone: 'dkim.amazonses.com' };
     },
     async createConfigurationSet(): Promise<void> {
       /* no-op locally */

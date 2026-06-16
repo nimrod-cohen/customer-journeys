@@ -367,7 +367,7 @@ async function sesForWorkspace(
   pool: Pool,
   workspaceId: string,
   deps: LocalApiDeps,
-): Promise<{ ses: SesEmailClient; configured: boolean }> {
+): Promise<{ ses: SesEmailClient; configured: boolean; region: string | null }> {
   const { rows } = await pool.query<{ region: string; access_key_id: string; secret_access_key: string }>(
     `SELECT s.region, s.access_key_id, s.secret_access_key
        FROM company_ses_config s JOIN workspaces w ON w.company_id = s.company_id
@@ -383,9 +383,10 @@ async function sesForWorkspace(
     return {
       ses: createSesClient({ region: cfg.region, accessKeyId: cfg.access_key_id, secretAccessKey }),
       configured: true,
+      region: cfg.region,
     };
   }
-  return { ses: deps.onboarding.ses, configured: false };
+  return { ses: deps.onboarding.ses, configured: false, region: null };
 }
 
 /** GET /company/ses-config — region + access key id + whether a secret is set (NEVER the secret). */
@@ -470,6 +471,7 @@ interface SendingDomainRow {
   verified_at: string | null;
   ses_identity: string | null;
   dkim_tokens: string[];
+  signing_hosted_zone: string | null;
 }
 
 type DnsRecordStatus = 'found' | 'missing' | 'mismatch';
@@ -548,13 +550,30 @@ async function withDnsStatus(records: DnsRecordOut[], configured: boolean): Prom
  *    MERGED with any existing SPF (only one SPF record is allowed per name).
  *  - DMARC (TXT) — recommended; sets a policy + enables reporting.
  */
-function dnsRecordsFor(domain: string, tokens: readonly string[]): DnsRecordOut[] {
+/**
+ * The DKIM CNAME target host. PREFERS the `SigningHostedZone` reported by SES
+ * (region-specific, authoritative — exactly what the SES console shows), so this
+ * works in ANY region a company chooses without us hardcoding a rule. Fallbacks
+ * (only when SES didn't report it / local mock): a region-qualified host, then
+ * the legacy default.
+ */
+export function dkimCnameHost(signingHostedZone: string | null, region: string | null): string {
+  return signingHostedZone ?? (region ? `dkim.${region}.amazonses.com` : 'dkim.amazonses.com');
+}
+
+function dnsRecordsFor(
+  domain: string,
+  tokens: readonly string[],
+  signingHostedZone: string | null,
+  region: string | null,
+): DnsRecordOut[] {
+  const dkimHost = dkimCnameHost(signingHostedZone, region);
   return [
     ...tokens.map((t, i) => ({
       role: `dkim${i + 1}`,
       type: 'CNAME',
       name: `${t}._domainkey.${domain}`,
-      value: `${t}.dkim.amazonses.com`,
+      value: `${t}.${dkimHost}`,
       required: true,
     })),
     {
@@ -586,26 +605,60 @@ async function ensureSesIdentity(
   pool: Pool,
   workspaceId: string,
   row: SendingDomainRow,
-): Promise<{ identity: string; tokens: string[] }> {
-  if (row.dkim_tokens.length > 0) return { identity: row.ses_identity ?? row.domain, tokens: row.dkim_tokens };
+): Promise<{ identity: string; tokens: string[]; signingHostedZone: string | null }> {
+  // Already provisioned: reuse the stored tokens. Backfill the signing hosted
+  // zone for rows provisioned before we started capturing it from SES.
+  if (row.dkim_tokens.length > 0) {
+    const identity = row.ses_identity ?? row.domain;
+    if (row.signing_hosted_zone) {
+      return { identity, tokens: row.dkim_tokens, signingHostedZone: row.signing_hosted_zone };
+    }
+    let signingHostedZone: string | null = null;
+    try {
+      signingHostedZone = (await ses.getIdentityVerificationAttributes(identity)).signingHostedZone ?? null;
+    } catch {
+      /* SES unreachable — leave null; dnsRecordsFor falls back */
+    }
+    if (signingHostedZone) {
+      const u = scopedQuery(workspaceId, 'UPDATE sending_domains SET signing_hosted_zone = $1 WHERE id = $2', [
+        signingHostedZone,
+        row.id,
+      ]);
+      await pool.query(u.text, u.values);
+    }
+    return { identity, tokens: row.dkim_tokens, signingHostedZone };
+  }
   let identity = row.domain;
   let tokens: string[] = [];
+  // The CNAME target host comes FROM SES (DkimAttributes.SigningHostedZone) — it's
+  // region-specific, so we never hardcode it (this system is multi-region).
+  let signingHostedZone: string | null = null;
   try {
     const r = await ses.createDomainIdentity(row.domain);
     identity = r.identity;
     tokens = [...r.dkimTokens];
+    signingHostedZone = r.signingHostedZone ?? null;
   } catch {
     // Identity already exists (or transient) — read the tokens back.
     const a = await ses.getIdentityVerificationAttributes(row.domain);
     tokens = [...a.dkimTokens];
+    signingHostedZone = a.signingHostedZone ?? null;
+  }
+  // The create response may omit the hosted zone — read it explicitly if so.
+  if (tokens.length > 0 && !signingHostedZone) {
+    try {
+      signingHostedZone = (await ses.getIdentityVerificationAttributes(identity)).signingHostedZone ?? null;
+    } catch {
+      /* fall back */
+    }
   }
   const upd = scopedQuery(
     workspaceId,
-    'UPDATE sending_domains SET ses_identity = $1, dkim_tokens = $2 WHERE id = $3',
-    [identity, tokens, row.id],
+    'UPDATE sending_domains SET ses_identity = $1, dkim_tokens = $2, signing_hosted_zone = $3 WHERE id = $4',
+    [identity, tokens, signingHostedZone, row.id],
   );
   await pool.query(upd.text, upd.values);
-  return { identity, tokens };
+  return { identity, tokens, signingHostedZone };
 }
 
 async function loadSendingDomain(
@@ -615,7 +668,7 @@ async function loadSendingDomain(
 ): Promise<SendingDomainRow | undefined> {
   const q = scopedQuery(
     workspaceId,
-    'SELECT id, domain, verified, verified_at, ses_identity, dkim_tokens FROM sending_domains WHERE id = $1',
+    'SELECT id, domain, verified, verified_at, ses_identity, dkim_tokens, signing_hosted_zone FROM sending_domains WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query<SendingDomainRow>(q.text, q.values);
@@ -629,10 +682,10 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const { ses_identity, dkim_tokens, ...domainOut } = row;
   void ses_identity;
   void dkim_tokens;
-  const { ses, configured } = await sesForWorkspace(pool, ctx.workspaceId, deps);
+  const { ses, configured, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   try {
-    const { tokens } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
-    const records = await withDnsStatus(dnsRecordsFor(row.domain, tokens), configured);
+    const { tokens, signingHostedZone } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
+    const records = await withDnsStatus(dnsRecordsFor(row.domain, tokens, signingHostedZone, region), configured);
     return ok({ domain: domainOut, records, sesConfigured: configured });
   } catch (e) {
     // SES unreachable (bad/missing company credentials) — return without records.
@@ -654,9 +707,9 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
 export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const row = await loadSendingDomain(pool, ctx.workspaceId, req.params.id!);
   if (!row) return ok({ error: 'not found' }, 404);
-  const { ses, configured } = await sesForWorkspace(pool, ctx.workspaceId, deps);
+  const { ses, configured, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   try {
-    const { identity, tokens } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
+    const { identity, tokens, signingHostedZone } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
     const attrs = await ses.getIdentityVerificationAttributes(identity);
     const verified = attrs.dkimStatus === 'SUCCESS';
     if (verified && !row.verified) {
@@ -670,7 +723,10 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
     return ok({
       verified: verified || row.verified,
       dkimStatus: attrs.dkimStatus,
-      records: await withDnsStatus(dnsRecordsFor(row.domain, tokens), configured),
+      records: await withDnsStatus(
+        dnsRecordsFor(row.domain, tokens, attrs.signingHostedZone ?? signingHostedZone, region),
+        configured,
+      ),
       sesConfigured: configured,
     });
   } catch (e) {
