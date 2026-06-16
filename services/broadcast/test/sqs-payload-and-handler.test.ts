@@ -117,6 +117,47 @@ describe('runBroadcast (fakes; SQS mocked at the boundary)', () => {
     expect(res.result).toBe('skipped');
     expect(sqsMock.commandCalls(SendMessageCommand)).toHaveLength(0);
   });
+
+  it('REVERTS sending→draft when audience resolution fails (no stuck "sending")', async () => {
+    // Reproduces the real incident: a dynamic segment whose rule doesn't compile
+    // (a bare attribute key). The claim flips status→sending, then buildSegmentMatch
+    // throws — the orchestrator must roll the status back, not leave it stuck.
+    const tx: SqlStatement[][] = [];
+    const reader: Reader = {
+      async query<T>(text: string): Promise<{ rows: T[] }> {
+        const t = text.replace(/\s+/g, ' ').trim();
+        if (t.startsWith('SELECT id, workspace_id, template_id, audience_kind')) {
+          return {
+            rows: [
+              { id: BC, workspace_id: WS, template_id: TPL, audience_kind: 'segment', audience_ref: SEG, scheduled_at: null, status: 'draft' } as unknown as T,
+            ],
+          };
+        }
+        if (t.startsWith('SELECT status FROM broadcasts')) return { rows: [{ status: 'sending' } as unknown as T] };
+        if (t.startsWith('SELECT kind, definition FROM segments')) {
+          // A bad rule (bare attribute key) → the compiler throws.
+          return { rows: [{ kind: 'dynamic_realtime', definition: { field: 'is_admin', operator: '=', value: 1 } } as unknown as T] };
+        }
+        return { rows: [] };
+      },
+    };
+    const deps: BroadcastDeps = {
+      reader,
+      sqs,
+      async runInWorkspaceTx(_ws, statements) {
+        tx.push([...statements]);
+      },
+      now: () => new Date('2026-06-07T12:00:00.000Z'),
+      dispatchQueueUrl: 'https://sqs/dispatch',
+      batchSize: 500,
+    };
+    await expect(runBroadcast(deps, BC)).rejects.toThrow();
+    // First tx claims sending; the LAST tx reverts to draft (so it's not stuck).
+    expect(tx[0]!.some((s) => s.values[3] === 'sending')).toBe(true);
+    expect(tx.at(-1)!.some((s) => s.values[3] === 'draft')).toBe(true);
+    // Nothing was enqueued.
+    expect(sqsMock.commandCalls(SendMessageCommand)).toHaveLength(0);
+  });
 });
 
 describe('thin handlers never throw', () => {

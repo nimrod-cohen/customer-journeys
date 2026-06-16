@@ -120,64 +120,80 @@ export async function runBroadcast(
     return { result: 'skipped', reason: 'broadcast not claimed (already sending/sent)' };
   }
 
-  // 4. Resolve the audience AT SEND TIME. A DYNAMIC segment is resolved LIVE by
-  //    running its compiled rule now (so time-windowed audiences are exact and we
-  //    don't depend on a materialized cache); a MANUAL list reads its curated
-  //    membership rows. audience_ref is a segment_id in both cases.
-  const { rows: segRows } = await deps.reader.query<{ kind: string; definition: AstNode | null }>(
-    `SELECT kind, definition FROM segments WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, bc.audience_ref],
-  );
-  const seg = segRows[0];
-  let profileIds: string[];
-  if (seg && seg.kind !== 'manual') {
-    // Dynamic: a null definition is an inactive draft → no audience (never blast all).
-    if (!seg.definition) {
-      profileIds = [];
+  // Everything after the claim runs under a guard: if ANY step throws — most
+  // notably the audience segment's rule failing to compile — revert status
+  // sending→<original> so the broadcast is never left stuck permanently
+  // 'sending' (uneditable AND unsendable). Then re-throw so the caller surfaces
+  // the real error.
+  try {
+    // 4. Resolve the audience AT SEND TIME. A DYNAMIC segment is resolved LIVE by
+    //    running its compiled rule now (so time-windowed audiences are exact and we
+    //    don't depend on a materialized cache); a MANUAL list reads its curated
+    //    membership rows. audience_ref is a segment_id in both cases.
+    const { rows: segRows } = await deps.reader.query<{ kind: string; definition: AstNode | null }>(
+      `SELECT kind, definition FROM segments WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, bc.audience_ref],
+    );
+    const seg = segRows[0];
+    let profileIds: string[];
+    if (seg && seg.kind !== 'manual') {
+      // Dynamic: a null definition is an inactive draft → no audience (never blast all).
+      if (!seg.definition) {
+        profileIds = [];
+      } else {
+        const match = buildSegmentMatch(workspaceId, seg.definition);
+        const { rows } = await deps.reader.query<{ id: string }>(match.text, match.values);
+        profileIds = rows.map((r) => r.id);
+      }
     } else {
-      const match = buildSegmentMatch(workspaceId, seg.definition);
-      const { rows } = await deps.reader.query<{ id: string }>(match.text, match.values);
-      profileIds = rows.map((r) => r.id);
+      const aud = resolveAudience(workspaceId, bc.audience_ref);
+      const { rows: members } = await deps.reader.query<{ profile_id: string }>(aud.text, aud.values);
+      profileIds = members.map((m) => m.profile_id);
     }
-  } else {
-    const aud = resolveAudience(workspaceId, bc.audience_ref);
-    const { rows: members } = await deps.reader.query<{ profile_id: string }>(aud.text, aud.values);
-    profileIds = members.map((m) => m.profile_id);
-  }
 
-  // The envelope (subject / From / To) lives on the email instance (template),
-  // resolved by the Dispatcher at send. The payload only carries attribution.
-  const payload = { broadcast_id: broadcastId };
-  const batchSize = deps.batchSize ?? DEFAULT_BATCH_SIZE;
-  const batches = chunk(profileIds, batchSize);
+    // The envelope (subject / From / To) lives on the email instance (template),
+    // resolved by the Dispatcher at send. The payload only carries attribution.
+    const payload = { broadcast_id: broadcastId };
+    const batchSize = deps.batchSize ?? DEFAULT_BATCH_SIZE;
+    const batches = chunk(profileIds, batchSize);
 
-  // 5. Per batch: insert outbox rows (one tx) → enqueue each {outbox_id}.
-  for (const batch of batches) {
-    const insert = buildBroadcastOutboxInsert(
-      workspaceId,
-      broadcastId,
-      bc.template_id,
-      payload,
-      batch,
-    );
-    // RETURNING is harmless inside the tx runner, but the runner doesn't return
-    // rows — so fetch the outbox ids for this batch by their dedupe keys after.
-    await deps.runInWorkspaceTx(workspaceId, [insert]);
+    // 5. Per batch: insert outbox rows (one tx) → enqueue each {outbox_id}.
+    for (const batch of batches) {
+      const insert = buildBroadcastOutboxInsert(
+        workspaceId,
+        broadcastId,
+        bc.template_id,
+        payload,
+        batch,
+      );
+      // RETURNING is harmless inside the tx runner, but the runner doesn't return
+      // rows — so fetch the outbox ids for this batch by their dedupe keys after.
+      await deps.runInWorkspaceTx(workspaceId, [insert]);
 
-    const { rows: obRows } = await deps.reader.query<{ id: string }>(
-      `SELECT id FROM outbox
-       WHERE workspace_id = $1 AND dedupe_key = ANY($2::text[])`,
-      [workspaceId, batch.map((p) => `broadcast:${broadcastId}:${p}`)],
-    );
-    for (const ob of obRows) {
-      await deps.sqs.send(buildDispatchEnqueueMessage(ob.id, deps.dispatchQueueUrl));
+      const { rows: obRows } = await deps.reader.query<{ id: string }>(
+        `SELECT id FROM outbox
+         WHERE workspace_id = $1 AND dedupe_key = ANY($2::text[])`,
+        [workspaceId, batch.map((p) => `broadcast:${broadcastId}:${p}`)],
+      );
+      for (const ob of obRows) {
+        await deps.sqs.send(buildDispatchEnqueueMessage(ob.id, deps.dispatchQueueUrl));
+      }
     }
+
+    // 6. status→sent (stamps sent_at).
+    await deps.runInWorkspaceTx(workspaceId, [
+      buildBroadcastStatusUpdate(workspaceId, broadcastId, 'sending', 'sent'),
+    ]);
+
+    return { result: 'sent', recipientCount: profileIds.length, batchCount: batches.length };
+  } catch (err) {
+    // Revert the claim so the broadcast returns to its pre-send state (best effort;
+    // never mask the original error).
+    await deps
+      .runInWorkspaceTx(workspaceId, [
+        buildBroadcastStatusUpdate(workspaceId, broadcastId, 'sending', bc.status as 'draft' | 'scheduled'),
+      ])
+      .catch(() => {});
+    throw err;
   }
-
-  // 6. status→sent (stamps sent_at).
-  await deps.runInWorkspaceTx(workspaceId, [
-    buildBroadcastStatusUpdate(workspaceId, broadcastId, 'sending', 'sent'),
-  ]);
-
-  return { result: 'sent', recipientCount: profileIds.length, batchCount: batches.length };
 }

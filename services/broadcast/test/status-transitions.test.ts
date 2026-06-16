@@ -18,6 +18,11 @@ describe('isValidBroadcastTransition', () => {
     expect(isValidBroadcastTransition('scheduled', 'cancelled')).toBe(true);
   });
 
+  it('allows a failed send to roll back from sending (never stuck)', () => {
+    expect(isValidBroadcastTransition('sending', 'draft')).toBe(true);
+    expect(isValidBroadcastTransition('sending', 'scheduled')).toBe(true);
+  });
+
   it('rejects terminal and illegal transitions', () => {
     expect(isValidBroadcastTransition('sent', 'sending')).toBe(false);
     expect(isValidBroadcastTransition('sent', 'draft')).toBe(false);

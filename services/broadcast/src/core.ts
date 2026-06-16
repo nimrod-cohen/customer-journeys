@@ -72,11 +72,12 @@ export function chunk<T>(items: readonly T[], batchSize: number): T[][] {
   return out;
 }
 
-/** Legal broadcast state transitions (§6). */
+/** Legal broadcast state transitions (§6). `sending` may roll BACK to draft/
+ *  scheduled when a send fails after the claim (so it's never stuck 'sending'). */
 const TRANSITIONS: Readonly<Record<BroadcastStatus, readonly BroadcastStatus[]>> = {
   draft: ['scheduled', 'sending', 'cancelled'],
   scheduled: ['sending', 'cancelled'],
-  sending: ['sent'],
+  sending: ['sent', 'draft', 'scheduled'],
   sent: [],
   cancelled: [],
 };
