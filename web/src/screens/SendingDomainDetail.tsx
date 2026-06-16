@@ -224,6 +224,20 @@ function DomainEditor({ id }: { id: string }) {
 
   if (!domain) return <p class="text-sm text-stone-500">Loading…</p>;
 
+  // The one check action always re-looks-up DNS AND asks SES; the LABEL reflects
+  // what the user needs next: while the required (DKIM) records aren't all found
+  // in DNS yet, the job is to fix/recheck DNS; once they're all present, it's on
+  // SES to confirm; after that it's a re-verify.
+  const requiredRecords = records.filter((r) => r.required);
+  const allRequiredFound = requiredRecords.length > 0 && requiredRecords.every((r) => r.status === 'found');
+  const checkLabel = checking
+    ? 'Checking…'
+    : domain.verified
+      ? 'Re-check with SES'
+      : allRequiredFound
+        ? 'Verify with SES'
+        : 'Recheck DNS';
+
   return (
     <section data-testid="domain-detail">
       <BackLink />
@@ -304,7 +318,7 @@ function DomainEditor({ id }: { id: string }) {
           </p>
           <div class="mt-3 flex items-center gap-3">
             <Button data-testid="check-dns" variant="secondary" onClick={() => void check()} disabled={checking}>
-              {checking ? 'Checking…' : domain.verified ? 'Re-check with SES' : 'Check with SES'}
+              {checkLabel}
             </Button>
             {checkMsg ? <span class="text-sm text-stone-600">{checkMsg}</span> : null}
           </div>
