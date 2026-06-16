@@ -67,6 +67,27 @@ test('create a dynamic segment, save, and see its members + the list', async ({ 
   await expect(page.getByTestId('profile-segment-row').filter({ hasText: 'VIP members' })).toHaveCount(1);
 });
 
+test('a BARE attribute key (e.g. "tier") resolves to attributes.tier and matches', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+
+  await page.getByTestId('segment-name').fill('VIP (bare key)');
+  // Type the attribute's OWN name, no `attributes.` prefix — the builder resolves
+  // a bare key to attributes.<key> so this just works.
+  await page.getByTestId('rule-field').first().fill('tier');
+  await page.getByTestId('rule-operator').first().selectOption('=');
+  await page.getByTestId('rule-value').first().fill('vip');
+
+  await page.getByTestId('save-segment').click();
+  // Same two seeded VIPs as the explicit attributes.tier rule — no error.
+  await expect(page.getByTestId('segment-size')).toContainText('2');
+  await expect(page.getByTestId('member-preview-row')).toHaveCount(2);
+  await expect(page.getByTestId('segment-preview-error')).toHaveCount(0);
+});
+
 test('segment by the unsubscribed attribute and by an event (count refreshes on save)', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();

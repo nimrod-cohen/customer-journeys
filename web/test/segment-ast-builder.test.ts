@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildAst,
   parseValue,
+  normalizeFieldPath,
   rowsFromAst,
   buildAstFromGroup,
   groupFromAst,
@@ -22,6 +23,23 @@ describe('segment AST builder', () => {
     expect(parseValue('=', 'gold')).toBe('gold');
     expect(parseValue('in', 'a, b ,c')).toEqual(['a', 'b', 'c']);
     expect(parseValue('exists', '')).toBeUndefined();
+  });
+
+  it('normalizes a bare attribute key to attributes.<key> (so "is_admin" works)', () => {
+    // A bare key the user types becomes an attribute path…
+    expect(normalizeFieldPath('is_admin')).toBe('attributes.is_admin');
+    // …and the built condition + compiled SQL reflect it (compiles, doesn't throw).
+    const rows: RuleRow[] = [{ field: 'is_admin', operator: '=', value: '1' }];
+    expect(buildAst(rows, 'and')).toEqual({ field: 'attributes.is_admin', operator: '=', value: 1 });
+    expect(() => compileWhere(WS, buildAst(rows, 'and')!)).not.toThrow();
+  });
+
+  it('leaves known scalar fields and already-dotted paths untouched', () => {
+    expect(normalizeFieldPath('email_status')).toBe('email_status'); // scalar profile field
+    expect(normalizeFieldPath('total_events')).toBe('total_events'); // scalar feature field
+    expect(normalizeFieldPath('attributes.tier')).toBe('attributes.tier'); // explicit path
+    expect(normalizeFieldPath('customer.tier')).toBe('customer.tier'); // shorthand (server expands)
+    expect(normalizeFieldPath('')).toBe(''); // empty stays empty (row is dropped)
   });
 
   it('an empty row set builds null (match-all)', () => {

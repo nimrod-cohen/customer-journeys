@@ -128,12 +128,39 @@ export function parseValue(operator: BuilderOperator, raw: string): unknown {
   return raw;
 }
 
+/**
+ * Scalar profile/feature fields a rule can reference directly (mirrors the
+ * @cdp/segments whitelist). A BARE key NOT in this set — and not already a dotted
+ * path (attributes./customer./features.counters./payload.) — is taken as a
+ * profile ATTRIBUTE, so a user can type "is_admin" and mean attributes.is_admin
+ * (same intuition as the customer.<key> shorthand). The compiler still binds the
+ * key as a parameter and stays strict about everything else.
+ */
+const SCALAR_FIELDS = new Set<string>([
+  'email',
+  'email_status',
+  'external_id',
+  'created_at',
+  'total_events',
+  'monetary_total',
+  'last_event_at',
+  'last_email_open_at',
+]);
+
+/** Normalize a builder field input to a path the compiler accepts. */
+export function normalizeFieldPath(field: string): string {
+  const f = field.trim();
+  if (f === '' || f.includes('.')) return f; // already a path (attributes./customer./features.counters./payload.)
+  return SCALAR_FIELDS.has(f) ? f : `attributes.${f}`;
+}
+
 /** Build one condition node from a field/payload row. */
 export function rowToCondition(row: { field: string; operator: BuilderOperator; value: string }): ConditionNode {
+  const field = normalizeFieldPath(row.field);
   if (row.operator === 'exists') {
-    return { field: row.field, operator: 'exists' };
+    return { field, operator: 'exists' };
   }
-  return { field: row.field, operator: row.operator, value: parseValue(row.operator, row.value) };
+  return { field, operator: row.operator, value: parseValue(row.operator, row.value) };
 }
 
 /** Build one event node from an event row. */

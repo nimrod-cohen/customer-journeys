@@ -417,6 +417,9 @@ export function SegmentBuilder({ id }: { id?: string }) {
   // marks unsaved rule edits so we can flag the list as stale.
   const [memVersion, setMemVersion] = useState(0);
   const [dirty, setDirty] = useState(false);
+  // A compile/preview error from the server (e.g. an unrecognized rule field) —
+  // surfaced in the members panel instead of silently showing 0 members.
+  const [previewError, setPreviewError] = useState('');
   const PAGE = 50;
   const [name, setName] = useState('');
   // A segment is EITHER dynamic (rule-based) OR manual (uploaded list) — never
@@ -453,40 +456,50 @@ export function SegmentBuilder({ id }: { id?: string }) {
   // Load one page (50) of members + the total count. Dynamic → live rule preview;
   // manual → the segment's CURRENT materialized members (once it exists).
   const loadMembers = async (off: number) => {
-    if (segmentKind === 'manual') {
-      if (!savedId) {
+    setPreviewError('');
+    try {
+      if (segmentKind === 'manual') {
+        if (!savedId) {
+          setSize(0);
+          setMembers([]);
+          setOffset(0);
+          setDirty(false);
+          return;
+        }
+        const res = await api.get<{ size: number; members: Array<{ id: string; email: string | null }> }>(
+          `/segments/${savedId}/members?offset=${off}`,
+        );
+        setSize(res.size);
+        setMembers(res.members);
+        setOffset(off);
+        setDirty(false);
+        return;
+      }
+      const ast = buildAstFromGroup({ combinator, rows, groups });
+      // No rules → an inactive DRAFT. Don't preview (a null AST would match everyone).
+      if (ast === null) {
         setSize(0);
         setMembers([]);
         setOffset(0);
         setDirty(false);
         return;
       }
-      const res = await api.get<{ size: number; members: Array<{ id: string; email: string | null }> }>(
-        `/segments/${savedId}/members?offset=${off}`,
+      const res = await api.post<{ size: number; members: Array<{ id: string; email: string | null }> }>(
+        '/segments/preview',
+        { body: { definition: ast, offset: off } },
       );
       setSize(res.size);
       setMembers(res.members);
       setOffset(off);
       setDirty(false);
-      return;
-    }
-    const ast = buildAstFromGroup({ combinator, rows, groups });
-    // No rules → an inactive DRAFT. Don't preview (a null AST would match everyone).
-    if (ast === null) {
-      setSize(0);
+    } catch (e) {
+      // A compile error (e.g. an unrecognized field) — surface it rather than
+      // silently showing an empty list.
+      setPreviewError((e as { error?: string })?.error ?? 'Could not evaluate this segment’s rules.');
+      setSize(null);
       setMembers([]);
-      setOffset(0);
       setDirty(false);
-      return;
     }
-    const res = await api.post<{ size: number; members: Array<{ id: string; email: string | null }> }>(
-      '/segments/preview',
-      { body: { definition: ast, offset: off } },
-    );
-    setSize(res.size);
-    setMembers(res.members);
-    setOffset(off);
-    setDirty(false);
   };
 
   // Refresh the members panel ONLY on entry (after hydrate) and after a save —
@@ -764,7 +777,14 @@ export function SegmentBuilder({ id }: { id?: string }) {
                       : `${size} matching`}
               </span>
             </div>
-            {isDraft ? (
+            {previewError ? (
+              <p
+                data-testid="segment-preview-error"
+                class="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-inset ring-rose-200"
+              >
+                {previewError}
+              </p>
+            ) : isDraft ? (
               <p data-testid="segment-draft-note" class="mt-2 text-sm text-amber-600">
                 No rules yet — this segment is an inactive <b>draft</b> and matches no one until you add a rule.
               </p>
