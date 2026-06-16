@@ -8,7 +8,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Pool } from 'pg';
 import { dispatch, type ApiRequest, type DispatchEnv } from './dispatch.js';
-import { devLogin, switchWorkspace } from './session.js';
+import { devLogin, registerOwner, switchWorkspace } from './session.js';
 import { makePgLookups } from './lookups.js';
 import { makeLocalDeps, type LocalApiDeps } from './deps.js';
 import type { AuthorizerLookups } from './auth.js';
@@ -46,8 +46,14 @@ export function createApp(opts: CreateAppOptions): Hono {
   // --- pre-auth / session routes (outside the capability route table) ---
   app.post('/auth/dev-login', async (c) => {
     const body = await safeJson(c);
-    const r = await devLogin(lookups, body);
-    return c.json(r.body as object, r.status as 200 | 400 | 403);
+    const r = await devLogin(lookups, env.pool, body);
+    return c.json(r.body as object, r.status as 200 | 400 | 401 | 403);
+  });
+
+  app.post('/auth/register', async (c) => {
+    const body = await safeJson(c);
+    const r = await registerOwner(env.pool, body);
+    return c.json(r.body as object, r.status as 200 | 201 | 400 | 409);
   });
 
   app.post('/workspace/switch', async (c) => {

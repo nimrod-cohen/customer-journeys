@@ -44,3 +44,22 @@ test('login then switch workspace re-scopes the app with no cross-bleed', async 
   await expect(a2Item).toBeVisible();
   await expect(aItem).toHaveCount(0);
 });
+
+test('the login screen offers company-owner registration (toggle shows the fields)', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('login-form').waitFor();
+
+  // Sign-in mode: dev credentials box is shown, no registration fields.
+  await expect(page.getByTestId('register-company')).toHaveCount(0);
+
+  // Switch to "Create a company account" → company + name fields appear.
+  await page.getByTestId('show-register').click();
+  await expect(page.getByTestId('register-company')).toBeVisible();
+  await expect(page.getByTestId('register-name')).toBeVisible();
+  await expect(page.getByTestId('login-submit')).toHaveText('Create account');
+
+  // Back to sign-in.
+  await page.getByTestId('show-signin').click();
+  await expect(page.getByTestId('register-company')).toHaveCount(0);
+  await expect(page.getByTestId('login-submit')).toHaveText('Sign in');
+});

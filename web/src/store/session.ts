@@ -144,6 +144,28 @@ export async function login(email: string, password: string): Promise<void> {
   await refreshMe();
 }
 
+/** Register a new company + owner, then log in. */
+export async function register(input: {
+  name: string;
+  email: string;
+  password: string;
+  companyName: string;
+}): Promise<void> {
+  const res = await api.post<LoginResponse>('/auth/register', {
+    body: { name: input.name, email: input.email, password: input.password, company_name: input.companyName },
+    allowWorkspaceId: true,
+  });
+  sessionStore.set((s) => ({
+    ...s,
+    token: res.token,
+    sub: res.sub,
+    workspaceId: res.workspace_id,
+    isPlatformAdmin: res.is_platform_admin,
+    memberships: res.memberships,
+  }));
+  await refreshMe();
+}
+
 /** Reload the resolved identity (role + active workspace) for the current token. */
 export async function refreshMe(): Promise<void> {
   const me = await api.get<MeResponse>('/me');

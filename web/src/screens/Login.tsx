@@ -3,22 +3,39 @@
 // workspace_id + role; the app re-renders into the AppShell.
 import { useState } from 'preact/hooks';
 import { DEV_USERS } from '@cdp/shared';
-import { login } from '../store/session.js';
+import { login, register } from '../store/session.js';
 import { Button, Input } from '../ui/kit.js';
 
 export function Login() {
+  const [mode, setMode] = useState<'signin' | 'register'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isRegister = mode === 'register';
 
   const onSubmit = async (e: Event) => {
     e.preventDefault();
     setError('');
+    setBusy(true);
     try {
-      await login(email.trim(), password);
+      if (isRegister) {
+        await register({ name: name.trim(), email: email.trim(), password, companyName: companyName.trim() });
+      } else {
+        await login(email.trim(), password);
+      }
     } catch (err) {
-      setError((err as { error?: string })?.error ?? 'login failed');
+      setError((err as { error?: string })?.error ?? (isRegister ? 'registration failed' : 'login failed'));
+    } finally {
+      setBusy(false);
     }
+  };
+
+  const switchMode = (next: 'signin' | 'register') => {
+    setMode(next);
+    setError('');
   };
 
   return (
@@ -61,10 +78,45 @@ export function Login() {
       {/* Form panel */}
       <div class="flex items-center justify-center px-6 py-12">
         <div class="w-full max-w-sm animate-fade-up">
-          <h2 class="font-display text-2xl font-bold text-ink-950">Sign in</h2>
-          <p class="mt-1 text-sm text-stone-500">Enter your email and password to continue.</p>
+          <h2 class="font-display text-2xl font-bold text-ink-950">
+            {isRegister ? 'Create a company account' : 'Sign in'}
+          </h2>
+          <p class="mt-1 text-sm text-stone-500">
+            {isRegister
+              ? 'Set up your company and you’ll be its owner.'
+              : 'Enter your email and password to continue.'}
+          </p>
 
           <form onSubmit={onSubmit} data-testid="login-form" class="mt-8 space-y-4">
+            {isRegister ? (
+              <div>
+                <label class="label" for="reg-company">
+                  Company name
+                </label>
+                <Input
+                  id="reg-company"
+                  data-testid="register-company"
+                  value={companyName}
+                  onInput={(e: Event) => setCompanyName((e.target as HTMLInputElement).value)}
+                  placeholder="Acme Inc."
+                />
+              </div>
+            ) : null}
+            {isRegister ? (
+              <div>
+                <label class="label" for="reg-name">
+                  Your name
+                </label>
+                <Input
+                  id="reg-name"
+                  data-testid="register-name"
+                  autocomplete="name"
+                  value={name}
+                  onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
+                  placeholder="Jane Doe"
+                />
+              </div>
+            ) : null}
             <div>
               <label class="label" for="login-email">
                 Email
@@ -87,16 +139,34 @@ export function Login() {
                 id="login-password"
                 data-testid="login-password"
                 type="password"
-                autocomplete="current-password"
+                autocomplete={isRegister ? 'new-password' : 'current-password'}
                 value={password}
                 onInput={(e: Event) => setPassword((e.target as HTMLInputElement).value)}
-                placeholder="••••••••"
+                placeholder={isRegister ? 'at least 8 characters' : '••••••••'}
               />
             </div>
-            <Button data-testid="login-submit" type="submit" class="w-full">
-              Sign in
+            <Button data-testid="login-submit" type="submit" class="w-full" disabled={busy}>
+              {isRegister ? 'Create account' : 'Sign in'}
             </Button>
           </form>
+
+          <p class="mt-4 text-sm text-stone-500">
+            {isRegister ? (
+              <>
+                Already have an account?{' '}
+                <button type="button" data-testid="show-signin" class="font-semibold text-brand-700 hover:underline" onClick={() => switchMode('signin')}>
+                  Sign in
+                </button>
+              </>
+            ) : (
+              <>
+                New here?{' '}
+                <button type="button" data-testid="show-register" class="font-semibold text-brand-700 hover:underline" onClick={() => switchMode('register')}>
+                  Create a company account
+                </button>
+              </>
+            )}
+          </p>
 
           {error ? (
             <p
@@ -108,6 +178,7 @@ export function Login() {
           ) : null}
 
           {/* DEV-ONLY: seeded credentials (replaced by Supabase Auth in prod). */}
+          {!isRegister ? (
           <div class="mt-8 rounded-lg border border-stone-200 bg-white/60 p-3">
             <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
               Dev credentials
@@ -132,6 +203,7 @@ export function Login() {
             </ul>
             <p class="mt-2 text-[11px] text-stone-400">Click an email to autofill. Password shown on fill.</p>
           </div>
+          ) : null}
         </div>
       </div>
     </div>
