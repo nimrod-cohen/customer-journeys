@@ -20,6 +20,10 @@ export {
   validateCampaignDefinition,
   resolveStartNode,
   findNode,
+  collectSendNodeEnvelopeGaps,
+  type ValueSpec,
+  type SendNodeEnvelope,
+  type SendNodeEnvelopeGap,
 } from './dsl.js';
 
 export {

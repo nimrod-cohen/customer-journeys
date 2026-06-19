@@ -8,6 +8,10 @@
 // types. condition `ast` is the §8 AstNode reused verbatim (branch conditions
 // compile through @cdp/segments).
 import { validateAst, type AstNode } from '@cdp/segments';
+import { isExpressionSpec, isLiteralSpec, type ValueSpec } from '@cdp/shared';
+
+// Re-export the value spec so consumers importing from the runner's DSL get it.
+export type { ValueSpec } from '@cdp/shared';
 
 /** A trigger node — how a profile enters the campaign (§9B enrollment).
  *  Three kinds (re-enrollment policy is 'once' for all of them — see core.ts):
@@ -100,8 +104,15 @@ export interface ActionNode {
   readonly template_id?: string;
   /** For kind='set_attribute': the profile attribute key to set. */
   readonly key?: string;
-  /** For kind='set_attribute': the value to set. */
-  readonly value?: unknown;
+  /**
+   * For kind='set_attribute': the value to set. EITHER an explicit value spec
+   * ({@link ValueSpec}: a `literal` written verbatim, or an `expression` of
+   * {{customer.*}}/{{event.*}} tokens resolved at runner execution against the
+   * profile + the trigger event persisted on enrollment.state) OR — for
+   * back-compat — a LEGACY BARE SCALAR (the original static value), treated as an
+   * implicit literal. Resolution is read-only string substitution (never SQL).
+   */
+  readonly value?: ValueSpec | unknown;
   /** The node id to advance to after the action. */
   readonly next: string;
 }
@@ -307,8 +318,11 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
       if (kind === 'send' && (typeof act.template_id !== 'string' || !act.template_id)) {
         throw new Error(`validateCampaignDefinition: send action "${id}" needs a template_id`);
       }
-      if (kind === 'set_attribute' && (typeof act.key !== 'string' || !act.key)) {
-        throw new Error(`validateCampaignDefinition: set_attribute action "${id}" needs a key`);
+      if (kind === 'set_attribute') {
+        if (typeof act.key !== 'string' || !act.key) {
+          throw new Error(`validateCampaignDefinition: set_attribute action "${id}" needs a key`);
+        }
+        validateSetAttributeValue(id, act.value);
       }
       requireEdge(act.next, 'next');
       return;
@@ -320,6 +334,46 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
     case 'exit':
       return;
   }
+}
+
+/**
+ * Validate a set_attribute action's VALUE spec (pure, §9B update-profile). The
+ * value is OPTIONAL (absent → an implicit null literal). It may be:
+ *   - a LEGACY BARE SCALAR (string/number/boolean/null) — the original static value,
+ *     accepted as an implicit literal (back-compat);
+ *   - an explicit { kind:'literal', value } — the `value` field MUST be present
+ *     (distinguishes from a bare scalar that merely happens to be an object);
+ *   - an explicit { kind:'expression', expression } — `expression` MUST be a
+ *     non-empty string.
+ * Any other spec-object shape (an unknown `kind`, or an object without a `kind`)
+ * is rejected. Resolution itself is read-only string substitution at runner time
+ * (never SQL); this only checks the STRUCTURE.
+ */
+function validateSetAttributeValue(id: string, value: unknown): void {
+  if (value === undefined) return; // absent → implicit null literal
+  // An explicit spec object carries a `kind`.
+  if (typeof value === 'object' && value !== null && !Array.isArray(value) && 'kind' in value) {
+    if (isExpressionSpec(value)) {
+      if (typeof value.expression !== 'string' || value.expression.length === 0) {
+        throw new Error(
+          `validateCampaignDefinition: set_attribute "${id}" expression value needs a non-empty expression`,
+        );
+      }
+      return;
+    }
+    if (isLiteralSpec(value)) {
+      if (!('value' in value)) {
+        throw new Error(
+          `validateCampaignDefinition: set_attribute "${id}" literal value spec needs a value field`,
+        );
+      }
+      return;
+    }
+    throw new Error(
+      `validateCampaignDefinition: set_attribute "${id}" value has an unknown spec kind "${String((value as { kind?: unknown }).kind)}"`,
+    );
+  }
+  // A bare scalar (or an array/object WITHOUT a kind) — accepted as a legacy literal.
 }
 
 /** Validate a webhook action's fields (model-layer; runner exec is phase 2). */
@@ -464,6 +518,62 @@ function findOrphans(start: string, nodes: Record<string, Node>): string[] {
     for (const t of edgesOf(node)) queue.push(t);
   }
   return Object.keys(nodes).filter((id) => !reachable.has(id));
+}
+
+/** The envelope columns of a send node's email copy (the publish-gate input). */
+export interface SendNodeEnvelope {
+  readonly sender_id: string | null;
+  readonly to_address: string | null;
+  readonly subject: string | null;
+}
+
+/** A per-send-node publish gap: which of sender/to/subject is missing (first only). */
+export interface SendNodeEnvelopeGap {
+  readonly nodeId: string;
+  /** The single highest-priority missing field (sendBroadcast order). */
+  readonly missing: 'sender' | 'to' | 'subject';
+}
+
+/**
+ * Walk a campaign definition's SEND nodes and yield, per node, its FIRST missing
+ * envelope field in sendBroadcast's ORDERED priority (sender_id → to_address →
+ * subject). `envelopes` maps a send node's template_id (its email copy id) to the
+ * copy's envelope columns; a send node with no copy (or a missing entry) reports
+ * 'sender' (nothing is configured yet). Pure — the publish gate runs the DB read
+ * and feeds this; the gate uses the FIRST gap (front of the list) for its message.
+ * Nodes are visited in the definition's reachable order (BFS from startNode) so the
+ * "which node" reported is stable.
+ */
+export function collectSendNodeEnvelopeGaps(
+  def: CampaignDefinition,
+  envelopes: Readonly<Record<string, SendNodeEnvelope | undefined>>,
+): SendNodeEnvelopeGap[] {
+  const gaps: SendNodeEnvelopeGap[] = [];
+  const seen = new Set<string>();
+  const queue: string[] = [def.startNode];
+  while (queue.length > 0) {
+    const id = queue.shift() as string;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const node = def.nodes[id];
+    if (!node) continue;
+    if (node.type === 'action' && (node as ActionNode).kind === 'send') {
+      const act = node as ActionNode;
+      const env = act.template_id ? envelopes[act.template_id] : undefined;
+      const missing = firstEnvelopeGap(env);
+      if (missing) gaps.push({ nodeId: id, missing });
+    }
+    for (const t of edgesOf(node)) queue.push(t);
+  }
+  return gaps;
+}
+
+/** The first missing envelope field, in sendBroadcast order (or null when complete). */
+function firstEnvelopeGap(env: SendNodeEnvelope | undefined): SendNodeEnvelopeGap['missing'] | null {
+  if (!env || !env.sender_id) return 'sender';
+  if (!env.to_address || !env.to_address.trim()) return 'to';
+  if (!env.subject || !env.subject.trim()) return 'subject';
+  return null;
 }
 
 /** Resolve the start node from a (validated) definition. THROWS if missing. */

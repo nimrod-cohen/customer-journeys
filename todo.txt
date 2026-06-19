@@ -34,7 +34,7 @@
   (NOT started — the current builder is one lean trigger->wait->send->exit graph with a single send step.
    This is a large, design-heavy effort: per-node editing UI + new node types (wait-until, hour-of-day
    window, webhook action) + DSL/runner support + validation. Tackle as its own focused task.)
-
+* put today's date in as the default in the email schedule date, and today in the from to dates filters
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).

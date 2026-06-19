@@ -4,6 +4,11 @@
 // The `customer.*` personalization / segment-field namespace + shorthand (§8/§11).
 export * from './customer.js';
 
+// The `event.*` personalization namespace (the trigger-event payload twin of
+// customer.*, §9B) + the set_attribute value spec + resolver (literal | expression).
+export * from './event.js';
+export * from './expression.js';
+
 // DST-correct zoned↔UTC time helpers + IANA validator (broadcast scheduler +
 // campaign time math share ONE implementation, §9B).
 export * from './timezone.js';

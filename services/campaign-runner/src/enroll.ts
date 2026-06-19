@@ -19,6 +19,7 @@ import {
   parseEventEnrollmentTrigger,
   evaluateEventPayloadFilter,
   buildEnrollmentInsert,
+  buildEnrollmentInsertWithState,
   parseKeepWhileInCancellations,
   buildEnrollmentCancel,
   type SegmentChangeLogRow,
@@ -187,8 +188,14 @@ export async function enrollFromEvent(deps: EnrollDeps, row: EventRow): Promise<
   }
 
   const intents = parseEventEnrollmentTrigger(row, triggerRows);
+  // Persist the trigger event onto enrollment.state.event (so a later set_attribute
+  // step can read {{event.*}}). Each intent carries the event (event-trigger path).
   const statements: SqlStatement[] = intents.map((i) =>
-    buildEnrollmentInsert(i.workspaceId, i.campaignId, i.profileId, i.startNode),
+    i.event
+      ? buildEnrollmentInsertWithState(i.workspaceId, i.campaignId, i.profileId, i.startNode, {
+          event: i.event,
+        })
+      : buildEnrollmentInsert(i.workspaceId, i.campaignId, i.profileId, i.startNode),
   );
   if (statements.length > 0) await deps.runInWorkspaceTx(row.workspace_id, statements);
   return { enrolled: intents.length, intents };

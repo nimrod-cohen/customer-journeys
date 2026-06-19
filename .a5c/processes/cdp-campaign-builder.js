@@ -95,18 +95,21 @@ const PHASES = [
     ],
   },
   {
-    id: 'phase4-send-instance', frontend: false,
-    title: 'Send node: per-node email instance (clone + envelope + gating)',
-    refs: 'CLAUDE.md (broadcast email-INSTANCE/clone model, sendBroadcast gating, dispatcher campaign path) + §9B action(send)',
+    id: 'phase4-action-nodes', frontend: false,
+    title: 'Action nodes: send-email instance + update-profile (event-sourced)',
+    refs: 'CLAUDE.md (broadcast email-INSTANCE/clone model, sendBroadcast gating, dispatcher campaign path, customer.* merge) + §9B action(send|set_attribute)',
     scope: [
-      'Give each send node its OWN editable email instance, reusing the broadcast flow: attaching a template CLONES it (kind=copy, source_template_id) into the node\'s working copy; the envelope (real named From sender + To token + Subject) lives on that copy and is edited in the email editor (autosaved). The send node references the copy template_id.',
+      'Give each SEND node its OWN editable email instance, reusing the broadcast flow: attaching a template CLONES it (kind=copy, source_template_id) into the node\'s working copy; the envelope (real named From sender + To token + Subject) lives on that copy and is edited in the email editor (autosaved). The send node references the copy template_id.',
       'PUBLISH-time gating: a campaign cannot be activated if any send node lacks a sendable email (From sender + To + Subject all set) — mirror sendBroadcast\'s ordered 409s + the verified-domain gate. Surface which node/what is missing.',
       'Verify the Dispatcher campaign path end-to-end: campaign outbox row → Dispatcher resolves sender_id → renders subject/To/body merge tags (the v0.27.2 subject fix) → messages_log with campaign_id. No change to the send pipeline beyond what the instance model needs.',
+      'UPDATE-PROFILE action (the set_attribute action kind already exists + the runner already applies a STATIC value via buildSetAttribute): extend it so the value can be a LITERAL **or** an EXPRESSION sourced from the trigger event or the profile — e.g. customer.* and a new event.* namespace ({{event.<payload path>}}). To enable event.*, PERSIST the trigger event payload onto campaign_enrollments.state at enrollment time (event-trigger enrollment from phase 3) so a later update-profile step can read it; resolve the expression at execution against the profile + enrollment.state.event (reuse the @cdp/shared customer.* resolver; add an analogous event.* resolver). A missing/again-undefined path resolves safely (no crash; documented — skip or empty).',
+      'Extend validateCampaignDefinition for the set_attribute value spec (literal vs expression) and keep it pure + unit-tested. The runner write stays workspace-scoped + idempotent (re-applying the same set_attribute on a retried tick is naturally idempotent for a literal; for an event-sourced value it resolves from the persisted enrollment.state, so a retry yields the same write).',
     ],
     criteria: [
       'A send node clones its template into an independently-editable copy (kind=copy); editing the copy does not touch the library original; the envelope persists on the copy. Cross-workspace template/sender ids are refused (inv.2).',
       'Activating a campaign with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.',
       'A campaign send flows through outbox → Dispatcher → messages_log(campaign_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.',
+      'An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value (e.g. attributes.last_purchase_amount = {{event.amount}} taken from the trigger event persisted on enrollment.state); the write is workspace-scoped + idempotent on retry; an undefined path resolves safely. Verified against REAL Postgres with unit tests for the value resolver.',
     ],
   },
   {
@@ -116,7 +119,7 @@ const PHASES = [
     scope: [
       'Replace the placeholder CampaignBuilder.tsx with a constrained DOWNWARD CANVAS that RENDERS a CampaignDefinition: auto-layout (each node below its parent; condition/multi-way branches fan to the SIDES and re-pack to avoid overlap; positions COMPUTED, not stored), rounded ORTHOGONAL connectors (no diagonals, no up/back arrows), pan/scroll. A node shows its type + summary; an insertion control (+) on each edge inserts a step; nodes are deletable (re-linking the graph so it stays a valid down-only tree with no orphans).',
       'Maintain the no-loop / no-orphan / single-trigger invariants in the editor (you can never create a back-edge or an unconnected node); build/parse between the canvas model and the DSL {startNode, nodes}; save via POST/PUT /campaigns (definition) — reject an invalid graph (validateCampaignDefinition) with a clear message.',
-      'Node-type palette for inserting: wait, wait-until, hour-of-day window, if/branch, send-email, webhook, exit (editors come in phase 6 — here, inserting creates a node with sensible defaults / a stub config). Keep it on the workspace design system; stable data-testid on every interactive element.',
+      'Node-type palette for inserting: wait, wait-until, hour-of-day window, if/branch, send-email, update-profile (set_attribute), webhook, exit (editors come in phase 6 — here, inserting creates a node with sensible defaults / a stub config). Keep it on the workspace design system; stable data-testid on every interactive element.',
     ],
     criteria: [
       'The builder renders an existing definition as a downward tree with branches fanning sideways + rounded orthogonal connectors; no diagonal/upward lines; layout is auto-computed (no manual drag). Verified in a REAL browser (Playwright).',
@@ -129,7 +132,7 @@ const PHASES = [
     title: 'Builder: per-node editors + publish validation',
     refs: 'CLAUDE.md (segment rule builder for if, broadcast email-instance flow for send, kit Drawer/Field) + the trigger design',
     scope: [
-      'Inline/drawer editors for every node: TRIGGER (segment_entry → segment picker; event → event-type + optional filter; manual), WAIT (duration), WAIT-UNTIL (date/time in workspace tz), HOUR-OF-DAY WINDOW (hour range + days), IF (REUSE the segment rule builder → AstNode), SEND (the email-instance picker + "Design email" → editor, reusing the broadcast clone/return flow + envelope), WEBHOOK (url/method/headers/body/timeout/retries; secret header write-only).',
+      'Inline/drawer editors for every node: TRIGGER (segment_entry → segment picker; event → event-type + optional filter; manual), WAIT (duration), WAIT-UNTIL (date/time in workspace tz), HOUR-OF-DAY WINDOW (hour range + days), IF (REUSE the segment rule builder → AstNode), SEND (the email-instance picker + "Design email" → editor, reusing the broadcast clone/return flow + envelope), UPDATE-PROFILE (attribute key picker + a value that is either a LITERAL or an expression — customer.* / event.* token, with a hint that event.* pulls from the trigger event), WEBHOOK (url/method/headers/body/timeout/retries; secret header write-only).',
       'PUBLISH flow: a Draft → Active transition that runs validateCampaignDefinition + the send-node envelope gating + trigger validity; surface inline what is missing and BLOCK publish until valid (buttons spinner+lock; no native dialogs).',
       'Wire the editors to save into the definition (autosave or explicit save consistent with the broadcast wizard); preserve the editor return-context for the send-node email (← Back to campaign).',
     ],
@@ -145,7 +148,7 @@ const PHASES = [
     refs: '§9B + CLAUDE.md (broadcast list/lifecycle patterns, activity log, dashboards)',
     scope: [
       'Campaign LIST + lifecycle: draft / active / paused (and the existing completed/exited/failed enrollment states); publish (validate→active), pause/resume, archive. Show per-campaign enrollment counts (active / completed / exited / failed) and optionally per-node counts.',
-      'A full END-TO-END journey acceptance test against the local stack: define a campaign in the builder (trigger → wait → hour-window → if → send + webhook → exit), enroll a profile (each trigger kind), advance via the runner (injected clock), and assert it sends through the Dispatcher (messages_log) + fires the (mocked) webhook + completes — workspace-scoped, idempotent.',
+      'A full END-TO-END journey acceptance test against the local stack: define a campaign in the builder (trigger → wait → hour-window → if → update-profile → send + webhook → exit), enroll a profile (each trigger kind — INCLUDING POSTing to the live local-api /profiles/:id/events path to assert event-trigger enrollment, closing the phase-3 coverage gap), advance via the runner (injected clock), and assert the update-profile step wrote an event-sourced attribute, it sends through the Dispatcher (messages_log) + fires the (mocked) webhook + completes — workspace-scoped, idempotent.',
       'Docs + hygiene: update CLAUDE.md (the campaign builder + new nodes + tz + triggers), bump the root version, ensure migrations applied to cdp + cdp_e2e.',
     ],
     criteria: [

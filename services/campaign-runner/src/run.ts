@@ -19,7 +19,7 @@
 // A legacy reader/runInWorkspaceTx path is retained for the in-memory unit tests
 // (deps without `withTx`); the real concurrency guarantee comes from `withTx`.
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
-import { isValidTimeZone, type CustomerProfile } from '@cdp/shared';
+import { isValidTimeZone, resolveValueSpec, type CustomerProfile } from '@cdp/shared';
 import { executeWebhook, type WebhookHttpClient } from '@cdp/runner-webhook';
 import {
   processNode,
@@ -128,6 +128,18 @@ interface EnrollmentRow {
   readonly status: string;
   readonly next_run_at: Date | string | null;
   readonly updated_at: Date | string;
+  /** The persisted enrollment state jsonb — carries the trigger event (event.*). */
+  readonly state?: { event?: { payload?: Record<string, unknown> } } | null;
+}
+
+/**
+ * The recipient profile + the trigger event payload an in-tick set_attribute
+ * resolves its value expression against (customer.* / event.*). Loaded once per
+ * tick (the profile post-lock; the event from the immutable enrollment.state).
+ */
+interface ResolveContext {
+  readonly profile: CustomerProfile;
+  readonly event?: unknown;
 }
 
 /**
@@ -184,6 +196,7 @@ async function chainTick(
   guardUpdatedAt: Date | string,
   now: Date,
   tz: string,
+  resolveCtx: ResolveContext,
 ): Promise<TickOutcome> {
   let state: EnrollmentState = {
     id: row.id,
@@ -250,7 +263,15 @@ async function chainTick(
         // with the authoritative node id (the per-(campaign,profile,node) dedupe key).
         webhooks.push({ ...eff, nodeId: currentNodeId });
       } else {
-        writes.push(buildSetAttribute(workspaceId, row.profile_id, eff.key, eff.value));
+        // Resolve the value spec (literal | expression | legacy bare scalar) against
+        // the recipient profile + the IMMUTABLE persisted trigger event. Read-only
+        // string substitution (never SQL — invariant 6 untouched); a retry re-resolves
+        // identically (the source never changes → idempotent jsonb_set).
+        const resolved = resolveValueSpec(eff.value, {
+          profile: resolveCtx.profile,
+          ...(resolveCtx.event !== undefined ? { event: resolveCtx.event } : {}),
+        });
+        writes.push(buildSetAttribute(workspaceId, row.profile_id, eff.key, resolved));
       }
     }
 
@@ -343,7 +364,7 @@ async function runEnrollmentInTx(
     //    until we commit, then sees the advanced status and skips below.
     const { rows } = await tx.query<EnrollmentRow>(
       `SELECT id, workspace_id, campaign_id, profile_id, current_node, status,
-              next_run_at, updated_at::text AS updated_at
+              next_run_at, updated_at::text AS updated_at, state
        FROM campaign_enrollments WHERE id = $1 FOR UPDATE`,
       [enrollmentId],
     );
@@ -387,7 +408,10 @@ async function runEnrollmentInTx(
     //    row lock the advance is unconditional in practice; we keep the guard for
     //    defense in depth (it always matches since we hold the lock).
     const guardUpdatedAt = row.updated_at;
-    const outcome = await chainTick(tx, workspaceId, definition, row, guardUpdatedAt, now, tz);
+    // Load the recipient profile (for customer.* in a set_attribute expression) +
+    // the trigger event from the locked, immutable enrollment.state (for event.*).
+    const resolveCtx = await loadResolveContext(tx, workspaceId, row);
+    const outcome = await chainTick(tx, workspaceId, definition, row, guardUpdatedAt, now, tz, resolveCtx);
 
     // 4. Apply all writes (outbox/set_attribute) + the boundary advance.
     const writes = advanceFor(workspaceId, enrollmentId, guardUpdatedAt, outcome);
@@ -469,7 +493,7 @@ async function runEnrollmentLegacy(
   // 1. Load the enrollment row. workspace_id comes FROM the row.
   const { rows } = await deps.reader.query<EnrollmentRow>(
     `SELECT id, workspace_id, campaign_id, profile_id, current_node, status,
-            next_run_at, updated_at::text AS updated_at
+            next_run_at, updated_at::text AS updated_at, state
      FROM campaign_enrollments WHERE id = $1`,
     [enrollmentId],
   );
@@ -506,7 +530,8 @@ async function runEnrollmentLegacy(
   // 4. Chain through nodes in ONE tick up to a wait/exit boundary (tz-aware).
   const now = deps.now();
   const tz = await loadWorkspaceTz(deps.reader, workspaceId);
-  const outcome = await chainTick(deps.reader, workspaceId, definition, row, guardUpdatedAt, now, tz);
+  const resolveCtx = await loadResolveContext(deps.reader, workspaceId, row);
+  const outcome = await chainTick(deps.reader, workspaceId, definition, row, guardUpdatedAt, now, tz, resolveCtx);
   const writes = advanceFor(workspaceId, enrollmentId, guardUpdatedAt, outcome);
 
   await deps.runInWorkspaceTx(workspaceId, writes);
@@ -535,6 +560,30 @@ async function loadWorkspaceTz(read: Reader, workspaceId: string): Promise<strin
   );
   const tz = rows[0]?.tz;
   return tz && isValidTimeZone(tz) ? tz : DEFAULT_WORKSPACE_TZ;
+}
+
+/**
+ * Load the value-resolution context for a tick: the recipient profile (for a
+ * set_attribute expression's customer.* tokens) + the trigger event payload from
+ * the enrollment's IMMUTABLE persisted state (for event.* tokens). workspace_id is
+ * the enrollment's (bound at $1). The event comes from state.event.payload (written
+ * at event enrollment); absent for segment/manual enrollment → an event.* token
+ * resolves safe-empty. A retry re-reads the SAME state, so the resolution is stable
+ * (idempotent jsonb_set). A missing profile falls back to a minimal {id} shape.
+ */
+async function loadResolveContext(
+  read: Reader,
+  workspaceId: string,
+  row: EnrollmentRow,
+): Promise<ResolveContext> {
+  const { rows } = await read.query<CustomerProfile>(
+    `SELECT id, email, external_id, email_status, created_at, attributes
+     FROM profiles WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, row.profile_id],
+  );
+  const profile: CustomerProfile = rows[0] ?? { id: row.profile_id };
+  const event = row.state?.event?.payload;
+  return event !== undefined ? { profile, event } : { profile };
 }
 
 /**

@@ -63,7 +63,9 @@ import {
   enrollFromSegmentChange,
   enrollProfileManually,
   enrollSegmentSnapshot,
+  collectSendNodeEnvelopeGaps,
   type EnrollDeps,
+  type CampaignDefinition,
 } from '@cdp/service-campaign-runner';
 import { runBroadcast, buildDueScheduledBroadcastsQuery } from '@cdp/service-broadcast';
 import {
@@ -1898,6 +1900,129 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
 };
 
 /**
+ * POST /campaigns/:id/send-nodes/:nodeId/attach-template — attach an email to a
+ * campaign SEND node by CLONING a library template into the node's own working copy
+ * (kind='copy', source_template_id), exactly like the broadcast instance flow. The
+ * clone copies the design + envelope columns (subject/sender_id/to_address/
+ * from_selected) so a configured library template yields a sendable copy, and the
+ * send node's `template_id` is repointed at the copy. Everything is scoped to the
+ * TOKEN's workspace (ctx.workspaceId, NEVER the body — inv.2): the campaign, the
+ * node, and the SOURCE template must each resolve inside the workspace or it's a
+ * 404 — a foreign template can never be cloned into this workspace.
+ */
+export const attachCampaignSendTemplate: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const nodeId = req.params.nodeId!;
+  const b = asObject(req.body);
+  const templateId = typeof b.template_id === 'string' ? b.template_id.trim() : '';
+  if (!templateId) return ok({ error: 'template_id required' }, 400);
+
+  // The campaign must belong to the token's workspace (else 404 — inv.2).
+  const campRows = await pool.query<{ definition: CampaignDefinition }>(
+    'SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2',
+    [ctx.workspaceId, id],
+  );
+  if (!campRows.rows[0]) return ok({ error: 'not found' }, 404);
+  const def = campRows.rows[0].definition;
+  const node = def.nodes?.[nodeId] as { type?: string; kind?: string } | undefined;
+  if (!node || node.type !== 'action' || node.kind !== 'send') {
+    return ok({ error: 'not found' }, 404);
+  }
+
+  // Clone the SOURCE template (scoped to this workspace → cross-workspace refusal)
+  // into a working copy, mirroring cloneTemplate's INSERT...SELECT (kind='copy').
+  const cq = scopedQuery(
+    ctx.workspaceId,
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address, from_selected)
+     SELECT workspace_id, name, mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address, from_selected
+     FROM email_templates WHERE id = $1`,
+    [templateId],
+  );
+  const cloned = await pool.query<{ id: string }>(`${cq.text} RETURNING id`, cq.values);
+  if (!cloned.rows[0]) return ok({ error: 'not found' }, 404); // source not in this workspace
+  const copyId = cloned.rows[0].id;
+
+  // Repoint the send node's template_id at the copy and persist the definition.
+  const nextDef: CampaignDefinition = {
+    ...def,
+    nodes: { ...def.nodes, [nodeId]: { ...def.nodes[nodeId], template_id: copyId } as never },
+  };
+  const uq = scopedQuery(
+    ctx.workspaceId,
+    'UPDATE campaigns SET definition = $1::jsonb WHERE id = $2',
+    [JSON.stringify(nextDef), id],
+  );
+  await pool.query(uq.text, uq.values);
+  return ok({ template: { id: copyId } }, 201);
+};
+
+/**
+ * POST /campaigns/:id/activate — PUBLISH a campaign (status → 'active') with
+ * SEND-NODE gating (§9B/§10). Mirrors sendBroadcast's ORDERED per-send-node 409s
+ * (sender_id → to_address → subject), naming the offending node, THEN the
+ * verified-domain gate. A campaign with no send node activates ungated. Everything
+ * is scoped to the token's workspace (the campaign + every referenced copy resolve
+ * inside ctx.workspaceId, NEVER the body — inv.2).
+ */
+export const activateCampaign: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const campRows = await pool.query<{ definition: CampaignDefinition }>(
+    'SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2',
+    [ctx.workspaceId, id],
+  );
+  if (!campRows.rows[0]) return ok({ error: 'not found' }, 404);
+  const def = campRows.rows[0].definition;
+
+  // Load each send node's copy envelope (scoped) → compute the ordered gaps. A copy
+  // from another workspace never resolves here, so it can never satisfy the gate.
+  const sendTemplateIds = Object.values(def.nodes ?? {})
+    .map((n) => n as { type?: string; kind?: string; template_id?: string })
+    .filter((n) => n.type === 'action' && n.kind === 'send')
+    .map((n) => n.template_id)
+    .filter((t): t is string => typeof t === 'string' && t.length > 0);
+
+  const envelopes: Record<string, { sender_id: string | null; to_address: string | null; subject: string | null }> = {};
+  if (sendTemplateIds.length > 0) {
+    const eq = scopedQuery(
+      ctx.workspaceId,
+      'SELECT id, sender_id, to_address, subject FROM email_templates WHERE id = ANY($1::uuid[])',
+      [sendTemplateIds],
+    );
+    const { rows } = await pool.query<{ id: string; sender_id: string | null; to_address: string | null; subject: string | null }>(eq.text, eq.values);
+    for (const r of rows) envelopes[r.id] = { sender_id: r.sender_id, to_address: r.to_address, subject: r.subject };
+  }
+
+  const gaps = collectSendNodeEnvelopeGaps(def, envelopes);
+  if (gaps.length > 0) {
+    const g = gaps[0]!; // the FIRST incomplete send node (BFS order)
+    const msg =
+      g.missing === 'sender'
+        ? `Choose who the email is from on the "${g.nodeId}" send step — open its email and pick a sender (add one under Sending domains).`
+        : g.missing === 'to'
+          ? `Set the To field on the "${g.nodeId}" send step's email before activating.`
+          : `Add a subject line to the "${g.nodeId}" send step's email before activating.`;
+    return ok({ error: msg }, 409);
+  }
+
+  // Verified-domain gate runs AFTER the per-node envelope checks (sendBroadcast
+  // parity). Only required when the campaign actually sends.
+  if (sendTemplateIds.length > 0) {
+    const vq = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM sending_domains WHERE verified = true');
+    const verified = await pool.query(vq.text, vq.values);
+    if (!verified.rowCount) {
+      return ok(
+        { error: 'No verified sending domain. Verify one in Workspace settings → Sending domains before activating.' },
+        409,
+      );
+    }
+  }
+
+  const uq = scopedQuery(ctx.workspaceId, "UPDATE campaigns SET status = 'active' WHERE id = $1", [id]);
+  const { rowCount } = await pool.query(uq.text, uq.values);
+  return ok({ activated: rowCount ?? 0, status: 'active' });
+};
+
+/**
  * POST /campaigns/:id/enroll — MANUAL/API enrollment (§9B). Enrolls EITHER a
  * single profile (`profile_id`) OR a point-in-time SEGMENT SNAPSHOT (`segment_id`)
  * at the campaign's start node. Exactly one target is required. Everything is
@@ -3285,6 +3410,8 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /campaigns': listCampaigns,
   'POST /campaigns': createCampaign,
   'PUT /campaigns/:id': updateCampaign,
+  'POST /campaigns/:id/activate': activateCampaign,
+  'POST /campaigns/:id/send-nodes/:nodeId/attach-template': attachCampaignSendTemplate,
   'POST /campaigns/:id/enroll': enrollIntoCampaign,
   'GET /profiles': listProfiles,
   'POST /profiles': createProfile,

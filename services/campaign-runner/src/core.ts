@@ -349,12 +349,36 @@ export interface SegmentChangeLogRow {
   readonly action: string; // 'entered' | 'exited'
 }
 
+/**
+ * The trigger event persisted onto campaign_enrollments.state.event at EVENT
+ * enrollment time (§9B). It mirrors the relevant EventRow fields — the `payload`
+ * an event.* expression reads, plus `type`/`event_id` for provenance. It is NOT a
+ * profile snapshot. Absent for segment/manual enrollment (state stays '{}').
+ */
+export interface EnrollmentEventState {
+  readonly type: string;
+  readonly payload: Record<string, unknown>;
+  readonly event_id: string;
+}
+
+/** The campaign_enrollments.state jsonb shape this engine writes/reads. */
+export interface EnrollmentStateJson {
+  /** The trigger event (event-trigger enrollment only). */
+  readonly event?: EnrollmentEventState;
+}
+
 /** An intent to enroll a profile into a campaign (resolved from a change-log row). */
 export interface EnrollmentIntent {
   readonly workspaceId: string;
   readonly campaignId: string;
   readonly profileId: string;
   readonly startNode: string;
+  /**
+   * The trigger event to persist on enrollment.state (EVENT enrollment only). The
+   * segment/manual paths leave this undefined → a plain buildEnrollmentInsert →
+   * state defaults to '{}' → a later event.* expression resolves safe-empty.
+   */
+  readonly event?: EnrollmentEventState;
 }
 
 /** A campaign's enrollment-relevant columns (trigger_segment_id, start node, trigger_on). */
@@ -453,6 +477,9 @@ export function parseEventEnrollmentTrigger(
       campaignId: c.id,
       profileId: row.profile_id,
       startNode: c.start_node,
+      // Persist the trigger event onto enrollment.state so a later set_attribute
+      // with an {{event.*}} expression can read the value that started the journey.
+      event: { type: row.type, payload: row.payload, event_id: row.event_id },
     });
   }
   return intents;
@@ -574,6 +601,31 @@ export function buildEnrollmentInsert(
            VALUES ($1, $2, $3, $4, 'active', now())
            ON CONFLICT (campaign_id, profile_id) DO NOTHING`,
     values: [workspaceId, campaignId, profileId, startNode],
+  };
+}
+
+/**
+ * Insert a campaign_enrollment at the start node, ALSO persisting `state` (the
+ * trigger event) — used ONLY by the EVENT enrollment path, which has the event in
+ * hand. Identical to buildEnrollmentInsert except the state jsonb is written (the
+ * segment/manual paths use the plain insert and leave state at the column default
+ * '{}'). ON CONFLICT (campaign_id, profile_id) DO NOTHING preserves the 'once'
+ * re-enrollment guard. workspace_id bound at $1 (THROWS on a falsy workspaceId).
+ */
+export function buildEnrollmentInsertWithState(
+  workspaceId: string,
+  campaignId: string,
+  profileId: string,
+  startNode: string,
+  state: EnrollmentStateJson,
+): SqlStatement {
+  if (!workspaceId) throw new Error('buildEnrollmentInsertWithState: workspaceId is required');
+  return {
+    text: `INSERT INTO campaign_enrollments
+             (workspace_id, campaign_id, profile_id, current_node, status, next_run_at, state)
+           VALUES ($1, $2, $3, $4, 'active', now(), $5::jsonb)
+           ON CONFLICT (campaign_id, profile_id) DO NOTHING`,
+    values: [workspaceId, campaignId, profileId, startNode, JSON.stringify(state)],
   };
 }
 

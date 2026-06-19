@@ -23,9 +23,12 @@ describe('parseEventEnrollmentTrigger', () => {
       { id: 'c2', workspace_id: WS, event_type: 'purchase', start_node: 'start', matchesFilter: true },
     ];
     const intents = parseEventEnrollmentTrigger(ev(), campaigns);
+    // Each event-trigger intent now also carries the trigger event (persisted onto
+    // enrollment.state.event so a later set_attribute can read {{event.*}}).
+    const event = { type: 'purchase', payload: {}, event_id: 'evt-1' };
     expect(intents).toEqual([
-      { workspaceId: WS, campaignId: 'c1', profileId: 'prof-1', startNode: 't' },
-      { workspaceId: WS, campaignId: 'c2', profileId: 'prof-1', startNode: 'start' },
+      { workspaceId: WS, campaignId: 'c1', profileId: 'prof-1', startNode: 't', event },
+      { workspaceId: WS, campaignId: 'c2', profileId: 'prof-1', startNode: 'start', event },
     ]);
   });
 

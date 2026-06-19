@@ -1,0 +1,557 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "browserVerified": {
+          "type": "boolean"
+        },
+        "criteriaAllMet": {
+          "type": "boolean"
+        },
+        "criteriaCoverage": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "criticalIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "idempotencyOk": {
+          "type": "boolean"
+        },
+        "isolationOk": {
+          "type": "boolean"
+        },
+        "recommendations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scopeCreep": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "testsPass": {
+          "type": "boolean"
+        },
+        "webhookSafetyOk": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "score",
+        "testsPass",
+        "criteriaAllMet",
+        "recommendations"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "docs": "CLAUDE.md (living source of truth — overrides the spec on conflict) + CDP-BUILD-SPEC.md §9B (campaign workflow engine), §8 (rule-AST→SQL compiler, reused for branch conditions), §9 (outbox→Dispatcher pipeline)",
+        "env": [
+          "Monorepo: pnpm workspaces + Turborepo + Vitest + strict TS. Run from repo root. Node 20+.",
+          "Real Postgres (dev): DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp (migrations applied). Single test file: pnpm --filter <pkg> exec vitest run path. Whole suite: DATABASE_URL=… pnpm test. Typecheck: pnpm typecheck. Lint: pnpm lint.",
+          "Browser e2e: pnpm --filter @cdp/web test:e2e — its OWN DB cdp_e2e on its OWN ports (local-api :8788, web :5174), runs with LOCAL_SES_FORCE_MOCK=1 LOCAL_SES_DKIM_STATUS=SUCCESS; re-seeds web/e2e/seed.ts each run. The dev stack (cdp, :8787/:5173) coexists. Playwright config has retries:1.",
+          "Dev API for manual checks: pnpm --filter @cdp/service-local-api dev:api (background, restart after backend edits). Health: GET http://localhost:8787/health.",
+          "Key reuse points: services/campaign-runner (dsl.ts, core.ts, run.ts, enroll.ts), services/local-api (handlers.ts, routes.ts, app.ts, server.ts), services/dispatcher (core.ts, dispatch.ts), packages/segments (AST + compiler + rule builder), packages/email, web/src/screens (BroadcastComposer email-instance flow, TemplateEditor, SegmentBuilder), web/src/ui/kit.tsx (ActionMenu, Drawer, Button, Field, Select), web/e2e/seed.ts."
+        ],
+        "implReport": {
+          "commandsRun": [
+            "pnpm --filter @cdp/shared exec vitest run test/expression-value.test.ts (20 passed)",
+            "pnpm --filter @cdp/service-campaign-runner exec vitest run test/set-attribute-value-spec.test.ts (10 passed)",
+            "pnpm --filter @cdp/service-campaign-runner exec vitest run test/enrollment-event-state.test.ts (5 passed)",
+            "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-campaign-runner exec vitest run test/set-attribute-event-sourced.integration.test.ts (2 passed)",
+            "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-campaign-runner exec vitest run test/campaign-send-dispatcher-instance.integration.test.ts (1 passed)",
+            "DATABASE_URL=... pnpm --filter @cdp/service-local-api exec vitest run test/campaign-send-node-clone.integration.test.ts test/campaign-publish-gate.integration.test.ts (10 passed)",
+            "pnpm typecheck (43/43 successful)",
+            "DATABASE_URL=... pnpm --filter @cdp/shared --filter @cdp/service-campaign-runner --filter @cdp/service-local-api --filter @cdp/service-dispatcher exec vitest run (cold: 55 + 165 + 189 + 71 = 480 passed)",
+            "pnpm lint (all touched backend packages clean; only the 7 KNOWN pre-existing web react-hooks/exhaustive-deps 'rule not found' errors in untouched files remain)",
+            "pnpm build (24/24 successful)"
+          ],
+          "e2eSummary": "No e2e — backend-only phase (phase.frontend=false; no builder UI, phases 5/6).",
+          "filesCreated": [
+            "packages/shared/src/event.ts",
+            "packages/shared/src/expression.ts",
+            "packages/shared/test/expression-value.test.ts",
+            "services/campaign-runner/test/set-attribute-value-spec.test.ts",
+            "services/campaign-runner/test/enrollment-event-state.test.ts",
+            "services/campaign-runner/test/set-attribute-event-sourced.integration.test.ts",
+            "services/campaign-runner/test/campaign-send-dispatcher-instance.integration.test.ts",
+            "services/local-api/test/campaign-send-node-clone.integration.test.ts",
+            "services/local-api/test/campaign-publish-gate.integration.test.ts"
+          ],
+          "filesModified": [
+            "packages/shared/src/index.ts",
+            "services/campaign-runner/src/dsl.ts",
+            "services/campaign-runner/src/core.ts",
+            "services/campaign-runner/src/enroll.ts",
+            "services/campaign-runner/src/run.ts",
+            "services/campaign-runner/src/index.ts",
+            "services/campaign-runner/test/parse-event-trigger.test.ts",
+            "services/local-api/src/handlers.ts",
+            "services/local-api/src/routes.ts",
+            "package.json",
+            "CLAUDE.md"
+          ],
+          "lintOk": true,
+          "migrationsApplied": [],
+          "notes": "PART A (send-node instance): POST /campaigns/:id/send-nodes/:nodeId/attach-template clones a library template into a kind='copy' working copy (source_template_id; copies design + subject/sender_id/to_address/from_selected via the same INSERT...SELECT as cloneTemplate) and repoints the send node's template_id at the copy; source SELECT scoped to ctx.workspaceId (cross-workspace 404, inv.2). POST /campaigns/:id/activate adds publish gating that did not exist before: pure collectSendNodeEnvelopeGaps (campaign-runner dsl.ts, BFS order) feeds sendBroadcast-ordered per-node 409s (sender_id -> to_address -> subject, naming the node) then the verified sending_domains gate (only when >=1 send node; a no-send campaign activates ungated). Dispatcher UNCHANGED — a campaign outbox row's template_id is the copy, so dispatch.ts resolves sender_id->From + renders subject/To/body exactly as for broadcasts (verified end-to-end via the integration test: messages_log.campaign_id set, broadcast_id null, exactly-once on replay). PART B (event-sourced set_attribute): new @cdp/shared event.ts (event.* namespace twin of customer.ts) + expression.ts (ValueSpec, renderExpression shared {{token}} engine, resolveValueSpec with literal | expression | legacy-bare-scalar + safe-empty). validateCampaignDefinition extended with validateSetAttributeValue (pure). buildEnrollmentInsertWithState persists {event:{type,payload,event_id}} onto campaign_enrollments.state ONLY in enrollFromEvent; the other three enrollment paths keep the plain insert so state.event is undefined and an event.* expression resolves safe-empty. run.ts loads the profile + state.event.payload under the FOR UPDATE lock and resolves the value spec before the existing parameterized buildSetAttribute (workspace_id at $1) — read-only substitution, never SQL (inv.6 untouched); idempotent because the source state is immutable. NO migration (campaign_enrollments.state jsonb DEFAULT '{}' already exists, migration 0005). NO builder UI (phases 5/6). Not pushed.",
+          "testsPass": true,
+          "testSummary": "All affected backend suites GREEN on a cold run: @cdp/shared 55/55 (4 files), @cdp/service-dispatcher 71/71 (12 files), @cdp/service-campaign-runner 165/165 (31 files), @cdp/service-local-api 189/189 (43 files). New phase-4 tests: expression-value (20 unit, value resolver literal/customer.*/event.*/deep-dot/undefined-safe), set-attribute-value-spec (10 unit, validateSetAttributeValue + side-effect carries the spec), enrollment-event-state (5 unit, buildEnrollmentInsertWithState + intent threads the event), set-attribute-event-sourced.integration (2, real Postgres: state.event persisted, literal + {{event.amount}} written, undefined path safe-empty, workspace-scoped, idempotent retry), campaign-send-dispatcher-instance.integration (1, runner->real dispatcher: From from sender_id, subject/To/body merge rendered, messages_log campaign_id, exactly-once), campaign-send-node-clone.integration (3, clone kind=copy + envelope copy + cross-ws refusal), campaign-publish-gate.integration (7, ordered per-node 409s + verified-domain gate + no-send ungated + cross-ws 404). Updated parse-event-trigger.test.ts for the new intent.event field. No mock of Postgres in the integration tier; SES mocked via an injected SesEmailClient.",
+          "typecheckOk": true,
+          "versionBump": "0.31.0 -> 0.32.0 (minor — feature)"
+        },
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL and every query filters by workspace_id. The campaign-runner + enrollment + handlers connect with the Supabase SERVICE ROLE which BYPASSES RLS — they MUST scope by workspace_id IN CODE (RLS is not their safety net). workspace_id is loaded FROM the enrollment/campaign row, never assumed.",
+          "workspace_id is NEVER client-supplied — it comes from the authorizer-injected claim (admin API) or a trusted server-set field (the enrollment row). Never trust a workspace_id in a request body. Reject a cross-workspace template_id / segment_id / sender_id (inv.2) — like validateSenderId does today.",
+          "All campaign action SENDS go through the SAME outbox → Dispatcher pipeline as broadcasts (§9): suppression → frequency-cap → quiet-hours, gated on a VERIFIED sending domain. A send node carries an email INSTANCE whose envelope (real named From sender + To + Subject) is ALL mandatory — NO no-reply fallback (mirror sendBroadcast gating). The Dispatcher renders merge tags in the SUBJECT, To AND body.",
+          "Runner idempotency + concurrency (unchanged guarantee): one tick advances a due enrollment exactly once (SELECT … FOR UPDATE row lock in one tx, re-check active inside the lock; legacy CAS path for unit tests). Outbox dedupe_key per (campaign_id, profile_id, node_id) prevents double-sends on retry. MAX_STEPS_PER_TICK guards pathological graphs. New node execution must preserve all of this.",
+          "Webhook action safety: outbound HTTP ONLY to an explicit per-workspace domain ALLOWLIST; enforce a timeout + BOUNDED retries; block SSRF (no internal/link-local/loopback/169.254 metadata targets); secrets (e.g. auth headers) use the @cdp/db secret-crypto envelope pattern, never returned in plaintext over the API; a webhook failure is ISOLATED (recorded; never crashes the tick or double-advances). LOCAL: the HTTP call is mocked/injected — never hit a real external host in tests.",
+          "Workspace timezone governs ALL campaign time math (waits, wait-until, hour-of-day window) — DST-correct (reuse the zoned↔UTC approach from the broadcast scheduler: zonedInputToUtcIso/tzOffsetMs). One configurable timezone per workspace; never per-broadcast guesswork.",
+          "The DSL ({startNode, nodes}) is the SINGLE graph model; validateCampaignDefinition is the structural gate (exactly ONE trigger, every edge resolves, a reachable exit, and — extended — NO cycles / NO orphan nodes / down-only). The builder is an AUTO-LAYOUT RENDER of that graph: compute (x,y) from the tree, draw rounded orthogonal connectors, branches fan sideways. NO separate graph model, NO stored coordinates, NO loops/back-edges.",
+          "REUSE, do not reinvent (code-quality bar): the broadcast email-INSTANCE/clone flow (kind=copy, source_template_id, cloneTemplate, the From/To/Subject envelope + editor return flow) for send nodes; the segment rule builder + AstNode for the if/condition node; the kit ActionMenu / Drawer / Button (auto-locks on promise-returning onClick) / Field / Select; the Dispatcher core; scopedQuery; runInWorkspaceTx; evaluateRealtimeSegmentsForProfile. Match the surrounding code style, comment density and naming.",
+          "UI standing rules: NEVER use native confirm/alert/prompt — use ui/dialog.tsx (askConfirm) or purpose-built modals. EVERY server-calling button shows a spinner + locks until the response (kit Button auto-locks when onClick RETURNS the promise — wire it that way). The email editor autosaves (no manual save). PRESERVE every existing data-testid; add stable testids for new UI. Floating toasts (ui/toast.tsx showToast) for transient feedback.",
+          "Test-first (§16A/§18): write the failing acceptance tests FIRST, then implement to green. Do NOT mock Postgres in the integration tier — use the REAL local DB. Mock SES/AWS (aws-sdk-client-mock / LocalStack); the webhook HTTP client is injected/mocked. Playwright (real browser) for UI phases with seeded data + stable selectors. turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces (events.event_id / ses_message_id are GLOBAL keys).",
+          "Process hygiene: BUMP the root package.json version per change (patch=tiny, minor=feature, major only when told). UPDATE CLAUDE.md when behavior/architecture changes. Apply new SQL migrations to BOTH the dev DB (cdp) AND the e2e DB (cdp_e2e) via a node pg script (psql is unavailable). RESTART the dev API (pnpm --filter @cdp/service-local-api dev:api — a long-lived tsx process, NOT watch) after backend edits, and REBUILD a changed package (tsc -b) the local-api imports from dist. Scope discipline: build EXACTLY the agreed design — no extra features."
+        ],
+        "loop": "Backend phase: pure unit tests + DB-integration against REAL local Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp). Mock AWS/SES (aws-sdk-client-mock) / LocalStack; the webhook HTTP client is injected/mocked. No frontend.",
+        "phase": {
+          "criteria": [
+            "A send node clones its template into an independently-editable copy (kind=copy); editing the copy does not touch the library original; the envelope persists on the copy. Cross-workspace template/sender ids are refused (inv.2).",
+            "Activating a campaign with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.",
+            "A campaign send flows through outbox → Dispatcher → messages_log(campaign_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.",
+            "An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value (e.g. attributes.last_purchase_amount = {{event.amount}} taken from the trigger event persisted on enrollment.state); the write is workspace-scoped + idempotent on retry; an undefined path resolves safely. Verified against REAL Postgres with unit tests for the value resolver."
+          ],
+          "frontend": false,
+          "id": "phase4-action-nodes",
+          "refs": "CLAUDE.md (broadcast email-INSTANCE/clone model, sendBroadcast gating, dispatcher campaign path, customer.* merge) + §9B action(send|set_attribute)",
+          "scope": [
+            "Give each SEND node its OWN editable email instance, reusing the broadcast flow: attaching a template CLONES it (kind=copy, source_template_id) into the node's working copy; the envelope (real named From sender + To token + Subject) lives on that copy and is edited in the email editor (autosaved). The send node references the copy template_id.",
+            "PUBLISH-time gating: a campaign cannot be activated if any send node lacks a sendable email (From sender + To + Subject all set) — mirror sendBroadcast's ordered 409s + the verified-domain gate. Surface which node/what is missing.",
+            "Verify the Dispatcher campaign path end-to-end: campaign outbox row → Dispatcher resolves sender_id → renders subject/To/body merge tags (the v0.27.2 subject fix) → messages_log with campaign_id. No change to the send pipeline beyond what the instance model needs.",
+            "UPDATE-PROFILE action (the set_attribute action kind already exists + the runner already applies a STATIC value via buildSetAttribute): extend it so the value can be a LITERAL **or** an EXPRESSION sourced from the trigger event or the profile — e.g. customer.* and a new event.* namespace ({{event.<payload path>}}). To enable event.*, PERSIST the trigger event payload onto campaign_enrollments.state at enrollment time (event-trigger enrollment from phase 3) so a later update-profile step can read it; resolve the expression at execution against the profile + enrollment.state.event (reuse the @cdp/shared customer.* resolver; add an analogous event.* resolver). A missing/again-undefined path resolves safely (no crash; documented — skip or empty).",
+            "Extend validateCampaignDefinition for the set_attribute value spec (literal vs expression) and keep it pure + unit-tested. The runner write stays workspace-scoped + idempotent (re-applying the same set_attribute on a retried tick is naturally idempotent for a literal; for an event-sourced value it resolves from the persisted enrollment.state, so a retry yields the same write)."
+          ],
+          "title": "Action nodes: send-email instance + update-profile (event-sourced)"
+        },
+        "plan": {
+          "e2eFlows": [],
+          "implUnits": [
+            "1. @cdp/shared: add the event.* namespace resolver — EVENT_PREFIX, resolveEventPath, eventMerge, expandEventToken — modeled on customer.ts; export from the package index. (No DB; pure.)",
+            "2. @cdp/shared: extract renderExpression (the {{token}} interpolation) so the dispatcher's renderTemplateBody and the new value resolver share one substitution engine; define resolveValueSpec(spec, ctx) with literal | expression | legacy-bare-scalar handling and safe-empty undefined resolution.",
+            "3. campaign-runner dsl.ts: define the ValueSpec type ({kind:'literal', value} | {kind:'expression', expression}); extend ActionNode.value typing; add validateSetAttributeValue and call it from validateNodeFields' set_attribute branch (accept legacy bare scalar for back-compat).",
+            "4. campaign-runner core.ts: change the set_attribute SideEffect to carry the VALUE SPEC (not a pre-resolved value); update actionSideEffect accordingly. Keep buildSetAttribute unchanged (it receives the already-resolved value).",
+            "5. campaign-runner core.ts: add buildEnrollmentInsertWithState (persists state jsonb) alongside buildEnrollmentInsert; thread the trigger event payload through the event-enrollment intent.",
+            "6. campaign-runner enroll.ts: in enrollFromEvent, persist {event:{type,payload,event_id}} onto enrollment.state via buildEnrollmentInsertWithState; segment_entry/manual paths keep buildEnrollmentInsert (state stays default '{}').",
+            "7. campaign-runner run.ts: in the FOR-UPDATE tick load enrollment.state (already part of the row read — add state to the SELECT) and the profile; when applying a set_attribute side effect, call resolveValueSpec({profile, event: state.event}) THEN buildSetAttribute(ws, profile, key, resolvedValue). Resolution is read-only against the locked row + post-loaded profile, so a retry re-resolves identically (idempotent).",
+            "8. local-api handlers.ts: add a campaign send-node CLONE path (reuse cloneTemplate's INSERT...SELECT copying design+envelope columns; kind='copy', source_template_id) and point the send node's template_id at the copy; scope the source SELECT by ctx.workspaceId (cross-workspace refusal).",
+            "9. local-api handlers.ts: add publish-time gating to the activate path (updateCampaign setting status='active', or a dedicated POST /campaigns/:id/activate) — for each send node, load its copy's (sender_id,to_address,subject) and emit sendBroadcast-ordered 409s naming the node; then the verified-domain gate. Reuse validateSenderId for any sender writes.",
+            "10. local-api routes.ts: register any new route(s) under the manage_content capability (clone/attach) consistent with existing campaign routes; activation stays manage_content.",
+            "11. Process hygiene: bump root package.json (minor — feature); update CLAUDE.md (event.* namespace, set_attribute value spec, enrollment.state.event persistence, campaign send-node instance + publish gate); NO new migration (campaign_enrollments.state already exists). Rebuild changed packages (tsc -b) before restarting dev:api; apply nothing to the DB schema."
+          ],
+          "mocks": [
+            "SES: an injected SesEmailClient capturing SendEmailInput (aws-sdk-client-mock style / a hand fake) — NEVER sends real mail; assert From/To/Subject/body and ConfigurationSet.",
+            "SQS: the injected SqsSender (SendMessageCommand) is a fake capturing enqueued {outbox_id} bodies (the runner boundary).",
+            "Clock: deps.now() injected for deterministic cap/quiet-hours/wait math.",
+            "No Postgres mock in the integration tier — REAL local Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp); pure tiers use in-memory objects only.",
+            "Webhook HTTP client: not exercised this phase (no webhook nodes), but unchanged injection contract preserved."
+          ],
+          "notes": "campaign_enrollments.state jsonb NOT NULL DEFAULT '{}' ALREADY EXISTS (packages/db/supabase/migrations/0005_messaging.sql) — CONFIRMED, NO migration needed to persist the trigger event there. Today buildEnrollmentInsert (core.ts) does NOT write state, so all current enrollment paths leave it at the default '{}'. The trigger event is in hand ONLY in enrollFromEvent (phase 3, EventRow with payload/type/event_id); that is the single place to persist state.event (via a new buildEnrollmentInsertWithState). The OTHER enrollment paths (enrollFromSegmentChange, enrollProfileManually, enrollSegmentSnapshot) have NO event, so they keep the plain buildEnrollmentInsert and state.event stays UNDEFINED — therefore a set_attribute with an event.* expression on a segment/manual-enrolled profile MUST resolve safely to empty (no crash): this is a required, explicitly-tested behavior, not an edge case. Activation today is just updateCampaign setting status='active' (no publish gating exists yet); the new gate mirrors sendBroadcast's ordered 409s (sender_id -> to_address -> subject) PER SEND NODE, then the verified-domain gate, naming the offending node. The dispatcher already renders subject/To/body merge tags and resolves sender_id->From with NO no-reply fallback reachable for a configured instance, so the campaign send path needs no dispatcher change beyond the instance model the broadcast flow established. Idempotency for the event-sourced write is structural: the value re-resolves from the IMMUTABLE persisted enrollment.state under the FOR UPDATE lock, so a retried tick produces the identical jsonb_set write (a literal is trivially idempotent; an expression is idempotent because its source — state.event — never changes). All resolution is read-only string substitution (never interpolated into SQL), so invariant 6 is untouched; the only SQL is the existing parameterized buildSetAttribute with workspace_id at $1.",
+          "pureFunctions": [
+            "@cdp/shared resolveEventPath(payload, pathAfterEvent): deep-dot resolver into the event payload (analogous to expandCustomerPath) — returns the leaf value or undefined.",
+            "@cdp/shared eventMerge(event): build the merge map for the 'event.*' namespace from a persisted trigger event payload (FULL tokens 'event.<path>' -> stringified scalars; nested objects/arrays skipped for whole-tag substitution, but dotted leaf paths supported via resolveEventPath). Pairs with the renderer like customerMerge.",
+            "@cdp/shared expandEventToken(token) / EVENT_PREFIX: normalize an 'event.*' token (no shorthand to expand, but keep symmetry with expandCustomerToken).",
+            "resolveValueSpec(spec, ctx:{profile, event}): the value resolver — a literal returns spec.value (or a bare scalar for back-compat); an expression renders via a shared interpolation over {customer.*, event.*} merge maps; an undefined/unknown path resolves to a documented safe-empty value; never throws. Lives in @cdp/shared (used by the runner; symmetrical with renderTemplateBody).",
+            "renderExpression(template, merge): the shared {{token}} interpolation engine extracted from dispatcher renderTemplateBody so the value resolver and the dispatcher share ONE substitution rule (unknown tags safe-empty for value resolution; same expandCustomerToken normalization).",
+            "isExpressionSpec(value) / isLiteralSpec(value) / coerceLegacyLiteral(value): pure value-spec discriminators used by both validateCampaignDefinition and resolveValueSpec.",
+            "validateSetAttributeValue(id, value): pure structural validation of the set_attribute value spec (literal vs expression vs legacy bare scalar), invoked from validateCampaignDefinition.",
+            "buildEnrollmentInsertWithState(workspaceId, campaignId, profileId, startNode, state): SqlStatement that persists campaign_enrollments.state (e.g. {event:{...}}) on insert; ON CONFLICT DO NOTHING preserved; workspace_id at $1; THROWS on falsy workspaceId.",
+            "buildSetAttribute (existing, core.ts) reused verbatim once the value is resolved — it already does workspace-scoped jsonb_set; resolution happens BEFORE building this statement.",
+            "collectSendNodeEnvelopeGaps(definition, copiesById): pure helper that walks send nodes and yields per-node {nodeId, missing:['sender'|'to'|'subject']} in sendBroadcast order — feeds the publish-gate message."
+          ],
+          "reuse": [
+            "@cdp/shared customer.ts (customerMerge, expandCustomerToken, expandCustomerPath, resolveCustomerField) — the event.* resolver is a structural twin; renderExpression is extracted from dispatcher renderTemplateBody so both share ONE {{token}} engine.",
+            "dispatcher core.ts renderTemplateBody / buildSendEmailInput — already render subject/To/body merge tags (the v0.27.2 subject fix); the campaign send path needs NO dispatcher change beyond the instance model already supporting sender_id/to_address/subject on the template.",
+            "campaign-runner core.ts buildCampaignOutboxInsert / buildCampaignDedupeKey / buildSetAttribute / buildEnrollmentInsert — reuse verbatim; add buildEnrollmentInsertWithState as a sibling.",
+            "campaign-runner run.ts chainTick + runEnrollmentInTx FOR-UPDATE lock + advanceFor — the set_attribute resolution slots into the existing side-effect application loop; idempotency/concurrency guarantees are preserved unchanged.",
+            "campaign-runner enroll.ts enrollFromEvent (phase 3) — the only enrollment path that has the trigger event in hand; it is where state.event is persisted. enrollFromSegmentChange / enrollProfileManually / enrollSegmentSnapshot intentionally leave event undefined.",
+            "local-api handlers.ts cloneTemplate (INSERT...SELECT copying design + subject/sender_id/to_address/from_selected), validateSenderId (cross-workspace sender refusal, inv.2), sendBroadcast's ordered 409 messages + verified-domain gate — mirror these verbatim for the campaign send-node clone + publish gate.",
+            "Existing test scaffolding: action-send-through-dispatcher.integration.test.ts (runner->real dispatcher with mocked SES, verified/unverified/suppressed cases), packages/shared/test/customer.test.ts (resolver unit-test style), services/local-api/test/broadcast-send-gate.integration.test.ts (ordered 409 gate assertions), campaign-enroll-endpoint.integration.test.ts (enrollment scoping).",
+            "@cdp/segments AstNode + evaluateEventPayloadFilter (already in core.ts) — the event payload is already trusted/closed-grammar at enroll time; the value resolver reads the SAME persisted payload, no new whitelist needed for resolution (it's read-only substitution, never SQL)."
+          ],
+          "testFiles": [
+            {
+              "assertions": [
+                "resolveValueSpec({kind:'literal', value:42}, ctx) returns 42 unchanged (number preserved, not stringified).",
+                "resolveValueSpec({kind:'literal', value:'gold'}, ctx) returns 'gold'.",
+                "resolveValueSpec({kind:'literal', value:null}, ctx) returns null (an explicit null literal is honored, distinct from undefined).",
+                "resolveValueSpec({kind:'expression', expression:'{{customer.tier}}'}, ctx with profile.attributes.tier='gold') returns 'gold' (reuses customerMerge + expandCustomerToken — shorthand customer.tier === customer.attributes.tier).",
+                "resolveValueSpec({kind:'expression', expression:'{{customer.email}}'}, ctx) returns the reserved profile column value.",
+                "resolveValueSpec({kind:'expression', expression:'{{event.amount}}'}, ctx with event={amount:19.99}) returns the value sourced from enrollment.state.event (NEW event.* namespace).",
+                "resolveValueSpec({kind:'expression', expression:'{{event.items.0.sku}}'}, ctx with nested event payload) resolves a DEEP dotted path via the event resolver (eventMerge / resolveEventPath analogous to expandCustomerPath).",
+                "resolveValueSpec({kind:'expression', expression:'{{event.missing}}'}, ctx) resolves SAFELY to '' (or a documented sentinel) — never throws, never leaves the literal '{{event.missing}}' as the written attribute.",
+                "resolveValueSpec({kind:'expression', expression:'{{customer.unknownAttr}}'}, ctx with no such attribute) resolves SAFELY (empty), no crash.",
+                "resolveValueSpec for an event.* expression when ctx.event is undefined (manual/segment enrollment left no event on state) returns the safe-empty value — confirms the manual/segment paths resolve safely.",
+                "resolveValueSpec({kind:'expression', expression:'pre {{customer.tier}} post'}, ctx) renders the surrounding literal text (string interpolation, not just whole-token substitution) — same engine as renderTemplateBody.",
+                "an unknown namespace token {{order.total}} (not customer.*/event.*) is left for safe-empty handling and never crashes."
+              ],
+              "criterion": "An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value ... an undefined path resolves safely. Verified ... with unit tests for the value resolver.",
+              "path": "packages/shared/test/expression-value.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "validateCampaignDefinition accepts a set_attribute action with key + a bare scalar value (BACKWARD-COMPAT: the legacy static value shape still validates as an implicit literal).",
+                "validateCampaignDefinition accepts {kind:'set_attribute', key:'tier', value:{kind:'literal', value:'gold'}, next}.",
+                "validateCampaignDefinition accepts {kind:'set_attribute', key:'last_amount', value:{kind:'expression', expression:'{{event.amount}}'}, next}.",
+                "validateCampaignDefinition THROWS when value is {kind:'expression'} with a missing/empty expression string.",
+                "validateCampaignDefinition THROWS when value is {kind:'literal'} but the literal field is absent (an explicit-spec object missing its payload) — distinguishes from a bare scalar value.",
+                "validateCampaignDefinition THROWS on an unknown value-spec kind (e.g. {kind:'sql'}).",
+                "validateCampaignDefinition still THROWS when set_attribute has no key (existing rule unchanged).",
+                "validation is PURE: no DB/AWS import in the module under test; the function only inspects the definition object.",
+                "actionSideEffect (core.ts) for a set_attribute now emits a side effect carrying the VALUE SPEC (literal|expression), not a pre-resolved value, so resolution happens at runner execution against the live profile + enrollment.state."
+              ],
+              "criterion": "Extend validateCampaignDefinition for the set_attribute value spec (literal vs expression) and keep it pure + unit-tested.",
+              "path": "services/campaign-runner/test/set-attribute-value-spec.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "buildEnrollmentInsertWithState(ws, camp, profile, startNode, {event:{type, payload, event_id}}) produces an INSERT writing state = jsonb {event:{...}} and still ON CONFLICT (campaign_id, profile_id) DO NOTHING (re-enrollment 'once' guard preserved).",
+                "buildEnrollmentInsertWithState binds workspace_id at $1 and THROWS on a falsy workspaceId (tenant-isolation guard parity with buildEnrollmentInsert).",
+                "the persisted state.event mirrors EventRow shape relevant for event.* resolution: at least payload (and type/event_id for provenance) — NOT a profile snapshot.",
+                "the legacy buildEnrollmentInsert (no state) is unchanged and still used by segment_entry / manual paths (state stays the column default '{}'), so a later set_attribute reading event.* gets an undefined event and resolves safely.",
+                "parseEventEnrollmentTrigger / the intent now carries the event payload through to the insert (the EnrollmentIntent or a sibling carries {event}) — assert the event-trigger path threads payload to buildEnrollmentInsertWithState while segment/manual intents carry none."
+              ],
+              "criterion": "PERSIST the trigger event payload onto campaign_enrollments.state at enrollment time (event-trigger enrollment); manual/segment enrollment leave event undefined which must resolve safely.",
+              "path": "services/campaign-runner/test/enrollment-event-state.test.ts",
+              "tier": "unit"
+            },
+            {
+              "assertions": [
+                "REAL Postgres (DATABASE_URL); unique file-local workspace/campaign/profile UUIDs; seed a workspace + profile + an active event-trigger campaign whose graph is trigger(event)->set_attribute->exit.",
+                "Event-trigger enrollment persists the trigger event payload onto campaign_enrollments.state.event (assert the column after enrollFromEvent / the wired enroll path).",
+                "Running the enrollment tick with a LITERAL set_attribute (value {kind:'literal', value:'gold'}) writes profiles.attributes.tier='gold' (jsonb_set) for the enrolled profile only.",
+                "Running a set_attribute with {kind:'expression', expression:'{{event.amount}}'} writes profiles.attributes.last_purchase_amount equal to the value taken FROM enrollment.state.event.amount (NOT the literal token).",
+                "An expression referencing an UNDEFINED event path ({{event.nope}}) writes a safe-empty value (documented) and does NOT crash the tick; the enrollment still advances to exit/completed.",
+                "WORKSPACE-SCOPED: a second workspace with an identically-named profile/attribute is NOT mutated (the UPDATE binds workspace_id=$1; assert the other tenant's attributes untouched).",
+                "IDEMPOTENT on retry: re-running the same enrollment tick (or replaying the sweep) yields the SAME attribute value — the event-sourced value re-resolves from the persisted enrollment.state, so a retry is a no-op write, not a divergent value. Assert attributes equal before/after the second run.",
+                "Cross-workspace safety: runEnrollment loads workspace_id FROM the enrollment row; assert no statement writes with a workspace_id other than the enrollment's (mirrors the existing 'write not scoped to the enrollment workspace' guard)."
+              ],
+              "criterion": "An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value (e.g. attributes.last_purchase_amount = {{event.amount}} taken from the trigger event persisted on enrollment.state); the write is workspace-scoped + idempotent on retry; an undefined path resolves safely. Verified against REAL Postgres.",
+              "path": "services/campaign-runner/test/set-attribute-event-sourced.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "REAL Postgres; capability-gated request context (manage_content). Seed a workspace with a library email_template + a verified domain + a domain_senders row.",
+                "Attaching a library template to a campaign SEND node clones it: a new email_templates row with kind='copy' and source_template_id = the library id (reuse cloneTemplate's INSERT ... SELECT shape) — assert the new row id != library id.",
+                "The clone copies the design + body AND the envelope columns (subject, sender_id, to_address, from_selected) — assert they match the source (so a configured library template yields a sendable copy).",
+                "Editing the copy (PUT the copy's subject/sender_id/to_address) does NOT change the library original — re-SELECT the library row and assert it's unchanged.",
+                "The send node's template_id now references the COPY (assert the campaign definition's send-node template_id == the copy id after attach).",
+                "Cross-workspace REFUSAL (inv.2): attaching/cloning a template_id that belongs to ANOTHER workspace returns 404/refusal and creates no copy (scopedQuery on the source SELECT yields no row).",
+                "Cross-workspace sender_id REFUSAL: setting the copy's sender_id to a domain_senders id from another workspace is rejected via validateSenderId ('sender_id is not a sender in this workspace') — reuse the existing helper.",
+                "Saving the copy with a sender_id that IS in the workspace succeeds (validateSenderId returns {senderId})."
+              ],
+              "criterion": "A send node clones its template into an independently-editable copy (kind=copy); editing the copy does not touch the library original; the envelope persists on the copy. Cross-workspace template/sender ids are refused (inv.2).",
+              "path": "services/local-api/test/campaign-send-node-clone.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "REAL Postgres. Activation is updateCampaign/the new publish path setting status='active'; assert a campaign whose send node's copy has sender_id=NULL is REFUSED with a 409 and a NODE-SPECIFIC message ('Choose who the email is from' + the offending node id/label).",
+                "Mirror sendBroadcast's ORDERED 409s per send node: sender_id missing -> 'Choose who the email is from…'; then to_address blank -> 'Set the To field…'; then subject blank -> 'Add a subject line…' — assert each surfaces in that priority and names the node.",
+                "A campaign with MULTIPLE send nodes reports the FIRST incomplete node (or aggregates) — assert the message identifies WHICH node is missing what (surface which node/what is missing).",
+                "With all three set (real named sender — NO no-reply fallback) on every send node AND a verified sending_domains row present, activation SUCCEEDS and campaigns.status becomes 'active'.",
+                "VERIFIED-DOMAIN gate runs AFTER the per-node envelope checks (parity with sendBroadcast order): a campaign with complete envelopes but NO verified domain is refused with the verified-domain message ('No verified sending domain…').",
+                "A campaign with NO send nodes (only set_attribute/wait/exit) activates without any envelope gating (the gate only applies to send nodes).",
+                "Cross-workspace: the activate path scopes the campaign + every referenced send-node copy by ctx.workspaceId (a copy/sender from another workspace can never satisfy the gate)."
+              ],
+              "criterion": "Activating a campaign with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.",
+              "path": "services/local-api/test/campaign-publish-gate.integration.test.ts",
+              "tier": "integration"
+            },
+            {
+              "assertions": [
+                "REAL Postgres + MOCKED SES (an injected SesEmailClient capturing SendEmailInput — never real mail), mirroring action-send-through-dispatcher.integration.test.ts.",
+                "Seed a verified workspace, a profile with attributes.tier='gold' and email, and a campaign send node referencing a COPY template with subject='Hi {{customer.email}} ({{customer.tier}})', to_address='{{customer.email}}', sender_id->a verified-domain sender, compiled_html containing {{customer.tier}}.",
+                "Run the runner tick: it inserts ONE outbox row with campaign_id set + dedupe_key 'campaign:<camp>:<profile>:<node>' and enqueues {outbox_id}; then run the REAL dispatchOutbox per id.",
+                "SES captured input: From == '\"Name\" <sender@verified-domain>' (resolved from sender_id — NO no-reply fallback used), To == the rendered customer.email, Subject has the merge tags RENDERED (the v0.27.2 subject fix — not the raw {{...}}), body has {{customer.tier}} rendered to 'gold'.",
+                "messages_log gets a row with campaign_id = the campaign (and broadcast_id NULL) and ses_message_id from the mock.",
+                "Guard pipeline holds: a SUPPRESSED recipient is SKIPPED (no SES call, no messages_log); the runner NEVER calls SES directly. An UNVERIFIED workspace is REFUSED at the gate.",
+                "Frequency-cap / quiet-hours short-circuit correctly when payload carries them (parity with existing dispatcher tests) — assert a capped recipient is skipped.",
+                "EXACTLY-ONCE: replaying the runner tick (same dedupe_key) inserts no second outbox row; replaying dispatchOutbox after a successful send re-claims nothing (one messages_log row total)."
+              ],
+              "criterion": "A campaign send flows through outbox -> Dispatcher -> messages_log(campaign_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.",
+              "path": "services/campaign-runner/test/campaign-send-dispatcher-instance.integration.test.ts",
+              "tier": "integration"
+            }
+          ]
+        }
+      },
+      "instructions": [
+        "Clear the turbo cache and RUN the tests yourself (DATABASE_URL set) twice from cold, plus pnpm typecheck and pnpm lint. For UI phases, RUN the Playwright e2e in a real browser. Record real pass/fail. Confirm the integration tier RUNS (real Postgres, not skipped/mocked) and no regression in earlier phases or the broadcast suite.",
+        "Verify EACH acceptance criterion is covered by a passing, non-vacuous test: [\"A send node clones its template into an independently-editable copy (kind=copy); editing the copy does not touch the library original; the envelope persists on the copy. Cross-workspace template/sender ids are refused (inv.2).\",\"Activating a campaign with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.\",\"A campaign send flows through outbox → Dispatcher → messages_log(campaign_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.\",\"An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value (e.g. attributes.last_purchase_amount = {{event.amount}} taken from the trigger event persisted on enrollment.state); the write is workspace-scoped + idempotent on retry; an undefined path resolves safely. Verified against REAL Postgres with unit tests for the value resolver.\"].",
+        "Highest-priority checks: (a) tenant isolation + workspace_id never client-supplied (server-side); (b) all campaign sends route through the Dispatcher gating with the mandatory From/To/Subject envelope (no no-reply); (c) runner idempotency/concurrency (no double-advance / double-send / double-webhook); (d) webhook SSRF + domain allowlist + injected HTTP (no real host) + bounded retries/timeout; (e) workspace-tz time math is DST-correct; (f) the DSL stays the single graph model (no loops/orphans/stored coords); (g) for UI, the flow works in a REAL browser, server buttons spinner+lock, NO native dialogs, data-testid preserved.",
+        "If any integration test mocks Postgres, that is a FAIL. If a UI criterion is only unit-tested (no real browser), that is a FAIL. If the webhook test hits a real host, that is a FAIL.",
+        "Scope check: flag any feature beyond the agreed design. Confirm the root version was bumped + CLAUDE.md updated when behavior changed.",
+        "Score 0-100. Set testsPass and criteriaAllMet honestly. Give concrete prioritized recommendations."
+      ],
+      "outputFormat": "JSON: { score: number, testsPass: boolean, criteriaAllMet: boolean, criteriaCoverage: [{criterion, met, evidence}], isolationOk: boolean, idempotencyOk: boolean, webhookSafetyOk: boolean, browserVerified: boolean, scopeCreep: string[], recommendations: string[], criticalIssues: string[] }",
+      "role": "adversarial principal reviewer + QA engineer verifying spec-fidelity, tenant isolation, runner idempotency, webhook safety, and (for UI) real-browser behavior",
+      "task": "Independently verify \"Action nodes: send-email instance + update-profile (event-sourced)\" against its criteria. Re-run the tests yourself (cold cache); do not trust the self-report."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KVGAJQXGHRECFZWEGVKSAKES/input.json",
+    "outputJsonPath": "tasks/01KVGAJQXGHRECFZWEGVKSAKES/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "iteration-1",
+    "phase4-action-nodes",
+    "quality-gate"
+  ],
+  "title": "Quality gate: Action nodes: send-email instance + update-profile (event-sourced) (iteration 1)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KVGAJQXGHRECFZWEGVKSAKES",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/campaign-builder:S000015:quality-gate",
+  "stepId": "S000015",
+  "inputs": {
+    "impl": {
+      "commandsRun": [
+        "pnpm --filter @cdp/shared exec vitest run test/expression-value.test.ts (20 passed)",
+        "pnpm --filter @cdp/service-campaign-runner exec vitest run test/set-attribute-value-spec.test.ts (10 passed)",
+        "pnpm --filter @cdp/service-campaign-runner exec vitest run test/enrollment-event-state.test.ts (5 passed)",
+        "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-campaign-runner exec vitest run test/set-attribute-event-sourced.integration.test.ts (2 passed)",
+        "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-campaign-runner exec vitest run test/campaign-send-dispatcher-instance.integration.test.ts (1 passed)",
+        "DATABASE_URL=... pnpm --filter @cdp/service-local-api exec vitest run test/campaign-send-node-clone.integration.test.ts test/campaign-publish-gate.integration.test.ts (10 passed)",
+        "pnpm typecheck (43/43 successful)",
+        "DATABASE_URL=... pnpm --filter @cdp/shared --filter @cdp/service-campaign-runner --filter @cdp/service-local-api --filter @cdp/service-dispatcher exec vitest run (cold: 55 + 165 + 189 + 71 = 480 passed)",
+        "pnpm lint (all touched backend packages clean; only the 7 KNOWN pre-existing web react-hooks/exhaustive-deps 'rule not found' errors in untouched files remain)",
+        "pnpm build (24/24 successful)"
+      ],
+      "e2eSummary": "No e2e — backend-only phase (phase.frontend=false; no builder UI, phases 5/6).",
+      "filesCreated": [
+        "packages/shared/src/event.ts",
+        "packages/shared/src/expression.ts",
+        "packages/shared/test/expression-value.test.ts",
+        "services/campaign-runner/test/set-attribute-value-spec.test.ts",
+        "services/campaign-runner/test/enrollment-event-state.test.ts",
+        "services/campaign-runner/test/set-attribute-event-sourced.integration.test.ts",
+        "services/campaign-runner/test/campaign-send-dispatcher-instance.integration.test.ts",
+        "services/local-api/test/campaign-send-node-clone.integration.test.ts",
+        "services/local-api/test/campaign-publish-gate.integration.test.ts"
+      ],
+      "filesModified": [
+        "packages/shared/src/index.ts",
+        "services/campaign-runner/src/dsl.ts",
+        "services/campaign-runner/src/core.ts",
+        "services/campaign-runner/src/enroll.ts",
+        "services/campaign-runner/src/run.ts",
+        "services/campaign-runner/src/index.ts",
+        "services/campaign-runner/test/parse-event-trigger.test.ts",
+        "services/local-api/src/handlers.ts",
+        "services/local-api/src/routes.ts",
+        "package.json",
+        "CLAUDE.md"
+      ],
+      "lintOk": true,
+      "migrationsApplied": [],
+      "notes": "PART A (send-node instance): POST /campaigns/:id/send-nodes/:nodeId/attach-template clones a library template into a kind='copy' working copy (source_template_id; copies design + subject/sender_id/to_address/from_selected via the same INSERT...SELECT as cloneTemplate) and repoints the send node's template_id at the copy; source SELECT scoped to ctx.workspaceId (cross-workspace 404, inv.2). POST /campaigns/:id/activate adds publish gating that did not exist before: pure collectSendNodeEnvelopeGaps (campaign-runner dsl.ts, BFS order) feeds sendBroadcast-ordered per-node 409s (sender_id -> to_address -> subject, naming the node) then the verified sending_domains gate (only when >=1 send node; a no-send campaign activates ungated). Dispatcher UNCHANGED — a campaign outbox row's template_id is the copy, so dispatch.ts resolves sender_id->From + renders subject/To/body exactly as for broadcasts (verified end-to-end via the integration test: messages_log.campaign_id set, broadcast_id null, exactly-once on replay). PART B (event-sourced set_attribute): new @cdp/shared event.ts (event.* namespace twin of customer.ts) + expression.ts (ValueSpec, renderExpression shared {{token}} engine, resolveValueSpec with literal | expression | legacy-bare-scalar + safe-empty). validateCampaignDefinition extended with validateSetAttributeValue (pure). buildEnrollmentInsertWithState persists {event:{type,payload,event_id}} onto campaign_enrollments.state ONLY in enrollFromEvent; the other three enrollment paths keep the plain insert so state.event is undefined and an event.* expression resolves safe-empty. run.ts loads the profile + state.event.payload under the FOR UPDATE lock and resolves the value spec before the existing parameterized buildSetAttribute (workspace_id at $1) — read-only substitution, never SQL (inv.6 untouched); idempotent because the source state is immutable. NO migration (campaign_enrollments.state jsonb DEFAULT '{}' already exists, migration 0005). NO builder UI (phases 5/6). Not pushed.",
+      "testsPass": true,
+      "testSummary": "All affected backend suites GREEN on a cold run: @cdp/shared 55/55 (4 files), @cdp/service-dispatcher 71/71 (12 files), @cdp/service-campaign-runner 165/165 (31 files), @cdp/service-local-api 189/189 (43 files). New phase-4 tests: expression-value (20 unit, value resolver literal/customer.*/event.*/deep-dot/undefined-safe), set-attribute-value-spec (10 unit, validateSetAttributeValue + side-effect carries the spec), enrollment-event-state (5 unit, buildEnrollmentInsertWithState + intent threads the event), set-attribute-event-sourced.integration (2, real Postgres: state.event persisted, literal + {{event.amount}} written, undefined path safe-empty, workspace-scoped, idempotent retry), campaign-send-dispatcher-instance.integration (1, runner->real dispatcher: From from sender_id, subject/To/body merge rendered, messages_log campaign_id, exactly-once), campaign-send-node-clone.integration (3, clone kind=copy + envelope copy + cross-ws refusal), campaign-publish-gate.integration (7, ordered per-node 409s + verified-domain gate + no-send ungated + cross-ws 404). Updated parse-event-trigger.test.ts for the new intent.event field. No mock of Postgres in the integration tier; SES mocked via an injected SesEmailClient.",
+      "typecheckOk": true,
+      "versionBump": "0.31.0 -> 0.32.0 (minor — feature)"
+    },
+    "iteration": 1,
+    "phase": {
+      "criteria": [
+        "A send node clones its template into an independently-editable copy (kind=copy); editing the copy does not touch the library original; the envelope persists on the copy. Cross-workspace template/sender ids are refused (inv.2).",
+        "Activating a campaign with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.",
+        "A campaign send flows through outbox → Dispatcher → messages_log(campaign_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.",
+        "An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value (e.g. attributes.last_purchase_amount = {{event.amount}} taken from the trigger event persisted on enrollment.state); the write is workspace-scoped + idempotent on retry; an undefined path resolves safely. Verified against REAL Postgres with unit tests for the value resolver."
+      ],
+      "frontend": false,
+      "id": "phase4-action-nodes",
+      "refs": "CLAUDE.md (broadcast email-INSTANCE/clone model, sendBroadcast gating, dispatcher campaign path, customer.* merge) + §9B action(send|set_attribute)",
+      "scope": [
+        "Give each SEND node its OWN editable email instance, reusing the broadcast flow: attaching a template CLONES it (kind=copy, source_template_id) into the node's working copy; the envelope (real named From sender + To token + Subject) lives on that copy and is edited in the email editor (autosaved). The send node references the copy template_id.",
+        "PUBLISH-time gating: a campaign cannot be activated if any send node lacks a sendable email (From sender + To + Subject all set) — mirror sendBroadcast's ordered 409s + the verified-domain gate. Surface which node/what is missing.",
+        "Verify the Dispatcher campaign path end-to-end: campaign outbox row → Dispatcher resolves sender_id → renders subject/To/body merge tags (the v0.27.2 subject fix) → messages_log with campaign_id. No change to the send pipeline beyond what the instance model needs.",
+        "UPDATE-PROFILE action (the set_attribute action kind already exists + the runner already applies a STATIC value via buildSetAttribute): extend it so the value can be a LITERAL **or** an EXPRESSION sourced from the trigger event or the profile — e.g. customer.* and a new event.* namespace ({{event.<payload path>}}). To enable event.*, PERSIST the trigger event payload onto campaign_enrollments.state at enrollment time (event-trigger enrollment from phase 3) so a later update-profile step can read it; resolve the expression at execution against the profile + enrollment.state.event (reuse the @cdp/shared customer.* resolver; add an analogous event.* resolver). A missing/again-undefined path resolves safely (no crash; documented — skip or empty).",
+        "Extend validateCampaignDefinition for the set_attribute value spec (literal vs expression) and keep it pure + unit-tested. The runner write stays workspace-scoped + idempotent (re-applying the same set_attribute on a retried tick is naturally idempotent for a literal; for an event-sourced value it resolves from the persisted enrollment.state, so a retry yields the same write)."
+      ],
+      "title": "Action nodes: send-email instance + update-profile (event-sourced)"
+    },
+    "plan": {
+      "e2eFlows": [],
+      "implUnits": [
+        "1. @cdp/shared: add the event.* namespace resolver — EVENT_PREFIX, resolveEventPath, eventMerge, expandEventToken — modeled on customer.ts; export from the package index. (No DB; pure.)",
+        "2. @cdp/shared: extract renderExpression (the {{token}} interpolation) so the dispatcher's renderTemplateBody and the new value resolver share one substitution engine; define resolveValueSpec(spec, ctx) with literal | expression | legacy-bare-scalar handling and safe-empty undefined resolution.",
+        "3. campaign-runner dsl.ts: define the ValueSpec type ({kind:'literal', value} | {kind:'expression', expression}); extend ActionNode.value typing; add validateSetAttributeValue and call it from validateNodeFields' set_attribute branch (accept legacy bare scalar for back-compat).",
+        "4. campaign-runner core.ts: change the set_attribute SideEffect to carry the VALUE SPEC (not a pre-resolved value); update actionSideEffect accordingly. Keep buildSetAttribute unchanged (it receives the already-resolved value).",
+        "5. campaign-runner core.ts: add buildEnrollmentInsertWithState (persists state jsonb) alongside buildEnrollmentInsert; thread the trigger event payload through the event-enrollment intent.",
+        "6. campaign-runner enroll.ts: in enrollFromEvent, persist {event:{type,payload,event_id}} onto enrollment.state via buildEnrollmentInsertWithState; segment_entry/manual paths keep buildEnrollmentInsert (state stays default '{}').",
+        "7. campaign-runner run.ts: in the FOR-UPDATE tick load enrollment.state (already part of the row read — add state to the SELECT) and the profile; when applying a set_attribute side effect, call resolveValueSpec({profile, event: state.event}) THEN buildSetAttribute(ws, profile, key, resolvedValue). Resolution is read-only against the locked row + post-loaded profile, so a retry re-resolves identically (idempotent).",
+        "8. local-api handlers.ts: add a campaign send-node CLONE path (reuse cloneTemplate's INSERT...SELECT copying design+envelope columns; kind='copy', source_template_id) and point the send node's template_id at the copy; scope the source SELECT by ctx.workspaceId (cross-workspace refusal).",
+        "9. local-api handlers.ts: add publish-time gating to the activate path (updateCampaign setting status='active', or a dedicated POST /campaigns/:id/activate) — for each send node, load its copy's (sender_id,to_address,subject) and emit sendBroadcast-ordered 409s naming the node; then the verified-domain gate. Reuse validateSenderId for any sender writes.",
+        "10. local-api routes.ts: register any new route(s) under the manage_content capability (clone/attach) consistent with existing campaign routes; activation stays manage_content.",
+        "11. Process hygiene: bump root package.json (minor — feature); update CLAUDE.md (event.* namespace, set_attribute value spec, enrollment.state.event persistence, campaign send-node instance + publish gate); NO new migration (campaign_enrollments.state already exists). Rebuild changed packages (tsc -b) before restarting dev:api; apply nothing to the DB schema."
+      ],
+      "mocks": [
+        "SES: an injected SesEmailClient capturing SendEmailInput (aws-sdk-client-mock style / a hand fake) — NEVER sends real mail; assert From/To/Subject/body and ConfigurationSet.",
+        "SQS: the injected SqsSender (SendMessageCommand) is a fake capturing enqueued {outbox_id} bodies (the runner boundary).",
+        "Clock: deps.now() injected for deterministic cap/quiet-hours/wait math.",
+        "No Postgres mock in the integration tier — REAL local Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp); pure tiers use in-memory objects only.",
+        "Webhook HTTP client: not exercised this phase (no webhook nodes), but unchanged injection contract preserved."
+      ],
+      "notes": "campaign_enrollments.state jsonb NOT NULL DEFAULT '{}' ALREADY EXISTS (packages/db/supabase/migrations/0005_messaging.sql) — CONFIRMED, NO migration needed to persist the trigger event there. Today buildEnrollmentInsert (core.ts) does NOT write state, so all current enrollment paths leave it at the default '{}'. The trigger event is in hand ONLY in enrollFromEvent (phase 3, EventRow with payload/type/event_id); that is the single place to persist state.event (via a new buildEnrollmentInsertWithState). The OTHER enrollment paths (enrollFromSegmentChange, enrollProfileManually, enrollSegmentSnapshot) have NO event, so they keep the plain buildEnrollmentInsert and state.event stays UNDEFINED — therefore a set_attribute with an event.* expression on a segment/manual-enrolled profile MUST resolve safely to empty (no crash): this is a required, explicitly-tested behavior, not an edge case. Activation today is just updateCampaign setting status='active' (no publish gating exists yet); the new gate mirrors sendBroadcast's ordered 409s (sender_id -> to_address -> subject) PER SEND NODE, then the verified-domain gate, naming the offending node. The dispatcher already renders subject/To/body merge tags and resolves sender_id->From with NO no-reply fallback reachable for a configured instance, so the campaign send path needs no dispatcher change beyond the instance model the broadcast flow established. Idempotency for the event-sourced write is structural: the value re-resolves from the IMMUTABLE persisted enrollment.state under the FOR UPDATE lock, so a retried tick produces the identical jsonb_set write (a literal is trivially idempotent; an expression is idempotent because its source — state.event — never changes). All resolution is read-only string substitution (never interpolated into SQL), so invariant 6 is untouched; the only SQL is the existing parameterized buildSetAttribute with workspace_id at $1.",
+      "pureFunctions": [
+        "@cdp/shared resolveEventPath(payload, pathAfterEvent): deep-dot resolver into the event payload (analogous to expandCustomerPath) — returns the leaf value or undefined.",
+        "@cdp/shared eventMerge(event): build the merge map for the 'event.*' namespace from a persisted trigger event payload (FULL tokens 'event.<path>' -> stringified scalars; nested objects/arrays skipped for whole-tag substitution, but dotted leaf paths supported via resolveEventPath). Pairs with the renderer like customerMerge.",
+        "@cdp/shared expandEventToken(token) / EVENT_PREFIX: normalize an 'event.*' token (no shorthand to expand, but keep symmetry with expandCustomerToken).",
+        "resolveValueSpec(spec, ctx:{profile, event}): the value resolver — a literal returns spec.value (or a bare scalar for back-compat); an expression renders via a shared interpolation over {customer.*, event.*} merge maps; an undefined/unknown path resolves to a documented safe-empty value; never throws. Lives in @cdp/shared (used by the runner; symmetrical with renderTemplateBody).",
+        "renderExpression(template, merge): the shared {{token}} interpolation engine extracted from dispatcher renderTemplateBody so the value resolver and the dispatcher share ONE substitution rule (unknown tags safe-empty for value resolution; same expandCustomerToken normalization).",
+        "isExpressionSpec(value) / isLiteralSpec(value) / coerceLegacyLiteral(value): pure value-spec discriminators used by both validateCampaignDefinition and resolveValueSpec.",
+        "validateSetAttributeValue(id, value): pure structural validation of the set_attribute value spec (literal vs expression vs legacy bare scalar), invoked from validateCampaignDefinition.",
+        "buildEnrollmentInsertWithState(workspaceId, campaignId, profileId, startNode, state): SqlStatement that persists campaign_enrollments.state (e.g. {event:{...}}) on insert; ON CONFLICT DO NOTHING preserved; workspace_id at $1; THROWS on falsy workspaceId.",
+        "buildSetAttribute (existing, core.ts) reused verbatim once the value is resolved — it already does workspace-scoped jsonb_set; resolution happens BEFORE building this statement.",
+        "collectSendNodeEnvelopeGaps(definition, copiesById): pure helper that walks send nodes and yields per-node {nodeId, missing:['sender'|'to'|'subject']} in sendBroadcast order — feeds the publish-gate message."
+      ],
+      "reuse": [
+        "@cdp/shared customer.ts (customerMerge, expandCustomerToken, expandCustomerPath, resolveCustomerField) — the event.* resolver is a structural twin; renderExpression is extracted from dispatcher renderTemplateBody so both share ONE {{token}} engine.",
+        "dispatcher core.ts renderTemplateBody / buildSendEmailInput — already render subject/To/body merge tags (the v0.27.2 subject fix); the campaign send path needs NO dispatcher change beyond the instance model already supporting sender_id/to_address/subject on the template.",
+        "campaign-runner core.ts buildCampaignOutboxInsert / buildCampaignDedupeKey / buildSetAttribute / buildEnrollmentInsert — reuse verbatim; add buildEnrollmentInsertWithState as a sibling.",
+        "campaign-runner run.ts chainTick + runEnrollmentInTx FOR-UPDATE lock + advanceFor — the set_attribute resolution slots into the existing side-effect application loop; idempotency/concurrency guarantees are preserved unchanged.",
+        "campaign-runner enroll.ts enrollFromEvent (phase 3) — the only enrollment path that has the trigger event in hand; it is where state.event is persisted. enrollFromSegmentChange / enrollProfileManually / enrollSegmentSnapshot intentionally leave event undefined.",
+        "local-api handlers.ts cloneTemplate (INSERT...SELECT copying design + subject/sender_id/to_address/from_selected), validateSenderId (cross-workspace sender refusal, inv.2), sendBroadcast's ordered 409 messages + verified-domain gate — mirror these verbatim for the campaign send-node clone + publish gate.",
+        "Existing test scaffolding: action-send-through-dispatcher.integration.test.ts (runner->real dispatcher with mocked SES, verified/unverified/suppressed cases), packages/shared/test/customer.test.ts (resolver unit-test style), services/local-api/test/broadcast-send-gate.integration.test.ts (ordered 409 gate assertions), campaign-enroll-endpoint.integration.test.ts (enrollment scoping).",
+        "@cdp/segments AstNode + evaluateEventPayloadFilter (already in core.ts) — the event payload is already trusted/closed-grammar at enroll time; the value resolver reads the SAME persisted payload, no new whitelist needed for resolution (it's read-only substitution, never SQL)."
+      ],
+      "testFiles": [
+        {
+          "assertions": [
+            "resolveValueSpec({kind:'literal', value:42}, ctx) returns 42 unchanged (number preserved, not stringified).",
+            "resolveValueSpec({kind:'literal', value:'gold'}, ctx) returns 'gold'.",
+            "resolveValueSpec({kind:'literal', value:null}, ctx) returns null (an explicit null literal is honored, distinct from undefined).",
+            "resolveValueSpec({kind:'expression', expression:'{{customer.tier}}'}, ctx with profile.attributes.tier='gold') returns 'gold' (reuses customerMerge + expandCustomerToken — shorthand customer.tier === customer.attributes.tier).",
+            "resolveValueSpec({kind:'expression', expression:'{{customer.email}}'}, ctx) returns the reserved profile column value.",
+            "resolveValueSpec({kind:'expression', expression:'{{event.amount}}'}, ctx with event={amount:19.99}) returns the value sourced from enrollment.state.event (NEW event.* namespace).",
+            "resolveValueSpec({kind:'expression', expression:'{{event.items.0.sku}}'}, ctx with nested event payload) resolves a DEEP dotted path via the event resolver (eventMerge / resolveEventPath analogous to expandCustomerPath).",
+            "resolveValueSpec({kind:'expression', expression:'{{event.missing}}'}, ctx) resolves SAFELY to '' (or a documented sentinel) — never throws, never leaves the literal '{{event.missing}}' as the written attribute.",
+            "resolveValueSpec({kind:'expression', expression:'{{customer.unknownAttr}}'}, ctx with no such attribute) resolves SAFELY (empty), no crash.",
+            "resolveValueSpec for an event.* expression when ctx.event is undefined (manual/segment enrollment left no event on state) returns the safe-empty value — confirms the manual/segment paths resolve safely.",
+            "resolveValueSpec({kind:'expression', expression:'pre {{customer.tier}} post'}, ctx) renders the surrounding literal text (string interpolation, not just whole-token substitution) — same engine as renderTemplateBody.",
+            "an unknown namespace token {{order.total}} (not customer.*/event.*) is left for safe-empty handling and never crashes."
+          ],
+          "criterion": "An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value ... an undefined path resolves safely. Verified ... with unit tests for the value resolver.",
+          "path": "packages/shared/test/expression-value.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "validateCampaignDefinition accepts a set_attribute action with key + a bare scalar value (BACKWARD-COMPAT: the legacy static value shape still validates as an implicit literal).",
+            "validateCampaignDefinition accepts {kind:'set_attribute', key:'tier', value:{kind:'literal', value:'gold'}, next}.",
+            "validateCampaignDefinition accepts {kind:'set_attribute', key:'last_amount', value:{kind:'expression', expression:'{{event.amount}}'}, next}.",
+            "validateCampaignDefinition THROWS when value is {kind:'expression'} with a missing/empty expression string.",
+            "validateCampaignDefinition THROWS when value is {kind:'literal'} but the literal field is absent (an explicit-spec object missing its payload) — distinguishes from a bare scalar value.",
+            "validateCampaignDefinition THROWS on an unknown value-spec kind (e.g. {kind:'sql'}).",
+            "validateCampaignDefinition still THROWS when set_attribute has no key (existing rule unchanged).",
+            "validation is PURE: no DB/AWS import in the module under test; the function only inspects the definition object.",
+            "actionSideEffect (core.ts) for a set_attribute now emits a side effect carrying the VALUE SPEC (literal|expression), not a pre-resolved value, so resolution happens at runner execution against the live profile + enrollment.state."
+          ],
+          "criterion": "Extend validateCampaignDefinition for the set_attribute value spec (literal vs expression) and keep it pure + unit-tested.",
+          "path": "services/campaign-runner/test/set-attribute-value-spec.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "buildEnrollmentInsertWithState(ws, camp, profile, startNode, {event:{type, payload, event_id}}) produces an INSERT writing state = jsonb {event:{...}} and still ON CONFLICT (campaign_id, profile_id) DO NOTHING (re-enrollment 'once' guard preserved).",
+            "buildEnrollmentInsertWithState binds workspace_id at $1 and THROWS on a falsy workspaceId (tenant-isolation guard parity with buildEnrollmentInsert).",
+            "the persisted state.event mirrors EventRow shape relevant for event.* resolution: at least payload (and type/event_id for provenance) — NOT a profile snapshot.",
+            "the legacy buildEnrollmentInsert (no state) is unchanged and still used by segment_entry / manual paths (state stays the column default '{}'), so a later set_attribute reading event.* gets an undefined event and resolves safely.",
+            "parseEventEnrollmentTrigger / the intent now carries the event payload through to the insert (the EnrollmentIntent or a sibling carries {event}) — assert the event-trigger path threads payload to buildEnrollmentInsertWithState while segment/manual intents carry none."
+          ],
+          "criterion": "PERSIST the trigger event payload onto campaign_enrollments.state at enrollment time (event-trigger enrollment); manual/segment enrollment leave event undefined which must resolve safely.",
+          "path": "services/campaign-runner/test/enrollment-event-state.test.ts",
+          "tier": "unit"
+        },
+        {
+          "assertions": [
+            "REAL Postgres (DATABASE_URL); unique file-local workspace/campaign/profile UUIDs; seed a workspace + profile + an active event-trigger campaign whose graph is trigger(event)->set_attribute->exit.",
+            "Event-trigger enrollment persists the trigger event payload onto campaign_enrollments.state.event (assert the column after enrollFromEvent / the wired enroll path).",
+            "Running the enrollment tick with a LITERAL set_attribute (value {kind:'literal', value:'gold'}) writes profiles.attributes.tier='gold' (jsonb_set) for the enrolled profile only.",
+            "Running a set_attribute with {kind:'expression', expression:'{{event.amount}}'} writes profiles.attributes.last_purchase_amount equal to the value taken FROM enrollment.state.event.amount (NOT the literal token).",
+            "An expression referencing an UNDEFINED event path ({{event.nope}}) writes a safe-empty value (documented) and does NOT crash the tick; the enrollment still advances to exit/completed.",
+            "WORKSPACE-SCOPED: a second workspace with an identically-named profile/attribute is NOT mutated (the UPDATE binds workspace_id=$1; assert the other tenant's attributes untouched).",
+            "IDEMPOTENT on retry: re-running the same enrollment tick (or replaying the sweep) yields the SAME attribute value — the event-sourced value re-resolves from the persisted enrollment.state, so a retry is a no-op write, not a divergent value. Assert attributes equal before/after the second run.",
+            "Cross-workspace safety: runEnrollment loads workspace_id FROM the enrollment row; assert no statement writes with a workspace_id other than the enrollment's (mirrors the existing 'write not scoped to the enrollment workspace' guard)."
+          ],
+          "criterion": "An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value (e.g. attributes.last_purchase_amount = {{event.amount}} taken from the trigger event persisted on enrollment.state); the write is workspace-scoped + idempotent on retry; an undefined path resolves safely. Verified against REAL Postgres.",
+          "path": "services/campaign-runner/test/set-attribute-event-sourced.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "REAL Postgres; capability-gated request context (manage_content). Seed a workspace with a library email_template + a verified domain + a domain_senders row.",
+            "Attaching a library template to a campaign SEND node clones it: a new email_templates row with kind='copy' and source_template_id = the library id (reuse cloneTemplate's INSERT ... SELECT shape) — assert the new row id != library id.",
+            "The clone copies the design + body AND the envelope columns (subject, sender_id, to_address, from_selected) — assert they match the source (so a configured library template yields a sendable copy).",
+            "Editing the copy (PUT the copy's subject/sender_id/to_address) does NOT change the library original — re-SELECT the library row and assert it's unchanged.",
+            "The send node's template_id now references the COPY (assert the campaign definition's send-node template_id == the copy id after attach).",
+            "Cross-workspace REFUSAL (inv.2): attaching/cloning a template_id that belongs to ANOTHER workspace returns 404/refusal and creates no copy (scopedQuery on the source SELECT yields no row).",
+            "Cross-workspace sender_id REFUSAL: setting the copy's sender_id to a domain_senders id from another workspace is rejected via validateSenderId ('sender_id is not a sender in this workspace') — reuse the existing helper.",
+            "Saving the copy with a sender_id that IS in the workspace succeeds (validateSenderId returns {senderId})."
+          ],
+          "criterion": "A send node clones its template into an independently-editable copy (kind=copy); editing the copy does not touch the library original; the envelope persists on the copy. Cross-workspace template/sender ids are refused (inv.2).",
+          "path": "services/local-api/test/campaign-send-node-clone.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "REAL Postgres. Activation is updateCampaign/the new publish path setting status='active'; assert a campaign whose send node's copy has sender_id=NULL is REFUSED with a 409 and a NODE-SPECIFIC message ('Choose who the email is from' + the offending node id/label).",
+            "Mirror sendBroadcast's ORDERED 409s per send node: sender_id missing -> 'Choose who the email is from…'; then to_address blank -> 'Set the To field…'; then subject blank -> 'Add a subject line…' — assert each surfaces in that priority and names the node.",
+            "A campaign with MULTIPLE send nodes reports the FIRST incomplete node (or aggregates) — assert the message identifies WHICH node is missing what (surface which node/what is missing).",
+            "With all three set (real named sender — NO no-reply fallback) on every send node AND a verified sending_domains row present, activation SUCCEEDS and campaigns.status becomes 'active'.",
+            "VERIFIED-DOMAIN gate runs AFTER the per-node envelope checks (parity with sendBroadcast order): a campaign with complete envelopes but NO verified domain is refused with the verified-domain message ('No verified sending domain…').",
+            "A campaign with NO send nodes (only set_attribute/wait/exit) activates without any envelope gating (the gate only applies to send nodes).",
+            "Cross-workspace: the activate path scopes the campaign + every referenced send-node copy by ctx.workspaceId (a copy/sender from another workspace can never satisfy the gate)."
+          ],
+          "criterion": "Activating a campaign with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.",
+          "path": "services/local-api/test/campaign-publish-gate.integration.test.ts",
+          "tier": "integration"
+        },
+        {
+          "assertions": [
+            "REAL Postgres + MOCKED SES (an injected SesEmailClient capturing SendEmailInput — never real mail), mirroring action-send-through-dispatcher.integration.test.ts.",
+            "Seed a verified workspace, a profile with attributes.tier='gold' and email, and a campaign send node referencing a COPY template with subject='Hi {{customer.email}} ({{customer.tier}})', to_address='{{customer.email}}', sender_id->a verified-domain sender, compiled_html containing {{customer.tier}}.",
+            "Run the runner tick: it inserts ONE outbox row with campaign_id set + dedupe_key 'campaign:<camp>:<profile>:<node>' and enqueues {outbox_id}; then run the REAL dispatchOutbox per id.",
+            "SES captured input: From == '\"Name\" <sender@verified-domain>' (resolved from sender_id — NO no-reply fallback used), To == the rendered customer.email, Subject has the merge tags RENDERED (the v0.27.2 subject fix — not the raw {{...}}), body has {{customer.tier}} rendered to 'gold'.",
+            "messages_log gets a row with campaign_id = the campaign (and broadcast_id NULL) and ses_message_id from the mock.",
+            "Guard pipeline holds: a SUPPRESSED recipient is SKIPPED (no SES call, no messages_log); the runner NEVER calls SES directly. An UNVERIFIED workspace is REFUSED at the gate.",
+            "Frequency-cap / quiet-hours short-circuit correctly when payload carries them (parity with existing dispatcher tests) — assert a capped recipient is skipped.",
+            "EXACTLY-ONCE: replaying the runner tick (same dedupe_key) inserts no second outbox row; replaying dispatchOutbox after a successful send re-claims nothing (one messages_log row total)."
+          ],
+          "criterion": "A campaign send flows through outbox -> Dispatcher -> messages_log(campaign_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.",
+          "path": "services/campaign-runner/test/campaign-send-dispatcher-instance.integration.test.ts",
+          "tier": "integration"
+        }
+      ]
+    }
+  }
+}

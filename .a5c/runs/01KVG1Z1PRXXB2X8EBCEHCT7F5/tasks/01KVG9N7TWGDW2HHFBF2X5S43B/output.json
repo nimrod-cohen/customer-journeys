@@ -1,0 +1,46 @@
+{
+  "filesCreated": [
+    "packages/shared/src/event.ts",
+    "packages/shared/src/expression.ts",
+    "packages/shared/test/expression-value.test.ts",
+    "services/campaign-runner/test/set-attribute-value-spec.test.ts",
+    "services/campaign-runner/test/enrollment-event-state.test.ts",
+    "services/campaign-runner/test/set-attribute-event-sourced.integration.test.ts",
+    "services/campaign-runner/test/campaign-send-dispatcher-instance.integration.test.ts",
+    "services/local-api/test/campaign-send-node-clone.integration.test.ts",
+    "services/local-api/test/campaign-publish-gate.integration.test.ts"
+  ],
+  "filesModified": [
+    "packages/shared/src/index.ts",
+    "services/campaign-runner/src/dsl.ts",
+    "services/campaign-runner/src/core.ts",
+    "services/campaign-runner/src/enroll.ts",
+    "services/campaign-runner/src/run.ts",
+    "services/campaign-runner/src/index.ts",
+    "services/campaign-runner/test/parse-event-trigger.test.ts",
+    "services/local-api/src/handlers.ts",
+    "services/local-api/src/routes.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "migrationsApplied": [],
+  "versionBump": "0.31.0 -> 0.32.0 (minor — feature)",
+  "testsPass": true,
+  "testSummary": "All affected backend suites GREEN on a cold run: @cdp/shared 55/55 (4 files), @cdp/service-dispatcher 71/71 (12 files), @cdp/service-campaign-runner 165/165 (31 files), @cdp/service-local-api 189/189 (43 files). New phase-4 tests: expression-value (20 unit, value resolver literal/customer.*/event.*/deep-dot/undefined-safe), set-attribute-value-spec (10 unit, validateSetAttributeValue + side-effect carries the spec), enrollment-event-state (5 unit, buildEnrollmentInsertWithState + intent threads the event), set-attribute-event-sourced.integration (2, real Postgres: state.event persisted, literal + {{event.amount}} written, undefined path safe-empty, workspace-scoped, idempotent retry), campaign-send-dispatcher-instance.integration (1, runner->real dispatcher: From from sender_id, subject/To/body merge rendered, messages_log campaign_id, exactly-once), campaign-send-node-clone.integration (3, clone kind=copy + envelope copy + cross-ws refusal), campaign-publish-gate.integration (7, ordered per-node 409s + verified-domain gate + no-send ungated + cross-ws 404). Updated parse-event-trigger.test.ts for the new intent.event field. No mock of Postgres in the integration tier; SES mocked via an injected SesEmailClient.",
+  "e2eSummary": "No e2e — backend-only phase (phase.frontend=false; no builder UI, phases 5/6).",
+  "typecheckOk": true,
+  "lintOk": true,
+  "commandsRun": [
+    "pnpm --filter @cdp/shared exec vitest run test/expression-value.test.ts (20 passed)",
+    "pnpm --filter @cdp/service-campaign-runner exec vitest run test/set-attribute-value-spec.test.ts (10 passed)",
+    "pnpm --filter @cdp/service-campaign-runner exec vitest run test/enrollment-event-state.test.ts (5 passed)",
+    "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-campaign-runner exec vitest run test/set-attribute-event-sourced.integration.test.ts (2 passed)",
+    "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-campaign-runner exec vitest run test/campaign-send-dispatcher-instance.integration.test.ts (1 passed)",
+    "DATABASE_URL=... pnpm --filter @cdp/service-local-api exec vitest run test/campaign-send-node-clone.integration.test.ts test/campaign-publish-gate.integration.test.ts (10 passed)",
+    "pnpm typecheck (43/43 successful)",
+    "DATABASE_URL=... pnpm --filter @cdp/shared --filter @cdp/service-campaign-runner --filter @cdp/service-local-api --filter @cdp/service-dispatcher exec vitest run (cold: 55 + 165 + 189 + 71 = 480 passed)",
+    "pnpm lint (all touched backend packages clean; only the 7 KNOWN pre-existing web react-hooks/exhaustive-deps 'rule not found' errors in untouched files remain)",
+    "pnpm build (24/24 successful)"
+  ],
+  "notes": "PART A (send-node instance): POST /campaigns/:id/send-nodes/:nodeId/attach-template clones a library template into a kind='copy' working copy (source_template_id; copies design + subject/sender_id/to_address/from_selected via the same INSERT...SELECT as cloneTemplate) and repoints the send node's template_id at the copy; source SELECT scoped to ctx.workspaceId (cross-workspace 404, inv.2). POST /campaigns/:id/activate adds publish gating that did not exist before: pure collectSendNodeEnvelopeGaps (campaign-runner dsl.ts, BFS order) feeds sendBroadcast-ordered per-node 409s (sender_id -> to_address -> subject, naming the node) then the verified sending_domains gate (only when >=1 send node; a no-send campaign activates ungated). Dispatcher UNCHANGED — a campaign outbox row's template_id is the copy, so dispatch.ts resolves sender_id->From + renders subject/To/body exactly as for broadcasts (verified end-to-end via the integration test: messages_log.campaign_id set, broadcast_id null, exactly-once on replay). PART B (event-sourced set_attribute): new @cdp/shared event.ts (event.* namespace twin of customer.ts) + expression.ts (ValueSpec, renderExpression shared {{token}} engine, resolveValueSpec with literal | expression | legacy-bare-scalar + safe-empty). validateCampaignDefinition extended with validateSetAttributeValue (pure). buildEnrollmentInsertWithState persists {event:{type,payload,event_id}} onto campaign_enrollments.state ONLY in enrollFromEvent; the other three enrollment paths keep the plain insert so state.event is undefined and an event.* expression resolves safe-empty. run.ts loads the profile + state.event.payload under the FOR UPDATE lock and resolves the value spec before the existing parameterized buildSetAttribute (workspace_id at $1) — read-only substitution, never SQL (inv.6 untouched); idempotent because the source state is immutable. NO migration (campaign_enrollments.state jsonb DEFAULT '{}' already exists, migration 0005). NO builder UI (phases 5/6). Not pushed."
+}
