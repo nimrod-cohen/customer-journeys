@@ -1,0 +1,139 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "e2eFlows": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "implUnits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mocks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "pureFunctions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reuse": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "testFiles": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "testFiles",
+        "implUnits"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "docs": "CLAUDE.md (living source of truth — overrides the spec on conflict) + CDP-BUILD-SPEC.md §9B (campaign workflow engine), §8 (rule-AST→SQL compiler, reused for branch conditions), §9 (outbox→Dispatcher pipeline)",
+        "env": [
+          "Monorepo: pnpm workspaces + Turborepo + Vitest + strict TS. Run from repo root. Node 20+.",
+          "Real Postgres (dev): DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp (migrations applied). Single test file: pnpm --filter <pkg> exec vitest run path. Whole suite: DATABASE_URL=… pnpm test. Typecheck: pnpm typecheck. Lint: pnpm lint.",
+          "Browser e2e: pnpm --filter @cdp/web test:e2e — its OWN DB cdp_e2e on its OWN ports (local-api :8788, web :5174), runs with LOCAL_SES_FORCE_MOCK=1 LOCAL_SES_DKIM_STATUS=SUCCESS; re-seeds web/e2e/seed.ts each run. The dev stack (cdp, :8787/:5173) coexists. Playwright config has retries:1.",
+          "Dev API for manual checks: pnpm --filter @cdp/service-local-api dev:api (background, restart after backend edits). Health: GET http://localhost:8787/health.",
+          "Key reuse points: services/campaign-runner (dsl.ts, core.ts, run.ts, enroll.ts), services/local-api (handlers.ts, routes.ts, app.ts, server.ts), services/dispatcher (core.ts, dispatch.ts), packages/segments (AST + compiler + rule builder), packages/email, web/src/screens (BroadcastComposer email-instance flow, TemplateEditor, SegmentBuilder), web/src/ui/kit.tsx (ActionMenu, Drawer, Button, Field, Select), web/e2e/seed.ts."
+        ],
+        "invariants": [
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL and every query filters by workspace_id. The campaign-runner + enrollment + handlers connect with the Supabase SERVICE ROLE which BYPASSES RLS — they MUST scope by workspace_id IN CODE (RLS is not their safety net). workspace_id is loaded FROM the enrollment/campaign row, never assumed.",
+          "workspace_id is NEVER client-supplied — it comes from the authorizer-injected claim (admin API) or a trusted server-set field (the enrollment row). Never trust a workspace_id in a request body. Reject a cross-workspace template_id / segment_id / sender_id (inv.2) — like validateSenderId does today.",
+          "All campaign action SENDS go through the SAME outbox → Dispatcher pipeline as broadcasts (§9): suppression → frequency-cap → quiet-hours, gated on a VERIFIED sending domain. A send node carries an email INSTANCE whose envelope (real named From sender + To + Subject) is ALL mandatory — NO no-reply fallback (mirror sendBroadcast gating). The Dispatcher renders merge tags in the SUBJECT, To AND body.",
+          "Runner idempotency + concurrency (unchanged guarantee): one tick advances a due enrollment exactly once (SELECT … FOR UPDATE row lock in one tx, re-check active inside the lock; legacy CAS path for unit tests). Outbox dedupe_key per (campaign_id, profile_id, node_id) prevents double-sends on retry. MAX_STEPS_PER_TICK guards pathological graphs. New node execution must preserve all of this.",
+          "Webhook action safety: outbound HTTP ONLY to an explicit per-workspace domain ALLOWLIST; enforce a timeout + BOUNDED retries; block SSRF (no internal/link-local/loopback/169.254 metadata targets); secrets (e.g. auth headers) use the @cdp/db secret-crypto envelope pattern, never returned in plaintext over the API; a webhook failure is ISOLATED (recorded; never crashes the tick or double-advances). LOCAL: the HTTP call is mocked/injected — never hit a real external host in tests.",
+          "Workspace timezone governs ALL campaign time math (waits, wait-until, hour-of-day window) — DST-correct (reuse the zoned↔UTC approach from the broadcast scheduler: zonedInputToUtcIso/tzOffsetMs). One configurable timezone per workspace; never per-broadcast guesswork.",
+          "The DSL ({startNode, nodes}) is the SINGLE graph model; validateCampaignDefinition is the structural gate (exactly ONE trigger, every edge resolves, a reachable exit, and — extended — NO cycles / NO orphan nodes / down-only). The builder is an AUTO-LAYOUT RENDER of that graph: compute (x,y) from the tree, draw rounded orthogonal connectors, branches fan sideways. NO separate graph model, NO stored coordinates, NO loops/back-edges.",
+          "REUSE, do not reinvent (code-quality bar): the broadcast email-INSTANCE/clone flow (kind=copy, source_template_id, cloneTemplate, the From/To/Subject envelope + editor return flow) for send nodes; the segment rule builder + AstNode for the if/condition node; the kit ActionMenu / Drawer / Button (auto-locks on promise-returning onClick) / Field / Select; the Dispatcher core; scopedQuery; runInWorkspaceTx; evaluateRealtimeSegmentsForProfile. Match the surrounding code style, comment density and naming.",
+          "UI standing rules: NEVER use native confirm/alert/prompt — use ui/dialog.tsx (askConfirm) or purpose-built modals. EVERY server-calling button shows a spinner + locks until the response (kit Button auto-locks when onClick RETURNS the promise — wire it that way). The email editor autosaves (no manual save). PRESERVE every existing data-testid; add stable testids for new UI. Floating toasts (ui/toast.tsx showToast) for transient feedback.",
+          "Test-first (§16A/§18): write the failing acceptance tests FIRST, then implement to green. Do NOT mock Postgres in the integration tier — use the REAL local DB. Mock SES/AWS (aws-sdk-client-mock / LocalStack); the webhook HTTP client is injected/mocked. Playwright (real browser) for UI phases with seeded data + stable selectors. turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces (events.event_id / ses_message_id are GLOBAL keys).",
+          "Process hygiene: BUMP the root package.json version per change (patch=tiny, minor=feature, major only when told). UPDATE CLAUDE.md when behavior/architecture changes. Apply new SQL migrations to BOTH the dev DB (cdp) AND the e2e DB (cdp_e2e) via a node pg script (psql is unavailable). RESTART the dev API (pnpm --filter @cdp/service-local-api dev:api — a long-lived tsx process, NOT watch) after backend edits, and REBUILD a changed package (tsc -b) the local-api imports from dist. Scope discipline: build EXACTLY the agreed design — no extra features."
+        ],
+        "loop": "This phase has a FRONTEND/UI surface. The widest quality loop is a REAL BROWSER: build the UI in /web (Preact) and verify with Playwright e2e (pnpm --filter @cdp/web test:e2e) against the e2e stack (cdp_e2e DB, :8788/:5174). Reuse the kit (ActionMenu/Drawer/Button/Field/Select), the broadcast email-instance flow, and the segment rule builder. Seed deterministic data (web/e2e/seed.ts) + stable data-testid selectors. NO native dialogs; server buttons spinner+lock.",
+        "phase": {
+          "criteria": [
+            "Inserting an If/branch on an edge yields a converging diamond: both arms lead to the SAME continuation node and the trunk continues below it; rendered with arms fanning sideways and connectors converging into the single join (no diagonal/upward edges, auto-layout). Verified in a REAL browser (Playwright tokenizes the connector paths + asserts convergence into one node).",
+            "Each arm has its own + ; adding a node to ONE arm while the other stays empty keeps the diamond and both sides rejoin the trunk (the user screenshot case); placing an Exit on an arm terminates only that arm. Round-trips through the DSL (save+reload same graph).",
+            "Delete re-links to a valid converging graph; no loops/orphans; validateCampaignDefinition passes for the diamond; workspace-scoped. No regression in the phase-5/6 canvas + editor e2e."
+          ],
+          "frontend": true,
+          "id": "phase6b-branch-convergence",
+          "refs": "CLAUDE.md (the phase-5 canvas: layout.ts/orthogonal-path.ts/mutate.ts/CampaignCanvas.tsx) + the locked converging-diamond design",
+          "scope": [
+            "Redesign the IF/branch (and any future multi-way branch) so its arms OPEN and REJOIN a single trunk (a converging diamond), NOT two separate exits. Inserting an If/branch on an edge A→B produces A→If with BOTH arms (onTrue/onFalse) leading to the continuation B; the trunk continues downward from that single join node. (Today insertBranch wires each arm to its own fresh exit — change it to rejoin.)",
+            "Each arm gets its OWN + insertion control to add action nodes into THAT arm only (If.onTrue→New→join); an EMPTY arm passes straight through to the join (matches the user screenshot: one populated arm, one empty, both reunite). An explicit EXIT node dropped on an arm terminates just that arm (that side does not rejoin).",
+            "Layout + connectors: the join node has 2+ incoming edges; draw the arms fanning to the SIDES and the connectors CONVERGING back into the single join, trunk continuing below — extend the existing Reingold-Tilford layout (a node with multiple parents laid out ONCE at max parent depth) and the orthogonal-path renderer (still rounded, axis-aligned, no diagonals, no up/back edges). Update mutate.ts (insertBranch rejoins; per-arm insert; delete re-links keeping a valid converging graph), CampaignCanvas.tsx (per-arm + controls + the convergence connectors). validateCampaignDefinition stays the gate (diamonds are already allowed — ensure no false cycle/orphan). The RUNNER is unchanged (it just follows current_node through the join)."
+          ],
+          "title": "Builder: converging branches (arms open and rejoin a single trunk)"
+        },
+        "prior": "The campaign-runner backend is MATURE: dsl.ts (trigger/wait/condition/action/exit + validateCampaignDefinition), core.ts (processNode, outbox/set_attribute/advance builders), run.ts (one-tx FOR UPDATE tick + legacy CAS), enroll.ts (segment-entry enrollment). The broadcast email-INSTANCE/clone flow + sendBroadcast gating + the Dispatcher campaign path already exist. The current CampaignBuilder.tsx is a 164-line PLACEHOLDER. Read these before planning."
+      },
+      "instructions": [
+        "Read CLAUDE.md (living source of truth — overrides the spec on conflict) + CDP-BUILD-SPEC.md §9B (campaign workflow engine), §8 (rule-AST→SQL compiler, reused for branch conditions), §9 (outbox→Dispatcher pipeline), plus the cited files for this phase: CLAUDE.md (the phase-5 canvas: layout.ts/orthogonal-path.ts/mutate.ts/CampaignCanvas.tsx) + the locked converging-diamond design. Read the existing campaign-runner + the relevant broadcast/segment code you will reuse.",
+        "For each acceptance criterion, define the test file(s), tier (unit | integration | e2e/browser), and the exact assertions — especially tenant-isolation, idempotency/concurrency, the Dispatcher-gating for sends, webhook SSRF/allowlist, and tz-correctness.",
+        "Identify the pure functions and what is mocked (AWS/SES/LocalStack; injected HTTP client for webhook) vs real (Postgres; real browser for UI).",
+        "List implementation units + dependency order, and EXACTLY which existing code/components to reuse. For UI phases, specify the Playwright e2e flows.",
+        "Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { testFiles: [{path, tier, criterion, assertions:[...]}], pureFunctions: string[], mocks: string[], e2eFlows: string[], implUnits: string[], reuse: string[], notes: string }",
+      "role": "senior test architect practicing TDD on a serverless multi-tenant CDP (campaign workflow engine + Preact SPA)",
+      "task": "Turn the acceptance criteria for \"Builder: converging branches (arms open and rejoin a single trunk)\" into a concrete, test-first plan that REUSES the existing campaign-runner, dispatcher, segment compiler, broadcast email-instance flow, and UI kit."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KVGWMADY16D1DS1DKZ30NS50/input.json",
+    "outputJsonPath": "tasks/01KVGWMADY16D1DS1DKZ30NS50/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "phase6b-branch-convergence",
+    "plan"
+  ],
+  "title": "Plan: Builder: converging branches (arms open and rejoin a single trunk)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KVGWMADY16D1DS1DKZ30NS50",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/campaign-builder:S000025:plan-phase",
+  "stepId": "S000025",
+  "inputs": {
+    "phase": {
+      "criteria": [
+        "Inserting an If/branch on an edge yields a converging diamond: both arms lead to the SAME continuation node and the trunk continues below it; rendered with arms fanning sideways and connectors converging into the single join (no diagonal/upward edges, auto-layout). Verified in a REAL browser (Playwright tokenizes the connector paths + asserts convergence into one node).",
+        "Each arm has its own + ; adding a node to ONE arm while the other stays empty keeps the diamond and both sides rejoin the trunk (the user screenshot case); placing an Exit on an arm terminates only that arm. Round-trips through the DSL (save+reload same graph).",
+        "Delete re-links to a valid converging graph; no loops/orphans; validateCampaignDefinition passes for the diamond; workspace-scoped. No regression in the phase-5/6 canvas + editor e2e."
+      ],
+      "frontend": true,
+      "id": "phase6b-branch-convergence",
+      "refs": "CLAUDE.md (the phase-5 canvas: layout.ts/orthogonal-path.ts/mutate.ts/CampaignCanvas.tsx) + the locked converging-diamond design",
+      "scope": [
+        "Redesign the IF/branch (and any future multi-way branch) so its arms OPEN and REJOIN a single trunk (a converging diamond), NOT two separate exits. Inserting an If/branch on an edge A→B produces A→If with BOTH arms (onTrue/onFalse) leading to the continuation B; the trunk continues downward from that single join node. (Today insertBranch wires each arm to its own fresh exit — change it to rejoin.)",
+        "Each arm gets its OWN + insertion control to add action nodes into THAT arm only (If.onTrue→New→join); an EMPTY arm passes straight through to the join (matches the user screenshot: one populated arm, one empty, both reunite). An explicit EXIT node dropped on an arm terminates just that arm (that side does not rejoin).",
+        "Layout + connectors: the join node has 2+ incoming edges; draw the arms fanning to the SIDES and the connectors CONVERGING back into the single join, trunk continuing below — extend the existing Reingold-Tilford layout (a node with multiple parents laid out ONCE at max parent depth) and the orthogonal-path renderer (still rounded, axis-aligned, no diagonals, no up/back edges). Update mutate.ts (insertBranch rejoins; per-arm insert; delete re-links keeping a valid converging graph), CampaignCanvas.tsx (per-arm + controls + the convergence connectors). validateCampaignDefinition stays the gate (diamonds are already allowed — ensure no false cycle/orphan). The RUNNER is unchanged (it just follows current_node through the join)."
+      ],
+      "title": "Builder: converging branches (arms open and rejoin a single trunk)"
+    }
+  }
+}

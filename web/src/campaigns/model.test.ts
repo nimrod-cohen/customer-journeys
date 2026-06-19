@@ -7,6 +7,7 @@ import {
   parseDefinition,
   buildDefinition,
   defaultNodeConfig,
+  outgoingEdges,
   starterModel,
   type CampaignDefinition,
 } from './model.js';
@@ -32,6 +33,45 @@ const branch: CampaignDefinition = {
     exitN: { type: 'exit' },
   },
 };
+
+// A converging diamond: the condition's BOTH arms point at the same join id.
+const diamond: CampaignDefinition = {
+  startNode: 'trigger',
+  nodes: {
+    trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+    cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'join', onFalse: 'join' },
+    join: { type: 'exit' },
+  },
+};
+
+describe('converging diamond bridge', () => {
+  it('parseDefinition yields TWO edges into the join (slots onTrue + onFalse, Yes/No)', () => {
+    const m = parseDefinition(diamond);
+    const condEdges = m.edges.filter((e) => e.from === 'cond');
+    expect(condEdges).toEqual([
+      { from: 'cond', to: 'join', slot: 'onTrue', label: 'Yes' },
+      { from: 'cond', to: 'join', slot: 'onFalse', label: 'No' },
+    ]);
+    // One CanvasNode per id (the join is a single node).
+    expect(m.nodes.map((n) => n.id).sort()).toEqual(['cond', 'join', 'trigger']);
+  });
+
+  it('buildDefinition(parseDefinition(diamond)) is identity (both arms preserved)', () => {
+    expect(buildDefinition(parseDefinition(diamond))).toEqual(diamond);
+  });
+
+  it('outgoingEdges returns onTrue then onFalse even when both point at the SAME join', () => {
+    const edges = outgoingEdges('cond', diamond.nodes.cond!);
+    expect(edges).toEqual([
+      { from: 'cond', to: 'join', slot: 'onTrue', label: 'Yes' },
+      { from: 'cond', to: 'join', slot: 'onFalse', label: 'No' },
+    ]);
+  });
+
+  it('the diamond validates (no false cycle/orphan)', () => {
+    expect(() => validateCampaignDefinition(buildDefinition(parseDefinition(diamond)))).not.toThrow();
+  });
+});
 
 describe('parseDefinition', () => {
   it('derives an explicit edge list from next/onTrue/onFalse and flags the start', () => {

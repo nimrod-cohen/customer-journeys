@@ -29,9 +29,20 @@ export class MutationError extends Error {}
 /**
  * insertOnEdge(model, edge, type, now?) — insert a NEW node of `type` on the edge
  * `edge` (A→B), rewriting it to A→NEW→B. For a single-out NEW node, NEW.next = B.
- * For a condition NEW node, onTrue→B and onFalse→a freshly-created exit (so BOTH
- * arms reach an exit — no orphan, both downstream). The result is always a valid
- * down-only tree (re-validated server-side).
+ *
+ * For a CONDITION NEW node we build a CONVERGING DIAMOND: BOTH arms (onTrue AND
+ * onFalse) point at the original downstream B (the continuation). B thereby
+ * becomes the JOIN — identified purely STRUCTURALLY as the node with 2+ incoming
+ * edges (there is NO stored "join" flag). The trunk continues below the join; an
+ * EMPTY arm simply passes straight through to it. To populate an arm, insert a
+ * node on the If's onTrue/onFalse edge — that uses the SINGLE-OUT path above
+ * (NEW.next = B), landing the node BETWEEN the If and the join. To TERMINATE an
+ * arm, insert an 'exit' on that arm edge: re-pointing only that arm slot to a
+ * fresh exit is SAFE because the join stays reachable via the other arm
+ * (insertExitOnArm). The single-out exit guard still refuses an exit insert that
+ * would ORPHAN B (a non-converging edge whose target is reachable only through it).
+ *
+ * The result is always a valid down-only graph (re-validated server-side).
  */
 export function insertOnEdge(
   model: CanvasModel,
@@ -50,17 +61,20 @@ export function insertOnEdge(
   const fresh = defaultNodeConfig(type, now);
 
   if (type === 'condition') {
-    // Auto-create a terminal exit for the onFalse arm so both branches reach an
-    // exit; onTrue continues to the original downstream B.
-    const exitId = freshNodeId('exit', existing);
-    existing.add(exitId);
-    nodes[exitId] = { type: 'exit' };
-    nodes[newId] = { ...fresh, onTrue: edge.to, onFalse: exitId };
+    // REJOIN: both arms lead to the original downstream B (the continuation). B is
+    // now the join (2+ incoming edges). No fresh exit is minted.
+    nodes[newId] = { ...fresh, onTrue: edge.to, onFalse: edge.to };
   } else if (type === 'exit') {
-    // An exit is terminal — A now points at NEW (the original B becomes
-    // unreachable from THIS edge). To avoid orphaning B, only allow inserting an
-    // exit when B is already an exit (collapsing two exits) — otherwise the
-    // splice would orphan B's subtree. Callers gate this; guard defensively.
+    // An exit is terminal — A now points at NEW, so B loses THIS incoming edge.
+    // Re-pointing is only SAFE when B stays reachable WITHOUT this edge (a
+    // converging arm — the diamond's other arm still reaches the join). Otherwise
+    // the splice would ORPHAN B (its subtree, or B itself when B is a trailing
+    // exit) → refuse (the single-out guard).
+    if (!reachableWithoutEdge(def, edge)) {
+      throw new MutationError(
+        'Add an Exit on a branch arm (or where the journey already ends) — placing it here would strand the steps below.',
+      );
+    }
     nodes[newId] = { type: 'exit' };
   } else {
     nodes[newId] = { ...fresh, next: edge.to };
@@ -70,6 +84,48 @@ export function insertOnEdge(
   nodes[edge.from] = repointSlot(nodes[edge.from]!, edge.slot, newId);
 
   return parseDefinition({ startNode: def.startNode, nodes });
+}
+
+/**
+ * insertExitOnArm(model, armEdge, now?) — terminate a single converging arm by
+ * re-pointing ONLY that arm slot to a fresh exit, leaving the join reachable via
+ * the other arm. A thin convenience over insertOnEdge('exit', …); it asserts the
+ * arm is converging (the join keeps another incoming edge) so the call can never
+ * orphan the join.
+ */
+export function insertExitOnArm(
+  model: CanvasModel,
+  armEdge: CanvasEdge,
+  now: Date = new Date(),
+): CanvasModel {
+  const def = buildDefinition(model);
+  if (!reachableWithoutEdge(def, armEdge)) {
+    throw new MutationError('That arm does not rejoin a shared trunk — an Exit here would strand the steps below.');
+  }
+  return insertOnEdge(model, armEdge, 'exit', now);
+}
+
+/**
+ * Is `edge.to` still reachable from the start if we DROP just `edge`? True for a
+ * converging arm (the join is reached via another incoming edge) — re-pointing
+ * this slot to a terminal exit then cannot orphan the target.
+ */
+function reachableWithoutEdge(def: CampaignDefinition, edge: CanvasEdge): boolean {
+  const seen = new Set<string>();
+  const queue = [def.startNode];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    const node = def.nodes[cur];
+    if (!node) continue;
+    for (const e of outgoingEdges(cur, node)) {
+      // Skip the one edge under test (same from + slot + to).
+      if (e.from === edge.from && e.slot === edge.slot && e.to === edge.to) continue;
+      queue.push(e.to);
+    }
+  }
+  return seen.has(edge.to);
 }
 
 /** Re-point a node's outgoing slot to a new target id (immutably). */

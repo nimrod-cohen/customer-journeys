@@ -38,6 +38,18 @@ const diamond: CampaignDefinition = {
   },
 };
 
+// The USER case: one populated arm (cond.onTrue→a→join) + one EMPTY arm
+// (cond.onFalse→join directly), both rejoining a single trunk that exits.
+const emptyArmDiamond: CampaignDefinition = {
+  startNode: 'trigger',
+  nodes: {
+    trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+    cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'a', onFalse: 'join' },
+    a: { type: 'action', kind: 'send', template_id: 'tplA', next: 'join' },
+    join: { type: 'exit' },
+  },
+};
+
 describe('layoutDefinition', () => {
   it('places the trigger at depth 0 (smallest y)', () => {
     const { positions } = layoutDefinition(linear);
@@ -97,6 +109,48 @@ describe('layoutDefinition', () => {
     expect(join.depth).toBe(Math.max(positions.get('a')!.depth, positions.get('b')!.depth) + 1);
     // Single entry — no duplicate position key.
     expect([...positions.keys()].filter((k) => k === 'join').length).toBe(1);
+  });
+
+  it('empty-arm diamond: the join is placed ONCE below BOTH the populated arm and the condition', () => {
+    const { positions } = layoutDefinition(emptyArmDiamond);
+    const join = positions.get('join')!;
+    // depth = max(depth(a), depth(cond))+1 via longest-path. The populated arm `a`
+    // is the deeper parent (cond→a→join), so the join sits below it AND the cond.
+    expect(join.y).toBeGreaterThan(positions.get('a')!.y);
+    expect(join.y).toBeGreaterThan(positions.get('cond')!.y);
+    expect(join.depth).toBe(Math.max(positions.get('a')!.depth, positions.get('cond')!.depth) + 1);
+    expect([...positions.keys()].filter((k) => k === 'join').length).toBe(1);
+  });
+
+  it('recenterJoins centers the join at the average of its two parents’ columns', () => {
+    const { positions } = layoutDefinition(emptyArmDiamond);
+    // The join’s parents are `a` (populated arm) and `cond` (the empty onFalse arm
+    // points straight at the join).
+    const px = [positions.get('a')!.x, positions.get('cond')!.x];
+    const lo = Math.min(...px);
+    const hi = Math.max(...px);
+    const join = positions.get('join')!;
+    expect(join.x).toBeGreaterThanOrEqual(lo);
+    expect(join.x).toBeLessThanOrEqual(hi);
+    expect(join.x).toBeCloseTo((lo + hi) / 2, 5);
+  });
+
+  it('computeEdges emits one down-only edge PER incoming edge into the join', () => {
+    const { positions } = layoutDefinition(emptyArmDiamond);
+    const edges = computeEdges(emptyArmDiamond, positions);
+    const intoJoin = edges.filter((e) => e.to === 'join');
+    expect(intoJoin.length).toBe(2); // from `a` and from `cond` (onFalse)
+    for (const e of edges) expect(e.toPoint.y).toBeGreaterThan(e.fromPoint.y); // strictly down-only
+  });
+
+  it('subtreeWidth does not double-spread the shared join (≤ the arm count)', () => {
+    // cond fans onTrue→a→join and onFalse→join; the join is a single shared leaf,
+    // so the condition's width must not exceed its two arms (no extra spread from
+    // counting the join twice). The empty arm contributes no extra column beyond
+    // the join it shares with the populated arm.
+    const w = subtreeWidth(emptyArmDiamond, 'cond');
+    expect(w).toBeLessThanOrEqual(2);
+    expect(w).toBeGreaterThanOrEqual(1);
   });
 
   it('is deterministic + ignores any stored coordinates on the def', () => {

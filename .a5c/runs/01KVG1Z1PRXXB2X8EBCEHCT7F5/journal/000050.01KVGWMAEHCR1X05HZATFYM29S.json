@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-19T21:29:43.121Z",
+  "data": {
+    "effectId": "01KVGWMADY16D1DS1DKZ30NS50",
+    "invocationKey": "cdp/campaign-builder:S000025:plan-phase",
+    "invocationHash": "3f6f705161a4eb88478e1ca890e94e98fefcca1a6a14c477c4c96db92c1237d6",
+    "stepId": "S000025",
+    "taskId": "plan-phase",
+    "kind": "agent",
+    "label": "plan",
+    "taskDefRef": "tasks/01KVGWMADY16D1DS1DKZ30NS50/task.json",
+    "labels": [
+      "plan",
+      "phase6b-branch-convergence"
+    ]
+  },
+  "checksum": "deac446f5827fe86f02fa56cbd900e8fb95573b1fbfa6be006a286fb887d457f"
+}

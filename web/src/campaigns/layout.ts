@@ -217,10 +217,23 @@ function recenterJoins(def: CampaignDefinition, col: Map<string, number>): void 
   }
 }
 
+/** Horizontal lane offset (px) for sibling arms that converge on the SAME join. */
+const ARM_LANE = 28;
+
 /**
  * computeEdges(def, positions) — one LayoutEdge per next/onTrue/onFalse, with the
  * source bottom-center and target top-center pixel anchors. ASSERTS every edge is
  * down-only (toPoint.y > fromPoint.y) — a valid def can never produce an up-edge.
+ *
+ * A CONVERGING DIAMOND with an EMPTY arm produces TWO edges with the SAME source
+ * AND the SAME target (e.g. a condition whose onTrue and onFalse both point at the
+ * join). Their connectors and (+) anchors would stack EXACTLY on top of each other
+ * (the lower button intercepts the upper one's clicks). So when two+ edges from one
+ * source share a target, we lane-offset only their SOURCE x (left/right of the card
+ * bottom) — keeping the SAME join toPoint so the arms still CONVERGE on one node,
+ * while giving each arm a distinct connector + a distinct (+) anchor. The offset
+ * stays within the source card so each connector remains axis-aligned (V/H/V) and
+ * down-only.
  */
 export function computeEdges(
   def: CampaignDefinition,
@@ -232,10 +245,25 @@ export function computeEdges(
     if (!node) continue;
     const from = positions.get(id);
     if (!from) continue;
-    for (const e of outgoingEdges(id, node)) {
+    const out = outgoingEdges(id, node);
+    // Group this source's edges by target so colliding siblings (same from+to) can
+    // be lane-offset apart. Order is preserved (onTrue before onFalse).
+    const byTarget = new Map<string, number>();
+    for (const e of out) byTarget.set(e.to, (byTarget.get(e.to) ?? 0) + 1);
+    const laneIndex = new Map<string, number>();
+    for (const e of out) {
       const to = positions.get(e.to);
       if (!to) continue;
-      const fromPoint = { x: from.x, y: from.y + LAYOUT.cardHeight };
+      const collisions = byTarget.get(e.to) ?? 1;
+      let fromX = from.x;
+      if (collisions > 1) {
+        // Spread the colliding siblings symmetrically around the card-bottom center.
+        const i = laneIndex.get(e.to) ?? 0;
+        laneIndex.set(e.to, i + 1);
+        const offset = (i - (collisions - 1) / 2) * ARM_LANE;
+        fromX = from.x + offset;
+      }
+      const fromPoint = { x: fromX, y: from.y + LAYOUT.cardHeight };
       const toPoint = { x: to.x, y: to.y };
       if (!(toPoint.y > fromPoint.y)) {
         throw new Error(

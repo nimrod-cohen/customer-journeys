@@ -1,0 +1,261 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KVGWMADY16D1DS1DKZ30NS50",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/campaign-builder:S000025:plan-phase",
+  "status": "ok",
+  "result": {
+    "e2eFlows": [
+      "Converging insert: New campaign -> name -> click the single (+) on trigger->exit_1 -> palette-if. Assert exactly ONE node-exit remains (both arms rejoin). Tokenize all connector path d-attributes: every path axis-aligned; >=2 paths end at the same (x,y) join point; join card below both arm sources.",
+      "Per-arm + with empty passthrough (user screenshot): from the condition above, identify the two arm (+) controls; click the Yes arm (+) -> palette-send. Assert node-send appears on one arm; the other arm has no node; STILL exactly one node-exit; both sides reach it (send card between condition and the join, fanned to a side).",
+      "Exit on an arm terminates it: New campaign -> condition -> click the No arm (+) -> palette-exit. Assert node-exit count == 2 (the new arm-terminal exit + the shared continuation), the Yes arm still reaches the continuation, save -> success toast.",
+      "Round-trip: build the populated-arm diamond, Save (success toast), reopen from campaign-list; assert node-condition + node-send present and the connectors still converge to one join (same node set).",
+      "Delete re-links: on the populated-arm diamond, open the condition's ActionMenu -> node-delete -> app-dialog askConfirm -> dialog-confirm; assert no orphan (graph re-links), Save succeeds with a toast.",
+      "Regression: open the seeded 'Welcome journey' (now a converging diamond); assert all five node types visible, all connectors axis-aligned, the join has 2 incoming connectors meeting at one point, no diagonal/up path."
+    ],
+    "implUnits": [
+      "1. (test-first) Write/UPDATE the failing unit tests: mutate.test.ts (rejoin insert, per-arm insert between If and join, arm-exit terminate, delete-collapse, property loop), layout.test.ts (empty-arm + populated converging fixtures), orthogonal-path.test.ts (two-arm convergence + distinct + anchors), model.test.ts (diamond round-trip), services/campaign-runner/test/dsl.validate.test.ts (diamond accepted, cycle/orphan still rejected).",
+      "2. mutate.ts insertOnEdge: rewrite the condition branch to rejoin (onTrue=onFalse=edge.to; drop the fresh-exit). Update the function's doc comment (it currently documents the fresh-exit behavior).",
+      "3. mutate.ts: add the per-arm Exit-insert path (insertExitOnArm or generalize the exit branch) so inserting an exit on a converging arm re-points just that slot to a fresh exit without orphaning the still-shared join; keep the existing orphan guard for non-converging single-out edges. Run mutate.test.ts to green.",
+      "4. mutate.ts deleteNode: verify the condition-collapse keeps the shared join; harden falseArmExclusive only if a rejoin test fails. Green the delete tests + the property loop.",
+      "5. layout.ts / orthogonal-path.ts / model.ts: run their new tests; expected GREEN with no code change (already diamond-aware). Patch only if a converging assertion fails.",
+      "6. CampaignCanvas.tsx: confirm per-arm (+) controls already render one (+) per edge (onTrue + onFalse each get their own) and connector keys stay unique for two edges into the same join (key includes from-slot-to). Add/verify stable testids; no structural change expected beyond ensuring the join's multiple incoming Connectors all render. The branch-label 'Yes'/'No' text stays on each arm.",
+      "7. web/e2e/seed.ts: change 'Welcome journey' to a CONVERGING diamond (cond.onTrue->sendY->join, cond.onFalse->join, join->exit) so the seeded e2e asserts convergence (today it has onFalse->exitN, divergent). Apply nothing to DB schema (no migration — definition is jsonb).",
+      "8. Update/REPLACE the e2e assertions in campaign-builder.browser.e2e.spec.ts that assumed divergence (the 'two arms fan into distinct x columns' / 'two exits' assertions) with convergence assertions; keep pathIsAxisAligned; add a path-endpoint convergence helper.",
+      "9. Run the full unit suite + pnpm --filter @cdp/web test:e2e against cdp_e2e (re-seeds each run). Then pnpm typecheck + pnpm lint.",
+      "10. Bump root package.json (minor — a builder feature). Update CLAUDE.md's campaign-builder note: branches now CONVERGE into a single trunk (diamond), per-arm + inserts between If and the join, an empty arm passes through, an Exit on an arm terminates only that arm; insertBranch rejoins; the runner is unchanged."
+    ],
+    "mocks": [
+      "No AWS/SES/HTTP mocks needed — this phase is pure builder UI + DSL graph math. The runner is unchanged (no send execution touched).",
+      "Unit tier imports the REAL validateCampaignDefinition from @cdp/service-campaign-runner (no mock) so every mutation result is gated by production rules.",
+      "Postgres: NOT mocked. The e2e runs against real cdp_e2e (seeded) per the standing rule; the unit tier needs no DB.",
+      "Playwright drives a REAL Chromium against the e2e stack (:8788 api / :5174 web, LOCAL_SES_FORCE_MOCK=1)."
+    ],
+    "notes": "The heavy lifting is ALREADY DONE in layout.ts and orthogonal-path.ts: they were built diamond-aware in phase 5 (computeDepths longest-path, recenterJoins for >1-incoming nodes, subtreeWidth visited-once, the down-only computeEdges assertion, the no-up-edge throw in orthogonalPath). layout.test.ts even ships a `diamond` fixture. So the REAL change is tiny and localized to mutate.ts: (a) insertOnEdge's condition branch must set onTrue=onFalse=edge.to (the continuation B) instead of creating a fresh exit for onFalse — that single change converts the divergent tree into a converging diamond, and B becomes the join purely because it now has two incoming edges. THE JOIN IS IDENTIFIED STRUCTURALLY (a node with 2+ incoming edges) — there is NO stored 'join' flag (honors the single-graph, no-extra-model invariant). (b) The PER-ARM + already exists for free: CampaignCanvas renders one (+) per outgoing edge, so the If's onTrue and onFalse edges each get their own (+); clicking the Yes-arm (+) inserts on the If.onTrue->join edge, rewriting it to If.onTrue->New->join via the EXISTING insertOnEdge single-out path (next=join) — i.e. a node is inserted BETWEEN If and the join, exactly the screenshot case. AN EMPTY ARM is simply the If slot still pointing directly at the join. (c) AN EXIT ON AN ARM needs a small new path: today insertOnEdge('exit') guards against orphaning B, but on a converging arm re-pointing the arm slot to a fresh exit is SAFE because the join remains reachable via the other arm — add insertExitOnArm (or detect 'target still reachable via another edge' in the exit branch) so the arm terminates without orphaning the join. (d) DELETE COLLAPSE already works: deleteNode's condition branch keeps the onTrue survivor and removes only onFalse-EXCLUSIVE descendants; for a rejoin diamond the join is reachable via onTrue so it is NOT exclusive and survives, parents collapse to the shared continuation — add tests, harden only if an edge case (e.g. one arm terminates in its own exit) fails. (e) MULTI-INCOMING CONNECTORS draw with NO diagonal/up edges because every edge is parent->child-below (depth strictly increases) and orthogonalPath is axis-aligned-by-construction; the two arm connectors simply both END at the join's top-center, which the e2e proves by tokenizing the path endpoints and asserting >=2 paths converge on one (x,y). (f) The seeded 'Welcome journey' is currently DIVERGENT (onFalse->exitN) and the existing e2e ASSERTS two exits / fanned distinct columns — those assertions must be REPLACED with convergence assertions and the seed updated to a diamond, or the regression test will contradict the new behavior. No migration (definition is jsonb), no runner change (it just follows current_node through the join), workspace-scoping unchanged (pure client-side graph math; persistence still goes through the existing workspace-scoped POST/PUT /campaigns).",
+    "pureFunctions": [
+      "web/src/campaigns/mutate.ts insertOnEdge: change the type==='condition' branch so BOTH onTrue and onFalse point at edge.to (the continuation B = the join). DELETE the fresh-exit creation for the onFalse arm. This turns A->B into A->If(both arms->B), a converging diamond; B is identified as the join purely structurally (the node with 2+ incoming edges).",
+      "web/src/campaigns/mutate.ts insertExitOnArm (NEW small pure helper, or generalize insertOnEdge's exit branch): inserting an 'exit' on a CONVERGING arm edge (e.g. If.onTrue->join) must re-point ONLY that arm slot to a fresh exit and NOT orphan the join (the join stays reachable via the other arm / other paths). Distinguish this safe case (target reachable via another edge) from the existing unsafe single-out exit-insert (which still guards against orphaning B).",
+      "web/src/campaigns/mutate.ts deleteNode (condition branch): already keeps the onTrue survivor + removes onFalse-EXCLUSIVE descendants; verify+harden so a SHARED join (reachable via onTrue too) is never removed and the parent collapses to the shared continuation. falseArmExclusive already computes this; add tests, fix only if a rejoin edge case fails.",
+      "web/src/campaigns/layout.ts recenterJoins + computeDepths + subtreeWidth: confirmed already correct for multi-incoming joins (longest-path depth, center under parents, count-once). No code change expected; covered by new tests. Touch ONLY if a converging case reveals a bug.",
+      "web/src/campaigns/orthogonal-path.ts orthogonalPath + edgeMidpoint: already render convergence (any from->below-to) with axis-aligned rounded corners and distinct + anchors. No change expected; covered by tests.",
+      "web/src/campaigns/model.ts outgoingEdges/parseDefinition/buildDefinition: already emit + round-trip two edges into one join; verify buildDefinition writes onTrue AND onFalse to the same target (it does). No change expected.",
+      "services/campaign-runner/src/dsl.ts validateCampaignDefinition: NO change — diamonds already allowed (grey-stack cycle detector + reachable-exit + orphan checks). Add regression tests proving the new shapes pass and real cycles/orphans still fail."
+    ],
+    "reuse": [
+      "validateCampaignDefinition (services/campaign-runner/src/dsl.ts) — the structural gate; diamonds + grey-stack cycle detection + reachable-exit + orphan checks already exist and are imported by mutate.test.ts.",
+      "layout.ts: computeDepths (longest-path so a join sits at max(parentDepth)+1), recenterJoins (centers a >1-incoming node under its parents), subtreeWidth visited-once (shared join not double-spread), computeEdges down-only assertion — ALL already multi-parent aware.",
+      "orthogonal-path.ts: orthogonalPath (rounded axis-aligned, throws on up-edge) + edgeMidpoint (distinct + anchors for sibling arms) — reused verbatim for convergence connectors.",
+      "model.ts: outgoingEdges / parseDefinition / buildDefinition (bySlot writes onTrue+onFalse to the same join) / freshNodeId / defaultNodeConfig — the DSL<->canvas bridge that already round-trips two edges into one node.",
+      "CampaignCanvas.tsx: the per-edge (+) control loop (already gives each arm its OWN + via outgoingEdges), the Connector component, ActionMenu delete, unique edge keys (from-slot-to).",
+      "CampaignBuilder.tsx: insert/remove/persist/openById flow, askConfirm (ui/dialog), showToast (ui/toast), kit Button auto-lock — no flow change, only the underlying mutate behavior changes.",
+      "Existing test scaffolding: mutate.test.ts validate() helper + property loop; layout.test.ts diamond fixture (already present!); the e2e pathIsAxisAligned tokenizer + loginAs/DEV_MKT/seed helpers."
+    ],
+    "testFiles": [
+      {
+        "assertions": [
+          "REPLACE the existing 'inserting a condition auto-wires onTrue->B and onFalse->a fresh exit' test: insertOnEdge(starter, trigger->exit_1 edge, 'condition') now wires BOTH cond.onTrue AND cond.onFalse to the ORIGINAL downstream 'exit_1' (the continuation/join) — NO fresh exit is created (assert no new exit node was added: exit-typed node count stays 1).",
+          "After the condition insert: buildDefinition has exactly ONE node with 2 incoming edges (the join = exit_1), found by counting parents across all outgoing slots; trigger.next is the new condition id; validateCampaignDefinition(def) does not throw (diamond is allowed).",
+          "Insert a condition on trigger->exit_1, THEN insert a 'send' on the cond.onTrue (Yes) arm edge (If->join): the result is If.onTrue -> send_N -> exit_1 while If.onFalse still -> exit_1 (empty arm passes straight through); the join exit_1 still has 2 incoming edges (from send_N and from cond.onFalse); both sides reach the same join; validateCampaignDefinition passes.",
+          "Insert a condition, then on the cond.onTrue arm insert an 'exit' (the per-arm terminate case): cond.onTrue now points at a FRESH exit (that arm terminates), cond.onFalse still points at the original continuation; the original continuation is NOT orphaned (still reachable via onFalse); exit-node count increased by exactly 1; validateCampaignDefinition passes; NO MutationError thrown for inserting an exit on a converging arm.",
+          "Inserting an 'exit' on a NON-arm single-out edge whose target is NOT already an exit still THROWS/guards (would orphan B) — preserve the existing exit-insert guard for non-converging single-out edges (regression).",
+          "deleteNode(condition) on a rejoin diamond (cond.onTrue->exit_1, cond.onFalse->exit_1): the condition is spliced out, every parent re-links to the SHARED continuation (exit_1), the join survives (reachable, not exclusive to either arm), no orphan, no new/lost exit; validateCampaignDefinition passes.",
+          "deleteNode(condition) where ONE arm has a node and the other is empty (cond.onTrue->send_N->join, cond.onFalse->join): condition removed, parent re-links to onTrue survivor=send_N which still reaches join; the join survives; the empty-arm edge's removal orphans nothing (join reachable via the surviving onTrue chain); validateCampaignDefinition passes.",
+          "deleteNode(condition) where the onTrue arm TERMINATES in its own exit (cond.onTrue->exitT, cond.onFalse->join): deleting the condition re-links parents to the onTrue survivor (exitT); the onFalse join becomes exclusive-to-onFalse-only IF unreachable otherwise — assert it is removed as an exclusive descendant ONLY when no other path reaches it, else preserved; in all cases validateCampaignDefinition passes and a reachable exit remains.",
+          "Property test (extend the existing 60-step random insert/delete loop): add 'condition' inserts that REJOIN and per-arm exit inserts; after every step validateCampaignDefinition(buildDefinition(m)) never throws (no cycle/orphan/no-exit) — a back-edge remains unconstructable, diamonds stay valid.",
+          "Round-trip identity: parseDefinition(buildDefinition(m)) for a diamond model equals the model's node+edge set (the join's two incoming edges both survive the round-trip; buildDefinition's bySlot writes onTrue AND onFalse to the same target)."
+        ],
+        "criterion": "1+2+3: insertBranch rejoins into a converging diamond; per-arm insert lands between If and the shared join; an Exit terminates only one arm; delete collapses to the shared continuation; every result validates.",
+        "path": "web/src/campaigns/mutate.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "Add a CONVERGING diamond fixture where BOTH arms have a node then rejoin (cond -> a / b -> join -> exit) AND a fixture matching the USER case (one populated arm + one EMPTY arm both into the same join: cond.onTrue->a->join, cond.onFalse->join).",
+          "For the empty-arm case: the join is placed ONCE (a single position entry), its depth = max(depth(a), depth(cond.onFalse-direct-edge source))+1 via longest-path, and its y is below BOTH the populated-arm node and the condition.",
+          "recenterJoins centers the join's x at the midpoint of its 2 parents' columns (assert join.x is between the min and max of its incoming parents' x, and equals their average).",
+          "computeEdges emits one LayoutEdge per incoming edge INTO the join (2 edges target the join id) and EVERY edge is down-only (toPoint.y > fromPoint.y) — computeEdges throws on any non-downward edge, so a passing layout proves no up-edge.",
+          "subtreeWidth on the converging cond counts the shared join ONCE (width = sum of arm widths with the join visited a single time), so the layout does not double-spread.",
+          "Determinism + coordinate-ignore: layout of the diamond is identical across two runs and unchanged when bogus x/y are injected on the def (no stored coordinates)."
+        ],
+        "criterion": "1: a converging diamond renders with arms fanning sideways, the join laid out ONCE at max(parentDepth)+1, centered under its parents; no upward/diagonal edges.",
+        "path": "web/src/campaigns/layout.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "orthogonalPath from a LEFT-offset arm source to a join below-and-right produces only M/V/H/Q commands (no L diagonal); the same for a RIGHT-offset arm — both converge to the same join toPoint.x/y.",
+          "Two arm connectors that share the SAME join target but leave DIFFERENT source x columns produce paths that both END at the identical join top-center point (toPoint) — convergence into one node.",
+          "edgeMidpoint for the two arm edges (If->join via onTrue path vs the per-arm-node->join edge) yields DISTINCT (x) anchors so the per-arm + buttons do not stack/overlap (reuse the existing horizontal-midpoint rule).",
+          "orthogonalPath still THROWS when to.y <= from.y (a join can never be above an arm — guards the no-up-edge invariant)."
+        ],
+        "criterion": "1: connectors from each arm CONVERGE into the single join via rounded axis-aligned paths (no diagonal), and the two arm + controls get distinct anchors.",
+        "path": "web/src/campaigns/orthogonal-path.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "parseDefinition of a diamond ({cond.onTrue=join, cond.onFalse=join}) yields TWO CanvasEdges into the join (slots onTrue + onFalse, labels Yes/No) and one CanvasNode per id.",
+          "buildDefinition(parseDefinition(diamond)) deep-equals the original definition (the join's onTrue/onFalse both preserved; no slot dropped).",
+          "outgoingEdges on the condition returns onTrue (Yes) then onFalse (No) even when both point at the SAME join id (both edges emitted, not deduped)."
+        ],
+        "criterion": "2: the DSL <-> canvas bridge round-trips a converging diamond (a join with two incoming edges) to identity.",
+        "path": "web/src/campaigns/model.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "REPLACE the current 'assemble an if-branch -> two arms fan into distinct x columns' test (which asserted 2 exits / divergence). New: insert a condition on trigger->exit_1; assert there is still EXACTLY ONE exit node (node-exit count == 1) — both arms rejoin it (NO fresh exit created).",
+          "Tokenize all connector paths (reuse pathIsAxisAligned) and assert every path is axis-aligned (no diagonal); additionally parse each path's final point (last V/H target) and assert >=2 connector paths END at the SAME (x,y) — the single join — proving convergence into one node.",
+          "Down-only: assert the join (exit) card top is strictly BELOW both arm sources; assert no connector path's end-y is above its start-y (recompute from tokens).",
+          "Per-arm + and empty-arm passthrough (user screenshot case): after the condition insert there are TWO arm + controls; click the Yes-arm + and add a 'send' (palette-send); assert a node-send appears on one arm while the other arm has NO node and BOTH still lead to the single shared exit (still exactly ONE exit, send card sits between condition and exit, off to one side).",
+          "Exit on an arm terminates it: insert a condition, click the No-arm +, choose palette-exit; assert exit count becomes 2 (the new arm-terminal exit + the still-shared continuation exit), the other arm still reaches the original continuation, save succeeds (toast).",
+          "Round-trip: name + save the populated-arm diamond, reopen via the list, assert the same node set rebuilds (node-condition present, node-send present, exactly the expected exit count) and connectors still converge.",
+          "Delete re-links: with the populated-arm diamond, delete the condition via its ActionMenu -> styled askConfirm dialog (NOT window.confirm) -> dialog-confirm; assert the graph re-links to a valid converging/linear graph (no orphan), save succeeds with a toast.",
+          "Regression: the existing 'renders a seeded definition as a downward tree with axis-aligned connectors' test passes against the UPDATED converging seed (Welcome journey now a diamond) — node-trigger/wait/condition/send/exit visible, all connectors axis-aligned, the seeded join has 2 incoming connectors meeting at one point."
+        ],
+        "criterion": "1+2+3: in a REAL browser, inserting an If yields a converging diamond; one populated arm + one empty arm rejoin a single trunk; an Exit on an arm terminates that arm; delete re-links; connectors converge with no diagonal/up paths; round-trips through the DSL.",
+        "path": "web/e2e/campaign-builder.browser.e2e.spec.ts",
+        "tier": "e2e"
+      },
+      {
+        "assertions": [
+          "A condition with onTrue===onFalse (both into the same continuation, empty arms) validates WITHOUT throwing (not a false cycle, not an orphan).",
+          "A condition with onTrue->node->join and onFalse->join (one populated arm, one empty, rejoin) validates.",
+          "A condition where one arm terminates in its own exit and the other rejoins the trunk validates (the rejoined trunk still reaches an exit).",
+          "Confirm a genuine back-edge (a node -> an ancestor) still THROWS the cycle error, and a node unreachable from start still THROWS the orphan error — convergence support did not weaken the gate."
+        ],
+        "criterion": "3: validateCampaignDefinition accepts the converging-diamond shapes the builder now emits and still rejects cycles/orphans/no-exit.",
+        "path": "services/campaign-runner/test/dsl.validate.test.ts",
+        "tier": "unit"
+      }
+    ]
+  },
+  "startedAt": "2026-06-19T21:34:49.807Z",
+  "finishedAt": "2026-06-19T21:34:49.807Z",
+  "value": {
+    "e2eFlows": [
+      "Converging insert: New campaign -> name -> click the single (+) on trigger->exit_1 -> palette-if. Assert exactly ONE node-exit remains (both arms rejoin). Tokenize all connector path d-attributes: every path axis-aligned; >=2 paths end at the same (x,y) join point; join card below both arm sources.",
+      "Per-arm + with empty passthrough (user screenshot): from the condition above, identify the two arm (+) controls; click the Yes arm (+) -> palette-send. Assert node-send appears on one arm; the other arm has no node; STILL exactly one node-exit; both sides reach it (send card between condition and the join, fanned to a side).",
+      "Exit on an arm terminates it: New campaign -> condition -> click the No arm (+) -> palette-exit. Assert node-exit count == 2 (the new arm-terminal exit + the shared continuation), the Yes arm still reaches the continuation, save -> success toast.",
+      "Round-trip: build the populated-arm diamond, Save (success toast), reopen from campaign-list; assert node-condition + node-send present and the connectors still converge to one join (same node set).",
+      "Delete re-links: on the populated-arm diamond, open the condition's ActionMenu -> node-delete -> app-dialog askConfirm -> dialog-confirm; assert no orphan (graph re-links), Save succeeds with a toast.",
+      "Regression: open the seeded 'Welcome journey' (now a converging diamond); assert all five node types visible, all connectors axis-aligned, the join has 2 incoming connectors meeting at one point, no diagonal/up path."
+    ],
+    "implUnits": [
+      "1. (test-first) Write/UPDATE the failing unit tests: mutate.test.ts (rejoin insert, per-arm insert between If and join, arm-exit terminate, delete-collapse, property loop), layout.test.ts (empty-arm + populated converging fixtures), orthogonal-path.test.ts (two-arm convergence + distinct + anchors), model.test.ts (diamond round-trip), services/campaign-runner/test/dsl.validate.test.ts (diamond accepted, cycle/orphan still rejected).",
+      "2. mutate.ts insertOnEdge: rewrite the condition branch to rejoin (onTrue=onFalse=edge.to; drop the fresh-exit). Update the function's doc comment (it currently documents the fresh-exit behavior).",
+      "3. mutate.ts: add the per-arm Exit-insert path (insertExitOnArm or generalize the exit branch) so inserting an exit on a converging arm re-points just that slot to a fresh exit without orphaning the still-shared join; keep the existing orphan guard for non-converging single-out edges. Run mutate.test.ts to green.",
+      "4. mutate.ts deleteNode: verify the condition-collapse keeps the shared join; harden falseArmExclusive only if a rejoin test fails. Green the delete tests + the property loop.",
+      "5. layout.ts / orthogonal-path.ts / model.ts: run their new tests; expected GREEN with no code change (already diamond-aware). Patch only if a converging assertion fails.",
+      "6. CampaignCanvas.tsx: confirm per-arm (+) controls already render one (+) per edge (onTrue + onFalse each get their own) and connector keys stay unique for two edges into the same join (key includes from-slot-to). Add/verify stable testids; no structural change expected beyond ensuring the join's multiple incoming Connectors all render. The branch-label 'Yes'/'No' text stays on each arm.",
+      "7. web/e2e/seed.ts: change 'Welcome journey' to a CONVERGING diamond (cond.onTrue->sendY->join, cond.onFalse->join, join->exit) so the seeded e2e asserts convergence (today it has onFalse->exitN, divergent). Apply nothing to DB schema (no migration — definition is jsonb).",
+      "8. Update/REPLACE the e2e assertions in campaign-builder.browser.e2e.spec.ts that assumed divergence (the 'two arms fan into distinct x columns' / 'two exits' assertions) with convergence assertions; keep pathIsAxisAligned; add a path-endpoint convergence helper.",
+      "9. Run the full unit suite + pnpm --filter @cdp/web test:e2e against cdp_e2e (re-seeds each run). Then pnpm typecheck + pnpm lint.",
+      "10. Bump root package.json (minor — a builder feature). Update CLAUDE.md's campaign-builder note: branches now CONVERGE into a single trunk (diamond), per-arm + inserts between If and the join, an empty arm passes through, an Exit on an arm terminates only that arm; insertBranch rejoins; the runner is unchanged."
+    ],
+    "mocks": [
+      "No AWS/SES/HTTP mocks needed — this phase is pure builder UI + DSL graph math. The runner is unchanged (no send execution touched).",
+      "Unit tier imports the REAL validateCampaignDefinition from @cdp/service-campaign-runner (no mock) so every mutation result is gated by production rules.",
+      "Postgres: NOT mocked. The e2e runs against real cdp_e2e (seeded) per the standing rule; the unit tier needs no DB.",
+      "Playwright drives a REAL Chromium against the e2e stack (:8788 api / :5174 web, LOCAL_SES_FORCE_MOCK=1)."
+    ],
+    "notes": "The heavy lifting is ALREADY DONE in layout.ts and orthogonal-path.ts: they were built diamond-aware in phase 5 (computeDepths longest-path, recenterJoins for >1-incoming nodes, subtreeWidth visited-once, the down-only computeEdges assertion, the no-up-edge throw in orthogonalPath). layout.test.ts even ships a `diamond` fixture. So the REAL change is tiny and localized to mutate.ts: (a) insertOnEdge's condition branch must set onTrue=onFalse=edge.to (the continuation B) instead of creating a fresh exit for onFalse — that single change converts the divergent tree into a converging diamond, and B becomes the join purely because it now has two incoming edges. THE JOIN IS IDENTIFIED STRUCTURALLY (a node with 2+ incoming edges) — there is NO stored 'join' flag (honors the single-graph, no-extra-model invariant). (b) The PER-ARM + already exists for free: CampaignCanvas renders one (+) per outgoing edge, so the If's onTrue and onFalse edges each get their own (+); clicking the Yes-arm (+) inserts on the If.onTrue->join edge, rewriting it to If.onTrue->New->join via the EXISTING insertOnEdge single-out path (next=join) — i.e. a node is inserted BETWEEN If and the join, exactly the screenshot case. AN EMPTY ARM is simply the If slot still pointing directly at the join. (c) AN EXIT ON AN ARM needs a small new path: today insertOnEdge('exit') guards against orphaning B, but on a converging arm re-pointing the arm slot to a fresh exit is SAFE because the join remains reachable via the other arm — add insertExitOnArm (or detect 'target still reachable via another edge' in the exit branch) so the arm terminates without orphaning the join. (d) DELETE COLLAPSE already works: deleteNode's condition branch keeps the onTrue survivor and removes only onFalse-EXCLUSIVE descendants; for a rejoin diamond the join is reachable via onTrue so it is NOT exclusive and survives, parents collapse to the shared continuation — add tests, harden only if an edge case (e.g. one arm terminates in its own exit) fails. (e) MULTI-INCOMING CONNECTORS draw with NO diagonal/up edges because every edge is parent->child-below (depth strictly increases) and orthogonalPath is axis-aligned-by-construction; the two arm connectors simply both END at the join's top-center, which the e2e proves by tokenizing the path endpoints and asserting >=2 paths converge on one (x,y). (f) The seeded 'Welcome journey' is currently DIVERGENT (onFalse->exitN) and the existing e2e ASSERTS two exits / fanned distinct columns — those assertions must be REPLACED with convergence assertions and the seed updated to a diamond, or the regression test will contradict the new behavior. No migration (definition is jsonb), no runner change (it just follows current_node through the join), workspace-scoping unchanged (pure client-side graph math; persistence still goes through the existing workspace-scoped POST/PUT /campaigns).",
+    "pureFunctions": [
+      "web/src/campaigns/mutate.ts insertOnEdge: change the type==='condition' branch so BOTH onTrue and onFalse point at edge.to (the continuation B = the join). DELETE the fresh-exit creation for the onFalse arm. This turns A->B into A->If(both arms->B), a converging diamond; B is identified as the join purely structurally (the node with 2+ incoming edges).",
+      "web/src/campaigns/mutate.ts insertExitOnArm (NEW small pure helper, or generalize insertOnEdge's exit branch): inserting an 'exit' on a CONVERGING arm edge (e.g. If.onTrue->join) must re-point ONLY that arm slot to a fresh exit and NOT orphan the join (the join stays reachable via the other arm / other paths). Distinguish this safe case (target reachable via another edge) from the existing unsafe single-out exit-insert (which still guards against orphaning B).",
+      "web/src/campaigns/mutate.ts deleteNode (condition branch): already keeps the onTrue survivor + removes onFalse-EXCLUSIVE descendants; verify+harden so a SHARED join (reachable via onTrue too) is never removed and the parent collapses to the shared continuation. falseArmExclusive already computes this; add tests, fix only if a rejoin edge case fails.",
+      "web/src/campaigns/layout.ts recenterJoins + computeDepths + subtreeWidth: confirmed already correct for multi-incoming joins (longest-path depth, center under parents, count-once). No code change expected; covered by new tests. Touch ONLY if a converging case reveals a bug.",
+      "web/src/campaigns/orthogonal-path.ts orthogonalPath + edgeMidpoint: already render convergence (any from->below-to) with axis-aligned rounded corners and distinct + anchors. No change expected; covered by tests.",
+      "web/src/campaigns/model.ts outgoingEdges/parseDefinition/buildDefinition: already emit + round-trip two edges into one join; verify buildDefinition writes onTrue AND onFalse to the same target (it does). No change expected.",
+      "services/campaign-runner/src/dsl.ts validateCampaignDefinition: NO change — diamonds already allowed (grey-stack cycle detector + reachable-exit + orphan checks). Add regression tests proving the new shapes pass and real cycles/orphans still fail."
+    ],
+    "reuse": [
+      "validateCampaignDefinition (services/campaign-runner/src/dsl.ts) — the structural gate; diamonds + grey-stack cycle detection + reachable-exit + orphan checks already exist and are imported by mutate.test.ts.",
+      "layout.ts: computeDepths (longest-path so a join sits at max(parentDepth)+1), recenterJoins (centers a >1-incoming node under its parents), subtreeWidth visited-once (shared join not double-spread), computeEdges down-only assertion — ALL already multi-parent aware.",
+      "orthogonal-path.ts: orthogonalPath (rounded axis-aligned, throws on up-edge) + edgeMidpoint (distinct + anchors for sibling arms) — reused verbatim for convergence connectors.",
+      "model.ts: outgoingEdges / parseDefinition / buildDefinition (bySlot writes onTrue+onFalse to the same join) / freshNodeId / defaultNodeConfig — the DSL<->canvas bridge that already round-trips two edges into one node.",
+      "CampaignCanvas.tsx: the per-edge (+) control loop (already gives each arm its OWN + via outgoingEdges), the Connector component, ActionMenu delete, unique edge keys (from-slot-to).",
+      "CampaignBuilder.tsx: insert/remove/persist/openById flow, askConfirm (ui/dialog), showToast (ui/toast), kit Button auto-lock — no flow change, only the underlying mutate behavior changes.",
+      "Existing test scaffolding: mutate.test.ts validate() helper + property loop; layout.test.ts diamond fixture (already present!); the e2e pathIsAxisAligned tokenizer + loginAs/DEV_MKT/seed helpers."
+    ],
+    "testFiles": [
+      {
+        "assertions": [
+          "REPLACE the existing 'inserting a condition auto-wires onTrue->B and onFalse->a fresh exit' test: insertOnEdge(starter, trigger->exit_1 edge, 'condition') now wires BOTH cond.onTrue AND cond.onFalse to the ORIGINAL downstream 'exit_1' (the continuation/join) — NO fresh exit is created (assert no new exit node was added: exit-typed node count stays 1).",
+          "After the condition insert: buildDefinition has exactly ONE node with 2 incoming edges (the join = exit_1), found by counting parents across all outgoing slots; trigger.next is the new condition id; validateCampaignDefinition(def) does not throw (diamond is allowed).",
+          "Insert a condition on trigger->exit_1, THEN insert a 'send' on the cond.onTrue (Yes) arm edge (If->join): the result is If.onTrue -> send_N -> exit_1 while If.onFalse still -> exit_1 (empty arm passes straight through); the join exit_1 still has 2 incoming edges (from send_N and from cond.onFalse); both sides reach the same join; validateCampaignDefinition passes.",
+          "Insert a condition, then on the cond.onTrue arm insert an 'exit' (the per-arm terminate case): cond.onTrue now points at a FRESH exit (that arm terminates), cond.onFalse still points at the original continuation; the original continuation is NOT orphaned (still reachable via onFalse); exit-node count increased by exactly 1; validateCampaignDefinition passes; NO MutationError thrown for inserting an exit on a converging arm.",
+          "Inserting an 'exit' on a NON-arm single-out edge whose target is NOT already an exit still THROWS/guards (would orphan B) — preserve the existing exit-insert guard for non-converging single-out edges (regression).",
+          "deleteNode(condition) on a rejoin diamond (cond.onTrue->exit_1, cond.onFalse->exit_1): the condition is spliced out, every parent re-links to the SHARED continuation (exit_1), the join survives (reachable, not exclusive to either arm), no orphan, no new/lost exit; validateCampaignDefinition passes.",
+          "deleteNode(condition) where ONE arm has a node and the other is empty (cond.onTrue->send_N->join, cond.onFalse->join): condition removed, parent re-links to onTrue survivor=send_N which still reaches join; the join survives; the empty-arm edge's removal orphans nothing (join reachable via the surviving onTrue chain); validateCampaignDefinition passes.",
+          "deleteNode(condition) where the onTrue arm TERMINATES in its own exit (cond.onTrue->exitT, cond.onFalse->join): deleting the condition re-links parents to the onTrue survivor (exitT); the onFalse join becomes exclusive-to-onFalse-only IF unreachable otherwise — assert it is removed as an exclusive descendant ONLY when no other path reaches it, else preserved; in all cases validateCampaignDefinition passes and a reachable exit remains.",
+          "Property test (extend the existing 60-step random insert/delete loop): add 'condition' inserts that REJOIN and per-arm exit inserts; after every step validateCampaignDefinition(buildDefinition(m)) never throws (no cycle/orphan/no-exit) — a back-edge remains unconstructable, diamonds stay valid.",
+          "Round-trip identity: parseDefinition(buildDefinition(m)) for a diamond model equals the model's node+edge set (the join's two incoming edges both survive the round-trip; buildDefinition's bySlot writes onTrue AND onFalse to the same target)."
+        ],
+        "criterion": "1+2+3: insertBranch rejoins into a converging diamond; per-arm insert lands between If and the shared join; an Exit terminates only one arm; delete collapses to the shared continuation; every result validates.",
+        "path": "web/src/campaigns/mutate.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "Add a CONVERGING diamond fixture where BOTH arms have a node then rejoin (cond -> a / b -> join -> exit) AND a fixture matching the USER case (one populated arm + one EMPTY arm both into the same join: cond.onTrue->a->join, cond.onFalse->join).",
+          "For the empty-arm case: the join is placed ONCE (a single position entry), its depth = max(depth(a), depth(cond.onFalse-direct-edge source))+1 via longest-path, and its y is below BOTH the populated-arm node and the condition.",
+          "recenterJoins centers the join's x at the midpoint of its 2 parents' columns (assert join.x is between the min and max of its incoming parents' x, and equals their average).",
+          "computeEdges emits one LayoutEdge per incoming edge INTO the join (2 edges target the join id) and EVERY edge is down-only (toPoint.y > fromPoint.y) — computeEdges throws on any non-downward edge, so a passing layout proves no up-edge.",
+          "subtreeWidth on the converging cond counts the shared join ONCE (width = sum of arm widths with the join visited a single time), so the layout does not double-spread.",
+          "Determinism + coordinate-ignore: layout of the diamond is identical across two runs and unchanged when bogus x/y are injected on the def (no stored coordinates)."
+        ],
+        "criterion": "1: a converging diamond renders with arms fanning sideways, the join laid out ONCE at max(parentDepth)+1, centered under its parents; no upward/diagonal edges.",
+        "path": "web/src/campaigns/layout.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "orthogonalPath from a LEFT-offset arm source to a join below-and-right produces only M/V/H/Q commands (no L diagonal); the same for a RIGHT-offset arm — both converge to the same join toPoint.x/y.",
+          "Two arm connectors that share the SAME join target but leave DIFFERENT source x columns produce paths that both END at the identical join top-center point (toPoint) — convergence into one node.",
+          "edgeMidpoint for the two arm edges (If->join via onTrue path vs the per-arm-node->join edge) yields DISTINCT (x) anchors so the per-arm + buttons do not stack/overlap (reuse the existing horizontal-midpoint rule).",
+          "orthogonalPath still THROWS when to.y <= from.y (a join can never be above an arm — guards the no-up-edge invariant)."
+        ],
+        "criterion": "1: connectors from each arm CONVERGE into the single join via rounded axis-aligned paths (no diagonal), and the two arm + controls get distinct anchors.",
+        "path": "web/src/campaigns/orthogonal-path.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "parseDefinition of a diamond ({cond.onTrue=join, cond.onFalse=join}) yields TWO CanvasEdges into the join (slots onTrue + onFalse, labels Yes/No) and one CanvasNode per id.",
+          "buildDefinition(parseDefinition(diamond)) deep-equals the original definition (the join's onTrue/onFalse both preserved; no slot dropped).",
+          "outgoingEdges on the condition returns onTrue (Yes) then onFalse (No) even when both point at the SAME join id (both edges emitted, not deduped)."
+        ],
+        "criterion": "2: the DSL <-> canvas bridge round-trips a converging diamond (a join with two incoming edges) to identity.",
+        "path": "web/src/campaigns/model.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "REPLACE the current 'assemble an if-branch -> two arms fan into distinct x columns' test (which asserted 2 exits / divergence). New: insert a condition on trigger->exit_1; assert there is still EXACTLY ONE exit node (node-exit count == 1) — both arms rejoin it (NO fresh exit created).",
+          "Tokenize all connector paths (reuse pathIsAxisAligned) and assert every path is axis-aligned (no diagonal); additionally parse each path's final point (last V/H target) and assert >=2 connector paths END at the SAME (x,y) — the single join — proving convergence into one node.",
+          "Down-only: assert the join (exit) card top is strictly BELOW both arm sources; assert no connector path's end-y is above its start-y (recompute from tokens).",
+          "Per-arm + and empty-arm passthrough (user screenshot case): after the condition insert there are TWO arm + controls; click the Yes-arm + and add a 'send' (palette-send); assert a node-send appears on one arm while the other arm has NO node and BOTH still lead to the single shared exit (still exactly ONE exit, send card sits between condition and exit, off to one side).",
+          "Exit on an arm terminates it: insert a condition, click the No-arm +, choose palette-exit; assert exit count becomes 2 (the new arm-terminal exit + the still-shared continuation exit), the other arm still reaches the original continuation, save succeeds (toast).",
+          "Round-trip: name + save the populated-arm diamond, reopen via the list, assert the same node set rebuilds (node-condition present, node-send present, exactly the expected exit count) and connectors still converge.",
+          "Delete re-links: with the populated-arm diamond, delete the condition via its ActionMenu -> styled askConfirm dialog (NOT window.confirm) -> dialog-confirm; assert the graph re-links to a valid converging/linear graph (no orphan), save succeeds with a toast.",
+          "Regression: the existing 'renders a seeded definition as a downward tree with axis-aligned connectors' test passes against the UPDATED converging seed (Welcome journey now a diamond) — node-trigger/wait/condition/send/exit visible, all connectors axis-aligned, the seeded join has 2 incoming connectors meeting at one point."
+        ],
+        "criterion": "1+2+3: in a REAL browser, inserting an If yields a converging diamond; one populated arm + one empty arm rejoin a single trunk; an Exit on an arm terminates that arm; delete re-links; connectors converge with no diagonal/up paths; round-trips through the DSL.",
+        "path": "web/e2e/campaign-builder.browser.e2e.spec.ts",
+        "tier": "e2e"
+      },
+      {
+        "assertions": [
+          "A condition with onTrue===onFalse (both into the same continuation, empty arms) validates WITHOUT throwing (not a false cycle, not an orphan).",
+          "A condition with onTrue->node->join and onFalse->join (one populated arm, one empty, rejoin) validates.",
+          "A condition where one arm terminates in its own exit and the other rejoins the trunk validates (the rejoined trunk still reaches an exit).",
+          "Confirm a genuine back-edge (a node -> an ancestor) still THROWS the cycle error, and a node unreachable from start still THROWS the orphan error — convergence support did not weaken the gate."
+        ],
+        "criterion": "3: validateCampaignDefinition accepts the converging-diamond shapes the builder now emits and still rejects cycles/orphans/no-exit.",
+        "path": "services/campaign-runner/test/dsl.validate.test.ts",
+        "tier": "unit"
+      }
+    ]
+  }
+}

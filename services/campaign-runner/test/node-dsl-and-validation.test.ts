@@ -336,6 +336,60 @@ describe('validateCampaignDefinition: cycle + orphan detection', () => {
     expect(() => validateCampaignDefinition(orphaned)).toThrow(/orphan|unreachable|not reachable/);
   });
 
+  it('ACCEPTS a condition whose BOTH arms point at the SAME continuation (empty arms rejoin)', () => {
+    const emptyArms = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'c' },
+        c: {
+          type: 'condition',
+          ast: { field: 'total_events', operator: '>=', value: 1 },
+          onTrue: 'x',
+          onFalse: 'x', // both arms straight into the same join — a converging diamond
+        },
+        x: { type: 'exit' },
+      },
+    };
+    expect(() => validateCampaignDefinition(emptyArms)).not.toThrow();
+  });
+
+  it('ACCEPTS one populated arm + one empty arm rejoining the trunk', () => {
+    const oneArm = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'c' },
+        c: {
+          type: 'condition',
+          ast: { field: 'total_events', operator: '>=', value: 1 },
+          onTrue: 'a',
+          onFalse: 'join', // empty arm passes straight through to the join
+        },
+        a: { type: 'action', kind: 'set_attribute', key: 'k', value: 1, next: 'join' },
+        join: { type: 'exit' },
+      },
+    };
+    expect(() => validateCampaignDefinition(oneArm)).not.toThrow();
+  });
+
+  it('ACCEPTS one arm terminating in its own exit while the other rejoins the trunk', () => {
+    const armTerminates = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'c' },
+        c: {
+          type: 'condition',
+          ast: { field: 'total_events', operator: '>=', value: 1 },
+          onTrue: 'exitT', // this arm terminates
+          onFalse: 'join', // the other arm rejoins the trunk → exit
+        },
+        exitT: { type: 'exit' },
+        join: { type: 'action', kind: 'set_attribute', key: 'done', value: 'y', next: 'x' },
+        x: { type: 'exit' },
+      },
+    };
+    expect(() => validateCampaignDefinition(armTerminates)).not.toThrow();
+  });
+
   it('ACCEPTS a diamond (two paths converging on one node) — not a cycle', () => {
     const diamond = {
       startNode: 't',

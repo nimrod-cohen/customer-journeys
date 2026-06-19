@@ -125,8 +125,11 @@ export async function seed(): Promise<void> {
       [SEG_DYN_A, WS_A, SEG_DYN_A_NAME],
     );
     // A started BRANCHING campaign in WS_A so the builder's "render an existing
-    // definition" e2e has a downward tree with a condition (fanned arms) to draw.
-    // Shape: trigger → wait → if(tier=vip) ? send→exit : exit.
+    // definition" e2e has a CONVERGING DIAMOND to draw: the condition's arms OPEN
+    // and REJOIN a single trunk that continues to one exit (NOT two separate
+    // exits). Shape: trigger → wait → if(tier=vip) ? send→join : join → exit.
+    // The join (a node with 2 incoming edges) is identified purely structurally —
+    // there is NO stored "join" flag.
     await pool.query(
       `INSERT INTO campaigns (id, workspace_id, name, status, definition)
        VALUES ($1,$2,'Welcome journey','draft',$3::jsonb)`,
@@ -138,10 +141,10 @@ export async function seed(): Promise<void> {
           nodes: {
             trigger: { type: 'trigger', kind: 'segment_entry', next: 'wait1' },
             wait1: { type: 'wait', delay: { seconds: 86400 }, next: 'cond' },
-            cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'sendY', onFalse: 'exitN' },
-            sendY: { type: 'action', kind: 'send', template_id: TPL_A, next: 'exitY' },
-            exitY: { type: 'exit' },
-            exitN: { type: 'exit' },
+            cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'sendY', onFalse: 'join' },
+            sendY: { type: 'action', kind: 'send', template_id: TPL_A, next: 'join' },
+            join: { type: 'action', kind: 'set_attribute', key: 'welcomed', value: 'y', next: 'exit1' },
+            exit1: { type: 'exit' },
           },
         }),
       ],

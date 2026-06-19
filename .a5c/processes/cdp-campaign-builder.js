@@ -143,15 +143,32 @@ const PHASES = [
     ],
   },
   {
+    id: 'phase6b-branch-convergence', frontend: true,
+    title: 'Builder: converging branches (arms open and rejoin a single trunk)',
+    refs: 'CLAUDE.md (the phase-5 canvas: layout.ts/orthogonal-path.ts/mutate.ts/CampaignCanvas.tsx) + the locked converging-diamond design',
+    scope: [
+      'Redesign the IF/branch (and any future multi-way branch) so its arms OPEN and REJOIN a single trunk (a converging diamond), NOT two separate exits. Inserting an If/branch on an edge A→B produces A→If with BOTH arms (onTrue/onFalse) leading to the continuation B; the trunk continues downward from that single join node. (Today insertBranch wires each arm to its own fresh exit — change it to rejoin.)',
+      'Each arm gets its OWN + insertion control to add action nodes into THAT arm only (If.onTrue→New→join); an EMPTY arm passes straight through to the join (matches the user screenshot: one populated arm, one empty, both reunite). An explicit EXIT node dropped on an arm terminates just that arm (that side does not rejoin).',
+      'Layout + connectors: the join node has 2+ incoming edges; draw the arms fanning to the SIDES and the connectors CONVERGING back into the single join, trunk continuing below — extend the existing Reingold-Tilford layout (a node with multiple parents laid out ONCE at max parent depth) and the orthogonal-path renderer (still rounded, axis-aligned, no diagonals, no up/back edges). Update mutate.ts (insertBranch rejoins; per-arm insert; delete re-links keeping a valid converging graph), CampaignCanvas.tsx (per-arm + controls + the convergence connectors). validateCampaignDefinition stays the gate (diamonds are already allowed — ensure no false cycle/orphan). The RUNNER is unchanged (it just follows current_node through the join).',
+    ],
+    criteria: [
+      'Inserting an If/branch on an edge yields a converging diamond: both arms lead to the SAME continuation node and the trunk continues below it; rendered with arms fanning sideways and connectors converging into the single join (no diagonal/upward edges, auto-layout). Verified in a REAL browser (Playwright tokenizes the connector paths + asserts convergence into one node).',
+      'Each arm has its own + ; adding a node to ONE arm while the other stays empty keeps the diamond and both sides rejoin the trunk (the user screenshot case); placing an Exit on an arm terminates only that arm. Round-trips through the DSL (save+reload same graph).',
+      'Delete re-links to a valid converging graph; no loops/orphans; validateCampaignDefinition passes for the diamond; workspace-scoped. No regression in the phase-5/6 canvas + editor e2e.',
+    ],
+  },
+  {
     id: 'phase7-lifecycle-journey', frontend: true,
     title: 'Lifecycle, dashboards + full end-to-end journey',
     refs: '§9B + CLAUDE.md (broadcast list/lifecycle patterns, activity log, dashboards)',
     scope: [
-      'Campaign LIST + lifecycle: draft / active / paused (and the existing completed/exited/failed enrollment states); publish (validate→active), pause/resume, archive. Show per-campaign enrollment counts (active / completed / exited / failed) and optionally per-node counts.',
+      'Campaigns is a LIST page that MIRRORS Broadcasts (BroadcastComposer): the /campaigns route shows a table/list of campaigns (name, lifecycle status, enrollment counts) with a "New campaign" action; opening/creating a campaign navigates to a SEPARATE edit page at route /campaigns/:id (the canvas builder) — the builder is NOT the top-level campaigns page. REMOVE any top-level "Design email" affordance from the campaigns list/page: email design lives ONLY inside a send-node editor (reached from a send node in the builder), never as a standalone campaigns-page button. Reuse the broadcasts list/detail routing + kit (ActionMenu row actions, etc.).',
+      'Campaign LIFECYCLE: draft / active / paused (and the existing completed/exited/failed enrollment states); publish (validate→active), pause/resume, archive. Show per-campaign enrollment counts (active / completed / exited / failed) and optionally per-node counts.',
       'A full END-TO-END journey acceptance test against the local stack: define a campaign in the builder (trigger → wait → hour-window → if → update-profile → send + webhook → exit), enroll a profile (each trigger kind — INCLUDING POSTing to the live local-api /profiles/:id/events path to assert event-trigger enrollment, closing the phase-3 coverage gap), advance via the runner (injected clock), and assert the update-profile step wrote an event-sourced attribute, it sends through the Dispatcher (messages_log) + fires the (mocked) webhook + completes — workspace-scoped, idempotent.',
       'Docs + hygiene: update CLAUDE.md (the campaign builder + new nodes + tz + triggers), bump the root version, ensure migrations applied to cdp + cdp_e2e.',
     ],
     criteria: [
+      'The campaigns screen is a LIST (like broadcasts); creating/opening a campaign routes to a SEPARATE /campaigns/:id builder page; there is NO "Design email" button on the campaigns list page (email design is only inside a send-node editor). Verified in a REAL browser.',
       'The campaign list shows lifecycle status + enrollment counts; publish/pause/resume work and are capability-gated + workspace-scoped; an active campaign enrolls + advances profiles. Verified in a REAL browser + against REAL Postgres.',
       'The full journey acceptance test passes: a built campaign enrolls (segment/event/manual), advances through wait/hour-window/if/send/webhook/exit with an injected clock, sends via the Dispatcher (messages_log, campaign_id) and fires the mocked webhook, idempotently, all workspace-scoped.',
       'CLAUDE.md updated; root version bumped; no regression across the full Vitest + e2e suite (cold).',
