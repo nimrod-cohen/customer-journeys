@@ -1,0 +1,88 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "criteria": [
+            "The builder renders an existing definition as a downward tree with branches fanning sideways + rounded orthogonal connectors; no diagonal/upward lines; layout is auto-computed (no manual drag). Verified in a REAL browser (Playwright).",
+            "A user can assemble trigger → wait → send → exit AND an if-branch (yes/no each ending in a send→exit), save it, reload, and get the same graph back (round-trips through the DSL). Saving an invalid graph is refused.",
+            "The editor cannot create a loop, a back-edge, or an orphan node; deleting a node re-links to a valid tree. Workspace-scoped; data-testid contract preserved + extended."
+          ],
+          "frontend": true,
+          "id": "phase5-builder-canvas",
+          "refs": "CLAUDE.md (UI kit, BroadcastComposer/SegmentBuilder patterns, data-testid e2e contract) + the locked canvas design",
+          "scope": [
+            "Replace the placeholder CampaignBuilder.tsx with a constrained DOWNWARD CANVAS that RENDERS a CampaignDefinition: auto-layout (each node below its parent; condition/multi-way branches fan to the SIDES and re-pack to avoid overlap; positions COMPUTED, not stored), rounded ORTHOGONAL connectors (no diagonals, no up/back arrows), pan/scroll. A node shows its type + summary; an insertion control (+) on each edge inserts a step; nodes are deletable (re-linking the graph so it stays a valid down-only tree with no orphans).",
+            "Maintain the no-loop / no-orphan / single-trigger invariants in the editor (you can never create a back-edge or an unconnected node); build/parse between the canvas model and the DSL {startNode, nodes}; save via POST/PUT /campaigns (definition) — reject an invalid graph (validateCampaignDefinition) with a clear message.",
+            "Node-type palette for inserting: wait, wait-until, hour-of-day window, if/branch, send-email, update-profile (set_attribute), webhook, exit (editors come in phase 6 — here, inserting creates a node with sensible defaults / a stub config). Keep it on the workspace design system; stable data-testid on every interactive element."
+          ],
+          "title": "Builder: constrained downward canvas (auto-layout + connectors)"
+        },
+        "score": 95
+      },
+      "instructions": [
+        "Run `git add -A`. If not on a feature branch and on the default branch, create/use a branch first.",
+        "Commit with a clear conventional message describing the phase (Builder: constrained downward canvas (auto-layout + connectors)), gate score (95), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Builder: constrained downward canvas (auto-layout + connectors)\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KVGCMSX1G6B7ZR0QQYMFFRJN/input.json",
+    "outputJsonPath": "tasks/01KVGCMSX1G6B7ZR0QQYMFFRJN/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "phase5-builder-canvas"
+  ],
+  "title": "Commit: Builder: constrained downward canvas (auto-layout + connectors)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KVGCMSX1G6B7ZR0QQYMFFRJN",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/campaign-builder:S000020:commit-phase",
+  "stepId": "S000020",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "criteria": [
+        "The builder renders an existing definition as a downward tree with branches fanning sideways + rounded orthogonal connectors; no diagonal/upward lines; layout is auto-computed (no manual drag). Verified in a REAL browser (Playwright).",
+        "A user can assemble trigger → wait → send → exit AND an if-branch (yes/no each ending in a send→exit), save it, reload, and get the same graph back (round-trips through the DSL). Saving an invalid graph is refused.",
+        "The editor cannot create a loop, a back-edge, or an orphan node; deleting a node re-links to a valid tree. Workspace-scoped; data-testid contract preserved + extended."
+      ],
+      "frontend": true,
+      "id": "phase5-builder-canvas",
+      "refs": "CLAUDE.md (UI kit, BroadcastComposer/SegmentBuilder patterns, data-testid e2e contract) + the locked canvas design",
+      "scope": [
+        "Replace the placeholder CampaignBuilder.tsx with a constrained DOWNWARD CANVAS that RENDERS a CampaignDefinition: auto-layout (each node below its parent; condition/multi-way branches fan to the SIDES and re-pack to avoid overlap; positions COMPUTED, not stored), rounded ORTHOGONAL connectors (no diagonals, no up/back arrows), pan/scroll. A node shows its type + summary; an insertion control (+) on each edge inserts a step; nodes are deletable (re-linking the graph so it stays a valid down-only tree with no orphans).",
+        "Maintain the no-loop / no-orphan / single-trigger invariants in the editor (you can never create a back-edge or an unconnected node); build/parse between the canvas model and the DSL {startNode, nodes}; save via POST/PUT /campaigns (definition) — reject an invalid graph (validateCampaignDefinition) with a clear message.",
+        "Node-type palette for inserting: wait, wait-until, hour-of-day window, if/branch, send-email, update-profile (set_attribute), webhook, exit (editors come in phase 6 — here, inserting creates a node with sensible defaults / a stub config). Keep it on the workspace design system; stable data-testid on every interactive element."
+      ],
+      "title": "Builder: constrained downward canvas (auto-layout + connectors)"
+    },
+    "score": 95
+  }
+}

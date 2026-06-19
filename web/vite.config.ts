@@ -52,7 +52,8 @@ export default defineConfig({
   // Vitest owns test/ (unit + DB-integration). Playwright owns e2e/ (browser),
   // run via `pnpm test:e2e` — keep its specs out of the vitest run.
   test: {
-    include: ['test/**/*.test.ts'],
+    // Unit tests live alongside source (src/**) AND in test/ (DB-integration).
+    include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
     exclude: ['node_modules/**', 'dist/**', 'e2e/**'],
   },
 });

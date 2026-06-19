@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-19T16:50:21.747Z",
+  "data": {
+    "effectId": "01KVGCMSX1G6B7ZR0QQYMFFRJN",
+    "invocationKey": "cdp/campaign-builder:S000020:commit-phase",
+    "invocationHash": "e95a9aa1779faa2545c398510138d7dbe9f77a57de98db0c112a4f9d54aef53d",
+    "stepId": "S000020",
+    "taskId": "commit-phase",
+    "kind": "agent",
+    "label": "commit",
+    "taskDefRef": "tasks/01KVGCMSX1G6B7ZR0QQYMFFRJN/task.json",
+    "labels": [
+      "commit",
+      "phase5-builder-canvas"
+    ]
+  },
+  "checksum": "cecf7932d4062a3d3dfa63ab96c3fd1b32b8c25a8f7c5f3465b08a064d367dbb"
+}

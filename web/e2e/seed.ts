@@ -28,6 +28,7 @@ export const SEG_A = '0e2efe00-0000-4000-8000-0000000000c2';
 export const SEG_B = '0e2efe00-0000-4000-8000-0000000000c3';
 export const SEG_DYN_A = '0e2efe00-0000-4000-8000-0000000000c4'; // dynamic: attributes.tier = vip
 export const SEG_A2 = '0e2efe00-0000-4000-8000-0000000000c5'; // segment in the 2nd Acme workspace
+export const CAMP_A = '0e2efe00-0000-4000-8000-0000000000c6'; // a started branching campaign in WS_A
 
 /** Segment names — asserted present/absent after switching workspaces. WS_A and
  * WS_A2 are BOTH in the Acme company (a user belongs to ONE company, which may
@@ -123,6 +124,29 @@ export async function seed(): Promise<void> {
        VALUES ($1,$2,$3,'dynamic_realtime','{"field":"attributes.tier","operator":"=","value":"vip"}'::jsonb)`,
       [SEG_DYN_A, WS_A, SEG_DYN_A_NAME],
     );
+    // A started BRANCHING campaign in WS_A so the builder's "render an existing
+    // definition" e2e has a downward tree with a condition (fanned arms) to draw.
+    // Shape: trigger → wait → if(tier=vip) ? send→exit : exit.
+    await pool.query(
+      `INSERT INTO campaigns (id, workspace_id, name, status, definition)
+       VALUES ($1,$2,'Welcome journey','draft',$3::jsonb)`,
+      [
+        CAMP_A,
+        WS_A,
+        JSON.stringify({
+          startNode: 'trigger',
+          nodes: {
+            trigger: { type: 'trigger', kind: 'segment_entry', next: 'wait1' },
+            wait1: { type: 'wait', delay: { seconds: 86400 }, next: 'cond' },
+            cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'sendY', onFalse: 'exitN' },
+            sendY: { type: 'action', kind: 'send', template_id: TPL_A, next: 'exitY' },
+            exitY: { type: 'exit' },
+            exitN: { type: 'exit' },
+          },
+        }),
+      ],
+    );
+
     let firstProfileId = '';
     // a1/a2/a3 are ESTABLISHED accounts (created long ago) — their events date to
     // early 2026, so a months-old created_at is the faithful value. a4 is a

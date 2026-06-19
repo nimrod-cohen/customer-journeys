@@ -1,0 +1,109 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KVGB1K660JGFK9DB2NPY1KGV",
+  "taskId": "implement-phase",
+  "invocationKey": "cdp/campaign-builder:S000018:implement-phase",
+  "status": "ok",
+  "result": {
+    "commandsRun": [
+      "pnpm --filter @cdp/service-campaign-runner exec tsc -b",
+      "pnpm --filter @cdp/web exec vitest run src/campaigns",
+      "pnpm --filter @cdp/service-local-api exec tsc -b",
+      "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-local-api exec vitest run test/get-campaign.integration.test.ts",
+      "pnpm typecheck",
+      "pnpm --filter @cdp/web lint",
+      "pnpm --filter @cdp/web exec vitest run",
+      "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-local-api exec vitest run",
+      "pnpm --filter @cdp/web exec playwright test campaign-builder.browser.e2e.spec.ts",
+      "pnpm --filter @cdp/web exec playwright test broadcast-and-campaign.browser.e2e.spec.ts",
+      "pnpm --filter @cdp/web test:e2e"
+    ],
+    "e2eSummary": "Full Playwright suite (cdp_e2e stack, cold run): 77 passed, 1 flaky (company-ses-config 'element is not stable' — UNRELATED pre-existing timing flake in an untouched file; passed on retry). New campaign-builder.browser.e2e.spec.ts 7/7 (render seeded tree + axis-aligned/down-only connectors, assemble linear + if-branch, 8-type palette, save/reload round-trip, delete re-links, last-exit-delete refused with styled toast). Migrated broadcast-and-campaign 'build and save a campaign workflow' to the (+)-insertion model: 12/12.",
+    "filesCreated": [
+      "web/src/campaigns/model.ts",
+      "web/src/campaigns/layout.ts",
+      "web/src/campaigns/orthogonal-path.ts",
+      "web/src/campaigns/mutate.ts",
+      "web/src/campaigns/CampaignCanvas.tsx",
+      "web/src/campaigns/model.test.ts",
+      "web/src/campaigns/layout.test.ts",
+      "web/src/campaigns/orthogonal-path.test.ts",
+      "web/src/campaigns/mutate.test.ts",
+      "services/local-api/test/get-campaign.integration.test.ts",
+      "web/e2e/campaign-builder.browser.e2e.spec.ts"
+    ],
+    "filesDeleted": [
+      "web/src/campaigns/builder.ts",
+      "web/test/campaign-builder.test.ts"
+    ],
+    "filesModified": [
+      "web/src/screens/CampaignBuilder.tsx",
+      "services/local-api/src/handlers.ts",
+      "services/local-api/src/routes.ts",
+      "web/vite.config.ts",
+      "web/e2e/seed.ts",
+      "web/e2e/broadcast-and-campaign.browser.e2e.spec.ts",
+      "package.json",
+      "CLAUDE.md"
+    ],
+    "lintOk": true,
+    "migrationsApplied": [],
+    "notes": "Phase 5 complete, test-first, on branch feat/campaign-builder (NOT pushed). The placeholder CampaignBuilder.tsx is replaced with a constrained downward canvas: pure auto-layout (Reingold-Tilford two-pass, depth->y down-only by construction, subtree-width x packing, condition arms fan sideways, diamond join counted once below both parents), rounded orthogonal SVG connectors (V/H + clamped Q corners, diagonal-free, never up/back; container data-testid=campaign-connectors), (+) edge insertion (insertOnEdge: A->B => A->NEW->B; condition auto-wires onTrue->B + onFalse->fresh exit) and delete (splice single-out / remove condition keeping onTrue arm + dropping onFalse-exclusive descendants; refuses trigger + last-exit). Canvas<->DSL via parseDefinition/buildDefinition (round-trip identity; NO stored coords). 8-type palette (wait/wait-until/hour-window/if/send/update-profile/webhook/exit) yields structurally-valid stubs via defaultNodeConfig (per-node editors are PHASE 6 — not built). Backend gap filled: GET /campaigns/:id (getCampaign, manage_content, scopedQuery on ctx.workspaceId, cross-workspace 404) for reload/round-trip; no migration (definition is existing jsonb). Save via POST/PUT /campaigns (already validate). Invariants honored: no native dialogs (askConfirm/showToast), server Buttons return the promise so the kit auto-locks+spins, every emitted graph re-gated by the production validateCampaignDefinition, workspace_id never client-supplied. lintOk=true means NO NEW lint errors in my files; the 7 KNOWN pre-existing react-hooks/exhaustive-deps 'rule not found' errors in untouched files remain (per the task instruction to ignore them). Removed the superseded thin web/src/campaigns/builder.ts + its obsolete web/test/campaign-builder.test.ts (coverage now in model/mutate/layout tests). vite.config.ts test.include extended to src/**/*.test.ts so the co-located unit tests run. Version bumped 0.32.0->0.33.0; CLAUDE.md updated with the campaign canvas section. Human steps: none (no AWS/DNS/migrations).",
+    "testsPass": true,
+    "testSummary": "web unit: 94 passed / 4 skipped (incl. 38 new campaign layout/model/mutate/orthogonal-path tests). local-api integration (real Postgres cdp): 194 passed / 0 failed (incl. 5 new get-campaign round-trip + cross-workspace-404 + invalid-graph-refusal). No regression.",
+    "typecheckOk": true,
+    "versionBump": "0.32.0 -> 0.33.0 (minor)"
+  },
+  "startedAt": "2026-06-19T16:41:50.026Z",
+  "finishedAt": "2026-06-19T16:41:50.026Z",
+  "value": {
+    "commandsRun": [
+      "pnpm --filter @cdp/service-campaign-runner exec tsc -b",
+      "pnpm --filter @cdp/web exec vitest run src/campaigns",
+      "pnpm --filter @cdp/service-local-api exec tsc -b",
+      "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-local-api exec vitest run test/get-campaign.integration.test.ts",
+      "pnpm typecheck",
+      "pnpm --filter @cdp/web lint",
+      "pnpm --filter @cdp/web exec vitest run",
+      "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-local-api exec vitest run",
+      "pnpm --filter @cdp/web exec playwright test campaign-builder.browser.e2e.spec.ts",
+      "pnpm --filter @cdp/web exec playwright test broadcast-and-campaign.browser.e2e.spec.ts",
+      "pnpm --filter @cdp/web test:e2e"
+    ],
+    "e2eSummary": "Full Playwright suite (cdp_e2e stack, cold run): 77 passed, 1 flaky (company-ses-config 'element is not stable' — UNRELATED pre-existing timing flake in an untouched file; passed on retry). New campaign-builder.browser.e2e.spec.ts 7/7 (render seeded tree + axis-aligned/down-only connectors, assemble linear + if-branch, 8-type palette, save/reload round-trip, delete re-links, last-exit-delete refused with styled toast). Migrated broadcast-and-campaign 'build and save a campaign workflow' to the (+)-insertion model: 12/12.",
+    "filesCreated": [
+      "web/src/campaigns/model.ts",
+      "web/src/campaigns/layout.ts",
+      "web/src/campaigns/orthogonal-path.ts",
+      "web/src/campaigns/mutate.ts",
+      "web/src/campaigns/CampaignCanvas.tsx",
+      "web/src/campaigns/model.test.ts",
+      "web/src/campaigns/layout.test.ts",
+      "web/src/campaigns/orthogonal-path.test.ts",
+      "web/src/campaigns/mutate.test.ts",
+      "services/local-api/test/get-campaign.integration.test.ts",
+      "web/e2e/campaign-builder.browser.e2e.spec.ts"
+    ],
+    "filesDeleted": [
+      "web/src/campaigns/builder.ts",
+      "web/test/campaign-builder.test.ts"
+    ],
+    "filesModified": [
+      "web/src/screens/CampaignBuilder.tsx",
+      "services/local-api/src/handlers.ts",
+      "services/local-api/src/routes.ts",
+      "web/vite.config.ts",
+      "web/e2e/seed.ts",
+      "web/e2e/broadcast-and-campaign.browser.e2e.spec.ts",
+      "package.json",
+      "CLAUDE.md"
+    ],
+    "lintOk": true,
+    "migrationsApplied": [],
+    "notes": "Phase 5 complete, test-first, on branch feat/campaign-builder (NOT pushed). The placeholder CampaignBuilder.tsx is replaced with a constrained downward canvas: pure auto-layout (Reingold-Tilford two-pass, depth->y down-only by construction, subtree-width x packing, condition arms fan sideways, diamond join counted once below both parents), rounded orthogonal SVG connectors (V/H + clamped Q corners, diagonal-free, never up/back; container data-testid=campaign-connectors), (+) edge insertion (insertOnEdge: A->B => A->NEW->B; condition auto-wires onTrue->B + onFalse->fresh exit) and delete (splice single-out / remove condition keeping onTrue arm + dropping onFalse-exclusive descendants; refuses trigger + last-exit). Canvas<->DSL via parseDefinition/buildDefinition (round-trip identity; NO stored coords). 8-type palette (wait/wait-until/hour-window/if/send/update-profile/webhook/exit) yields structurally-valid stubs via defaultNodeConfig (per-node editors are PHASE 6 — not built). Backend gap filled: GET /campaigns/:id (getCampaign, manage_content, scopedQuery on ctx.workspaceId, cross-workspace 404) for reload/round-trip; no migration (definition is existing jsonb). Save via POST/PUT /campaigns (already validate). Invariants honored: no native dialogs (askConfirm/showToast), server Buttons return the promise so the kit auto-locks+spins, every emitted graph re-gated by the production validateCampaignDefinition, workspace_id never client-supplied. lintOk=true means NO NEW lint errors in my files; the 7 KNOWN pre-existing react-hooks/exhaustive-deps 'rule not found' errors in untouched files remain (per the task instruction to ignore them). Removed the superseded thin web/src/campaigns/builder.ts + its obsolete web/test/campaign-builder.test.ts (coverage now in model/mutate/layout tests). vite.config.ts test.include extended to src/**/*.test.ts so the co-located unit tests run. Version bumped 0.32.0->0.33.0; CLAUDE.md updated with the campaign canvas section. Human steps: none (no AWS/DNS/migrations).",
+    "testsPass": true,
+    "testSummary": "web unit: 94 passed / 4 skipped (incl. 38 new campaign layout/model/mutate/orthogonal-path tests). local-api integration (real Postgres cdp): 194 passed / 0 failed (incl. 5 new get-campaign round-trip + cross-workspace-404 + invalid-graph-refusal). No regression.",
+    "typecheckOk": true,
+    "versionBump": "0.32.0 -> 0.33.0 (minor)"
+  }
+}

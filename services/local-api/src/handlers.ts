@@ -1847,6 +1847,25 @@ export const listCampaigns: Handler = async (ctx, pool) => {
   return ok({ campaigns: rows });
 };
 
+/**
+ * GET /campaigns/:id — the full campaign + its definition for the builder to
+ * reload/round-trip (§9B phase 5). Scoped to the TOKEN's workspace
+ * (ctx.workspaceId, NEVER a body/query workspace_id — inv.1/inv.2): a campaign in
+ * another workspace 404s. The `definition` jsonb is returned verbatim so the
+ * canvas reconstructs the same DSL graph it saved.
+ */
+export const getCampaign: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, status, definition, trigger_segment_id, trigger_on, keep_while_in_segment FROM campaigns WHERE id = $1',
+    [id],
+  );
+  const { rows } = await pool.query(q.text, q.values);
+  if (rows.length === 0) return ok({ error: 'campaign not found' }, 404);
+  return ok({ campaign: rows[0] });
+};
+
 export const createCampaign: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const name = String(b.name ?? '');
@@ -3408,6 +3427,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /broadcasts/:id/duplicate': duplicateBroadcast,
   'POST /broadcasts/:id/send': sendBroadcast,
   'GET /campaigns': listCampaigns,
+  'GET /campaigns/:id': getCampaign,
   'POST /campaigns': createCampaign,
   'PUT /campaigns/:id': updateCampaign,
   'POST /campaigns/:id/activate': activateCampaign,

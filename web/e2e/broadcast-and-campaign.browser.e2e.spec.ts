@@ -392,9 +392,13 @@ test('build and save a campaign workflow', async ({ page }) => {
   await page.getByTestId('nav-campaigns').click();
   await page.getByTestId('campaign-builder').waitFor();
 
+  await page.getByTestId('campaign-new').click();
   await page.getByTestId('campaign-name').fill('Onboarding journey');
-  // Add a wait step → graph becomes trigger→wait→send→exit.
-  await page.getByTestId('add-wait-node').click();
+  // Insert a wait step on the starter trigger→exit edge via the (+) palette →
+  // graph becomes trigger→wait→exit.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('campaign-palette').waitFor();
+  await page.getByTestId('palette-wait').click();
   await expect(page.getByTestId('node-wait')).toBeVisible();
 
   await page.getByTestId('save-campaign').click();

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KVGASRZH63N77ACDV18C3P8K",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/campaign-builder:S000016:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "9b71c99ba3c933d8240966a6405dcc4acdf224a7",
+    "committed": true,
+    "message": "feat(campaigns): phase 4 — send-node email instance + publish gating + event-sourced update-profile"
+  },
+  "startedAt": "2026-06-19T16:18:49.376Z",
+  "finishedAt": "2026-06-19T16:18:49.376Z",
+  "value": {
+    "commitHash": "9b71c99ba3c933d8240966a6405dcc4acdf224a7",
+    "committed": true,
+    "message": "feat(campaigns): phase 4 — send-node email instance + publish gating + event-sourced update-profile"
+  }
+}

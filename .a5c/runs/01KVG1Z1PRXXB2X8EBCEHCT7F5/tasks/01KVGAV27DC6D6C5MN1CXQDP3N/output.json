@@ -1,0 +1,135 @@
+{
+  "testFiles": [
+    {
+      "path": "web/src/campaigns/layout.test.ts",
+      "tier": "unit",
+      "criterion": "The builder renders an existing definition as a downward tree with branches fanning sideways + rounded orthogonal connectors; no diagonal/upward lines; layout is auto-computed (no manual drag).",
+      "assertions": [
+        "layoutDefinition(def) returns a node-position map keyed by node id; the single trigger (startNode) sits at depth 0 (smallest y).",
+        "Every non-trigger node's y is STRICTLY GREATER than its parent's y (each child renders BELOW its parent) — proves down-only, no upward placement.",
+        "A linear trigger->wait->send->exit gets monotonically increasing y and a single shared x column (no horizontal spread when there is no branch).",
+        "A condition node's onTrue / onFalse children are placed in DISTINCT x columns either side of (or fanned from) the condition's x — branches fan sideways, never overlap.",
+        "Two sibling subtrees never overlap horizontally: re-packing widens the parent's allotted x-extent to the sum of child subtree widths (assert no two nodes share the same (x,y) cell and sibling x-extents are disjoint).",
+        "A diamond / re-convergence (two parents into one downstream node) places the shared node once, at a y below BOTH parents (max parent depth + 1) — no duplicate position, still down-only.",
+        "Layout is deterministic + pure: same def in -> identical positions out (call twice, deep-equal); no stored coordinates are read from the def (strip any x/y from input -> identical output).",
+        "computeEdges(def, positions) emits one orthogonal edge per (next/onTrue/onFalse): every edge's target y > source y (assert no edge goes up); diagonal-free by construction (path is vertical+horizontal+vertical segments only — see orthogonalPath assertions)."
+      ]
+    },
+    {
+      "path": "web/src/campaigns/orthogonal-path.test.ts",
+      "tier": "unit",
+      "criterion": "rounded ORTHOGONAL connectors (no diagonals, no up/back arrows)",
+      "assertions": [
+        "orthogonalPath({x1,y1},{x2,y2}) returns an SVG path string whose every drawn segment is axis-aligned: parse the path and assert each line/curve control run changes EITHER x OR y but never both simultaneously (no diagonal L segment).",
+        "When source and target share an x (straight-down child) the path is a single vertical segment (M x y1 V y2), y2 > y1.",
+        "When target is offset in x (a branch) the path is down -> rounded corner -> across -> rounded corner -> down, using quadratic/arc corners (assert the path contains corner commands Q or A, and the corner radius is clamped to <= half the shorter leg so it never overshoots).",
+        "y2 is ALWAYS >= y1 for every connector the builder emits (the function is only ever called child-below-parent) — a guard test passing y2 < y1 throws / is never produced by computeEdges.",
+        "Edge midpoint (insertion-control anchor) is computed on the vertical run and returned for the (+) control placement."
+      ]
+    },
+    {
+      "path": "web/src/campaigns/model.test.ts",
+      "tier": "unit",
+      "criterion": "build/parse between the canvas model and the DSL {startNode, nodes}; round-trips through the DSL.",
+      "assertions": [
+        "parseDefinition(def) -> CanvasModel: produces a node list + an explicit edge list (parent/child/branch-label) derived ONLY from next/onTrue/onFalse, with the trigger flagged as start; no coordinates stored.",
+        "buildDefinition(model) -> {startNode, nodes}: startNode is the single trigger id; each canvas node serializes to its exact DSL shape (wait->{delay:{seconds}}, condition->{ast,onTrue,onFalse}, action send->{kind:'send',template_id,next}, set_attribute->{kind:'set_attribute',key,value,next}, webhook->{kind:'webhook',url,method,next}, hour_of_day_window->{startHour,endHour,next}, exit->{type:'exit'}).",
+        "Round-trip identity: buildDefinition(parseDefinition(def)) deep-equals the original def for: a linear trigger->wait->send->exit AND an if-branch (condition with onTrue=send->exit and onFalse=send->exit).",
+        "buildDefinition output passes the runner's validateCampaignDefinition for every starter/insert/delete operation result (import the real validator from @cdp/service-campaign-runner and assert it does NOT throw).",
+        "Default node factories produce VALID stub configs: insertNode('wait') -> {delay:{seconds:86400}}, 'wait_until' -> {until: <future ISO>}, 'hour_of_day_window' -> {startHour,endHour}, 'condition' -> a trivially-true/placeholder AstNode + onTrue/onFalse both wired, 'send' -> {kind:'send', template_id:null/placeholder, next}, 'set_attribute' -> {key:'', value}, 'webhook' -> {url:'https://example.com', method:'POST'}, 'exit' -> {type:'exit'} — each, once inserted, keeps the whole graph passing validateCampaignDefinition (except 'send' template attach is phase 6, so the stub uses a placeholder that still validates structurally OR the model marks it incomplete without breaking structural validity)."
+      ]
+    },
+    {
+      "path": "web/src/campaigns/mutate.test.ts",
+      "tier": "unit",
+      "criterion": "The editor cannot create a loop, a back-edge, or an orphan node; deleting a node re-links to a valid tree.",
+      "assertions": [
+        "insertOnEdge(model, edge, type): inserting on an edge A->B yields A->NEW->B (NEW.next = B), preserving down-only order; the resulting def passes validateCampaignDefinition (no orphan: NEW is reachable, B still reachable).",
+        "Inserting a condition on an edge A->B wires onTrue->B and onFalse->NEW exit (auto-created terminal) so both branches reach an exit — result validates (reachable exit on both arms, no orphan).",
+        "deleteNode(model, id) for a single-out node (wait/send/set_attribute/webhook/hour_window) splices it out: parent edge re-links parent -> deleted.next; result has no orphan and passes validateCampaignDefinition.",
+        "deleteNode on a condition removes BOTH arms' exclusive descendants (or re-links parent to a chosen surviving arm per the locked rule) such that the result is still a valid down-only tree with a reachable exit and NO orphan — assert validateCampaignDefinition passes and the removed subtree nodes are gone from the map.",
+        "deleteNode refuses to delete the trigger (start) and refuses to leave zero exits — returns an error/no-op (the builder surfaces a toast, never produces an invalid def).",
+        "The mutation API exposes NO way to point an edge at an ancestor: insert/delete only ever set next to an existing downstream id or a freshly-created node, so a back-edge is unconstructable (property test: after a random sequence of inserts/deletes, validateCampaignDefinition never throws a cycle/orphan error).",
+        "All produced definitions are workspace-agnostic structurally but template_id/sender references are passed through verbatim (no client-supplied workspace_id ever appears in the def)."
+      ]
+    },
+    {
+      "path": "services/local-api/test/get-campaign.integration.test.ts",
+      "tier": "integration",
+      "criterion": "save it, reload, and get the same graph back (round-trips through the DSL). Workspace-scoped.",
+      "assertions": [
+        "GET /campaigns/:id returns {id,name,status,definition,trigger_segment_id,trigger_on} for a campaign in the token's workspace; the definition deep-equals what was saved via POST /campaigns.",
+        "GET /campaigns/:id for a campaign in ANOTHER workspace returns 404 (scopedQuery on ctx.workspaceId — inv.1/inv.2; never trusts a body workspace_id).",
+        "POST /campaigns with a structurally INVALID definition (e.g. a back-edge / orphan / no reachable exit / two triggers) returns 400/409 with validateCampaignDefinition's message (assert the cycle, orphan, and no-exit messages each surface).",
+        "PUT /campaigns/:id with an invalid definition is likewise refused and does NOT mutate the stored row (re-GET shows the prior definition).",
+        "A round-trip: POST a valid branching definition -> GET it back -> the returned definition passes validateCampaignDefinition and equals the input (uses the REAL local Postgres, not a mock)."
+      ]
+    },
+    {
+      "path": "web/e2e/campaign-builder.browser.e2e.spec.ts",
+      "tier": "e2e/browser",
+      "criterion": "All three criteria verified end-to-end in a real browser (render tree+connectors, assemble+save+reload round-trip + invalid refused, no-loop/no-orphan + delete re-links).",
+      "assertions": [
+        "Render: open Campaigns -> the canvas (data-testid=campaign-canvas) shows the seeded/started graph as nodes with type+summary; assert the connector SVG (data-testid=campaign-connectors) contains paths and that NO path element has a diagonal command (evaluate the rendered <path d> strings in-page and assert every segment is axis-aligned) and every edge's target node DOM top > source node DOM top (no upward line).",
+        "Assemble linear: name the campaign, use the (+) insertion control on the trigger->exit edge (campaign-edge-insert) to add wait, then send, then confirm trigger->wait->send->exit; save-campaign succeeds and the item appears in campaign-list.",
+        "Assemble branch: insert an if/branch (node-condition) on an edge; both yes/no arms auto-get a send->exit; the canvas shows two columns fanned sideways (assert the two branch send nodes have different DOM x / left offsets).",
+        "Round-trip: save, then re-open the campaign (campaign-open) -> the canvas reconstructs the SAME node set + edges (assert node-type testids + branch shape match) — definition round-trips through the DSL.",
+        "Invalid refused: drive the builder/state into an invalid save (e.g. via a test hook that posts a malformed def, or delete an arm leaving no exit if the UI permits) -> a styled error/toast (campaign-error) shows validateCampaignDefinition's message; NO native dialog appears.",
+        "Delete re-links: delete the wait node (node-delete in its ActionMenu, confirmed via app-dialog/dialog-confirm — NOT window.confirm) -> trigger now links straight to send; canvas still valid, save still succeeds; assert no orphaned node remains in the DOM.",
+        "Palette: open the insert palette (campaign-palette) on an edge and assert all eight types are present with stable testids (palette-wait, palette-wait-until, palette-hour-window, palette-if, palette-send, palette-update-profile, palette-webhook, palette-exit).",
+        "Server buttons spinner+lock: save-campaign shows a spinner and is disabled while the POST is in flight (kit Button auto-lock — onClick returns the promise).",
+        "Data-testid contract preserved: the existing campaign-builder, campaign-name, campaign-list, campaign-item, campaign-canvas, design-email testids still resolve (back-compat for any other spec)."
+      ]
+    }
+  ],
+  "pureFunctions": [
+    "layoutDefinition(def): CampaignDefinition -> Map<nodeId,{x,y,depth}> — tree layout: depth (=y row) from BFS distance to start; x from a second-pass subtree-width packing (Reingold-Tilford-style: leaf gets width 1, a parent centers over its children, sibling subtrees are placed side by side so x-extents never overlap; condition arms fan onTrue left / onFalse right). Positions are COMPUTED from edges only — NEVER read from the def.",
+    "subtreeWidth(def, nodeId, memo): number — recursive child-subtree width used by the packer; a re-convergence (diamond) node is counted once (visited set) so shared descendants don't double-spread.",
+    "computeEdges(def, positions): Edge[] — one entry per next/onTrue/onFalse with {from,to,label?,fromPoint,toPoint}; asserts toPoint.y > fromPoint.y (down-only) and carries the branch label for connector rendering.",
+    "orthogonalPath(from, to, radius): string — builds the rounded orthogonal SVG path (V/H runs joined by clamped quadratic corners); diagonal-free by construction; returns the path + the vertical-run midpoint for the (+) anchor.",
+    "parseDefinition(def): CanvasModel — DSL -> a normalized editor model (nodes[] + edges[] + start id); no coordinates.",
+    "buildDefinition(model): {startNode,nodes} — CanvasModel -> DSL (replaces the existing thin web/src/campaigns/builder.ts buildDefinition; emits each node's exact DSL shape).",
+    "defaultNodeConfig(type): Node — sensible-default/stub config per palette type that keeps the graph structurally valid (editors are phase 6).",
+    "insertOnEdge(model, edge, type): CanvasModel — A->B becomes A->NEW->B (condition arms auto-wire to exits); guarantees down-only + no orphan.",
+    "deleteNode(model, id): CanvasModel | error — splices a single-out node (re-link parent to node.next) or removes a condition + its exclusive descendants; refuses to delete the trigger or to remove the last reachable exit; never creates an orphan or a back-edge.",
+    "nodeSummary(node): string — the short label shown on a node card (e.g. 'Wait 2 days', 'If tier = vip', 'Send email', 'Set attribute', 'Webhook POST', 'Exit')."
+  ],
+  "mocks": [
+    "NONE for the layout/model/orthogonal-path unit tier — they are pure, no I/O.",
+    "Integration tier (services/local-api GET/POST/PUT /campaigns): REAL local Postgres (cdp / cdp_e2e). Do NOT mock Postgres. SES/SQS already mocked in the local-api test harness; no send happens in this phase.",
+    "Import the REAL validateCampaignDefinition from @cdp/service-campaign-runner in the web unit tests (no mock) so the builder's emitted graphs are gated by the production validator.",
+    "E2E tier: real Chromium via Playwright against the e2e stack (cdp_e2e, :8788/:5174) with LOCAL_SES_FORCE_MOCK=1; seeded data via web/e2e/seed.ts. No AWS, no webhook HTTP (no send/webhook execution this phase)."
+  ],
+  "e2eFlows": [
+    "Render an existing/started definition: nav-campaigns -> campaign-builder -> assert campaign-canvas shows nodes + campaign-connectors has only axis-aligned, downward paths.",
+    "Assemble trigger->wait->send->exit via the (+) edge insertion control + palette, name it, save-campaign, see it in campaign-list.",
+    "Assemble an if-branch (insert condition; both yes/no arms auto-end in send->exit) and assert the two arms render in distinct x columns (fanned sideways).",
+    "Round-trip: save then re-open (campaign-open) and assert the canvas reconstructs the identical node set + branch shape.",
+    "Invalid graph refused: trigger an invalid save and assert a styled campaign-error/toast with the validator's message (no native dialog).",
+    "Delete a node (ActionMenu node-delete -> app-dialog confirm) and assert the parent re-links to the deleted node's child, the graph stays valid, and no orphan node remains.",
+    "Palette completeness + spinner-lock: open campaign-palette, assert all 8 type testids; assert save-campaign spins+locks during the POST."
+  ],
+  "implUnits": [
+    "1. web/src/campaigns/model.ts — CanvasModel type + parseDefinition/buildDefinition (REPLACE the thin builder.ts; keep BuilderNode/buildDefinition export names where other code imports them, or update CampaignBuilder imports). Pure, unit-tested first.",
+    "2. web/src/campaigns/layout.ts — layoutDefinition + subtreeWidth + computeEdges (tree layout: depth=y, subtree-width packing for x, branch fan). Pure.",
+    "3. web/src/campaigns/orthogonal-path.ts — orthogonalPath + corner-radius clamp + edge-midpoint. Pure.",
+    "4. web/src/campaigns/mutate.ts — defaultNodeConfig, insertOnEdge, deleteNode, nodeSummary (all down-only/no-orphan safe). Pure.",
+    "5. services/local-api: add getCampaign handler (GET /campaigns/:id returning the full definition, scopedQuery on ctx.workspaceId) + register route 'GET /campaigns/:id': 'manage_content' in routes.ts and the handler map. (createCampaign/updateCampaign already validate the definition — reuse as-is.)",
+    "6. web/src/screens/CampaignBuilder.tsx — REPLACE the placeholder with: a list of campaigns (GET /campaigns) + open/new; a CampaignCanvas component (SVG connectors layer behind absolutely-positioned node cards, pan/scroll container); NodeCard (type icon + nodeSummary + ActionMenu with delete); EdgeInsert (+) control on each edge midpoint opening the palette; NodePalette (8 types). State is the CanvasModel; save calls POST /campaigns (new) or PUT /campaigns/:id (existing) with buildDefinition(model); reload via GET /campaigns/:id round-trips. Server-calling buttons wired to RETURN the promise (auto-lock). No native dialogs (askConfirm for delete; showToast for errors).",
+    "7. web/src/campaigns/CampaignCanvas.tsx (+ NodeCard, EdgeLayer, NodePalette) — presentational components consuming layout/orthogonal-path; pan/scroll wrapper (overflow-auto), no manual drag.",
+    "8. Tests authored FIRST per the test-first rule: layout.test.ts, orthogonal-path.test.ts, model.test.ts, mutate.test.ts (unit) -> get-campaign.integration.test.ts -> campaign-builder.browser.e2e.spec.ts. Implement units 1-7 to green.",
+    "9. Update the existing web/e2e/broadcast-and-campaign.browser.e2e.spec.ts 'build and save a campaign workflow' test (it uses add-wait-node/save-campaign) to the new (+)-insertion model — OR keep add-wait-node as a back-compat affordance; decide and preserve all referenced testids.",
+    "10. Process hygiene: bump root package.json (minor — feature); update CLAUDE.md (campaign builder canvas section); apply any (none expected — no schema change) migrations; rebuild changed packages; restart dev API."
+  ],
+  "reuse": [
+    "validateCampaignDefinition + CampaignDefinition + Node types from services/campaign-runner/src/dsl.ts (the SINGLE graph model + structural gate — import in web unit tests and rely on the server's existing validate calls).",
+    "Existing services/local-api createCampaign/updateCampaign (already call validateCampaignDefinition) + activateCampaign + attachCampaignSendTemplate (clone-into-copy for send nodes, used in phase 6); add only getCampaign.",
+    "web/src/ui/kit.tsx: Button (auto-locks on promise onClick), ActionMenu (per-node delete, spins/locks), Card, Field, Input, Select, PageHeader, Badge, toneFor, EmptyState, Drawer (palette could be a Drawer or a popover).",
+    "web/src/ui/dialog.tsx askConfirm (delete confirmation — NEVER window.confirm) + web/src/ui/toast.tsx showToast (error/success — invariant: no native dialogs).",
+    "web/src/screens/BroadcastComposer.tsx patterns: list+open+new screen shape, wizard-style breadcrumbs/step gating, the email-INSTANCE attach flow (reused in phase 6 for send-node config), data-testid conventions.",
+    "web/src/screens/SegmentBuilder.tsx + packages/segments rule builder + AstNode (reused in phase 6 for the if/branch condition editor; the stub default uses a placeholder AstNode here).",
+    "web/e2e/helpers.ts loginAs + web/e2e/seed.ts (DEV_MKT, WS_A, TPL_A, SEG_A) for deterministic e2e data; web/playwright.config.ts e2e stack.",
+    "web/src/store/session.ts api client (api.get/post/put) + web/src/router.ts navigate + AppShell '/campaigns' mount."
+  ],
+  "notes": "AUTO-LAYOUT: a Reingold-Tilford-style two-pass tree layout over the DSL edges (no stored coords). Pass 1 (BFS from startNode) assigns DEPTH -> y row (each child strictly below its parent => down-only by construction; a re-convergence/diamond node takes max(parent depth)+1, counted once). Pass 2 packs x by SUBTREE WIDTH: a leaf = 1 unit, a parent centers over its children, sibling subtrees are laid side-by-side so their x-extents are disjoint (re-pack to avoid overlap); a condition's onTrue/onFalse arms fan to the sides (left/right) of the condition's x. Because depth only ever increases along an edge, there is never an upward or back connector. CANVAS<->DSL: the DSL {startNode,nodes} stays the ONE model; parseDefinition derives an explicit edge list (next/onTrue/onFalse) for rendering, buildDefinition serializes back; round-trip is identity. KEEPING IT A VALID DOWN-ONLY TREE ON INSERT/DELETE: insertOnEdge only ever turns A->B into A->NEW->B (NEW.next=B) and a condition insert auto-wires both arms to exits, so a new node is always reachable (no orphan) and always points DOWNSTREAM (no back-edge is constructable through the UI). deleteNode splices a single-out node (parent re-links to node.next) or removes a condition plus its exclusive descendants, refusing to delete the trigger or the last reachable exit; every mutation result is re-checked by validateCampaignDefinition (cycle/orphan/exit gates) before save. PLAYWRIGHT 'NO DIAGONAL/UPWARD' STRATEGY: render connectors as <path> in an SVG layer with a stable data-testid (campaign-connectors); in-browser, read each path's `d`, tokenize the commands, and assert every drawn run changes only x OR only y (M/V/H + Q/A corners; never an L with both dx and dy != 0) => diagonal-free; and assert, per edge, the target node card's DOM top is greater than the source's (downward-only). Corner radius is clamped to half the shorter leg so rounded corners never overshoot into a diagonal-looking artifact. INVARIANTS HONORED: no native confirm/alert/prompt (askConfirm/showToast); server buttons return the promise so kit Button auto-locks+spins; GET/POST/PUT /campaigns are workspace-scoped via ctx.workspaceId (never a body workspace_id, inv.1/2); the DSL is the single model with NO stored coordinates and NO loops/orphans (editor-enforced + server-validated). No schema migration is needed (definition is existing jsonb). Send-node template attach + the per-node editors (incl. webhook SSRF/allowlist, tz math, segment AST condition editor) are PHASE 6 — here inserting a node yields a structurally-valid stub via defaultNodeConfig; scope discipline: build exactly the canvas + insert/delete + save/round-trip, no editors."
+}

@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-19T16:18:49.726Z",
+  "data": {
+    "effectId": "01KVGAV27DC6D6C5MN1CXQDP3N",
+    "invocationKey": "cdp/campaign-builder:S000017:plan-phase",
+    "invocationHash": "9e3f510a41a1ed0848a38b2da2282becc52cf224d7d0206e537876f73d6efb12",
+    "stepId": "S000017",
+    "taskId": "plan-phase",
+    "kind": "agent",
+    "label": "plan",
+    "taskDefRef": "tasks/01KVGAV27DC6D6C5MN1CXQDP3N/task.json",
+    "labels": [
+      "plan",
+      "phase5-builder-canvas"
+    ]
+  },
+  "checksum": "643ea1db855b0906ef3d43999880d4e891a92377377f4d130257421809bfdab5"
+}
