@@ -39,6 +39,15 @@ export interface SqlStatement {
 export interface SegmentReeval {
   readonly workspaceId: string;
   readonly profileEmail: string;
+  /**
+   * Phase 3 (§9B): the ingested event's details so deps.ts can ALSO fire
+   * event-trigger campaign enrollment (enrollFromEvent) in the SAME tx, alongside
+   * the segment-entry enrollment driven by the membership change_log. type/payload
+   * come straight from the trusted envelope; event_id is the producer dedupe key.
+   */
+  readonly eventType: string;
+  readonly eventPayload: Record<string, unknown>;
+  readonly eventId: string;
 }
 
 /** The ordered, workspace-scoped work to apply for one message, in one tx. */
@@ -301,6 +310,9 @@ export function planProcessing(msg: ProcessorMessage): ProcessingPlan {
     segmentReeval: {
       workspaceId: msg.workspace_id,
       profileEmail: msg.envelope.email,
+      eventType: msg.envelope.type,
+      eventPayload: msg.envelope.attributes ?? {},
+      eventId: msg.envelope.event_id,
     },
   };
 }

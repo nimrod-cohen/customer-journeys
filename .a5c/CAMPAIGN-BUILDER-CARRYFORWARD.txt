@@ -1,1 +1,2 @@
 redirect:manual SSRF hardening — carry to Phase 7
+Phase 7 journey must POST /profiles/:id/events and assert event-trigger enrollment via the live local-api path (phase-3 gate coverage gap)

@@ -50,7 +50,7 @@ describe('validateCampaignDefinition', () => {
     const d = validDef();
     const two = {
       ...d,
-      nodes: { ...d.nodes, t2: { type: 'trigger', kind: 'event', next: 'x' } },
+      nodes: { ...d.nodes, t2: { type: 'trigger', kind: 'manual', next: 'x' } },
     };
     expect(() => validateCampaignDefinition(two)).toThrow(/exactly one trigger/);
 
@@ -348,7 +348,7 @@ describe('validateCampaignDefinition: cycle + orphan detection', () => {
       nodes: {
         t: { type: 'trigger', kind: 'manual', next: 'x' },
         x: { type: 'exit' },
-        t2: { type: 'trigger', kind: 'event', next: 'x' }, // extra trigger + orphan
+        t2: { type: 'trigger', kind: 'manual', next: 'x' }, // extra trigger + orphan
       },
     };
     expect(() => validateCampaignDefinition(twoTriggers)).toThrow(/exactly one trigger|orphan|unreachable/);

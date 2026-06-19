@@ -1,0 +1,34 @@
+{
+  "score": 92,
+  "testsPass": true,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {
+      "criterion": "Segment-entry enrollment still works (no regression). Event ingestion of the configured type enrolls the profile into the active campaign exactly once (idempotent on replay); a non-matching event/filter does NOT enroll.",
+      "met": true,
+      "evidence": "VERIFIED cold vs real Postgres (DATABASE_URL=...:5433/cdp). enroll-from-event.integration.test.ts (8 tests, 85ms, ran not skipped): matching-type enrolls 1 row at start node status active; REPLAY twice => count 1 (ON CONFLICT (campaign_id,profile_id) DO NOTHING); different event type => 0; payload filter amount>=100 => 150 enrolls / 50 does not; tenant isolation (WS-B campaign NOT enrolled by WS-A event); draft campaign => 0; SEGMENT-ENTRY REGRESSION enrollFromSegmentChange still enrolls exactly once; cross-kind 'once' single row. Pre-existing enrollment-from-segment-entry.integration.test.ts (5 tests) stays green. Payload-filter closed grammar tested: unknown operator throws, profile.email/non-payload field throws, reuses @cdp/segments resolveOperator whitelist. parse-event-trigger.test.ts (6 tests): type match, no-filter default, matchesFilter=false drop, cross-workspace filtered, falsy-ws throw."
+    },
+    {
+      "criterion": "The manual/API enroll endpoint enrolls a profile (and a segment snapshot) at the start node, is capability-gated + workspace-scoped, and refuses a cross-workspace campaign/profile/segment id (404/inv.2).",
+      "met": true,
+      "evidence": "campaign-enroll-endpoint.integration.test.ts (7 tests, 186ms, real Postgres): single profile enrolls at start node, written row workspace_id===ctx WS; segment snapshot enrolls N members and is point-in-time (member added after call NOT enrolled); idempotent re-run => 3 rows stays 3; cross-workspace campaign => 404 no write; cross-workspace profile => 404 no write; cross-workspace segment => 404; body workspace_id IGNORED (write uses ctx WS). Unit test (6 tests): both-missing/both-present/blank/non-string => 400 before any DB op (pool throws if queried); ROUTE_TABLE['POST /campaigns/:id/enroll']==='manage_content'; handler returns a Promise. Handler reads workspace_id from ctx only; enrollDepsOnPool has a defensive guard that THROWS if any statement's $1 != workspaceId."
+    },
+    {
+      "criterion": "The re-enrollment policy is documented + enforced for all three trigger kinds. All verified against REAL Postgres; everything workspace-scoped.",
+      "met": true,
+      "evidence": "reenrollment-policy.test.ts (4 tests): decideReenrollment(false,'once')=true / (true,'once')=false; 'always' both true; buildEnrollmentInsert always emits ON CONFLICT (campaign_id,profile_id) DO NOTHING; DEFAULT_REENROLLMENT_POLICY='once'. All three kinds (segment_entry/event/manual) funnel through the SAME buildEnrollmentInsert (confirmed in enroll.ts). CLAUDE.md lines 63-70 document the trigger kinds, where enrollment fires (prod processor + dev local-api), the endpoint, and the 'once' default explicitly. Verified across kinds in the integration tier."
+    }
+  ],
+  "isolationOk": true,
+  "idempotencyOk": true,
+  "webhookSafetyOk": true,
+  "browserVerified": true,
+  "scopeCreep": [],
+  "recommendations": [
+    "Add a test that drives the ACTUAL production processor wiring (services/processor planProcessing -> runPlanInWorkspaceTx -> runSegmentReevalInTx) and asserts a campaign_enrollments row is written. Currently the processor hook is covered only structurally (typecheck) + by an analogous campaign-runner mirror test (event-enrollment-from-processor.integration.test.ts reproduces the tx shape but does NOT invoke runSegmentReevalInTx). The wiring is plausibly correct but not directly exercised.",
+    "Add a local-api integration test that POSTs /profiles/:id/events for a configured event type and asserts the profile is enrolled (the sendProfileEvent enrollFromEvent hook is wired but no test drives that end-to-end path; only the manual endpoint and the isolated core are tested).",
+    "The cross-kind 'once' integration assertion uses a raw INSERT (not enrollFromEvent) for the second enrollment because the campaign has a segment_entry trigger; consider a campaign whose definition is event-triggered AND also entered via segment to exercise both real code paths against the same UNIQUE row.",
+    "buildResolveAudience reads the materialized segment_memberships table for BOTH dynamic and manual members (not a live compileWhere recompute as the plan text suggested). This is correct given the materialize-on-save model but means the snapshot is only as fresh as the last segment re-eval; worth a one-line note in code if it isn't already understood as point-in-time-of-materialization."
+  ],
+  "criticalIssues": []
+}

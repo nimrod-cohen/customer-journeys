@@ -9,18 +9,28 @@
 //   - 'entered' enrolls; 'exited' produces NO enrollment.
 //   - cross-workspace isolation: only campaigns in the change-log's workspace
 //     are considered, and every write binds workspace_id at $1.
+//
+// Three trigger kinds funnel through buildEnrollmentInsert (re-enrollment 'once'):
+//   - segment_entry → enrollFromSegmentChange (wired at processor segment-reeval)
+//   - event         → enrollFromEvent (wired at processor/ingest event landing)
+//   - manual/API    → enrollProfileManually / enrollSegmentSnapshot (the endpoint)
 import {
   parseEnrollmentTrigger,
+  parseEventEnrollmentTrigger,
+  evaluateEventPayloadFilter,
   buildEnrollmentInsert,
   parseKeepWhileInCancellations,
   buildEnrollmentCancel,
   type SegmentChangeLogRow,
+  type EventRow,
+  type EventCampaignTriggerRow,
   type CampaignTriggerRow,
   type CampaignKeepRow,
   type EnrollmentIntent,
   type SqlStatement,
 } from './core.js';
-import { resolveStartNode, validateCampaignDefinition } from './dsl.js';
+import { buildResolveAudience, type AstNode } from '@cdp/segments';
+import { resolveStartNode, validateCampaignDefinition, type TriggerNode } from './dsl.js';
 
 /** A minimal query reader (returns rows). The orchestrator never opens a tx. */
 export interface Reader {
@@ -120,4 +130,130 @@ export async function enrollFromSegmentChange(
   if (statements.length > 0) await deps.runInWorkspaceTx(row.workspace_id, statements);
 
   return { enrolled: intents.length, intents, cancelled: cancelIntents.length };
+}
+
+/** The outcome of an event/manual enroll call. */
+export interface SimpleEnrollResult {
+  readonly enrolled: number;
+  readonly intents: readonly EnrollmentIntent[];
+}
+
+/**
+ * Enroll a profile into the active EVENT-trigger campaigns matched by an INGESTED
+ * EVENT (§9B) — the event analogue of enrollFromSegmentChange. Reads the active
+ * campaigns in the event's workspace, resolves each one's trigger node, keeps only
+ * those whose kind='event' eventType equals the event type, evaluates the optional
+ * payload filter against the event payload (pure, in-memory), then inserts the
+ * enrollment(s) at the start node in ONE workspace-scoped tx. The ON CONFLICT
+ * 'once' guard makes a replayed event enroll at most once. Tenant isolation:
+ * campaigns are read WHERE workspace_id=$1 and every write binds workspace_id at $1.
+ */
+export async function enrollFromEvent(deps: EnrollDeps, row: EventRow): Promise<SimpleEnrollResult> {
+  if (!row.workspace_id) throw new Error('enrollFromEvent: workspace_id is required');
+
+  // Active campaigns in THIS workspace (the event type / trigger kind is resolved
+  // from each definition; an in-SQL definition filter is brittle, so we read the
+  // small active set and resolve in code — mirrors enrollFromSegmentChange).
+  const { rows: campaignRows } = await deps.reader.query<CampaignRow>(
+    `SELECT id, workspace_id, trigger_segment_id, trigger_on, definition
+     FROM campaigns
+     WHERE workspace_id = $1 AND status = 'active'`,
+    [row.workspace_id],
+  );
+
+  const triggerRows: EventCampaignTriggerRow[] = [];
+  for (const c of campaignRows) {
+    let trigger: TriggerNode;
+    let startNode: string;
+    try {
+      validateCampaignDefinition(c.definition);
+      const node = resolveStartNode(c.definition);
+      if (node.type !== 'trigger' || node.kind !== 'event') continue; // only event triggers
+      trigger = node;
+      startNode = c.definition.startNode;
+    } catch {
+      continue; // skip an invalid definition rather than crash the hook
+    }
+    if (!trigger.eventType || trigger.eventType !== row.type) continue;
+    // Evaluate the optional payload filter against the event payload (closed grammar).
+    const matchesFilter = evaluateEventPayloadFilter(trigger.filter as AstNode | undefined, row.payload);
+    triggerRows.push({
+      id: c.id,
+      workspace_id: c.workspace_id,
+      event_type: trigger.eventType,
+      start_node: startNode,
+      matchesFilter,
+    });
+  }
+
+  const intents = parseEventEnrollmentTrigger(row, triggerRows);
+  const statements: SqlStatement[] = intents.map((i) =>
+    buildEnrollmentInsert(i.workspaceId, i.campaignId, i.profileId, i.startNode),
+  );
+  if (statements.length > 0) await deps.runInWorkspaceTx(row.workspace_id, statements);
+  return { enrolled: intents.length, intents };
+}
+
+/**
+ * Resolve a campaign's start node from its validated definition. THROWS if the
+ * campaign id resolves to nothing in `workspaceId` (cross-workspace / missing —
+ * inv.2) or the definition is malformed. workspace_id bound at $1.
+ */
+async function loadStartNode(deps: EnrollDeps, workspaceId: string, campaignId: string): Promise<string> {
+  const { rows } = await deps.reader.query<{ definition: unknown }>(
+    `SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2 AND status = 'active'`,
+    [workspaceId, campaignId],
+  );
+  const def = rows[0]?.definition;
+  if (def === undefined) throw new Error('enroll: campaign not found in workspace');
+  validateCampaignDefinition(def);
+  resolveStartNode(def);
+  return def.startNode;
+}
+
+/**
+ * MANUAL/API enrollment of a SINGLE profile into a campaign at its start node
+ * (§9B). workspace-scoped (workspace_id at $1) + ON CONFLICT 'once'. The caller
+ * (the endpoint) has already verified the profile belongs to the workspace.
+ */
+export async function enrollProfileManually(
+  deps: EnrollDeps,
+  args: { readonly workspaceId: string; readonly campaignId: string; readonly profileId: string },
+): Promise<SimpleEnrollResult> {
+  const { workspaceId, campaignId, profileId } = args;
+  if (!workspaceId) throw new Error('enrollProfileManually: workspaceId is required');
+  const startNode = await loadStartNode(deps, workspaceId, campaignId);
+  const intents: EnrollmentIntent[] = [{ workspaceId, campaignId, profileId, startNode }];
+  await deps.runInWorkspaceTx(workspaceId, [buildEnrollmentInsert(workspaceId, campaignId, profileId, startNode)]);
+  return { enrolled: 1, intents };
+}
+
+/**
+ * MANUAL/API enrollment of a SEGMENT SNAPSHOT (§9B): resolve the segment's CURRENT
+ * members (point-in-time) and enroll each at the campaign's start node. Uses
+ * buildResolveAudience so BOTH dynamic (source='evaluator') and manual
+ * (source='manual') memberships are covered, workspace-scoped at $1. The snapshot
+ * is point-in-time — later segment changes do NOT retroactively enroll. ON CONFLICT
+ * 'once' makes a re-run insert no duplicates.
+ */
+export async function enrollSegmentSnapshot(
+  deps: EnrollDeps,
+  args: { readonly workspaceId: string; readonly campaignId: string; readonly segmentId: string },
+): Promise<SimpleEnrollResult> {
+  const { workspaceId, campaignId, segmentId } = args;
+  if (!workspaceId) throw new Error('enrollSegmentSnapshot: workspaceId is required');
+  const startNode = await loadStartNode(deps, workspaceId, campaignId);
+  const audience = buildResolveAudience(workspaceId, segmentId);
+  const { rows } = await deps.reader.query<{ profile_id: string }>(audience.text, audience.values);
+  const intents: EnrollmentIntent[] = rows.map((r) => ({
+    workspaceId,
+    campaignId,
+    profileId: r.profile_id,
+    startNode,
+  }));
+  const statements = intents.map((i) =>
+    buildEnrollmentInsert(i.workspaceId, i.campaignId, i.profileId, i.startNode),
+  );
+  if (statements.length > 0) await deps.runInWorkspaceTx(workspaceId, statements);
+  return { enrolled: intents.length, intents };
 }

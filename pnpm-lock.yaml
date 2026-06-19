@@ -272,9 +272,6 @@ importers:
       '@cdp/email':
         specifier: workspace:*
         version: link:../../packages/email
-      '@cdp/service-processor':
-        specifier: workspace:*
-        version: link:../processor
       '@cdp/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -498,6 +495,9 @@ importers:
       '@cdp/segments':
         specifier: workspace:*
         version: link:../../packages/segments
+      '@cdp/service-campaign-runner':
+        specifier: workspace:*
+        version: link:../campaign-runner
       '@cdp/service-ingest':
         specifier: workspace:*
         version: link:../ingest

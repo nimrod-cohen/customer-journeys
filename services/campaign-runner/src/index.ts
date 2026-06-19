@@ -30,7 +30,10 @@ export {
   buildBranchMatchQuery,
   evaluateBranch,
   decideReenrollment,
+  DEFAULT_REENROLLMENT_POLICY,
   parseEnrollmentTrigger,
+  parseEventEnrollmentTrigger,
+  evaluateEventPayloadFilter,
   buildEnrollmentInsert,
   parseKeepWhileInCancellations,
   buildEnrollmentCancel,
@@ -47,6 +50,8 @@ export {
   type ReenrollmentPolicy,
   type Arrival,
   type SegmentChangeLogRow,
+  type EventRow,
+  type EventCampaignTriggerRow,
   type CampaignTriggerRow,
   type CampaignKeepRow,
   type CancelIntent,
@@ -55,8 +60,12 @@ export {
 
 export {
   enrollFromSegmentChange,
+  enrollFromEvent,
+  enrollProfileManually,
+  enrollSegmentSnapshot,
   type EnrollDeps,
   type EnrollResult,
+  type SimpleEnrollResult,
   type Reader as EnrollReader,
 } from './enroll.js';
 

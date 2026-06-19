@@ -57,7 +57,14 @@ import {
   buildSegmentMatch,
   type AstNode,
 } from '@cdp/segments';
-import { validateCampaignDefinition } from '@cdp/service-campaign-runner';
+import {
+  validateCampaignDefinition,
+  enrollFromEvent,
+  enrollFromSegmentChange,
+  enrollProfileManually,
+  enrollSegmentSnapshot,
+  type EnrollDeps,
+} from '@cdp/service-campaign-runner';
 import { runBroadcast, buildDueScheduledBroadcastsQuery } from '@cdp/service-broadcast';
 import {
   computeCostViewForWorkspaces,
@@ -1890,6 +1897,60 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
   return ok({ updated: rowCount ?? 0 });
 };
 
+/**
+ * POST /campaigns/:id/enroll — MANUAL/API enrollment (§9B). Enrolls EITHER a
+ * single profile (`profile_id`) OR a point-in-time SEGMENT SNAPSHOT (`segment_id`)
+ * at the campaign's start node. Exactly one target is required. Everything is
+ * scoped to the TOKEN's workspace (ctx.workspaceId, NEVER the body — inv.2): the
+ * campaign, the profile, and the segment must each resolve INSIDE ctx.workspaceId
+ * or it's a 404 (a foreign id never enrolls another tenant). Idempotent — the
+ * 'once' policy (ON CONFLICT (campaign_id, profile_id) DO NOTHING) makes a re-run
+ * insert no duplicates. Reuses the campaign-runner enroll cores.
+ */
+export const enrollIntoCampaign: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const profileId = typeof b.profile_id === 'string' ? b.profile_id.trim() : '';
+  const segmentId = typeof b.segment_id === 'string' ? b.segment_id.trim() : '';
+  const hasProfile = b.profile_id !== undefined && b.profile_id !== null;
+  const hasSegment = b.segment_id !== undefined && b.segment_id !== null;
+
+  // Input contract: exactly ONE target, well-formed — rejected BEFORE any DB op.
+  if (hasProfile === hasSegment) {
+    return ok({ error: 'exactly one of profile_id or segment_id is required' }, 400);
+  }
+  if (hasProfile && !profileId) return ok({ error: 'profile_id must be a non-empty string' }, 400);
+  if (hasSegment && !segmentId) return ok({ error: 'segment_id must be a non-empty string' }, 400);
+
+  // The campaign must belong to the token's workspace (else 404 — inv.2).
+  if (!(await ownsResource(pool, ctx.workspaceId, 'campaigns', id))) {
+    return ok({ error: 'not found' }, 404);
+  }
+
+  const deps = enrollDepsOnPool(pool);
+  if (hasProfile) {
+    // The profile must exist in THIS workspace (mirrors sendProfileEvent).
+    const present = await pool.query('SELECT 1 FROM profiles WHERE workspace_id = $1 AND id = $2', [ctx.workspaceId, profileId]);
+    if (!present.rowCount) return ok({ error: 'not found' }, 404);
+    const res = await enrollProfileManually(deps, {
+      workspaceId: ctx.workspaceId,
+      campaignId: id,
+      profileId,
+    });
+    return ok({ enrolled: res.enrolled });
+  }
+
+  // segment snapshot: the segment must exist in THIS workspace.
+  const seg = await pool.query('SELECT 1 FROM segments WHERE workspace_id = $1 AND id = $2', [ctx.workspaceId, segmentId]);
+  if (!seg.rowCount) return ok({ error: 'not found' }, 404);
+  const res = await enrollSegmentSnapshot(deps, {
+    workspaceId: ctx.workspaceId,
+    campaignId: id,
+    segmentId,
+  });
+  return ok({ enrolled: res.enrolled });
+};
+
 // ---------------------------------------------------------------------------
 // profiles (manage_content)
 // ---------------------------------------------------------------------------
@@ -2433,7 +2494,7 @@ async function recomputeFeaturesAndSegments(client: PoolClient, ws: string, prof
        updated_at = now()`,
     [ws, profileId, OPEN_EVENT_TYPES as readonly string[], PURCHASE_EVENT_TYPES as readonly string[]],
   );
-  await evaluateRealtimeSegmentsForProfile(
+  const evalRes = await evaluateRealtimeSegmentsForProfile(
     {
       reader: { query: (text, values) => client.query(text, values) },
       runInWorkspaceTx: async (_w, statements) => {
@@ -2443,6 +2504,62 @@ async function recomputeFeaturesAndSegments(client: PoolClient, ws: string, prof
     ws,
     profileId,
   );
+  // SEGMENT-ENTRY ENROLLMENT (§9B): the membership change_log rows just written
+  // above drive campaign enrollment — fire enrollFromSegmentChange for each
+  // entered/exited delta on the SAME tx client (no nested BEGIN/COMMIT). This is
+  // the live hook: entering a campaign's trigger segment really enrolls the
+  // profile. Workspace-scoped; idempotent (ON CONFLICT 'once').
+  const enrollDeps = enrollDepsOnClient(client);
+  for (const delta of evalRes.deltas) {
+    if (delta.action !== 'entered' && delta.action !== 'exited') continue;
+    await enrollFromSegmentChange(enrollDeps, {
+      workspace_id: ws,
+      segment_id: delta.segmentId,
+      profile_id: profileId,
+      action: delta.action,
+    });
+  }
+}
+
+/**
+ * Build EnrollDeps bound to a single tx client — so an enrollment write composes
+ * into the CALLER's open transaction (no nested BEGIN/COMMIT) and every read/write
+ * runs on the same connection. workspace_id scoping is in-code (every statement
+ * binds workspace_id at $1; the asserted-scope tx runner lives in the campaign-
+ * runner — here we run on the open client directly).
+ */
+function enrollDepsOnClient(client: PoolClient): EnrollDeps {
+  return {
+    reader: { query: (text, values) => client.query(text, values as unknown[]) as never },
+    runInWorkspaceTx: async (_w, statements) => {
+      for (const s of statements) await client.query(s.text, s.values);
+    },
+  };
+}
+
+/** Build EnrollDeps bound to the request POOL (own tx per statement-list). */
+function enrollDepsOnPool(pool: Pool): EnrollDeps {
+  return {
+    reader: { query: (text, values) => pool.query(text, values as unknown[]) as never },
+    runInWorkspaceTx: async (workspaceId, statements) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const s of statements) {
+          // Defensive in-code scoping guard (service role bypasses RLS): every
+          // statement must bind workspace_id at $1 (CLAUDE.md inv.1/2).
+          if (s.values[0] !== workspaceId) throw new Error('enroll: statement not scoped to workspace');
+          await client.query(s.text, s.values);
+        }
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
+  };
 }
 
 /**
@@ -2485,6 +2602,18 @@ export const sendProfileEvent: Handler = async (ctx, pool, req) => {
     );
     eventId = ins.rows[0]!.event_id;
     await recomputeFeaturesAndSegments(client, ws, id);
+    // EVENT-TRIGGER ENROLLMENT (§9B): the dev mirror of the processor hook — fires
+    // at the SAME point segment re-eval does, on the SAME tx client (no nested
+    // BEGIN/COMMIT). Enrolls the profile into active event-trigger campaigns whose
+    // eventType (+ optional payload filter) matches this event; idempotent (ON
+    // CONFLICT 'once'). Workspace-scoped; never trusts a body workspace_id.
+    await enrollFromEvent(enrollDepsOnClient(client), {
+      workspace_id: ws,
+      profile_id: id,
+      type,
+      payload,
+      event_id: eventId,
+    });
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -3156,6 +3285,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /campaigns': listCampaigns,
   'POST /campaigns': createCampaign,
   'PUT /campaigns/:id': updateCampaign,
+  'POST /campaigns/:id/enroll': enrollIntoCampaign,
   'GET /profiles': listProfiles,
   'POST /profiles': createProfile,
   'POST /profiles/import-csv': importProfilesCsv,

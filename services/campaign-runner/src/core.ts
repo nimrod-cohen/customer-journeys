@@ -10,7 +10,7 @@
 //   - EXACTLY-ONCE SENDS: action sends insert an outbox row with a stable
 //     dedupe_key (campaign:<campaign>:<profile>:<node>) ON CONFLICT DO NOTHING,
 //     then the Dispatcher's atomic claim sends once.
-import { buildSegmentMatch } from '@cdp/segments';
+import { buildSegmentMatch, resolveOperator } from '@cdp/segments';
 import type { AstNode } from '@cdp/segments';
 import { isWindowOpen, nextWindowOpening, zonedInputToUtcIso } from '@cdp/shared';
 import {
@@ -32,6 +32,16 @@ export interface SqlStatement {
 
 /** The re-enrollment policy for a campaign (this phase: 'once' default). */
 export type ReenrollmentPolicy = 'once' | 'always';
+
+/**
+ * The systemwide DEFAULT re-enrollment policy for ALL THREE trigger kinds
+ * (segment_entry / event / manual). 'once' means a profile already enrolled in a
+ * campaign is never enrolled again — enforced structurally by the
+ * UNIQUE(campaign_id, profile_id) + ON CONFLICT DO NOTHING in buildEnrollmentInsert
+ * and decided in code by decideReenrollment(hasExisting, 'once'). 'always'
+ * (re-entry) remains a forward-compat enum value but is NOT enabled this phase.
+ */
+export const DEFAULT_REENROLLMENT_POLICY: ReenrollmentPolicy = 'once';
 
 /** A side effect produced by processing a node (consumed by the orchestrator). */
 export type SideEffect =
@@ -386,6 +396,162 @@ export function parseEnrollmentTrigger(
     });
   }
   return intents;
+}
+
+// ── event-trigger enrollment ──────────────────────────────────────────────────
+
+/**
+ * An ingested EVENT row (the bits event-trigger enrollment cares about, §6/§7).
+ * Mirrors the shape the processor / local dev path has at enroll time.
+ */
+export interface EventRow {
+  readonly workspace_id: string;
+  readonly profile_id: string;
+  /** The behavioral event type (matched against a campaign's trigger eventType). */
+  readonly type: string;
+  /** The event payload — the closed-grammar filter (payload.*) is run against it. */
+  readonly payload: Record<string, unknown>;
+  /** The producer-supplied dedupe key (events.event_id). */
+  readonly event_id: string;
+}
+
+/**
+ * An event-trigger campaign's enrollment-relevant columns. `matchesFilter` is the
+ * RESULT of evaluating the trigger's optional payload filter against the event
+ * payload (the orchestrator computes it via evaluateEventPayloadFilter); when the
+ * trigger has no filter, leave it undefined (treated as a match).
+ */
+export interface EventCampaignTriggerRow {
+  readonly id: string;
+  readonly workspace_id: string;
+  /** The trigger node's eventType. */
+  readonly event_type: string;
+  readonly start_node: string;
+  /** The optional payload-filter result; undefined / true = matched, false = drop. */
+  readonly matchesFilter?: boolean;
+}
+
+/**
+ * Parse an ingested event row into enrollment intents (§9B) — the event-kind
+ * analogue of parseEnrollmentTrigger. An intent is produced per ACTIVE campaign
+ * (same workspace) whose event trigger's eventType equals the event's type AND
+ * whose optional payload-filter result is not false. THROWS on a falsy
+ * workspaceId (tenant-isolation guard, parity with parseEnrollmentTrigger).
+ */
+export function parseEventEnrollmentTrigger(
+  row: EventRow,
+  campaigns: readonly EventCampaignTriggerRow[],
+): EnrollmentIntent[] {
+  if (!row.workspace_id) throw new Error('parseEventEnrollmentTrigger: workspace_id is required');
+  const intents: EnrollmentIntent[] = [];
+  for (const c of campaigns) {
+    if (c.workspace_id !== row.workspace_id) continue; // tenant isolation
+    if (c.event_type !== row.type) continue;
+    if (c.matchesFilter === false) continue; // a false payload filter drops the intent
+    intents.push({
+      workspaceId: row.workspace_id,
+      campaignId: c.id,
+      profileId: row.profile_id,
+      startNode: c.start_node,
+    });
+  }
+  return intents;
+}
+
+// ── event payload filter (pure, closed-grammar, no DB) ────────────────────────
+
+/** The jsonb prefix for an event-trigger payload filter field (payload.<key>). */
+const PAYLOAD_FILTER_PREFIX = 'payload.';
+
+/** A leaf condition in a payload filter (mirrors @cdp/segments ConditionNode). */
+interface PayloadCondition {
+  readonly field: string;
+  readonly operator: string;
+  readonly value?: unknown;
+}
+/** A boolean group in a payload filter (mirrors @cdp/segments GroupNode). */
+interface PayloadGroup {
+  readonly op: 'and' | 'or' | 'not';
+  readonly conditions: readonly AstNode[];
+}
+
+function isPayloadGroup(node: AstNode): node is PayloadGroup {
+  return (
+    typeof (node as PayloadGroup).op === 'string' && Array.isArray((node as PayloadGroup).conditions)
+  );
+}
+
+/**
+ * Evaluate an OPTIONAL event-trigger payload filter against an ingested event
+ * payload — PURE, in-memory, no DB. The filter is a CLOSED grammar reusing the
+ * @cdp/segments AstNode shapes restricted to the `payload.*` namespace: a leaf
+ * `{ field:'payload.<key>', operator, value }` or a boolean group (and/or/not).
+ * The operator is whitelisted via resolveOperator (THROWS on an unknown one) and
+ * the field MUST be a `payload.*` path (THROWS otherwise) — never interpolated,
+ * never reaching the profile. `undefined` filter ⇒ always matches.
+ */
+export function evaluateEventPayloadFilter(
+  filter: AstNode | undefined,
+  payload: Record<string, unknown>,
+): boolean {
+  if (filter === undefined || filter === null) return true;
+  if (typeof filter !== 'object') {
+    throw new Error('evaluateEventPayloadFilter: filter must be an AstNode object');
+  }
+  if (isPayloadGroup(filter)) {
+    const children = filter.conditions;
+    if (!Array.isArray(children) || children.length === 0) {
+      throw new Error('evaluateEventPayloadFilter: group needs a non-empty conditions array');
+    }
+    if (filter.op === 'and') return children.every((c) => evaluateEventPayloadFilter(c, payload));
+    if (filter.op === 'or') return children.some((c) => evaluateEventPayloadFilter(c, payload));
+    if (filter.op === 'not') {
+      if (children.length !== 1) throw new Error('evaluateEventPayloadFilter: "not" wraps exactly one condition');
+      return !evaluateEventPayloadFilter(children[0] as AstNode, payload);
+    }
+    throw new Error(`evaluateEventPayloadFilter: unknown group op "${(filter as PayloadGroup).op}"`);
+  }
+  // Leaf condition.
+  const leaf = filter as unknown as PayloadCondition;
+  if (typeof leaf.field !== 'string' || !leaf.field.startsWith(PAYLOAD_FILTER_PREFIX)) {
+    throw new Error(`evaluateEventPayloadFilter: field "${String(leaf.field)}" must be a payload.* path`);
+  }
+  const key = leaf.field.slice(PAYLOAD_FILTER_PREFIX.length);
+  if (key.length === 0) throw new Error('evaluateEventPayloadFilter: empty payload key');
+  const op = resolveOperator(leaf.operator); // THROWS on a non-whitelisted operator
+  const actual = payload[key];
+  return applyPayloadOperator(op, actual, leaf.value);
+}
+
+/** Apply a single whitelisted operator to an actual payload value. */
+function applyPayloadOperator(op: string, actual: unknown, expected: unknown): boolean {
+  switch (op) {
+    case 'exists':
+      return actual !== undefined && actual !== null;
+    case '=':
+      return actual === expected;
+    case '!=':
+      return actual !== expected;
+    case '>':
+    case '>=':
+    case '<':
+    case '<=': {
+      const a = Number(actual);
+      const b = Number(expected);
+      if (Number.isNaN(a) || Number.isNaN(b)) return false;
+      if (op === '>') return a > b;
+      if (op === '>=') return a >= b;
+      if (op === '<') return a < b;
+      return a <= b;
+    }
+    case 'in':
+      return Array.isArray(expected) && (expected as unknown[]).includes(actual);
+    case 'not in':
+      return Array.isArray(expected) && !(expected as unknown[]).includes(actual);
+    default:
+      // resolveOperator already rejected unknown tokens; defensive.
+      throw new Error(`evaluateEventPayloadFilter: unsupported operator "${op}"`);
+  }
 }
 
 // ── SqlStatement builders (all workspace-scoped, workspace_id bound at $1) ─────

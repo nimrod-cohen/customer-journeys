@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-19T15:52:16.927Z",
+  "data": {
+    "effectId": "01KVG9AERFRY03ZJ875DET426E",
+    "invocationKey": "cdp/campaign-builder:S000012:commit-phase",
+    "invocationHash": "e485fec315aa2545bb49864aa9ae133da7232794e083a1b26915d974f0466479",
+    "stepId": "S000012",
+    "taskId": "commit-phase",
+    "kind": "agent",
+    "label": "commit",
+    "taskDefRef": "tasks/01KVG9AERFRY03ZJ875DET426E/task.json",
+    "labels": [
+      "commit",
+      "phase3-triggers-enrollment"
+    ]
+  },
+  "checksum": "5d9e29cb30760a099158c52e40ba7734d89b40a9a1bf90ffc97d16ad3eec5337"
+}

@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-19T15:06:45.479Z",
+  "data": {
+    "effectId": "01KVG6Q3APAJCBQEGZ9TCHE7AD",
+    "invocationKey": "cdp/campaign-builder:S000009:plan-phase",
+    "invocationHash": "295ea39b617772e1ef70925dd1dc4186f6cd6bd727da6268dedcacfdae91857e",
+    "stepId": "S000009",
+    "taskId": "plan-phase",
+    "kind": "agent",
+    "label": "plan",
+    "taskDefRef": "tasks/01KVG6Q3APAJCBQEGZ9TCHE7AD/task.json",
+    "labels": [
+      "plan",
+      "phase3-triggers-enrollment"
+    ]
+  },
+  "checksum": "dfb7ff870635fdbfe7d8e97abccb8e4918cad751ee79ec3d8f0cfd67692bbe45"
+}

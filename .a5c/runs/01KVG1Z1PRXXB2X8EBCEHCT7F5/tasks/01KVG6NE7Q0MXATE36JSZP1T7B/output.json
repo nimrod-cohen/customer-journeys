@@ -1,0 +1,5 @@
+{
+  "committed": true,
+  "commitHash": "1906acc9358ac8c45d73a14c7eb91fc59c7440fe",
+  "message": "feat(campaigns): phase 2 — runner executes hour-of-day window + webhook (tz-aware)"
+}

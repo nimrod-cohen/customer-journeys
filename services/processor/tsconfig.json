@@ -8,6 +8,7 @@
   "references": [
     { "path": "../../packages/shared" },
     { "path": "../../packages/db" },
-    { "path": "../../packages/segments" }
+    { "path": "../../packages/segments" },
+    { "path": "../campaign-runner" }
   ]
 }

@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-19T15:33:16.692Z",
+  "data": {
+    "effectId": "01KVG87N83SDBC89NC74MNYNWP",
+    "invocationKey": "cdp/campaign-builder:S000011:quality-gate",
+    "invocationHash": "0f87f0c0fc78606f78ba1ed65b76950b6efe8a23bf4743a36aec21a4f3390270",
+    "stepId": "S000011",
+    "taskId": "quality-gate",
+    "kind": "agent",
+    "label": "quality-gate",
+    "taskDefRef": "tasks/01KVG87N83SDBC89NC74MNYNWP/task.json",
+    "labels": [
+      "quality-gate",
+      "phase3-triggers-enrollment",
+      "iteration-1"
+    ]
+  },
+  "checksum": "3e01dd10e31aa3f9e683aa02ae6c56104f50599e21a5e99527a84287cf14ec68"
+}

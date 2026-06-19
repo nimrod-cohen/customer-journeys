@@ -8,6 +8,11 @@
 import type { Pool, PoolClient } from 'pg';
 import { getPool } from '@cdp/db';
 import { evaluateRealtimeSegmentsForProfile, type EvaluateDeps } from '@cdp/segments';
+import {
+  enrollFromEvent,
+  enrollFromSegmentChange,
+  type EnrollDeps,
+} from '@cdp/service-campaign-runner';
 import type { ProcessingPlan } from './core.js';
 import type { ProcessorDeps } from './handler.js';
 
@@ -88,7 +93,36 @@ async function runSegmentReevalInTx(
       for (const s of statements) await client.query(s.text, s.values);
     },
   };
-  await evaluateRealtimeSegmentsForProfile(deps, reeval.workspaceId, profileId);
+  const evalRes = await evaluateRealtimeSegmentsForProfile(deps, reeval.workspaceId, profileId);
+
+  // Phase 3 (§9B) — campaign enrollment, fired on the SAME tx client (no nested
+  // BEGIN/COMMIT), workspace-scoped, idempotent (ON CONFLICT 'once'):
+  //   1. SEGMENT-ENTRY: each entered/exited membership change drives
+  //      enrollFromSegmentChange (the change_log rows were just written above).
+  //   2. EVENT: the ingested event drives enrollFromEvent into active
+  //      event-trigger campaigns whose eventType (+ optional payload filter) matches.
+  const enrollDeps: EnrollDeps = {
+    reader: { query: (text, values) => client.query(text, values as unknown[]) as never },
+    runInWorkspaceTx: async (_ws, statements) => {
+      for (const s of statements) await client.query(s.text, s.values);
+    },
+  };
+  for (const delta of evalRes.deltas) {
+    if (delta.action !== 'entered' && delta.action !== 'exited') continue;
+    await enrollFromSegmentChange(enrollDeps, {
+      workspace_id: reeval.workspaceId,
+      segment_id: delta.segmentId,
+      profile_id: profileId,
+      action: delta.action,
+    });
+  }
+  await enrollFromEvent(enrollDeps, {
+    workspace_id: reeval.workspaceId,
+    profile_id: profileId,
+    type: reeval.eventType,
+    payload: reeval.eventPayload,
+    event_id: reeval.eventId,
+  });
 }
 
 /** Assemble the production dependency set (pooled pg, service role). */

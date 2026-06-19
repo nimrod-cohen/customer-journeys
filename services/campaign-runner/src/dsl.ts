@@ -7,13 +7,26 @@
 // findNode. It is pure and has no I/O — the runner (core/run) consumes these
 // types. condition `ast` is the §8 AstNode reused verbatim (branch conditions
 // compile through @cdp/segments).
-import type { AstNode } from '@cdp/segments';
+import { validateAst, type AstNode } from '@cdp/segments';
 
-/** A trigger node — how a profile enters the campaign (§9B enrollment). */
+/** A trigger node — how a profile enters the campaign (§9B enrollment).
+ *  Three kinds (re-enrollment policy is 'once' for all of them — see core.ts):
+ *    - segment_entry: enrollment is driven by campaigns.trigger_segment_id (the
+ *      segment lives on the CAMPAIGN ROW, not the node) via enrollFromSegmentChange.
+ *    - event: an INGESTED EVENT of `eventType` (optionally matching `filter`, a
+ *      payload-only AstNode) enrolls the profile via enrollFromEvent. Both fields
+ *      live HERE in the definition JSON (no migration).
+ *    - manual: no auto-source — enrolled by the API (POST /campaigns/:id/enroll).
+ */
 export interface TriggerNode {
   readonly type: 'trigger';
   /** segment_entry uses campaigns.trigger_segment_id; others live in definition. */
   readonly kind: 'segment_entry' | 'event' | 'manual';
+  /** For kind='event' (REQUIRED): the event type that enrolls the profile. */
+  readonly eventType?: string;
+  /** For kind='event' (OPTIONAL): a payload-only filter (payload.* namespace),
+   *  evaluated against the ingested event payload in-memory at enroll time. */
+  readonly filter?: AstNode;
   /** The node id to advance to once enrolled. */
   readonly next: string;
 }
@@ -246,6 +259,20 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
     case 'trigger':
       if (node.kind !== 'segment_entry' && node.kind !== 'event' && node.kind !== 'manual') {
         throw new Error(`validateCampaignDefinition: trigger "${id}" has an invalid kind`);
+      }
+      if (node.kind === 'event') {
+        // An event trigger MUST name the event type; the optional payload filter is
+        // a payload-only AstNode (structurally validated; the field whitelist is
+        // enforced at enroll time by evaluateEventPayloadFilter).
+        if (typeof node.eventType !== 'string' || node.eventType.length === 0) {
+          throw new Error(`validateCampaignDefinition: event trigger "${id}" needs an eventType`);
+        }
+        if (node.filter !== undefined) {
+          if (typeof node.filter !== 'object' || node.filter === null || Array.isArray(node.filter)) {
+            throw new Error(`validateCampaignDefinition: event trigger "${id}" filter must be an AstNode object`);
+          }
+          validateAst(node.filter); // THROWS on a malformed AstNode shape
+        }
       }
       requireEdge(node.next, 'next');
       return;

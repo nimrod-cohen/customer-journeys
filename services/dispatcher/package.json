@@ -21,7 +21,6 @@
     "@aws-sdk/client-sesv2": "^3.620.0",
     "@cdp/db": "workspace:*",
     "@cdp/email": "workspace:*",
-    "@cdp/service-processor": "workspace:*",
     "@cdp/shared": "workspace:*",
     "pg": "^8.12.0"
   },
