@@ -1,0 +1,14 @@
+{
+  "type": "RUN_CREATED",
+  "recordedAt": "2026-06-19T13:43:43.101Z",
+  "data": {
+    "runId": "01KVG1Z1PRXXB2X8EBCEHCT7F5",
+    "processId": "cdp/campaign-builder",
+    "entrypoint": {
+      "importPath": "../../processes/cdp-campaign-builder.js",
+      "exportName": "process"
+    },
+    "inputsRef": "inputs.json"
+  },
+  "checksum": "5390c965338f534b19249aa91d6fbeed078838d1533a1b27edd29db9719da972"
+}

@@ -6,6 +6,8 @@ import { makeProdDeps } from './deps.js';
 export {
   parseUnsubscribeRequest,
   buildUnsubscribeSuppression,
+  buildUnsubscribedAttribute,
+  buildUnsubscribeActivity,
   type SqlStatement,
   type UnsubscribeRequest,
   type ParsedUnsubscribe,

@@ -47,7 +47,7 @@ export function AccountSettings() {
         </Field>
 
         <div class="mt-3 flex items-center gap-3">
-          <Button data-testid="account-save" onClick={() => void save()} disabled={busy}>
+          <Button data-testid="account-save" onClick={() => save()} disabled={busy}>
             {busy ? 'Saving…' : 'Save'}
           </Button>
           {saved ? <span class="text-sm text-emerald-600">Saved ✓</span> : null}

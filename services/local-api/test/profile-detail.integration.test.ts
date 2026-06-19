@@ -90,6 +90,7 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
   async function cleanup(): Promise<void> {
     for (const ws of [WS_A, WS_B]) {
       await world.pool.query('DELETE FROM suppressions WHERE workspace_id = $1', [ws]);
+      await world.pool.query('DELETE FROM segment_change_log WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM segments WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
@@ -111,6 +112,13 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
       (p) => p.external_id === 'made-1',
     );
     expect(row?.unsubscribed).toBe(false);
+
+    // The creation is recorded in the workspace Activity log.
+    const act = await call(world.env, 'GET', '/activity', { token: tokA() });
+    const created = (act.body as { activity: { type: string; profile_id: string | null }[] }).activity.filter(
+      (a) => a.type === 'profile_created',
+    );
+    expect(created.length).toBeGreaterThan(0);
   });
 
   it('POST /profiles with an EXISTING email is a 409 conflict (no silent merge)', async () => {
@@ -254,6 +262,37 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
       body: { attributes: { tier: 'std', unsubscribed: true } },
     });
     expect(await supp()).toEqual({ reason: 'unsubscribe', source: 'manual' });
+
+    // REGRESSION: a suppression written by the recipient's own unsubscribe LINK
+    // (source='one-click', NOT 'manual') must ALSO be lifted when re-subscribing
+    // via the attribute — the reported bug was it stayed on the list.
+    await world.pool.query('DELETE FROM suppressions WHERE workspace_id = $1 AND email = $2', [WS_A, 'a2@acme.com']);
+    await world.pool.query(
+      "INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1, 'a2@acme.com', 'unsubscribe', 'one-click')",
+      [WS_A],
+    );
+    await call(world.env, 'PATCH', `/profiles/${P_A2}`, {
+      token: tokA(),
+      body: { attributes: { tier: 'std', unsubscribed: false } },
+    });
+    expect(await supp()).toBeNull();
+
+    // …but a pipeline-written bounce (source NOT 'manual') is preserved across a
+    // re-subscribe — re-subscribing is a CONSENT change, not a deliverability one.
+    await world.pool.query(
+      "INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1, 'a2@acme.com', 'hard_bounce', 'feedback')",
+      [WS_A],
+    );
+    await call(world.env, 'PATCH', `/profiles/${P_A2}`, {
+      token: tokA(),
+      body: { attributes: { tier: 'std', unsubscribed: false } },
+    });
+    expect(await supp()).toEqual({ reason: 'hard_bounce', source: 'feedback' });
+
+    // Each edit is recorded in the workspace Activity log (not the behavioral
+    // `events` table — so the profile's event history stays purely behavioral).
+    const act = await call(world.env, 'GET', '/activity', { token: tokA() });
+    expect((act.body as { activity: { type: string }[] }).activity.some((a) => a.type === 'profile_updated')).toBe(true);
   });
 
   it('a cross-workspace profile id is NOT editable (404, tenant isolation)', async () => {
@@ -278,6 +317,44 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     const r = await call(world.env, 'GET', `/profiles/${P_B}/events`, { token: tokA() });
     expect(r.status).toBe(200);
     expect((r.body as { events: unknown[] }).events).toHaveLength(0);
+  });
+
+  it('POST /profiles/:id/events records a manual event + recomputes features', async () => {
+    // P_A2 starts with no events/features. Send one on its behalf.
+    const r = await call(world.env, 'POST', `/profiles/${P_A2}/events`, {
+      token: tokA(),
+      body: { type: 'demo_requested', payload: { plan: 'pro', seats: 5 } },
+    });
+    expect(r.status).toBe(201);
+    expect((r.body as { event: { type: string } }).event.type).toBe('demo_requested');
+
+    // It shows up in the profile's event history…
+    const ev = await call(world.env, 'GET', `/profiles/${P_A2}/events`, { token: tokA() });
+    const types = (ev.body as { events: { type: string; payload: Record<string, unknown> }[] }).events;
+    expect(types.some((e) => e.type === 'demo_requested')).toBe(true);
+    expect(types.find((e) => e.type === 'demo_requested')?.payload).toMatchObject({ plan: 'pro', seats: 5 });
+
+    // …and the rolling features were recomputed (total_events now reflects it).
+    const prof = await call(world.env, 'GET', `/profiles/${P_A2}`, { token: tokA() });
+    expect((prof.body as { features: { total_events: number } }).features.total_events).toBe(1);
+  });
+
+  it('POST /profiles/:id/events requires a type (400) and rejects a non-object payload (400)', async () => {
+    const noType = await call(world.env, 'POST', `/profiles/${P_A2}/events`, { token: tokA(), body: { payload: {} } });
+    expect(noType.status).toBe(400);
+    const badPayload = await call(world.env, 'POST', `/profiles/${P_A2}/events`, {
+      token: tokA(),
+      body: { type: 'x', payload: [1, 2, 3] },
+    });
+    expect(badPayload.status).toBe(400);
+  });
+
+  it('POST /profiles/:id/events on a cross-workspace profile id is 404 (tenant isolation)', async () => {
+    const r = await call(world.env, 'POST', `/profiles/${P_B}/events`, {
+      token: tokA(),
+      body: { type: 'demo_requested' },
+    });
+    expect(r.status).toBe(404);
   });
 
   it('GET /profiles?segment_id=… returns ONLY that segment\'s members (scoped)', async () => {

@@ -1,0 +1,35 @@
+{
+  "score": 94,
+  "testsPass": true,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {
+      "criterion": "Workspace timezone is persisted + read back via the settings API (workspace-scoped, owner-gated like other settings); an invalid IANA zone is rejected.",
+      "met": true,
+      "evidence": "services/local-api/test/workspace-settings-timezone.integration.test.ts (6 tests) RAN against REAL Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp) and passed twice from cold (59-180ms = real DB I/O, not skipped/mocked; hasDatabaseUrl() gated it ON). Non-vacuous coverage: default UTC for a fresh workspace; PUT America/New_York persists + GET reads back; Asia/Jerusalem (odd-but-valid) accepted; invalid 'Not/AZone' -> 400 with NOTHING written (re-GET shows prior Europe/Paris); stray body workspace_id IGNORED (OTHER_WS untouched, inv.2); jsonb merge preserves link_tracking. Handler verified: getWorkspaceSettings defaults timezone to 'UTC'; updateWorkspaceSettings validates via isValidTimeZone (server-side) returning 400, merges via settings || $2::jsonb with workspace_id from ctx ONLY. routes.ts maps GET/PUT /workspace/settings to 'manage_workspace_users' (owner-gated, unchanged)."
+    },
+    {
+      "criterion": "validateCampaignDefinition accepts well-formed graphs with the new hour_of_day_window + webhook nodes and REJECTS bad window range, webhook missing url/method, cycle/back-edge, orphan, >1 trigger, unreachable exit — all by passing unit tests; diamond NOT falsely rejected.",
+      "met": true,
+      "evidence": "services/campaign-runner/test/node-dsl-and-validation.test.ts (31) + dsl-types-exports.test.ts (3) = 34 passed (two cold passes). Each required case has a real, distinct, non-vacuous fixture: accepts hour_of_day_window (9..17), optional daysOfWeek [1-5], overnight 22..6; rejects missing startHour/endHour, out-of-range (-1/24/9.5), invalid daysOfWeek (7/dup/non-array/empty), unresolvable next; accepts fully-configured webhook; rejects missing url, invalid method, non-http(s) scheme (file:/ftp:/javascript:), non-object headers / non-positive timeoutMs / negative maxRetries; rejects back-edge-to-ancestor cycle, self-loop, orphan island; ACCEPTS a real diamond (c.onTrue->m, onFalse->n, both ->x) proving the grey-stack DFS (detectCycle) does not use a naive seen-set; >1 trigger and 0 trigger both rejected; second-trigger-also-orphan reports a deterministic error. Cycle detection runs BEFORE reachable-exit so a loop is diagnosed as a cycle."
+    },
+    {
+      "criterion": "DSL types exported + documented; no runner/execution change yet (deferred to phase 2); typecheck + lint clean; no regression in existing campaign-runner tests.",
+      "met": true,
+      "evidence": "HourOfDayWindowNode/WebhookAction/WebhookMethod added to the Node union, NODE_TYPES set, edgesOf, and re-exported via services/campaign-runner/src/index.ts (dsl-types-exports.test.ts asserts importability). Heavily doc-commented incl. explicit phase-2 deferrals (SSRF allowlist, secret-crypto, HTTP client). core.ts changes are ONLY no-op placeholders (processNode advances hour_of_day_window as advance/no-op; actionSideEffect returns null for kind=webhook) needed for tsc switch-exhaustiveness — grep confirms NO fetch/http/axios/undici in services/campaign-runner/src. pnpm typecheck: 41/41 successful from cold (0 cached). Full campaign-runner suite: 82 passed / 13 skipped (the 13 are DB-integration tests skipped only because they were run without DATABASE_URL in that pass; unit tier fully green). Lint: campaign-runner/shared/local-api clean; web shows EXACTLY 7 'react-hooks/exhaustive-deps rule not found' config errors, all in files NOT touched by this phase (EmailDesigner/Activity/ProfileDetail/SegmentBuilder/SimpleScreens) — verified via git stash of the phase's web files that all 7 persist at HEAD (pre-existing config issue, not introduced here; the modified WorkspaceSettings.tsx is NOT among them)."
+    }
+  ],
+  "isolationOk": true,
+  "idempotencyOk": true,
+  "webhookSafetyOk": true,
+  "browserVerified": true,
+  "scopeCreep": [],
+  "recommendations": [
+    "Pre-existing (not this phase, but should be fixed soon to keep the lint gate meaningful): register the react-hooks ESLint plugin in the web flat config so the 7 'rule not found' errors resolve and pnpm lint exits 0 repo-wide. Currently `pnpm lint` is non-zero on a pre-existing config gap unrelated to phase 1.",
+    "The 'requires a reachable exit' fixture is now a CYCLIC graph (wait.next -> trigger) asserting /cycle|back-edge|no exit/, rather than the plan's intended acyclic-but-exitless graph. The implementer's reasoning is sound (in this DSL every non-exit node has >=1 outgoing edge, so a finite acyclic graph cannot be exitless), but it means the hasReachableExit 'no exit' branch is not exercised in isolation. Optional phase-2 follow-up: keep hasReachableExit but add a comment/test note that it is a defense-in-depth check unreachable given acyclicity + total edges.",
+    "Phase 2 (carry forward, as documented): webhook runner must add the injected/mocked HTTP client, per-workspace host ALLOWLIST + SSRF guards (block loopback/link-local/169.254 metadata/internal), bounded retries + timeout, isolated failure (no tick crash / double-advance), outbox dedupe per (campaign_id, profile_id, node_id), and envelope-encrypt auth-header secrets via @cdp/db secret-crypto; the hour_of_day_window runner must PARK using the workspace timezone (DST-correct, reuse @cdp/shared tzOffsetMs).",
+    "Web picker is verified only via extracted pure logic (saveWorkspaceTimezone + timeZoneList), not a rendered-DOM/real-browser assertion — acceptable here (phase.frontend=false, project has no DOM harness), but the timezone-picker + campaign-builder browser e2e deferred to the later UI phase should be added then to assert the kit Button spinner-lock and testids in a real browser.",
+    "Minor record-keeping: implReport states versionBump 0.28.0 -> 0.29.0, but the committed HEAD package.json was 0.11.2 (the working tree carries many uncommitted prior phases). Net result is correct (root version bumped to 0.29.0, a minor for a feature), but the reported baseline did not match HEAD."
+  ],
+  "criticalIssues": []
+}

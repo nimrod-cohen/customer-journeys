@@ -4,6 +4,10 @@
 // The `customer.*` personalization / segment-field namespace + shorthand (§8/§11).
 export * from './customer.js';
 
+// DST-correct zoned↔UTC time helpers + IANA validator (broadcast scheduler +
+// campaign time math share ONE implementation, §9B).
+export * from './timezone.js';
+
 /** Workspace-scoped roles stored in workspace_users.role (§3A). */
 export type WorkspaceRole = 'owner' | 'marketer' | 'accounting';
 

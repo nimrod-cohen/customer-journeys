@@ -1,0 +1,121 @@
+{
+  "testFiles": [
+    {
+      "path": "services/campaign-runner/test/node-dsl-and-validation.test.ts",
+      "tier": "unit",
+      "criterion": "validateCampaignDefinition accepts the new hour_of_day_window + webhook nodes and rejects malformed ones; existing checks still pass; the existing 'reachable exit' test (a wait that loops to t) must be RE-WRITTEN to a non-cyclic no-exit graph because cycle-rejection now fires first.",
+      "assertions": [
+        "EXTEND existing file (do not replace) — keep validDef() + every current passing assertion green (one-trigger, unresolvable edge, missing startNode, per-type required fields, unknown type, resolveStartNode/findNode).",
+        "FIX the current 'requires a reachable exit' test: its `w: wait -> t` is now a CYCLE, so it would throw /cycle/ not /no exit/. Replace with a genuinely no-exit-but-acyclic graph (e.g. t->a(set_attribute)->a2(set_attribute)->... all chain to nodes that never reach an exit, or a chain ending at a node whose next is itself-forbidden) OR a chain t->w(until)->a where a.next points only back UP is removed; use a finite acyclic chain that simply contains no exit node at all.",
+        "ACCEPTS a well-formed graph containing an hour_of_day_window node: { type:'hour_of_day_window', startHour:9, endHour:17, next:'a' } wired trigger->window->send->exit, not toThrow.",
+        "ACCEPTS hour_of_day_window with optional daysOfWeek: [1,2,3,4,5] (Mon-Fri); not toThrow.",
+        "REJECTS hour_of_day_window missing startHour or endHour -> toThrow(/startHour|endHour|hour window/).",
+        "REJECTS hour_of_day_window with out-of-range hours (startHour:-1, endHour:24, or non-integer 9.5) -> toThrow(/hour/).",
+        "REJECTS hour_of_day_window with an invalid daysOfWeek (value 7, duplicate, non-array, empty array) -> toThrow(/day/).",
+        "ACCEPTS a window where startHour > endHour (overnight window, e.g. 22..6) as a VALID wrap-around range (document the semantics; runner interprets later) — assert not toThrow, so the structural gate does not forbid it.",
+        "REJECTS hour_of_day_window with a missing/unresolvable next edge -> toThrow(/next|unresolvable/).",
+        "ACCEPTS an action node with kind:'webhook' fully configured { kind:'webhook', url:'https://hooks.example.com/x', method:'POST', headers:{}, bodyTemplate:'{}', timeoutMs:5000, maxRetries:2, next:'x' } -> not toThrow.",
+        "REJECTS webhook action missing url -> toThrow(/url/).",
+        "REJECTS webhook action missing/invalid method (not one of GET/POST/PUT/PATCH/DELETE) -> toThrow(/method/).",
+        "REJECTS webhook action with a non-http(s) url scheme (e.g. file:, ftp:, javascript:) -> toThrow(/url|scheme|https?/) — structural SSRF pre-check at the model layer (full IP/host allowlist SSRF enforcement is phase 2 runtime, but the scheme guard belongs here).",
+        "REJECTS webhook action with a non-object headers, negative/zero timeoutMs, or negative maxRetries -> toThrow.",
+        "REJECTS a CYCLE / back-edge: trigger->w(wait)->c(condition onTrue:'w' onFalse:'x') where an edge points back to an ancestor -> toThrow(/cycle|back-edge/).",
+        "REJECTS a self-loop: a node whose own next targets itself -> toThrow(/cycle/).",
+        "REJECTS an ORPHAN node: a graph with a valid reachable path to an exit PLUS an extra node not reachable from startNode -> toThrow(/orphan|unreachable|not reachable/).",
+        "Confirms a diamond (condition onTrue->m, onFalse->n, both m,n -> same exit) is NOT a cycle and is ACCEPTED (a node reached via two paths is fine; only a back-edge to an ancestor is a cycle) — guards against a naive 'already seen => cycle' bug.",
+        "Keeps the existing 'requires exactly one trigger' (0 and 2) assertions passing alongside the new orphan check (a second trigger that is also an orphan should still report a deterministic error).",
+        "action kind:'send' still requires template_id; kind:'set_attribute' still requires key — unchanged, re-asserted to prove no regression."
+      ]
+    },
+    {
+      "path": "services/local-api/test/workspace-settings-timezone.integration.test.ts",
+      "tier": "integration",
+      "criterion": "Workspace timezone is persisted on workspaces.settings.timezone + read back via the settings API (workspace-scoped, owner-gated); an invalid IANA zone is rejected; default is UTC.",
+      "assertions": [
+        "REAL local Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp); file-local unique workspace UUID + owner user via the existing test harness/seed helper used by other local-api integration tests.",
+        "GET /workspace/settings for a fresh workspace returns settings.timezone === 'UTC' (default applied in getWorkspaceSettings like lowercase_emails/link_tracking).",
+        "PUT /workspace/settings { timezone: 'America/New_York' } returns 200 and the merged settings include timezone:'America/New_York'; a subsequent GET reads it back (persisted in workspaces.settings jsonb via the existing settings || $2::jsonb merge).",
+        "PUT /workspace/settings { timezone: 'Not/AZone' } returns 400 with an error (invalid IANA zone rejected by a server-side validator; nothing written — re-GET still shows the prior value).",
+        "PUT validates against a canonical list (Intl.supportedValuesOf('timeZone')) with a try/new Intl.DateTimeFormat({timeZone}) fallback for engines lacking supportedValuesOf; assert a known-good odd-but-valid zone like 'Asia/Jerusalem' is ACCEPTED.",
+        "Tenant isolation: workspace_id is taken from ctx (authorizer claim), NEVER from the body — assert a body carrying a stray workspace_id does not change which row is updated (the update targets ctx.workspaceId only).",
+        "Owner-gating unchanged: the route stays mapped to capability 'manage_workspace_users' in routes.ts (assert via the existing route-capability test pattern, or a non-owner role is denied by the existing authorize path).",
+        "Merge-safety: PUT { timezone:'Europe/Paris' } does NOT clobber an existing settings.link_tracking/lowercase_emails value (jsonb merge preserves siblings)."
+      ]
+    },
+    {
+      "path": "packages/shared/test/timezone.test.ts",
+      "tier": "unit",
+      "criterion": "Shared tz helpers (extracted from BroadcastComposer for reuse by campaign time math) are DST-correct and an IANA validator is correct — the single source of truth for campaign waits/windows in later phases.",
+      "assertions": [
+        "isValidTimeZone('UTC'|'America/New_York'|'Asia/Jerusalem') === true; isValidTimeZone('Not/AZone'|''|'America/Fake') === false (used by the settings API validator).",
+        "tzOffsetMs is correct across a DST boundary for America/New_York (-5h in January, -4h in July) — assert both.",
+        "zonedInputToUtcIso('2026-03-08T02:30','America/New_York') resolves the spring-forward gap deterministically (matches the broadcast composer's two-pass re-resolution behavior) — lock the exact ISO so the extraction is behavior-preserving.",
+        "Round-trip: utcIsoToZonedInput(zonedInputToUtcIso(x, tz), tz) === x for a non-DST instant.",
+        "timeZoneList() returns a non-empty list including 'UTC' and falls back gracefully when Intl.supportedValuesOf is absent (stub it undefined).",
+        "These tests must pass IDENTICALLY whether the functions are imported from the new @cdp/shared module or still inlined — guards the extraction against drift."
+      ]
+    },
+    {
+      "path": "web/test/workspace-timezone-picker.test.ts",
+      "tier": "unit",
+      "criterion": "WorkspaceSettings renders a timezone picker (small IANA Select) wired to GET/PUT /workspace/settings; the save button auto-locks (kit Button promise behavior); invalid not selectable.",
+      "assertions": [
+        "On mount, GET /workspace/settings is read and the Select is initialized to settings.timezone (or 'UTC' when unset) — assert the controlled value.",
+        "The Select options come from timeZoneList() (full IANA list) and include the persisted value even on a curated-fallback engine.",
+        "Changing the Select and saving issues PUT /workspace/settings { timezone: <chosen> }; the save control RETURNS the promise so the kit Button auto-locks/spins while in flight (assert disabled-while-pending), matching the standing button rule.",
+        "A failed PUT reverts the displayed value (optimistic rollback like toggleLinkTracking) and surfaces a toast (showToast), not a native alert.",
+        "Stable data-testid added (e.g. 'workspace-timezone-select' / 'workspace-timezone-save'); PRESERVE all existing WorkspaceSettings testids.",
+        "Mock the api client (no real network) — this is a component/unit test, not e2e."
+      ]
+    },
+    {
+      "path": "services/campaign-runner/test/dsl-types-exports.test.ts",
+      "tier": "unit",
+      "criterion": "The new DSL types (HourOfDayWindowNode, WebhookAction shape) are exported from dsl.ts / re-exported via index.ts; the Node union includes them; typecheck-level guarantees encoded as runtime-importable shape assertions.",
+      "assertions": [
+        "Importing { validateCampaignDefinition } plus the new node-kind discriminants from '../src/dsl.js' succeeds and index.ts re-exports them (assert the index barrel exposes the types/value guards used elsewhere).",
+        "A small type-narrowing fixture: building each node literal and passing it through validateCampaignDefinition compiles (acts as a TS strict compile guard via tsc -b; runtime assertion confirms the guard accepts the literal).",
+        "edgesOf coverage: an hour_of_day_window node contributes [next] to reachability and a webhook action contributes [next] (assert reachability/orphan detection sees these new edge sources — a window or webhook on the only path to exit keeps the graph valid)."
+      ]
+    }
+  ],
+  "pureFunctions": [
+    "validateCampaignDefinition (EXTEND): add validation arms for hour_of_day_window (startHour/endHour integer 0-23, optional daysOfWeek subset of 0-6 unique non-empty, next edge) and action kind 'webhook' (url http(s) only, method in {GET,POST,PUT,PATCH,DELETE}, headers object, bodyTemplate string, timeoutMs>0, maxRetries>=0, next edge).",
+    "validateNodeFields (EXTEND): new switch cases for the two node shapes; webhook url scheme guard (reject non-http(s)) as a model-layer SSRF pre-check.",
+    "edgesOf (EXTEND): return [node.next] for hour_of_day_window; webhook action already covered by the existing 'action' arm returning [node.next].",
+    "hasReachableExit (KEEP): unchanged BFS — already traverses via edgesOf.",
+    "detectCycle (NEW, pure): DFS with a recursion/grey-stack over the node graph from startNode; throws on a back-edge to a node currently on the DFS stack (distinguish from a diamond re-convergence which is allowed).",
+    "findOrphans (NEW, pure): BFS/DFS reachable-set from startNode; any node id in nodes not in the reachable set is an orphan -> throw. Compose both into validateCampaignDefinition after the per-node + reachable-exit checks.",
+    "isValidTimeZone (NEW, @cdp/shared): true iff new Intl.DateTimeFormat('en-US',{timeZone}) does not throw; used by the settings API and the picker.",
+    "tzOffsetMs / zonedInputToUtcIso / utcIsoToZonedInput / timeZoneList (EXTRACT from web/src/screens/BroadcastComposer.tsx into @cdp/shared/timezone.ts): move verbatim, re-import in BroadcastComposer so campaign time math reuses the SAME DST-correct implementation. Behavior-preserving extraction."
+  ],
+  "mocks": [
+    "No SES/AWS in this phase (no sends executed yet) — none needed for the DSL/settings tests.",
+    "No webhook HTTP client invoked in this phase (types + structural validation only); the injected/mocked HTTP client is a PHASE-2 concern — explicitly NOT mocked here.",
+    "web picker test: mock the api client (api.get/api.put) — no real network.",
+    "@cdp/shared/timezone fallback test: stub Intl.supportedValuesOf to undefined to exercise the curated fallback."
+  ],
+  "e2eFlows": [
+    "NONE this phase (phase.frontend=false; the WorkspaceSettings picker is covered by a component unit test, not Playwright). A browser e2e for the timezone picker + campaign builder is deferred to a later UI phase. If a smoke e2e is desired, it would be: sign in as owner (seeded Acme) -> Workspace settings -> select a timezone -> reload -> assert it persisted; explicitly out of scope now."
+  ],
+  "implUnits": [
+    "1. (test-first) Write/extend services/campaign-runner/test/node-dsl-and-validation.test.ts with the new accept/reject cases AND fix the now-cyclic 'reachable exit' fixture; add dsl-types-exports.test.ts. Run -> RED.",
+    "2. Extend services/campaign-runner/src/dsl.ts: add HourOfDayWindowNode interface (type:'hour_of_day_window', startHour, endHour, daysOfWeek?, next), add 'webhook' to ActionNode.kind with url/method/headers/bodyTemplate/timeoutMs/maxRetries fields (document overnight wrap-around + that secret auth headers will be envelope-encrypted at rest in phase 2), add both to the Node union and NODE_TYPES set, add validateNodeFields arms, add edgesOf arm.",
+    "3. Add detectCycle + findOrphans pure helpers and call them inside validateCampaignDefinition (after one-trigger, per-node, startNode-resolves, reachable-exit). Update the function's doc comment to list the new checks. Re-export new types via services/campaign-runner/src/index.ts. Run unit tests -> GREEN.",
+    "4. Create packages/shared/src/timezone.ts by EXTRACTING tzOffsetMs/zonedInputToUtcIso/utcIsoToZonedInput/timeZoneList from BroadcastComposer + add isValidTimeZone; export from packages/shared/src/index.ts. Add packages/shared/test/timezone.test.ts. Re-import the helpers in web/src/screens/BroadcastComposer.tsx (delete the local copies) — assert no behavior change. Run -> GREEN. (Rebuild @cdp/shared via tsc -b since local-api imports from dist.)",
+    "5. (test-first) Write services/local-api/test/workspace-settings-timezone.integration.test.ts -> RED.",
+    "6. Extend services/local-api/src/handlers.ts: getWorkspaceSettings adds timezone default 'UTC'; updateWorkspaceSettings adds a timezone branch that validates via isValidTimeZone (from @cdp/shared) and 400s on invalid, else merges into the settings jsonb (reuse the existing settings || $2::jsonb pattern, workspace_id from ctx only). Route stays 'manage_workspace_users'. Run integration -> GREEN. RESTART dev API after the edit.",
+    "7. Write web/test/workspace-timezone-picker.test.ts -> RED; add the picker to WorkspaceSettings.tsx (a kit Select fed by timeZoneList(), initialized from GET, saved via PUT with optimistic rollback + showToast, promise-returning save so the kit Button auto-locks; new stable testids). Run -> GREEN.",
+    "8. pnpm typecheck + pnpm lint clean; run the FULL campaign-runner unit suite + local-api + web unit suites to confirm no regression. Bump root package.json (minor — new feature). Update CLAUDE.md (campaigns DSL section: two new node kinds + tightened validator; workspace settings: timezone setting; note tz helpers now live in @cdp/shared)."
+  ],
+  "reuse": [
+    "services/campaign-runner/src/dsl.ts — extend in place (Node union, NODE_TYPES, validateNodeFields, edgesOf, validateCampaignDefinition, hasReachableExit). Do NOT introduce a second graph model (invariant: DSL is the single graph model).",
+    "services/campaign-runner/test/node-dsl-and-validation.test.ts validDef() helper + existing assertion style — extend it; reuse @cdp/segments AstNode in the condition node (already imported).",
+    "web/src/screens/BroadcastComposer.tsx tz helpers (tzOffsetMs/zonedInputToUtcIso/utcIsoToZonedInput/timeZoneList) — extract to @cdp/shared/timezone.ts and reuse on BOTH sides (broadcast scheduler + campaign time math) so there is ONE DST-correct implementation.",
+    "services/local-api/src/handlers.ts get/updateWorkspaceSettings — extend the existing settings jsonb merge (lowercase_emails/link_tracking pattern); routes.ts capability mapping ('manage_workspace_users') unchanged.",
+    "web/src/screens/WorkspaceSettings.tsx existing toggle pattern (optimistic state + savingSettings lock + rollback on catch) for the timezone picker; web/src/ui/kit.tsx Select + Button (auto-locks on promise-returning onClick) + Field; web/src/ui/toast.tsx showToast for feedback (never native alert/confirm).",
+    "packages/db/src/secret-crypto.ts (encryptSecret/decryptSecret/isEncryptedSecret) — referenced in the webhook field DOC/comment as the phase-2 mechanism for the optional auth header secret; NOT wired this phase (types only).",
+    "packages/shared/src/index.ts barrel + project-references (tsc -b) so the new timezone module is importable by web AND local-api."
+  ],
+  "notes": "PLANNING ONLY — no code/tests written here. Two gotchas the implementer must handle: (1) the EXISTING 'requires a reachable exit' unit test uses a wait node that loops back to the trigger (w.next='t'); once cycle-rejection lands, that graph throws /cycle/ before /no exit/, so the test MUST be rewritten to an acyclic-but-exitless graph — otherwise it's a false regression. (2) Cycle detection must NOT flag a legitimate diamond / re-convergence (two paths into the same downstream node) — use a DFS grey-stack (back-edge to a node on the current recursion stack), not a global 'seen' set; add an explicit diamond-accept test. Scope discipline: hour_of_day_window + webhook are TYPES + STRUCTURAL validation ONLY — NO runner execution, NO real HTTP, NO SSRF IP/host allowlist enforcement, NO secret encryption wiring (all phase 2); the only SSRF-adjacent guard here is the http(s)-scheme check in the validator. Overnight windows (startHour>endHour) are accepted as valid wrap-around (document semantics; runner resolves later). The tz extraction must be behavior-preserving (lock exact ISO outputs in the shared tz test). Apply no new SQL migration — timezone lives in the existing workspaces.settings jsonb. Bump root version (minor) and update CLAUDE.md per process hygiene. Tier mix: pure unit (DSL + tz helpers + picker component), REAL-Postgres integration (settings API), no e2e this phase."
+}

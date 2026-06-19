@@ -7,6 +7,9 @@ import { useStore } from '../store/store.js';
 import { api, sessionStore } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader, Select } from '../ui/kit.js';
+import { showToast } from '../ui/toast.tsx';
+import { timeZoneList } from '@cdp/shared';
+import { saveWorkspaceTimezone } from './workspaceSettingsLogic.js';
 import { SendingDomainsPanel } from './SendingDomainsList.tsx';
 
 type SettingsTab = 'workspace' | 'domains';
@@ -27,6 +30,9 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   const [addError, setAddError] = useState('');
   const [lowercaseEmails, setLowercaseEmails] = useState(true);
   const [linkTracking, setLinkTracking] = useState(false);
+  const [timezone, setTimezone] = useState('UTC');
+  // Lock the toggles while a settings PUT is in flight (no racing re-toggles).
+  const [savingSettings, setSavingSettings] = useState(false);
 
   const reload = async () => {
     const r = await api.get<{ members: Member[] }>('/workspace/members');
@@ -35,30 +41,55 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   useEffect(() => {
     void reload();
     void api
-      .get<{ settings: { lowercase_emails?: boolean; link_tracking?: boolean } }>('/workspace/settings')
+      .get<{ settings: { lowercase_emails?: boolean; link_tracking?: boolean; timezone?: string } }>(
+        '/workspace/settings',
+      )
       .then((r) => {
         setLowercaseEmails(r.settings.lowercase_emails !== false);
         setLinkTracking(r.settings.link_tracking === true);
+        setTimezone(r.settings.timezone || 'UTC');
       });
   }, []);
 
+  // The workspace clock for all campaign time math (§9B). The kit Button below
+  // auto-locks while this promise is in flight (we RETURN it). Optimistic + rollback.
+  const saveTimezone = (next: string) => {
+    const previous = timezone;
+    setTimezone(next); // optimistic
+    return saveWorkspaceTimezone(next, { previous, setTimezone, put: api.put, toast: showToast });
+  };
+  // The picker list always includes the currently-persisted value (some engines
+  // omit a literal 'UTC' from supportedValuesOf — timeZoneList prepends it).
+  const zones = (() => {
+    const list = timeZoneList();
+    return list.includes(timezone) ? list : [timezone, ...list];
+  })();
+
   const toggleLinkTracking = async () => {
+    if (savingSettings) return;
     const next = !linkTracking;
     setLinkTracking(next); // optimistic
+    setSavingSettings(true);
     try {
       await api.put('/workspace/settings', { body: { link_tracking: next } });
     } catch {
       setLinkTracking(!next);
+    } finally {
+      setSavingSettings(false);
     }
   };
 
   const toggleLowercase = async () => {
+    if (savingSettings) return;
     const next = !lowercaseEmails;
     setLowercaseEmails(next); // optimistic
+    setSavingSettings(true);
     try {
       await api.put('/workspace/settings', { body: { lowercase_emails: next } });
     } catch {
       setLowercaseEmails(!next); // revert on failure
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -200,8 +231,9 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           type="button"
           role="switch"
           aria-checked={lowercaseEmails}
+          disabled={savingSettings}
           onClick={toggleLowercase}
-          class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+          class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:opacity-50 ${
             lowercaseEmails ? 'bg-brand-500' : 'bg-stone-300'
           }`}
         >
@@ -226,8 +258,9 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           type="button"
           role="switch"
           aria-checked={linkTracking}
+          disabled={savingSettings}
           onClick={toggleLinkTracking}
-          class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+          class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:opacity-50 ${
             linkTracking ? 'bg-brand-500' : 'bg-stone-300'
           }`}
         >
@@ -237,6 +270,37 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
             }`}
           />
         </button>
+      </Card>
+
+      <Card class="mt-6 flex flex-wrap items-end justify-between gap-3 p-5">
+        <div class="min-w-[16rem] flex-1">
+          <h2 class="text-base font-bold text-ink-900">Timezone</h2>
+          <p class="mt-1 text-sm text-stone-500">
+            The clock for campaign waits, wait-until and hour-of-day windows. Sends are scheduled against this zone
+            (DST-correct). Default UTC.
+          </p>
+        </div>
+        <div class="flex items-end gap-2">
+          <Field label="Workspace timezone">
+            <Select
+              data-testid="workspace-timezone-select"
+              class="w-64"
+              value={timezone}
+              onChange={(e: Event) => {
+                void saveTimezone((e.target as HTMLSelectElement).value);
+              }}
+            >
+              {zones.map((z) => (
+                <option key={z} value={z}>
+                  {z.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Button data-testid="workspace-timezone-save" onClick={() => saveTimezone(timezone)}>
+            Save
+          </Button>
+        </div>
       </Card>
 
       </>

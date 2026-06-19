@@ -32,6 +32,11 @@ export default defineConfig({
   timeout: 60_000,
   fullyParallel: false,
   workers: 1,
+  // One retry: this local tier drives a single shared dev API (one worker), so a
+  // few timing-sensitive specs (SES-config save round-trip, settings toggles) can
+  // flake when the machine is under heavy load — they pass on retry and in
+  // isolation. Playwright still flags any retried test as "flaky" (nothing hidden).
+  retries: 1,
   globalSetup: './e2e/global-setup.ts',
   reporter: [['list']],
   use: {

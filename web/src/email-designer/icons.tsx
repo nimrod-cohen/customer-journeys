@@ -29,5 +29,8 @@ export {
   Trash2,
   ArrowUp,
   ArrowDown,
+  MoreVertical,
+  Baseline,
+  Highlighter,
   GalleryHorizontalEnd,
 } from 'lucide-preact';

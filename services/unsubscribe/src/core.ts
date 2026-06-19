@@ -111,3 +111,20 @@ export function buildUnsubscribedAttribute(workspaceId: string, email: string): 
     values: [workspaceId, email],
   };
 }
+
+/**
+ * Record the opt-out in the workspace Activity log (so the Activity screen shows
+ * it). Workspace-scoped; links the row to the recipient's profile when one exists
+ * (else profile_id stays NULL). Throws on a falsy workspaceId (tenancy guard).
+ */
+export function buildUnsubscribeActivity(workspaceId: string, email: string): SqlStatement {
+  if (!workspaceId) {
+    throw new Error('buildUnsubscribeActivity: workspaceId is required (tenant-isolation guard)');
+  }
+  return {
+    text: `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
+           VALUES ($1, (SELECT id FROM profiles WHERE workspace_id = $1 AND email = $2 LIMIT 1),
+                   'unsubscribe', 'unsubscribe', 'info', 'via email link')`,
+    values: [workspaceId, email],
+  };
+}

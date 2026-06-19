@@ -202,6 +202,33 @@
 }
 .nm-rte-btn:hover { background: #44403c; }
 .nm-rte-sep { width: 1px; height: 16px; background: #44403c; margin: 0 3px; }
+/* Text color + highlight swatches: an icon over a color bar, with the native
+   color input overlaid (transparent) so clicking the control opens the picker. */
+.nm-rte-color-btn {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  color: #e7e5e4;
+  cursor: pointer;
+}
+.nm-rte-color-btn:hover { background: #44403c; }
+.nm-rte-color-bar { width: 16px; height: 3px; border-radius: 2px; }
+.nm-rte-color-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
 
 /* ── Properties / settings panel ── */
 .nm-props { padding: 0 12px 16px; }
@@ -330,8 +357,32 @@
 }
 .nm-nav-item:hover { background: #f5f5f4; }
 .nm-nav-item.nm-active { background: #ccfbf1; color: #0f766e; }
-.nm-nav-actions { display: flex; gap: 2px; opacity: 0; }
+/* Action affordances live on every tree item, revealed on hover. */
+.nm-nav-actions { display: flex; gap: 2px; align-items: center; flex: none; opacity: 0; }
 .nm-nav-item:hover .nm-nav-actions { opacity: 1; }
+/* Keep the controls visible while their dropdown is open (pointer leaves the row
+   to reach the portaled menu). */
+.nm-nav-item:has(.nm-icon-menu-btn[aria-expanded='true']) .nm-nav-actions { opacity: 1; }
+.nm-nav-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The round "⋮" menu trigger on each node (Duplicate / Delete). */
+.nm-icon-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  flex: none;
+  border: 1px solid #d6d3d1;
+  border-radius: 9999px;
+  background: #fff;
+  color: #57534e;
+  cursor: pointer;
+}
+.nm-icon-menu-btn:hover { border-color: #14b8a6; color: #0f766e; background: #f0fdfa; }
+.nm-icon-menu-btn[aria-expanded='true'] { background: #ccfbf1; border-color: #14b8a6; color: #0f766e; }
+/* The dropdown is portaled to <body> so the scrolling navigator can't clip it. */
+.nm-menu-fixed { position: fixed; top: auto; left: auto; }
 /* Draggable elements in the structure tree + the drop-target highlight. */
 .nm-nav-item.nm-draggable { cursor: grab; }
 .nm-nav-item.nm-draggable:active { cursor: grabbing; }

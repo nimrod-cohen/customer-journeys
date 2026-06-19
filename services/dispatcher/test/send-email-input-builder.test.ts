@@ -101,6 +101,26 @@ describe('buildSendEmailInput', () => {
     expect(buildSendEmailInput(ctx()).html).toBe('<html><body>Hi Ada</body></html>');
   });
 
+  it('personalizes the SUBJECT with merge tags (like the To and body)', () => {
+    const input = buildSendEmailInput({ ...ctx(), subject: 'Welcome {{first_name}}' });
+    expect(input.subject).toBe('Welcome Ada');
+  });
+
+  it('resolves customer.* tokens in the subject', () => {
+    const merge = { 'customer.attributes.first_name': 'Ada', first_name: 'Ada' };
+    const input = buildSendEmailInput({
+      ...ctx(),
+      merge,
+      subject: 'fourth email to {{customer.attributes.first_name}}',
+    });
+    expect(input.subject).toBe('fourth email to Ada');
+  });
+
+  it('leaves an unknown subject tag untouched (no crash)', () => {
+    const input = buildSendEmailInput({ ...ctx(), subject: 'Hi {{customer.attributes.missing}}' });
+    expect(input.subject).toBe('Hi {{customer.attributes.missing}}');
+  });
+
   it('injects workspace-scoped List-Unsubscribe headers', () => {
     const input = buildSendEmailInput(ctx());
     expect(input.headers?.['List-Unsubscribe']).toContain('workspace_id=ws-1');

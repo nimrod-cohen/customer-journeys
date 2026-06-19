@@ -29,6 +29,7 @@
     "@cdp/service-dispatcher": "workspace:*",
     "@cdp/service-metering": "workspace:*",
     "@cdp/service-onboarding": "workspace:*",
+    "@cdp/service-unsubscribe": "workspace:*",
     "@cdp/shared": "workspace:*",
     "@cdp/tenancy": "workspace:*",
     "@hono/node-server": "^1.12.0",

@@ -8,11 +8,12 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Pool } from 'pg';
 import { dispatch, type ApiRequest, type DispatchEnv } from './dispatch.js';
-import { devLogin, registerOwner, switchWorkspace } from './session.js';
+import { devLogin, registerOwner, switchWorkspace, createFirstWorkspace } from './session.js';
 import { makePgLookups } from './lookups.js';
 import { makeLocalDeps, type LocalApiDeps } from './deps.js';
 import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
+import { makeUnsubscribeHandler, runUnsubscribeInWorkspaceTx } from '@cdp/service-unsubscribe';
 
 export interface CreateAppOptions {
   readonly pool: Pool;
@@ -62,6 +63,15 @@ export function createApp(opts: CreateAppOptions): Hono {
     return c.json(r.body as object, r.status as 200 | 400 | 401 | 403);
   });
 
+  // A company owner creates their FIRST workspace (the workspace-less token can't
+  // reach the capability-gated POST /workspaces) and is logged into it. Session
+  // route: authenticates the token directly and re-mints it, like /workspace/switch.
+  app.post('/workspace/bootstrap', async (c) => {
+    const body = await safeJson(c);
+    const r = await createFirstWorkspace(env.pool, c.req.header('authorization') ?? null, body);
+    return c.json(r.body as object, r.status as 201 | 400 | 401 | 403);
+  });
+
   // Serve an uploaded asset (email image) as BINARY — public-by-uuid, no auth:
   // the CloudFront model (possession of the unguessable URL grants read, exactly
   // like a CDN image link inside a delivered email). Uploads are capability-gated
@@ -92,6 +102,29 @@ export function createApp(opts: CreateAppOptions): Hono {
     const url = rows[0]?.url;
     if (!url) return c.notFound();
     return c.redirect(url, 302);
+  });
+
+  // Unsubscribe (§10): public, no auth — the link lands here from a delivered
+  // email. GET shows a re-affirm CONFIRMATION page (changes nothing — GET is
+  // prefetchable); POST (the page's Confirm button, or an RFC 8058 one-click)
+  // writes the per-workspace suppression + sets the profile `unsubscribed=true`.
+  // Reuses the SAME handler the production Lambda runs, bound to the local pool.
+  const unsubscribe = makeUnsubscribeHandler({
+    runInWorkspaceTx: (workspaceId, statements) => runUnsubscribeInWorkspaceTx(opts.pool, workspaceId, statements),
+  });
+  const runUnsubscribe = async (method: 'GET' | 'POST', c: { req: { url: string; text: () => Promise<string> } }) => {
+    const qs = new URL(c.req.url).search.replace(/^\?/, '');
+    const base = { httpMethod: method, path: '/unsubscribe', rawQueryString: qs };
+    if (method === 'POST') return unsubscribe({ ...base, body: await c.req.text().catch(() => '') });
+    return unsubscribe(base);
+  };
+  app.get('/unsubscribe', async (c) => {
+    const r = await runUnsubscribe('GET', c);
+    return c.body(r.body, r.statusCode as 200, r.headers ?? {});
+  });
+  app.post('/unsubscribe', async (c) => {
+    const r = await runUnsubscribe('POST', c);
+    return c.body(r.body, r.statusCode as 200, r.headers ?? {});
   });
 
   // --- everything else flows through the dispatch pipeline ---

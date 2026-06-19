@@ -9,11 +9,17 @@ import {
   selectNode,
   reorderRow,
   moveElement,
+  duplicateRow,
+  removeRow,
+  duplicateElement,
+  removeElement,
+  removeGridCell,
   navDragId,
   navDropTargetId,
   mutate,
 } from './state.js';
 import { ArrowUp, ArrowDown } from './icons.tsx';
+import { NodeActionsMenu } from './NodeActionsMenu.tsx';
 import type { DesignElement } from './model.js';
 
 /** Where a dragged element should land. */
@@ -88,6 +94,11 @@ export function Navigator(): JSX.Element {
               >
                 <ArrowDown size={12} />
               </button>
+              <NodeActionsMenu
+                label="Row actions"
+                onDuplicate={() => mutate('Duplicate row', () => duplicateRow(row.id))}
+                onDelete={() => mutate('Remove row', () => removeRow(row.id))}
+              />
             </span>
           </div>
           {row.elements.map((el) => (
@@ -148,7 +159,14 @@ function NavElement({
           drop({ ...parent, beforeElementId: el.id });
         }}
       >
-        {el.type}
+        <span class="nm-nav-label">{el.type}</span>
+        <span class="nm-nav-actions">
+          <NodeActionsMenu
+            label="Element actions"
+            onDuplicate={() => mutate('Duplicate', () => duplicateElement(el.id))}
+            onDelete={() => mutate('Remove', () => removeElement(el.id))}
+          />
+        </span>
       </div>
       {el.type === 'grid'
         ? el.children.map((cell, i) => (
@@ -171,7 +189,15 @@ function NavElement({
                   drop({ cellId: cell.id });
                 }}
               >
-                column {i + 1}
+                <span class="nm-nav-label">column {i + 1}</span>
+                {el.children.length > 1 ? (
+                  <span class="nm-nav-actions">
+                    <NodeActionsMenu
+                      label="Column actions"
+                      onDelete={() => mutate('Remove column', () => removeGridCell(el.id, cell.id))}
+                    />
+                  </span>
+                ) : null}
               </div>
               {cell.elements.map((sub) => (
                 <NavElement key={sub.id} el={sub} depth={depth + 2} parent={{ cellId: cell.id }} />

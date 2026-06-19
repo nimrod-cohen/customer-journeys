@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-19T14:01:38.229Z",
+  "data": {
+    "effectId": "01KVG2ZVN28MS4Y8Q0PXVV0JXM",
+    "invocationKey": "cdp/campaign-builder:S000003:quality-gate",
+    "invocationHash": "9cd2e2e66098f27f76a0a5d0d5974b505a6956cc56aa9a0e9702304e86d779b2",
+    "stepId": "S000003",
+    "taskId": "quality-gate",
+    "kind": "agent",
+    "label": "quality-gate",
+    "taskDefRef": "tasks/01KVG2ZVN28MS4Y8Q0PXVV0JXM/task.json",
+    "labels": [
+      "quality-gate",
+      "phase1-model-tz",
+      "iteration-1"
+    ]
+  },
+  "checksum": "909da54e314bbf7b2ef8799a0a34dfbe3747ba339117747b1f7bd13225577757"
+}

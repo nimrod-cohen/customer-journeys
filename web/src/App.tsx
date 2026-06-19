@@ -4,9 +4,15 @@
 import { useStore } from './store/store.js';
 import { sessionStore } from './store/session.js';
 import { Login } from './screens/Login.js';
+import { CreateFirstWorkspace } from './screens/CreateFirstWorkspace.js';
 import { AppShell } from './AppShell.js';
 
 export function App() {
   const session = useStore(sessionStore);
-  return session.token ? <AppShell /> : <Login />;
+  if (!session.token) return <Login />;
+  // A logged-in owner with no workspace (registered a company but hasn't created
+  // a workspace yet) must create one before the main shell. Platform admins
+  // legitimately have no active workspace and go straight to the shell.
+  if (!session.isPlatformAdmin && !session.workspaceId) return <CreateFirstWorkspace />;
+  return <AppShell />;
 }

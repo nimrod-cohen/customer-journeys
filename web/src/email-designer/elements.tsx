@@ -25,6 +25,7 @@ import {
   type Style,
 } from './canvas-styles.js';
 import { askText } from '../ui/dialog.tsx';
+import { Baseline, Highlighter } from './icons.tsx';
 import type { DesignElement, GridElement, LeafElement } from './model.js';
 
 // ── Text (contenteditable + floating toolbar) ────────────────────────────────
@@ -64,6 +65,11 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
   const linkDialogActive = useRef(false);
   const [showToolbar, setShowToolbar] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
+  // The selection captured when a color swatch is pressed — focus moves to the
+  // native color input, so we restore this range before recoloring.
+  const savedRange = useRef<Range | null>(null);
+  const [textColor, setTextColor] = useState('#111827');
+  const [hiliteColor, setHiliteColor] = useState('#fde047');
 
   const s: Style = { padding: paddingCss(element.props.padding, DEFAULT_CONTENT_PADDING) };
   if (element.props.color) s.color = element.props.color;
@@ -196,6 +202,44 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
     ref.current?.focus();
   };
 
+  // Pressing a color swatch moves focus to the native <input type=color>, so grab
+  // the current selection first; applyColor restores it before recoloring.
+  const captureRange = (): void => {
+    const sel = window.getSelection();
+    savedRange.current = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+  };
+
+  // Color the CURRENT SELECTION (partial coloring) by wrapping it in a span —
+  // same manual approach as the font-size stepper (no execCommand focus dance, so
+  // it works after the picker stole focus). Clears the same property on nested
+  // spans so the new color wins, then re-selects the recolored run.
+  const applyColor = (prop: 'color' | 'backgroundColor', value: string): void => {
+    const sel = window.getSelection();
+    if (!sel) return;
+    if (savedRange.current) {
+      sel.removeAllRanges();
+      sel.addRange(savedRange.current);
+    }
+    if (sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) return; // need a non-empty selection to color
+    const frag = range.extractContents();
+    frag.querySelectorAll<HTMLElement>('*').forEach((n) => {
+      n.style[prop] = '';
+      if (!n.getAttribute('style')) n.removeAttribute('style');
+    });
+    const span = document.createElement('span');
+    span.style[prop] = value;
+    span.appendChild(frag);
+    range.insertNode(span);
+    sel.removeAllRanges();
+    const r2 = document.createRange();
+    r2.selectNodeContents(span);
+    sel.addRange(r2);
+    savedRange.current = r2.cloneRange();
+    ref.current?.focus();
+  };
+
   // The toolbar is PORTALED to document.body: the app shell animates with a
   // transform, which would otherwise hijack position:fixed (a transformed
   // ancestor becomes the containing block) and strand the toolbar mid-page.
@@ -217,6 +261,45 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
               </button>
             ),
           )}
+          <span class="nm-rte-sep" />
+          <label class="nm-rte-color-btn" title="Text color">
+            <Baseline size={15} />
+            <span class="nm-rte-color-bar" style={{ background: textColor }} />
+            <input
+              type="color"
+              class="nm-rte-color-input"
+              data-testid="rte-text-color"
+              value={textColor}
+              onMouseDown={(e) => {
+                e.stopPropagation(); // let the native picker open (toolbar preventDefault would block it)
+                captureRange();
+              }}
+              onInput={(e) => {
+                const v = (e.target as HTMLInputElement).value;
+                setTextColor(v);
+                applyColor('color', v);
+              }}
+            />
+          </label>
+          <label class="nm-rte-color-btn" title="Highlight color">
+            <Highlighter size={15} />
+            <span class="nm-rte-color-bar" style={{ background: hiliteColor }} />
+            <input
+              type="color"
+              class="nm-rte-color-input"
+              data-testid="rte-bg-color"
+              value={hiliteColor}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                captureRange();
+              }}
+              onInput={(e) => {
+                const v = (e.target as HTMLInputElement).value;
+                setHiliteColor(v);
+                applyColor('backgroundColor', v);
+              }}
+            />
+          </label>
         </div>,
         document.body,
       )

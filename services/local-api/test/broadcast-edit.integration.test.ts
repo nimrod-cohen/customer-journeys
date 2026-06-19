@@ -81,6 +81,34 @@ describeMaybe('broadcast create + edit (real Postgres)', () => {
     expect(b.scheduled_at).not.toBeNull();
   });
 
+  it('refuses to schedule sooner than 5 minutes from now (400), but accepts ≥ 5 min', async () => {
+    // Too soon (2 minutes out) → 400, nothing created.
+    const tooSoon = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+    const bad = await call(world.env, 'POST', '/broadcasts', {
+      token: tok(),
+      body: { name: 'TooSoon', audience_kind: 'segment', audience_ref: SEG, template_id: tpl, scheduled_at: tooSoon },
+    });
+    expect(bad.status).toBe(400);
+    expect((bad.body as { error: string }).error).toMatch(/5 minutes/i);
+
+    // Comfortably in the future (10 minutes out) → created as scheduled.
+    const okTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const good = await call(world.env, 'POST', '/broadcasts', {
+      token: tok(),
+      body: { name: 'FarEnough', audience_kind: 'segment', audience_ref: SEG, template_id: tpl, scheduled_at: okTime },
+    });
+    expect(good.status).toBe(201);
+    expect((good.body as { broadcast: { status: string } }).broadcast.status).toBe('scheduled');
+
+    // Editing to a too-soon time is likewise refused (400).
+    const id = (good.body as { broadcast: { id: string } }).broadcast.id;
+    const edit = await call(world.env, 'PUT', `/broadcasts/${id}`, {
+      token: tok(),
+      body: { name: 'FarEnough', audience_kind: 'segment', audience_ref: SEG, template_id: tpl, scheduled_at: tooSoon },
+    });
+    expect(edit.status).toBe(400);
+  });
+
   it('a SENT broadcast cannot be edited (409)', async () => {
     const c = await call(world.env, 'POST', '/broadcasts', {
       token: tok(), body: { name: 'B3', audience_kind: 'segment', audience_ref: SEG, template_id: tpl },

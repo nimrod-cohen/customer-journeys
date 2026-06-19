@@ -187,6 +187,8 @@ test('merge a secondary profile into the lead (survivor remains, secondary delet
   await page.getByTestId('profile-search').fill('a1@acme.com');
   await page.getByTestId('profile-row').first().click();
   await page.getByTestId('profile-detail').waitFor();
+  // Merge now lives in the profile actions (⋮) menu.
+  await page.getByTestId('profile-actions').click();
   await page.getByTestId('merge-button').click();
   await page.getByTestId('merge-drawer').waitFor();
   await page.getByTestId('merge-secondary-select').selectOption({ label: 'a2@acme.com' });
@@ -200,4 +202,31 @@ test('merge a secondary profile into the lead (survivor remains, secondary delet
   await page.getByTestId('profile-back').click();
   await page.getByTestId('profile-search').fill('a2@acme.com');
   await expect(page.getByTestId('profile-row')).toHaveCount(0);
+});
+
+test('send a manual event on a profile via the actions menu — it appears in the timeline', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+
+  // Open a profile and send an event from the ⋮ actions menu.
+  await page.getByTestId('profile-search').fill('a3@acme.com');
+  await page.getByTestId('profile-row').first().click();
+  await page.getByTestId('profile-detail').waitFor();
+  await page.getByTestId('profile-actions').click();
+  await page.getByTestId('send-event-action').click();
+  await page.getByTestId('send-event-drawer').waitFor();
+
+  // Invalid JSON content blocks sending.
+  await page.getByTestId('send-event-type').fill('demo_requested');
+  await page.getByTestId('send-event-payload').fill('{ not json');
+  await expect(page.getByTestId('send-event-json-error')).toBeVisible();
+  await expect(page.getByTestId('send-event-confirm')).toBeDisabled();
+
+  // Fix the JSON → send. The drawer closes and the Events tab shows the new event.
+  await page.getByTestId('send-event-payload').fill('{"plan":"pro"}');
+  await page.getByTestId('send-event-confirm').click();
+  await expect(page.getByTestId('send-event-drawer')).toHaveCount(0);
+  await expect(page.getByTestId('tab-events')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('profile-detail')).toContainText('demo_requested');
 });

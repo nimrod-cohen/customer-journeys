@@ -1,0 +1,43 @@
+{
+  "filesCreated": [
+    "packages/shared/src/timezone.ts",
+    "packages/shared/test/timezone.test.ts",
+    "services/campaign-runner/test/dsl-types-exports.test.ts",
+    "services/local-api/test/workspace-settings-timezone.integration.test.ts",
+    "web/src/screens/workspaceSettingsLogic.ts",
+    "web/test/workspace-timezone-picker.test.ts"
+  ],
+  "filesModified": [
+    "services/campaign-runner/src/dsl.ts",
+    "services/campaign-runner/src/core.ts",
+    "services/campaign-runner/src/index.ts",
+    "services/campaign-runner/test/node-dsl-and-validation.test.ts",
+    "packages/shared/src/index.ts",
+    "services/local-api/src/handlers.ts",
+    "web/src/screens/WorkspaceSettings.tsx",
+    "web/src/screens/BroadcastComposer.tsx",
+    "CLAUDE.md",
+    "package.json"
+  ],
+  "migrationsApplied": [],
+  "versionBump": "0.28.0 -> 0.29.0 (minor, new feature)",
+  "testsPass": true,
+  "testSummary": "Test-first (red -> green). New/extended unit tests: campaign-runner node-dsl-and-validation.test.ts + dsl-types-exports.test.ts = 34 passed (new hour_of_day_window + webhook accept/reject cases, cycle/back-edge/self-loop rejection, orphan rejection, diamond-accept, rewritten no-exit fixture, type-export guards). @cdp/shared timezone.test.ts = 8 passed (isValidTimeZone, DST offsets Jan/Jul, spring-forward gap locked ISO, round-trip, timeZoneList fallback). web workspace-timezone-picker.test.ts = 4 passed (option list incl UTC + optimistic save/rollback w/ mocked api, error toast). REAL-Postgres integration workspace-settings-timezone.integration.test.ts = 6 passed (UTC default, persist+readback, Asia/Jerusalem accepted, invalid 400 writes-nothing, stray body workspace_id ignored, jsonb merge preserves siblings). Full no-regression run: campaign-runner 82 passed/13 skipped; @cdp/shared 18 passed; web 60 passed/4 skipped; local-api 166 passed (whole integration suite against DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp).",
+  "e2eSummary": "None this phase (phase.frontend=false; the WorkspaceSettings picker is covered by a pure component-logic unit test, not Playwright). A browser e2e for the timezone picker + campaign builder is deferred to a later UI phase per the plan.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "commandsRun": [
+    "pnpm --filter @cdp/service-campaign-runner exec vitest run",
+    "pnpm --filter @cdp/shared build",
+    "pnpm --filter @cdp/shared exec vitest run",
+    "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm --filter @cdp/service-local-api exec vitest run",
+    "pnpm --filter @cdp/web exec vitest run",
+    "pnpm typecheck",
+    "pnpm lint",
+    "pnpm --filter @cdp/service-campaign-runner lint",
+    "pnpm --filter @cdp/service-local-api lint",
+    "pnpm --filter @cdp/shared lint",
+    "pnpm --filter @cdp/web lint"
+  ],
+  "notes": "Scope kept to phase 1: TYPES + structural validation for the two new DSL nodes only -- no runner execution, no real HTTP, no SSRF host-allowlist, no secret encryption wiring (all phase 2, documented in dsl.ts doc-comments). The only SSRF-adjacent guard here is the webhook http(s)-scheme check in the validator. To keep tsc exhaustive (the Node union now includes WebhookAction + HourOfDayWindowNode), processNode advances hour_of_day_window as a no-op and actionSideEffect returns null for kind=webhook -- explicitly placeholders for the phase-2 runner. No SQL migration: timezone lives in the existing workspaces.settings jsonb. tz helpers extracted behavior-preserving from BroadcastComposer into @cdp/shared/timezone.ts and re-imported there (exact spring-forward ISO locked in the test). LINT: the web package still reports 7 PRE-EXISTING 'react-hooks/exhaustive-deps was not found' config errors in ProfileDetail/SegmentBuilder/SimpleScreens/EmailDesigner/Activity -- confirmed present at HEAD via git stash (they fail unchanged when my edits are reverted), so they are NOT introduced by this work; campaign-runner/local-api/shared lint clean and I fixed a one-line prefer-const regression my edit surfaced in BroadcastComposer. typecheck clean across all 41 tasks. WEB picker NOTE: the project has no DOM-rendering test harness (web unit tests are pure-logic, like campaign-builder.test.ts), so the picker is verified via its extracted pure save logic (workspaceSettingsLogic.saveWorkspaceTimezone) + timeZoneList option list with a mocked api client, not a rendered-DOM assertion -- the load-bearing behavior (PUT body, optimistic rollback, error toast, promise-returning save for kit Button auto-lock). Dev API not restarted (no manual exercise needed; integration tests drive the same dispatch pipeline in-process)."
+}

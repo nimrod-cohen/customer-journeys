@@ -32,6 +32,13 @@ export interface Session {
   readonly role: Role | null;
   readonly isPlatformAdmin: boolean;
   readonly memberships: readonly Membership[];
+  /**
+   * True when a logged-in company owner has no workspace yet (registration
+   * creates the company only). The app shows the "create your first workspace"
+   * screen instead of the main shell, and skips /me (which a workspace-less
+   * non-admin can't call). Cleared once they bootstrap a workspace.
+   */
+  readonly needsWorkspace: boolean;
 }
 
 const EMPTY: Session = {
@@ -46,6 +53,7 @@ const EMPTY: Session = {
   role: null,
   isPlatformAdmin: false,
   memberships: [],
+  needsWorkspace: false,
 };
 
 // Persist the session across page reloads. The bearer token carries the active
@@ -90,7 +98,11 @@ export const api: ApiClient = createApiClient({
  * user lands on Login rather than a broken session.
  */
 export async function restoreSession(): Promise<void> {
-  if (!sessionStore.get().token) return;
+  const s = sessionStore.get();
+  if (!s.token) return;
+  // A workspace-less owner (needs_workspace) can't call /me — keep the persisted
+  // session as-is so they land on the create-first-workspace screen, not logout.
+  if (!s.isPlatformAdmin && !s.workspaceId) return;
   try {
     await refreshMe();
   } catch {
@@ -110,6 +122,39 @@ interface LoginResponse {
   workspace_id: string | null;
   is_platform_admin: boolean;
   memberships: Membership[];
+  /** Set when the owner has registered a company but has no workspace yet. */
+  needs_workspace?: boolean;
+  /** The owner's company (present in the needs_workspace state). */
+  company?: { id: string; name: string };
+  email?: string | null;
+  name?: string | null;
+}
+
+/**
+ * Apply a login-shaped response to the session. When it carries no active
+ * workspace for a non-admin (`needs_workspace`), we record the company and skip
+ * /me (a workspace-less non-admin can't call it); otherwise we refresh identity.
+ */
+async function applyLogin(res: LoginResponse): Promise<void> {
+  const needsWorkspace = !res.is_platform_admin && !res.workspace_id;
+  sessionStore.set((s) => ({
+    ...s,
+    token: res.token,
+    sub: res.sub,
+    workspaceId: res.workspace_id,
+    isPlatformAdmin: res.is_platform_admin,
+    memberships: res.memberships,
+    needsWorkspace,
+    ...(needsWorkspace
+      ? {
+          email: res.email ?? null,
+          name: res.name ?? null,
+          companyId: res.company?.id ?? null,
+          companyName: res.company?.name ?? null,
+        }
+      : {}),
+  }));
+  if (!needsWorkspace) await refreshMe();
 }
 
 interface MeResponse {
@@ -133,18 +178,14 @@ export async function login(email: string, password: string): Promise<void> {
     // data request, so the workspace_id guard is intentionally bypassed here.
     allowWorkspaceId: true,
   });
-  sessionStore.set((s) => ({
-    ...s,
-    token: res.token,
-    sub: res.sub,
-    workspaceId: res.workspace_id,
-    isPlatformAdmin: res.is_platform_admin,
-    memberships: res.memberships,
-  }));
-  await refreshMe();
+  await applyLogin(res);
 }
 
-/** Register a new company + owner, then log in. */
+/**
+ * Register a new company + owner. Registration creates the company only (no
+ * workspace), so this lands in the needs_workspace state — the app then prompts
+ * the owner to create their first workspace.
+ */
 export async function register(input: {
   name: string;
   email: string;
@@ -155,6 +196,19 @@ export async function register(input: {
     body: { name: input.name, email: input.email, password: input.password, company_name: input.companyName },
     allowWorkspaceId: true,
   });
+  await applyLogin(res);
+}
+
+/**
+ * Create the owner's FIRST workspace (POST /workspace/bootstrap), then enter it.
+ * Re-mints the token with the new active workspace and reloads /me so the full
+ * app re-scopes — clearing the needs_workspace state.
+ */
+export async function bootstrapWorkspace(name: string): Promise<void> {
+  const res = await api.post<LoginResponse>('/workspace/bootstrap', {
+    body: { name },
+    allowWorkspaceId: true,
+  });
   sessionStore.set((s) => ({
     ...s,
     token: res.token,
@@ -162,6 +216,7 @@ export async function register(input: {
     workspaceId: res.workspace_id,
     isPlatformAdmin: res.is_platform_admin,
     memberships: res.memberships,
+    needsWorkspace: false,
   }));
   await refreshMe();
 }

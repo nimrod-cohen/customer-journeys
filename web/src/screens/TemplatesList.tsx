@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
+import { clearEditorReturn } from '../store/editorReturn.js';
 import { Button, Card, PageHeader, EmptyState } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.tsx';
 import { AssetManagerPanel } from '../email-designer/AssetManager.tsx';
@@ -56,7 +57,13 @@ export function TemplatesList() {
         subtitle="Email templates and the image gallery your emails are built from."
         actions={
           tab === 'templates' ? (
-            <Button data-testid="new-template" onClick={() => navigate('/editor')}>
+            <Button
+              data-testid="new-template"
+              onClick={() => {
+                clearEditorReturn();
+                navigate('/editor');
+              }}
+            >
               New template
             </Button>
           ) : undefined
@@ -112,10 +119,18 @@ export function TemplatesList() {
                 {t.updated_at ? <span class="text-xs text-stone-500">updated {fmtDate(t.updated_at)}</span> : null}
               </span>
               <span class="flex shrink-0 items-center gap-2">
-                <Button data-testid="template-edit" variant="secondary" size="sm" onClick={() => navigate(`/editor/${t.id}`)}>
+                <Button
+                  data-testid="template-edit"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    clearEditorReturn();
+                    navigate(`/editor/${t.id}`);
+                  }}
+                >
                   Edit
                 </Button>
-                <Button data-testid="template-delete" variant="danger" size="sm" onClick={() => void deleteTemplate(t)}>
+                <Button data-testid="template-delete" variant="danger" size="sm" onClick={() => deleteTemplate(t)}>
                   Delete
                 </Button>
               </span>

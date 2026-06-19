@@ -17,6 +17,7 @@ import {
   type WaitNode,
   type ConditionNode,
   type ActionNode,
+  type WebhookAction,
 } from './dsl.js';
 
 /** A parameterized query ready for `pool.query(text, values)` (shared shape). */
@@ -225,6 +226,12 @@ export function processNode(
       };
     }
 
+    case 'hour_of_day_window':
+      // Phase 1 ships the TYPE + structural validation only. The phase-2 runner
+      // will PARK the enrollment until the next window opening (workspace-tz,
+      // DST-correct) when outside the window; until then this advances as a no-op.
+      return { disposition: 'advance', nextNode: node.next, sideEffects: [] };
+
     case 'exit':
       return { disposition: 'complete', sideEffects: [] };
   }
@@ -236,7 +243,10 @@ export function processNode(
  * current_node (the authoritative dedupe component); here it carries the empty
  * placeholder so processNode stays node-id agnostic.
  */
-function actionSideEffect(node: ActionNode): SideEffect | null {
+function actionSideEffect(node: ActionNode | WebhookAction): SideEffect | null {
+  // A webhook action carries no profile-mutating/send side effect here — its HTTP
+  // call is a phase-2 runner concern (injected client, allowlist + SSRF guards).
+  if (node.kind === 'webhook') return null;
   if (node.kind === 'send') {
     if (!node.template_id) return null;
     return { kind: 'send', templateId: node.template_id, nodeId: '' };

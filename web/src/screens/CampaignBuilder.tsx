@@ -6,6 +6,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { buildDefinition, starterNodes, type BuilderNode } from '../campaigns/builder.js';
+import { clearEditorReturn } from '../store/editorReturn.js';
 import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor } from '../ui/kit.js';
 
 interface Template {
@@ -74,7 +75,14 @@ export function CampaignBuilder() {
         title="Campaigns"
         subtitle="Design a multi-step journey: trigger → wait → branch → action."
         actions={
-          <Button data-testid="design-email" variant="secondary" onClick={() => navigate('/editor')}>
+          <Button
+            data-testid="design-email"
+            variant="secondary"
+            onClick={() => {
+              clearEditorReturn(); // standalone design → Back goes to the template library
+              navigate('/editor');
+            }}
+          >
             Design email
           </Button>
         }

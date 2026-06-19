@@ -145,7 +145,7 @@ export function Login() {
                 placeholder={isRegister ? 'at least 8 characters' : '••••••••'}
               />
             </div>
-            <Button data-testid="login-submit" type="submit" class="w-full" disabled={busy}>
+            <Button data-testid="login-submit" type="submit" class="w-full" loading={busy} disabled={busy}>
               {isRegister ? 'Create account' : 'Sign in'}
             </Button>
           </form>

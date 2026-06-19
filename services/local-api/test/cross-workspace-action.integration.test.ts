@@ -106,6 +106,7 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
     ]);
     await world.pool.query('DELETE FROM segments WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
     await world.pool.query('DELETE FROM profiles WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
+    await world.pool.query('DELETE FROM domain_senders WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
     await world.pool.query('DELETE FROM sending_domains WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
     await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = ANY($1)', [
       [WS_A, WS_B],
@@ -170,9 +171,18 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
       [SEG_A, PROF_A, WS_A],
     );
     await world.pool.query(
-      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html, subject) VALUES ($1,$2,'A tpl','<mjml/>','<html/>','Hello')",
+      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html, subject, from_selected) VALUES ($1,$2,'A tpl','<mjml/>','<html/>','Hello',true)",
       [TPL_A, WS_A],
     );
+    // The email needs a real From sender (no no-reply fallback) to be sendable.
+    const sndA = await world.pool.query<{ id: string }>(
+      "INSERT INTO domain_senders (workspace_id, domain, name, email) VALUES ($1,'mail.a.test','A','a@mail.a.test') RETURNING id",
+      [WS_A],
+    );
+    await world.pool.query('UPDATE email_templates SET sender_id = $2 WHERE id = $1', [
+      TPL_A,
+      sndA.rows[0]!.id,
+    ]);
     await world.pool.query(
       `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, status)
        VALUES ($1,$2,'A blast',$3,'segment',$4,'draft')`,

@@ -4,6 +4,7 @@
 // (Visual redesign; all data-testid attributes preserved.)
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
+import { sessionStore } from '../store/session.js';
 import { navigate } from '../router.js';
 import {
   Badge,
@@ -223,15 +224,32 @@ interface ColumnConfig {
   v?: number; // schema version (see loadCols migration)
   order: string[]; // e.g. ['email_status', 'external_id', 'attr:tier'] — order = display order
 }
-const COLS_KEY = 'cdp.profileColumns';
+// Profile column prefs are PER-WORKSPACE: attributes differ between workspaces,
+// and a super-admin switching companies must not carry one workspace's column
+// selection into another (tenant-scoped UI state). Keyed by the active
+// workspace id; the old GLOBAL key is migrated into the current workspace once.
+const COLS_KEY_PREFIX = 'cdp.profileColumns';
+const LEGACY_COLS_KEY = 'cdp.profileColumns'; // pre-v0.28 unscoped (global) key
+const colsKey = (workspaceId: string | null): string => `${COLS_KEY_PREFIX}:${workspaceId ?? 'none'}`;
 const COLS_VERSION = 2; // bumped when Status became a configurable column
 // All configurable columns (Status, External ID, Created, attributes) share one
 // budget, so hiding one frees a slot for another.
 const MAX_COLS = 6;
 const DEFAULT_ORDER = [STATUS_COL, EXT_COL];
-function loadCols(): ColumnConfig {
+function loadCols(workspaceId: string | null): ColumnConfig {
   try {
-    const raw = globalThis.localStorage?.getItem(COLS_KEY);
+    const ls = globalThis.localStorage;
+    let raw = ls?.getItem(colsKey(workspaceId));
+    if (!raw && ls) {
+      // One-time migration: inherit the old GLOBAL prefs into THIS workspace,
+      // then drop the global key so OTHER workspaces don't inherit it too.
+      const legacy = ls.getItem(LEGACY_COLS_KEY);
+      if (legacy) {
+        ls.setItem(colsKey(workspaceId), legacy);
+        ls.removeItem(LEGACY_COLS_KEY);
+        raw = legacy;
+      }
+    }
     if (raw) {
       const c = JSON.parse(raw) as Partial<ColumnConfig> & { showExtId?: boolean; attrCols?: string[] };
       if (Array.isArray(c.order)) {
@@ -298,7 +316,10 @@ export function ProfileExplorer() {
 
   // Configurable, reorderable table columns (persisted): External ID + up to 3
   // attribute columns, in a user-defined order.
-  const [cols, setCols] = useState<ColumnConfig>(loadCols);
+  // Column prefs are scoped to the active workspace (AppShell re-keys this screen
+  // by workspace id, so a workspace switch remounts → reloads the right prefs).
+  const workspaceId = sessionStore.get().workspaceId;
+  const [cols, setCols] = useState<ColumnConfig>(() => loadCols(workspaceId));
   const [colsOpen, setColsOpen] = useState(false);
   const [colSearch, setColSearch] = useState('');
   // Close the column picker on any click/escape outside its popover.
@@ -319,25 +340,43 @@ export function ProfileExplorer() {
     };
   }, [colsOpen]);
   const [allAttrKeys, setAllAttrKeys] = useState<string[]>([]);
+  // True once the workspace's real attribute keys have loaded (success), so we
+  // can safely prune stale persisted columns. NOT set on a fetch error (we must
+  // not prune when the authoritative list is unknown).
+  const [attrKeysLoaded, setAttrKeysLoaded] = useState(false);
   useEffect(() => {
     try {
-      globalThis.localStorage?.setItem(COLS_KEY, JSON.stringify({ v: COLS_VERSION, order: cols.order }));
+      globalThis.localStorage?.setItem(colsKey(workspaceId), JSON.stringify({ v: COLS_VERSION, order: cols.order }));
     } catch {
       /* ignore */
     }
-  }, [cols]);
+  }, [cols, workspaceId]);
   // Exhaustive list of attribute keys in the workspace (server DISTINCT), so the
   // picker isn't limited to the loaded page. Reloadable so a newly-created
   // profile's attribute keys appear in the picker without a page refresh.
   const reloadAttrKeys = () =>
     api
       .get<{ keys: string[] }>('/profiles/attribute-keys')
-      .then((r) => setAllAttrKeys(r.keys))
-      .catch(() => setAllAttrKeys([]));
+      .then((r) => {
+        setAllAttrKeys(r.keys);
+        setAttrKeysLoaded(true);
+      })
+      .catch(() => undefined); // keep the prior list; never prune on a fetch error
   useEffect(() => {
     void reloadAttrKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segmentId]);
+  // Self-heal: once the workspace's real attribute keys are known, drop any
+  // enabled ATTRIBUTE column whose key no longer exists (e.g. after a data
+  // cleanup) — so the picker never shows attributes that aren't there. Built-in
+  // columns (Status / External ID / Created) are always kept.
+  useEffect(() => {
+    if (!attrKeysLoaded) return;
+    setCols((c) => {
+      const pruned = c.order.filter((id) => !id.startsWith(ATTR_PREFIX) || allAttrKeys.includes(attrKeyOf(id)));
+      return pruned.length === c.order.length ? c : { v: COLS_VERSION, order: pruned };
+    });
+  }, [attrKeysLoaded, allAttrKeys]);
 
   const enabledCol = (id: string) => cols.order.includes(id);
   const toggleCol = (id: string) =>

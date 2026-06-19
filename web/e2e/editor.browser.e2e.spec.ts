@@ -37,21 +37,21 @@ test('the designer renders and emits MJML rooted at <mjml>', async ({ page }) =>
   expect(mjml).not.toMatch(/<!DOCTYPE|<html/i);
 });
 
-test('duplicate / delete an element via the Actions dropdown', async ({ page }) => {
+test('duplicate / delete an element via the per-node Actions menu in the Structure sidebar', async ({ page }) => {
   await openDesigner(page);
 
   await page.getByTestId('toolbox-image').click();
   await expect(page.getByTestId('canvas-element')).toHaveCount(1);
 
-  // Select it → open the Actions menu → Duplicate clones it.
-  await page.getByTestId('canvas-element').first().click();
-  await page.getByTestId('node-actions').click();
+  // Each Structure (Navigator) item carries its own round actions menu. Open the
+  // element's menu → Duplicate clones it. (The dropdown is portaled to <body>, so
+  // the menu items are matched at page level.)
+  await page.getByTestId('nav-element').first().getByTestId('node-actions').click();
   await page.getByTestId('duplicate-node').click();
   await expect(page.getByTestId('canvas-element')).toHaveCount(2);
 
-  // Actions → Delete removes the selected element.
-  await page.getByTestId('canvas-element').last().click();
-  await page.getByTestId('node-actions').click();
+  // The last element's menu → Delete removes it.
+  await page.getByTestId('nav-element').last().getByTestId('node-actions').click();
   await page.getByTestId('delete-node').click();
   await expect(page.getByTestId('canvas-element')).toHaveCount(1);
 });
@@ -400,6 +400,51 @@ test('text editor: adding a link via the styled dialog applies to the selection'
   // …and the updated URL survives into the emitted MJML once the edit commits.
   await page.getByTestId('template-name').click(); // blur the editable → save
   await expect(page.getByTestId('mjml-output')).toHaveValue(/https:\/\/example\.com\/updated/);
+});
+
+test('text editor: text color + highlight apply to a partial selection and survive into MJML', async ({ page }) => {
+  await openDesigner(page);
+  await page.getByTestId('toolbox-text').click();
+
+  const editable = page.getByTestId('text-editable');
+  await editable.click();
+  await page.getByTestId('rte-toolbar').waitFor();
+
+  // Select only the FIRST HALF of the first text run (partial coloring).
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="text-editable"]')!;
+    const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode() as Text;
+    const end = Math.max(1, Math.floor(node.length / 2));
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, end);
+    sel.addRange(range);
+  });
+
+  // Pick a text color via the swatch's native input (dispatch input as the picker would).
+  await page.evaluate(() => {
+    const input = document.querySelector('[data-testid="rte-text-color"]') as HTMLInputElement;
+    input.value = '#ff0000';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  // The colored run exists in the editable DOM (a span, not the whole block).
+  await expect(editable.locator('span[style*="rgb(255, 0, 0)"]')).toHaveCount(1);
+
+  // Highlight the same run.
+  await page.evaluate(() => {
+    const input = document.querySelector('[data-testid="rte-bg-color"]') as HTMLInputElement;
+    input.value = '#00ff00';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(editable.locator('span[style*="background-color: rgb(0, 255, 0)"]')).toHaveCount(1);
+
+  // Blur to commit → both colors survive into the emitted MJML (inline on mj-text).
+  await page.getByTestId('template-name').click();
+  const mjml = await page.getByTestId('mjml-output').inputValue();
+  expect(mjml).toMatch(/color:\s*rgb\(255, 0, 0\)/);
+  expect(mjml).toMatch(/background-color:\s*rgb\(0, 255, 0\)/);
 });
 
 test('text editor: lists are visible at design time and the toolbar clamps to the canvas', async ({ page }) => {

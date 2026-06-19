@@ -66,6 +66,16 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
     }
   });
 
+  it('GET shows a re-affirm confirmation page and changes NOTHING (prefetch-safe)', async () => {
+    const res = await handler({ httpMethod: 'GET', rawPath: '/unsubscribe', queryStringParameters: { workspace_id: wsA, email } });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers?.['content-type']).toContain('text/html');
+    expect(res.body).toContain('confirm-unsubscribe'); // the "Yes, unsubscribe" button
+    // A GET must NOT opt anyone out (mail clients/proxies prefetch links).
+    expect(await suppressed(admin, wsA)).toBe(false);
+    expect(await unsubAttr(admin, wsA)).toBe(null);
+  });
+
   it('one-click POST unsubscribe in A suppresses A but NOT B', async () => {
     const res = await handler({
       httpMethod: 'POST',
@@ -80,6 +90,12 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
 
     expect(await suppressed(admin, wsA)).toBe(true);
     expect(await suppressed(admin, wsB)).toBe(false);
+
+    // …and it's recorded in the workspace Activity log (scoped to A).
+    const act = await admin.query("SELECT source, type FROM activity_log WHERE workspace_id = $1", [wsA]);
+    expect(act.rows.some((r) => r.source === 'unsubscribe' && r.type === 'unsubscribe')).toBe(true);
+    const actB = await admin.query('SELECT 1 FROM activity_log WHERE workspace_id = $1', [wsB]);
+    expect(actB.rowCount).toBe(0);
   });
 
   it('flags the profile attribute unsubscribed=true in A only (not B)', async () => {

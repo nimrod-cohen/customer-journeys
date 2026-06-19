@@ -10,7 +10,7 @@
 //   - SES SendEmail is called ONLY on the all-pass 'send' path.
 //   - On a send, messages_log + usage_counters + outbox-mark-sent commit
 //     together (one tx) — a forced failure rolls back all three.
-import type { SendEmailInput, SesEmailClient } from '@cdp/email';
+import { buildUnsubscribeUrl, type SendEmailInput, type SesEmailClient } from '@cdp/email';
 import {
   decideDispatch,
   windowStart,
@@ -135,6 +135,28 @@ export async function dispatchOutbox(
     if (!ws) return { result: 'noop', reason: 'workspace not found' };
     const linkTrackingOn = ws.settings?.['link_tracking'] === true;
 
+    // Sending identity: the gate (canSend) + the no-reply@<domain> fallback
+    // historically read `workspaces.sending_identity` (§10A). The current model
+    // verifies sending domains per-row in `sending_domains`, so derive the
+    // effective identity from a VERIFIED sending domain — otherwise a workspace
+    // whose domain was verified through the per-domain flow is wrongly refused and
+    // has no from_domain. Falls back to any legacy workspace identity (older data).
+    const legacyIdentity = (ws.sending_identity ?? {}) as {
+      verified?: boolean;
+      from_domain?: string;
+      config_set?: string;
+    };
+    const { rows: verifiedDomains } = await deps.reader.query<{ domain: string }>(
+      `SELECT domain FROM sending_domains WHERE workspace_id = $1 AND verified = true ORDER BY domain LIMIT 1`,
+      [workspaceId],
+    );
+    const fromDomain = verifiedDomains[0]?.domain ?? legacyIdentity.from_domain;
+    const sendingIdentity = {
+      verified: verifiedDomains.length > 0 || legacyIdentity.verified === true,
+      ...(fromDomain ? { from_domain: fromDomain } : {}),
+      ...(legacyIdentity.config_set ? { config_set: legacyIdentity.config_set } : {}),
+    };
+
     const { rows: profRows } = await deps.reader.query<{
       id: string;
       email: string | null;
@@ -194,7 +216,16 @@ export async function dispatchOutbox(
     // The recipient's own data populates the `customer.*` namespace; an explicit
     // per-send `payload.merge` provides any extra tags. Profile-derived customer
     // values are authoritative (override a stale payload customer key).
-    const merge = { ...asStringRecord(payload['merge']), ...customerMerge(profile) };
+    const merge: Record<string, string> = { ...asStringRecord(payload['merge']), ...customerMerge(profile) };
+    // `{{unsubscribe}}` / `{{unsubscribe_url}}` resolve to THIS recipient's
+    // workspace-scoped unsubscribe link (the page re-affirms before opting out;
+    // confirming sets the profile `unsubscribed = true`). unsubscribe_url is the
+    // raw URL (for a custom-text link); unsubscribe is a ready-made anchor.
+    if (profile.email) {
+      const unsubUrl = buildUnsubscribeUrl({ baseUrl: deps.unsubscribeBaseUrl, workspaceId, email: profile.email });
+      merge.unsubscribe_url = unsubUrl;
+      merge.unsubscribe = `<a href="${unsubUrl}">Unsubscribe</a>`;
+    }
     const frequencyCapPerDays =
       typeof payload['frequency_cap_per_days'] === 'number'
         ? (payload['frequency_cap_per_days'] as number)
@@ -243,7 +274,7 @@ export async function dispatchOutbox(
     }
 
     const ctx: DispatchContext = {
-      workspace: { id: ws.id, status: ws.status, sending_identity: ws.sending_identity },
+      workspace: { id: ws.id, status: ws.status, sending_identity: sendingIdentity },
       profile: { id: profile.id, email: profile.email },
       template: { compiledHtml },
       subject,

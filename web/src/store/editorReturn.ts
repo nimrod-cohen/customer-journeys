@@ -15,12 +15,49 @@ interface EditorReturn {
   readonly createAs?: 'copy';
 }
 
-let pending: EditorReturn | null = null;
+// The return context is PERSISTED in sessionStorage so it survives a page reload
+// inside the editor: a refresh used to wipe this module's memory, and the editor's
+// Back button then fell back to the template library instead of the originating
+// broadcast/campaign. sessionStorage is per-tab and cleared when the tab closes —
+// the right lifetime for "where did I come from in this tab".
+const STORAGE_KEY = 'cdp.editorReturn';
+
+function loadPending(): EditorReturn | null {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as EditorReturn) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storePending(v: EditorReturn | null): void {
+  try {
+    if (v) globalThis.sessionStorage?.setItem(STORAGE_KEY, JSON.stringify(v));
+    else globalThis.sessionStorage?.removeItem(STORAGE_KEY);
+  } catch {
+    /* storage unavailable (private mode / tests) — in-memory only */
+  }
+}
+
+let pending: EditorReturn | null = loadPending();
 let returnedTemplateId: string | null = null;
 
 /** Record where the editor should return after saving (set before navigating to /editor). */
 export function setEditorReturn(returnPath: string, opts?: { createAs?: 'copy' }): void {
   pending = opts?.createAs ? { returnPath, createAs: opts.createAs } : { returnPath };
+  storePending(pending);
+}
+
+/**
+ * Clear any return context. Standalone editor opens (the template library, the
+ * "Design email" shortcuts) MUST call this so a return left over from an
+ * abandoned broadcast/campaign flow can't mislabel the Back button or send the
+ * user to the wrong place.
+ */
+export function clearEditorReturn(): void {
+  pending = null;
+  storePending(null);
 }
 
 /** Peek the pending return context WITHOUT consuming it (autosave reads createAs). */
@@ -32,6 +69,7 @@ export function peekEditorReturn(): EditorReturn | null {
 export function takeEditorReturn(): EditorReturn | null {
   const r = pending;
   pending = null;
+  storePending(null);
   return r;
 }
 
@@ -45,6 +83,25 @@ export function takeReturnedTemplate(): string | null {
   const id = returnedTemplateId;
   returnedTemplateId = null;
   return id;
+}
+
+// ── Returned-to marker ───────────────────────────────────────────────────────
+// The originating screen (e.g. the broadcast wizard) uses this to restore the
+// right step when the editor comes back — even when NO template was saved (the
+// returnedTemplateId is null then), so we can't rely on that alone. In-memory:
+// it only needs to survive the single navigation back, not a refresh.
+let returnedToPath: string | null = null;
+
+/** The editor records WHERE it returned, so that screen can restore its context. */
+export function markReturnedTo(path: string): void {
+  returnedToPath = path;
+}
+
+/** Consume the path the editor just returned to (null if not an editor return). */
+export function takeReturnedTo(): string | null {
+  const p = returnedToPath;
+  returnedToPath = null;
+  return p;
 }
 
 // ── Saved-flag across the new-template remount ───────────────────────────────

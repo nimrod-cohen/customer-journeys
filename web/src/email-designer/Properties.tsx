@@ -3,7 +3,7 @@
 // row / element / grid cell. Every commit goes through mutate() so it is undoable
 // and notifies the host.
 import type { ComponentChildren, JSX } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import {
   selectedId,
   settings,
@@ -14,10 +14,6 @@ import {
   updateRowProps,
   updateElementProps,
   updateCellProps,
-  removeRow,
-  removeElement,
-  duplicateRow,
-  duplicateElement,
   addGridCell,
   removeGridCell,
   mutate,
@@ -25,79 +21,10 @@ import {
 import { FONT_SIZE_EMS, type Align, type Border, type Radius, type Spacing } from './model.js';
 import { AssetPicker } from './AssetPicker.tsx';
 import { ImageEditor } from './ImageEditor.tsx';
-import { AlignLeft, AlignCenter, AlignRight, Copy, Trash2 } from './icons.tsx';
-import { Crop, MoreHorizontal } from 'lucide-preact';
+import { AlignLeft, AlignCenter, AlignRight } from './icons.tsx';
+import { Crop } from 'lucide-preact';
 
 type Patch = Record<string, unknown>;
-
-// ── Node actions (Duplicate / Delete) — a small dropdown menu ────────────────
-
-/**
- * The per-node actions menu shown for the selected row/element: a single
- * "Actions" button that opens a dropdown with Duplicate + Delete. Closes on an
- * outside click or Escape.
- */
-function NodeActionsMenu({ onDuplicate, onDelete }: { onDuplicate: () => void; onDelete: () => void }): JSX.Element {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    const close = (): void => setOpen(false);
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('click', close);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('click', close);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-  return (
-    <div class="nm-menu-wrap">
-      <button
-        type="button"
-        class="nm-btn"
-        data-testid="node-actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={(e) => {
-          e.stopPropagation(); // don't trip the outside-click close
-          setOpen((o) => !o);
-        }}
-      >
-        <MoreHorizontal size={14} /> Actions
-      </button>
-      {open ? (
-        <div class="nm-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            role="menuitem"
-            class="nm-menu-item"
-            data-testid="duplicate-node"
-            onClick={() => {
-              setOpen(false);
-              onDuplicate();
-            }}
-          >
-            <Copy size={13} /> Duplicate
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            class="nm-menu-item nm-danger"
-            data-testid="delete-node"
-            onClick={() => {
-              setOpen(false);
-              onDelete();
-            }}
-          >
-            <Trash2 size={13} /> Delete
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 // ── Shared field editors ─────────────────────────────────────────────────────
 
@@ -318,12 +245,6 @@ function RowPanel({ id }: { id: string }): JSX.Element {
       <PaddingField value={p.padding} onCommit={(v) => commit({ padding: v })} />
       <BorderField value={p.border} onCommit={(v) => commit({ border: v })} />
       <RadiusField value={p.radius} onCommit={(v) => commit({ radius: v })} />
-      <div class="nm-props-actions">
-        <NodeActionsMenu
-          onDuplicate={() => mutate('Duplicate row', () => duplicateRow(id))}
-          onDelete={() => mutate('Remove row', () => removeRow(id))}
-        />
-      </div>
     </div>
   );
 }
@@ -475,13 +396,6 @@ function ElementPanel({ id }: { id: string }): JSX.Element {
           </div>
         </>
       ) : null}
-
-      <div class="nm-props-actions">
-        <NodeActionsMenu
-          onDuplicate={() => mutate('Duplicate', () => duplicateElement(id))}
-          onDelete={() => mutate('Remove', () => removeElement(id))}
-        />
-      </div>
     </div>
   );
 }

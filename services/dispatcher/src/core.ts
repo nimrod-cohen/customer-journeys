@@ -281,7 +281,9 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
   return {
     from: fromAddress(ctx.workspace.sending_identity, ctx.fromEmail, ctx.fromName),
     to,
-    subject: ctx.subject,
+    // The subject is personalized too — merge tags ({{customer.*}}) render per
+    // recipient, exactly like the To and the body.
+    subject: renderTemplateBody(ctx.subject, ctx.merge),
     html: renderTemplateBody(ctx.template.compiledHtml, ctx.merge),
     ...(configSet ? { configurationSetName: configSet } : {}),
     headers: { ...headers },

@@ -80,7 +80,10 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /broadcasts': 'manage_content',
   'POST /broadcasts': 'manage_content',
   'GET /broadcasts/:id': 'manage_content',
+  'GET /broadcasts/:id/preview': 'manage_content',
   'PUT /broadcasts/:id': 'manage_content',
+  'DELETE /broadcasts/:id': 'manage_content',
+  'POST /broadcasts/:id/duplicate': 'manage_content',
   'POST /broadcasts/:id/send': 'manage_content',
 
   // --- campaigns (manage_content) ---
@@ -101,6 +104,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'PATCH /profiles/:id': 'manage_content',
   'POST /profiles/:id/merge': 'manage_content',
   'GET /profiles/:id/events': 'manage_content',
+  'POST /profiles/:id/events': 'manage_content',
   'GET /profiles/:id/delivery': 'manage_content',
   'GET /profiles/:id/segments': 'manage_content',
 

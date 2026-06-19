@@ -8,8 +8,9 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { Badge, Button, Card, EmptyState, Field, Input, Select, toneFor } from '../ui/kit.js';
+import { ActionMenu, Badge, Button, Card, EmptyState, Field, Input, Select, toneFor } from '../ui/kit.js';
 import { MergeProfileDrawer } from './MergeProfileDrawer.js';
+import { SendEventDrawer } from './SendEventDrawer.js';
 
 interface Profile {
   id: string;
@@ -84,6 +85,9 @@ export function ProfileDetail({ id }: { id: string }) {
   const [features, setFeatures] = useState<Features | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [sendingEvent, setSendingEvent] = useState(false);
+  // Bumped after a manual event is recorded so the Events tab remounts + refetches.
+  const [eventsReloadKey, setEventsReloadKey] = useState(0);
 
   const load = async () => {
     try {
@@ -119,9 +123,13 @@ export function ProfileDetail({ id }: { id: string }) {
           ← Back to profiles
         </button>
         {profile ? (
-          <Button data-testid="merge-button" variant="secondary" size="sm" onClick={() => setMerging(true)}>
-            Merge…
-          </Button>
+          <ActionMenu
+            data-testid="profile-actions"
+            items={[
+              { label: 'Send event', onSelect: () => setSendingEvent(true), 'data-testid': 'send-event-action' },
+              { label: 'Merge…', onSelect: () => setMerging(true), 'data-testid': 'merge-button' },
+            ]}
+          />
         ) : null}
       </div>
 
@@ -141,6 +149,20 @@ export function ProfileDetail({ id }: { id: string }) {
             setMerging(false);
             if (survivingId === id) void load();
             else navigate(`/profiles/${survivingId}`);
+          }}
+        />
+      ) : null}
+
+      {profile ? (
+        <SendEventDrawer
+          open={sendingEvent}
+          profileId={profile.id}
+          onClose={() => setSendingEvent(false)}
+          onSent={() => {
+            setSendingEvent(false);
+            void load(); // refresh the header stats (features recomputed server-side)
+            setEventsReloadKey((k) => k + 1);
+            setTab('events'); // show the just-recorded event
           }}
         />
       ) : null}
@@ -188,6 +210,8 @@ export function ProfileDetail({ id }: { id: string }) {
           <button
             key={t.id}
             data-testid={`tab-${t.id}`}
+            role="tab"
+            aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
             class={`-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
               tab === t.id
@@ -209,7 +233,7 @@ export function ProfileDetail({ id }: { id: string }) {
       ) : tab === 'delivery' ? (
         <DeliveryTab id={id} />
       ) : tab === 'events' ? (
-        <EventsTab id={id} />
+        <EventsTab id={id} key={eventsReloadKey} />
       ) : (
         <SegmentsTab id={id} />
       )}

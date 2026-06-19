@@ -82,8 +82,10 @@ export async function seed(): Promise<void> {
     // A template + a saved segment + a couple of profiles in WS_A. The template
     // carries a subject (the email envelope lives on the email instance) so a
     // broadcast attaching it can be sent (the send gate requires a subject).
+    // from_selected=true so a clone of this seeded template is immediately
+    // sendable (the send gate also requires an intentionally-chosen From).
     await pool.query(
-      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html, subject) VALUES ($1,$2,'Welcome','<mjml/>','<html>Hi</html>','Welcome aboard')",
+      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html, subject, from_selected) VALUES ($1,$2,'Welcome','<mjml/>','<html>Hi</html>','Welcome aboard',true)",
       [TPL_A, WS_A],
     );
     // A VERIFIED sending domain so WS_A broadcasts can be sent (the send gate).
@@ -91,6 +93,14 @@ export async function seed(): Promise<void> {
       "INSERT INTO sending_domains (workspace_id, domain, verified, verified_at) VALUES ($1,'mail.acme.test',true,now())",
       [WS_A],
     );
+    // A named sender on that domain, and point the seeded template's From at it —
+    // a broadcast's email needs a real (non-no-reply) sender + subject + To to be
+    // sendable, and a clone of this template inherits the sender_id.
+    const seededSender = await pool.query<{ id: string }>(
+      "INSERT INTO domain_senders (workspace_id, domain, name, email) VALUES ($1,'mail.acme.test','Acme Team','team@mail.acme.test') RETURNING id",
+      [WS_A],
+    );
+    await pool.query('UPDATE email_templates SET sender_id = $2 WHERE id = $1', [TPL_A, seededSender.rows[0]!.id]);
     await pool.query(
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
       [SEG_A, WS_A, SEG_A_NAME, 'manual'],

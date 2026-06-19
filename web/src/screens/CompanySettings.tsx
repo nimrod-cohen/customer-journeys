@@ -187,7 +187,7 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
                     value={renameText}
                     onInput={(e: Event) => setRenameText((e.target as HTMLInputElement).value)}
                   />
-                  <Button data-testid="rename-save" size="sm" onClick={() => void saveRename(m.workspaceId)}>
+                  <Button data-testid="rename-save" size="sm" onClick={() => saveRename(m.workspaceId)}>
                     Save
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setRenameId(null)}>
@@ -221,7 +221,7 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
                           data-testid="ws-open"
                           variant="ghost"
                           size="sm"
-                          onClick={() => void switchWorkspace(m.workspaceId)}
+                          onClick={() => switchWorkspace(m.workspaceId)}
                         >
                           Open
                         </Button>

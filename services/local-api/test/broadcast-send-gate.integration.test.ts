@@ -39,9 +39,15 @@ describeMaybe('broadcast send gate (real Postgres)', () => {
     );
     // The subject lives on the EMAIL (template), not the broadcast.
     await pool.query(
-      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html, subject) VALUES ($1,$2,'T','<mjml/>','<html/>','Hello there')",
+      "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html, subject, from_selected) VALUES ($1,$2,'T','<mjml/>','<html/>','Hello there',true)",
       [TPL, WS],
     );
+    // The email needs a real From sender (no no-reply fallback) to be sendable.
+    const snd = await pool.query<{ id: string }>(
+      "INSERT INTO domain_senders (workspace_id, domain, name, email) VALUES ($1,'mail.x.test','T','t@mail.x.test') RETURNING id",
+      [WS],
+    );
+    await pool.query('UPDATE email_templates SET sender_id = $2 WHERE id = $1', [TPL, snd.rows[0]!.id]);
     await pool.query(
       `INSERT INTO broadcasts (id, workspace_id, name, template_id, audience_kind, audience_ref, status)
        VALUES ($1,$2,'B',$3,'manual',$4,'draft')`,
@@ -64,6 +70,7 @@ describeMaybe('broadcast send gate (real Postgres)', () => {
     await pool.query('DELETE FROM segments WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM email_templates WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM profiles WHERE workspace_id = $1', [WS]);
+    await pool.query('DELETE FROM domain_senders WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM sending_domains WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM workspaces WHERE id = $1', [WS]);

@@ -26,6 +26,10 @@ supabase/.temp/
 .localstack/
 volume/
 
+# Playwright e2e artifacts (ephemeral, cleared by db:reset:dev)
+web/test-results/
+web/playwright-report/
+
 # a5c run state
 .a5c/runs/*/state
 

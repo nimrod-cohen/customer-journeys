@@ -1,6 +1,6 @@
 {
   "name": "customer-journeys",
-  "version": "0.11.2",
+  "version": "0.29.0",
   "private": true,
   "description": "Serverless multi-tenant marketing CDP (monorepo)",
   "packageManager": "pnpm@9.15.9",
@@ -17,6 +17,7 @@
     "format": "prettier --write .",
     "db:start": "supabase start --workdir packages/db",
     "db:migrate": "supabase db reset --workdir packages/db",
+    "db:reset:dev": "node scripts/reset-dev-db.mjs",
     "localstack:start": "docker compose -f docker-compose.yml up -d"
   },
   "devDependencies": {

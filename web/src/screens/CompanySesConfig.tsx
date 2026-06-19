@@ -117,11 +117,11 @@ export function CompanySesConfig() {
           />
         </Field>
         <div class="flex items-center gap-3">
-          <Button data-testid="ses-save" onClick={() => void save()} disabled={busy || !canSave}>
+          <Button data-testid="ses-save" onClick={() => save()} disabled={busy || !canSave}>
             {busy ? 'Saving…' : 'Save SES credentials'}
           </Button>
           {configured ? (
-            <Button data-testid="ses-remove" variant="danger" size="sm" onClick={() => void remove()}>
+            <Button data-testid="ses-remove" variant="danger" size="sm" onClick={() => remove()}>
               Remove
             </Button>
           ) : null}

@@ -86,7 +86,7 @@ export function SendingDomainDetail({ id }: { id?: string }) {
                 if (e.key === 'Enter' && name.trim()) void create();
               }}
             />
-            <Button data-testid="save-domain" onClick={() => void create()} disabled={creating || !name.trim()}>
+            <Button data-testid="save-domain" onClick={() => create()} disabled={creating || !name.trim()}>
               Save domain
             </Button>
           </div>
@@ -251,7 +251,7 @@ function DomainEditor({ id }: { id: string }) {
             <Badge data-testid="domain-status" tone={domain.verified ? 'success' : 'warn'}>
               {domain.verified ? 'verified' : 'pending'}
             </Badge>
-            <Button data-testid="domain-remove" variant="danger" size="sm" onClick={() => void removeDomain()}>
+            <Button data-testid="domain-remove" variant="danger" size="sm" onClick={() => removeDomain()}>
               Remove
             </Button>
           </span>
@@ -330,7 +330,7 @@ function DomainEditor({ id }: { id: string }) {
                 <span class={recordStatusClass('mismatch')}>!</span> value doesn’t match
               </p>
               <div class="mt-3 flex items-center gap-3">
-                <Button data-testid="check-dns" variant="secondary" onClick={() => void check()} disabled={checking}>
+                <Button data-testid="check-dns" variant="secondary" onClick={() => check()} disabled={checking}>
                   {checkLabel}
                 </Button>
                 {checkMsg ? <span class="text-sm text-stone-600">{checkMsg}</span> : null}
@@ -372,7 +372,7 @@ function DomainEditor({ id }: { id: string }) {
                 </span>
                 <Button
                   data-testid="add-sender"
-                  onClick={() => void addSender()}
+                  onClick={() => addSender()}
                   disabled={sBusy || !sName.trim() || !sLocal.trim()}
                 >
                   Add sender
@@ -393,7 +393,7 @@ function DomainEditor({ id }: { id: string }) {
                         <span class="font-medium text-ink-900">{s.name}</span>{' '}
                         <span class="text-stone-500">&lt;{s.email}&gt;</span>
                       </span>
-                      <Button data-testid="sender-delete" variant="danger" size="sm" onClick={() => void removeSender(s)}>
+                      <Button data-testid="sender-delete" variant="danger" size="sm" onClick={() => removeSender(s)}>
                         Remove
                       </Button>
                     </li>

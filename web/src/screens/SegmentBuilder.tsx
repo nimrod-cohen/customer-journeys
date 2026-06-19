@@ -822,7 +822,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
                           variant="ghost"
                           size="sm"
                           disabled={offset === 0}
-                          onClick={() => void loadMembers(Math.max(0, offset - PAGE))}
+                          onClick={() => loadMembers(Math.max(0, offset - PAGE))}
                         >
                           ← Prev
                         </Button>
@@ -834,7 +834,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
                           variant="ghost"
                           size="sm"
                           disabled={offset + PAGE >= size}
-                          onClick={() => void loadMembers(offset + PAGE)}
+                          onClick={() => loadMembers(offset + PAGE)}
                         >
                           Next →
                         </Button>

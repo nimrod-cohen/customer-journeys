@@ -6,9 +6,12 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { setEditorReturn, takeReturnedTemplate } from '../store/editorReturn.js';
-import { Badge, Button, Card, Field, Input, PageHeader, Select, EmptyState, toneFor } from '../ui/kit.js';
+import { setEditorReturn, takeReturnedTemplate, takeReturnedTo } from '../store/editorReturn.js';
+import { ActionMenu, Badge, Button, Card, Field, Input, PageHeader, Select, EmptyState, toneFor } from '../ui/kit.js';
+import type { ActionMenuItem } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
+import { askConfirm } from '../ui/dialog.tsx';
+import { timeZoneList, zonedInputToUtcIso, utcIsoToZonedInput } from '@cdp/shared';
 
 interface Segment {
   id: string;
@@ -29,6 +32,8 @@ interface Broadcast {
   name: string;
   status: string;
   scheduled_at: string | null;
+  /** The IANA zone the send time was expressed in (null unless scheduled). */
+  scheduled_tz?: string | null;
   sent_at: string | null;
   updated_at: string | null;
   stats?: BroadcastStats;
@@ -36,16 +41,38 @@ interface Broadcast {
 
 const EDITABLE = new Set(['draft', 'scheduled']);
 
-/** "today at 8:15 AM" / "tomorrow at 10:45 AM" / "Jun 7 at 8:22 PM" + the tz abbr. */
-function whenLabel(ts: string): string {
+/** "today at 8:15 AM" / "tomorrow at 10:45 AM" / "Jun 7 at 8:22 PM" + the tz abbr.
+ *  When `tz` (an IANA zone) is given, the time + abbreviation are shown in it. */
+function whenLabel(ts: string, tz?: string | null): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return '';
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const zone = tz || undefined;
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: zone });
   const day0 = (x: Date) => Math.floor(new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime() / 86_400_000);
   const diff = day0(d) - day0(new Date());
-  const rel = diff === 0 ? 'today' : diff === 1 ? 'tomorrow' : diff === -1 ? 'yesterday' : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  const tz = new Intl.DateTimeFormat([], { timeZoneName: 'short' }).formatToParts(d).find((p) => p.type === 'timeZoneName')?.value ?? '';
-  return `${rel} at ${time}${tz ? ` (${tz})` : ''}`;
+  const rel = diff === 0 ? 'today' : diff === 1 ? 'tomorrow' : diff === -1 ? 'yesterday' : d.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: zone });
+  const tzName = new Intl.DateTimeFormat([], { timeZoneName: 'short', timeZone: zone }).formatToParts(d).find((p) => p.type === 'timeZoneName')?.value ?? '';
+  return `${rel} at ${time}${tzName ? ` (${tzName})` : ''}`;
+}
+
+/** Countdown to a future send: "in 2 days, 5 hours, 30 minutes" (top 3 units).
+ *  `nowMs` is passed in so the caller can re-render it live on a timer. */
+function untilLabel(ts: string, nowMs: number): string {
+  const target = new Date(ts).getTime();
+  if (Number.isNaN(target)) return '';
+  const secs = Math.floor((target - nowMs) / 1000);
+  if (secs <= 0) return 'sending now';
+  const unit = (n: number, s: number, label: string) => {
+    const v = Math.floor(n / s);
+    return { v, rest: n - v * s, txt: v ? `${v} ${label}${v === 1 ? '' : 's'}` : '' };
+  };
+  const d = unit(secs, 86_400, 'day');
+  const h = unit(d.rest, 3_600, 'hour');
+  const m = unit(h.rest, 60, 'minute');
+  const parts = [d.txt, h.txt, m.txt].filter(Boolean);
+  // Always show at least minutes (e.g. "in 0 minutes" → show "in 1 minute" floor).
+  if (parts.length === 0) parts.push('less than a minute');
+  return `in ${parts.join(', ')}`;
 }
 
 /** "a day ago" / "3 hours ago" via Intl.RelativeTimeFormat. */
@@ -68,11 +95,6 @@ function pct(n: number, d: number): string {
   return d > 0 ? `${((n / d) * 100).toFixed(1)}%` : '—';
 }
 
-function fmtDate(ts: string | null): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
-}
 
 // --- List screen ------------------------------------------------------------
 
@@ -82,6 +104,16 @@ export function BroadcastComposer() {
   // sending domain. We learn this up front so we can warn + disable Send rather
   // than letting the user click into the refusal. null = not yet known.
   const [hasVerifiedDomain, setHasVerifiedDomain] = useState<boolean | null>(null);
+  // The broadcast currently being sent → lock + spin its Send button so it can't
+  // be double-clicked while the request is in flight.
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  // Ticks once a minute so the "in X days, Y hours" countdown on scheduled
+  // broadcasts stays live without a reload.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   const reload = async () => {
     const b = await api.get<{ broadcasts: Broadcast[] }>('/broadcasts');
@@ -96,6 +128,8 @@ export function BroadcastComposer() {
   }, []);
 
   const send = async (id: string) => {
+    if (sendingId) return; // a send is already in flight
+    setSendingId(id);
     try {
       const res = await api.post<{ result: { result?: string } }>(`/broadcasts/${id}/send`, {});
       const outcome = res.result?.result ?? 'queued';
@@ -104,6 +138,37 @@ export function BroadcastComposer() {
     } catch (e) {
       // e.g. 409 when the workspace has no verified sending domain.
       showToast((e as { error?: string })?.error ?? 'Could not send the broadcast.', { tone: 'error' });
+    } finally {
+      setSendingId(null);
+    }
+  };
+
+  // Duplicate any broadcast → a fresh DRAFT (its own email copy) you can tweak/resend.
+  const duplicate = async (id: string) => {
+    try {
+      await api.post(`/broadcasts/${id}/duplicate`, {});
+      showToast('Broadcast duplicated as a draft.', { tone: 'success' });
+      await reload();
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not duplicate the broadcast.', { tone: 'error' });
+    }
+  };
+
+  // Delete an UNSENT broadcast (draft/scheduled). Styled confirm — never native.
+  const remove = async (id: string, name: string) => {
+    const ok = await askConfirm({
+      title: 'Delete broadcast?',
+      message: `“${name}” will be permanently deleted. This can't be undone.`,
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await api.del(`/broadcasts/${id}`);
+      showToast('Broadcast deleted.', { tone: 'success' });
+      await reload();
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not delete the broadcast.', { tone: 'error' });
     }
   };
 
@@ -118,9 +183,6 @@ export function BroadcastComposer() {
         subtitle="Send a one-off email to a segment or manual group."
         actions={
           <span class="flex items-center gap-2">
-            <Button data-testid="design-email" variant="secondary" onClick={() => navigate('/editor')}>
-              Design email
-            </Button>
             <Button data-testid="new-broadcast" onClick={() => navigate('/broadcasts/new')}>
               New broadcast
             </Button>
@@ -160,7 +222,7 @@ export function BroadcastComposer() {
             const editable = EDITABLE.has(b.status);
             const subtitle =
               b.status === 'scheduled' && b.scheduled_at
-                ? `Scheduled to send ${whenLabel(b.scheduled_at)}`
+                ? `Scheduled to send ${whenLabel(b.scheduled_at, b.scheduled_tz)} · ${untilLabel(b.scheduled_at, nowMs)}`
                 : b.status === 'sent' && b.sent_at
                   ? `Sent ${whenLabel(b.sent_at)}`
                   : b.status === 'sending'
@@ -219,23 +281,46 @@ export function BroadcastComposer() {
                       </span>
                     </span>
                   ) : null}
-                  {editable ? (
-                    <Button data-testid="broadcast-edit" variant="secondary" size="sm" onClick={() => navigate(`/broadcasts/${b.id}`)}>
-                      {b.status === 'scheduled' ? 'Continue editing' : 'Edit'}
-                    </Button>
-                  ) : null}
-                  {editable ? (
-                    <Button
-                      data-testid="send-broadcast"
-                      variant="secondary"
-                      size="sm"
-                      disabled={blockSend}
-                      title={blockSend ? 'Verify a sending domain in Workspace settings before sending.' : undefined}
-                      onClick={() => send(b.id)}
-                    >
-                      Send
-                    </Button>
-                  ) : null}
+                  {/* All row actions consolidated into one kebab (⋮) menu. Edit/Send/
+                      Delete only for unsent (draft/scheduled); Duplicate always. */}
+                  <ActionMenu
+                    data-testid="broadcast-actions"
+                    items={[
+                      ...(editable
+                        ? [
+                            {
+                              label: b.status === 'scheduled' ? 'Continue editing' : 'Edit',
+                              onSelect: () => navigate(`/broadcasts/${b.id}`),
+                              'data-testid': 'broadcast-edit',
+                            } satisfies ActionMenuItem,
+                          ]
+                        : []),
+                      {
+                        label: 'Duplicate',
+                        onSelect: () => duplicate(b.id),
+                        'data-testid': 'broadcast-duplicate',
+                      },
+                      ...(editable
+                        ? [
+                            {
+                              label: 'Send',
+                              onSelect: () => send(b.id),
+                              disabled: blockSend || sendingId !== null,
+                              ...(blockSend
+                                ? { title: 'Verify a sending domain in Workspace settings before sending.' }
+                                : {}),
+                              'data-testid': 'send-broadcast',
+                            } satisfies ActionMenuItem,
+                            {
+                              label: 'Delete',
+                              onSelect: () => remove(b.id, b.name),
+                              danger: true,
+                              'data-testid': 'broadcast-delete',
+                            } satisfies ActionMenuItem,
+                          ]
+                        : []),
+                    ]}
+                  />
                 </span>
               </li>
             );
@@ -255,14 +340,22 @@ export function BroadcastComposer() {
 
 const STEPS = ['Audience', 'Content', 'Schedule'] as const;
 
-/** Convert a stored ISO timestamp to a datetime-local input value (local time). */
-function isoToLocalInput(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+/** A scheduled send must be at least this far in the future — you can't schedule
+ *  in the past or so close the sweep can't act on it. Mirrored on the server. */
+const MIN_SCHEDULE_LEAD_MS = 5 * 60 * 1000;
+
+// DST-correct zoned↔UTC helpers + the IANA picker list now live in @cdp/shared
+// (timeZoneList / tzOffsetMs / zonedInputToUtcIso / utcIsoToZonedInput) so the
+// broadcast scheduler and campaign time math share ONE implementation (§9B).
+
+/** The browser's IANA zone — the sensible default for "send at this time". */
+const BROWSER_TZ = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+})();
 
 export function BroadcastWizard({ id }: { id?: string }) {
   const editing = Boolean(id);
@@ -276,10 +369,25 @@ export function BroadcastWizard({ id }: { id?: string }) {
   // template clones it so this broadcast's content is independently editable and
   // the library original stays pristine.
   const [attachedCopy, setAttachedCopy] = useState<{ id: string; name: string } | null>(null);
+  // The attached email's envelope (From sender / To / Subject). All three must be
+  // filled to leave the Content step — fetched whenever the instance changes.
+  const [envelope, setEnvelope] = useState<{ subject: string; sender_id: string | null; to_address: string } | null>(
+    null,
+  );
   const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>('now');
   const [scheduledAt, setScheduledAt] = useState('');
+  const [timeZone, setTimeZone] = useState(BROWSER_TZ);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // A sent/sending/cancelled broadcast is no longer editable → show a read-only
+  // preview of the email instead of the wizard (and instead of bouncing away).
+  const [viewOnly, setViewOnly] = useState(false);
+  // Ticks each minute so the "≥ 5 minutes from now" schedule check stays current.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     void Promise.all([
@@ -300,24 +408,27 @@ export function BroadcastWizard({ id }: { id?: string }) {
       .then((r) => {
         const b = r.broadcast;
         if (!EDITABLE.has(b.status)) {
-          navigate('/broadcasts');
+          setViewOnly(true); // sent/sending/cancelled → read-only preview
           return;
         }
         setName(b.name);
         setSegId(b.audience_ref ?? '');
         setTplId(b.template_id ?? '');
         if (b.scheduled_at) {
+          const tz = b.scheduled_tz || BROWSER_TZ;
           setScheduleMode('later');
-          setScheduledAt(isoToLocalInput(b.scheduled_at));
+          setTimeZone(tz);
+          setScheduledAt(utcIsoToZonedInput(b.scheduled_at, tz));
         }
-        // Returning from the email editor (Design email): select the template we
-        // just saved and jump to the Content step. Applied AFTER the broadcast's
-        // own fields so it wins over the (older) saved template_id.
+        // Returning from the email editor (Design email): jump to the Content step
+        // and select the template we just saved. Applied AFTER the broadcast's own
+        // fields so it wins over the (older) saved template_id. We land on Content
+        // whenever we came back from designing THIS broadcast's email — even if no
+        // copy was saved (returnedTo), not only when a template id came back.
         const justSaved = takeReturnedTemplate();
-        if (justSaved) {
-          setTplId(justSaved);
-          setStep(1);
-        }
+        const returnedHere = takeReturnedTo() === `/broadcasts/${id}`;
+        if (justSaved) setTplId(justSaved);
+        if (justSaved || returnedHere) setStep(1);
         // Resolve the attached template: a kind='copy' row is this broadcast's
         // working copy (shown as such in the dropdown).
         const attached = justSaved || b.template_id;
@@ -332,6 +443,28 @@ export function BroadcastWizard({ id }: { id?: string }) {
       })
       .catch(() => navigate('/broadcasts'));
   }, [id]);
+
+  // Load the attached email's envelope (From/To/Subject) so the Content step can
+  // require all three before advancing. Re-runs whenever the instance changes
+  // (picked a template, designed one, or returned from the editor).
+  useEffect(() => {
+    if (!attachedCopy) {
+      setEnvelope(null);
+      return;
+    }
+    void api
+      .get<{ template: { subject: string | null; sender_id: string | null; to_address: string | null } }>(
+        `/templates/${attachedCopy.id}`,
+      )
+      .then((r) =>
+        setEnvelope({
+          subject: r.template.subject ?? '',
+          sender_id: r.template.sender_id ?? null,
+          to_address: r.template.to_address ?? '',
+        }),
+      )
+      .catch(() => setEnvelope(null));
+  }, [attachedCopy?.id]);
 
   /**
    * Template picked in the dropdown. A LIBRARY template is CLONED on the spot —
@@ -355,18 +488,30 @@ export function BroadcastWizard({ id }: { id?: string }) {
   };
 
   /**
+   * Discard the chosen email and start over (choose a different template, or a
+   * blank design). The previously cloned working copy simply becomes unreferenced
+   * — it was never a library entry — and the next choice replaces it.
+   */
+  const resetEmail = (): void => {
+    setAttachedCopy(null);
+    setTplId('');
+  };
+
+  /**
    * Open the email editor to design content for THIS broadcast. We persist the
    * broadcast as a draft first (so the wizard state survives the round-trip and
    * we have a URL to return to), then hand the editor a return path. On save the
    * editor comes back here with the new template selected.
    */
   const designEmail = async () => {
+    const scheduledIso = scheduleMode === 'later' && scheduledAt ? zonedInputToUtcIso(scheduledAt, timeZone) : null;
     const body = {
       name: name || 'Untitled broadcast',
       audience_kind: 'segment',
       audience_ref: segId,
       template_id: tplId || null,
-      scheduled_at: scheduleMode === 'later' && scheduledAt ? new Date(scheduledAt).toISOString() : null,
+      scheduled_at: scheduledIso,
+      scheduled_tz: scheduledIso ? timeZone : null,
     };
     let bid = id;
     if (id) {
@@ -392,33 +537,78 @@ export function BroadcastWizard({ id }: { id?: string }) {
       ? `${attachedCopy.name} (this broadcast's copy)`
       : (templates.find((t) => t.id === tplId)?.name ?? '—');
 
-  const canNext = step === 0 ? name.trim().length > 0 && segId !== '' : step === 1 ? tplId !== '' : true;
-  const canSave =
-    name.trim().length > 0 && segId !== '' && tplId !== '' && (scheduleMode === 'now' || scheduledAt !== '');
+  // Per-step validity → which steps the breadcrumbs can jump to (you can always
+  // go back; you can jump forward only as far as the entered data is valid).
+  const step0Valid = name.trim().length > 0 && segId !== '';
+  // To leave Content, the attached email must have ALL of From (a real named
+  // sender — no no-reply fallback), To, and Subject filled. The list of what's
+  // still missing drives the inline hint.
+  const missingEnvelope: string[] = !attachedCopy
+    ? ['an email']
+    : [
+        envelope?.sender_id ? null : 'From',
+        envelope && envelope.to_address.trim() !== '' ? null : 'To',
+        envelope && envelope.subject.trim() !== '' ? null : 'Subject',
+      ].filter((x): x is string => x !== null);
+  const step1Valid = tplId !== '' && missingEnvelope.length === 0;
+  const canReach = (target: number): boolean =>
+    target === 0 ? true : target === 1 ? step0Valid : step0Valid && step1Valid;
 
-  const save = async () => {
+  const canNext = step === 0 ? step0Valid : step === 1 ? step1Valid : true;
+  // A scheduled send must be ≥ 5 minutes from now (`nowMs` re-renders each minute,
+  // and the server re-checks on save). The picker's `min` is now+5min in the zone.
+  const scheduledMs =
+    scheduleMode === 'later' && scheduledAt ? new Date(zonedInputToUtcIso(scheduledAt, timeZone)).getTime() : NaN;
+  const scheduleTooEarly =
+    scheduleMode === 'later' &&
+    scheduledAt !== '' &&
+    !Number.isNaN(scheduledMs) &&
+    scheduledMs < nowMs + MIN_SCHEDULE_LEAD_MS;
+  const minScheduledInput = utcIsoToZonedInput(new Date(nowMs + MIN_SCHEDULE_LEAD_MS).toISOString(), timeZone);
+  const canSave =
+    step0Valid && step1Valid && (scheduleMode === 'now' || (scheduledAt !== '' && !scheduleTooEarly));
+
+  // Finish the wizard one of three ways:
+  //  - 'now'      → persist + send immediately (status flips to sending/sent),
+  //  - 'schedule' → persist with a send time (status 'scheduled'),
+  //  - 'draft'    → persist with NO send time and don't send (status 'draft' —
+  //                 a broadcast created but not sent or scheduled).
+  // A send failure (no verified domain, missing subject) is surfaced and the
+  // broadcast remains saved (as a draft) so the user can fix it.
+  const finish = async (action: 'now' | 'schedule' | 'draft') => {
     setSaving(true);
     setError('');
     try {
+      const scheduledIso = action === 'schedule' && scheduledAt ? zonedInputToUtcIso(scheduledAt, timeZone) : null;
       const body = {
         name: name || 'Untitled broadcast',
         audience_kind: 'segment',
         audience_ref: segId,
         template_id: tplId,
-        scheduled_at: scheduleMode === 'later' && scheduledAt ? new Date(scheduledAt).toISOString() : null,
+        scheduled_at: scheduledIso,
+        scheduled_tz: scheduledIso ? timeZone : null,
       };
+      let bid = id;
       if (editing && id) {
         await api.put(`/broadcasts/${id}`, { body });
       } else {
-        await api.post('/broadcasts', { body });
+        const r = await api.post<{ broadcast: { id: string } }>('/broadcasts', { body });
+        bid = r.broadcast.id;
+      }
+      if (action === 'now' && bid) {
+        const res = await api.post<{ result: { result?: string } }>(`/broadcasts/${bid}/send`, {});
+        showToast(`Broadcast ${res.result?.result ?? 'sent'}.`, { tone: 'success' });
       }
       navigate('/broadcasts');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save');
+      setError((e as { error?: string })?.error ?? (e instanceof Error ? e.message : 'Failed to save'));
     } finally {
       setSaving(false);
     }
   };
+
+  // Sent/sending/cancelled broadcasts aren't editable — show the email preview.
+  if (viewOnly && id) return <BroadcastPreview id={id} />;
 
   return (
     <section data-testid="broadcast-wizard">
@@ -430,26 +620,47 @@ export function BroadcastWizard({ id }: { id?: string }) {
         subtitle="Pick an audience and content, then send now or schedule."
       />
 
-      {/* Step indicator */}
+      {/* Step indicator — click any reachable step to jump straight to it. */}
       <ol class="mb-5 flex items-center gap-2 text-sm">
-        {STEPS.map((label, i) => (
-          <li key={label} class="flex items-center gap-2">
-            <span
-              data-testid={`wizard-step-${i}`}
-              class={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                i === step
-                  ? 'bg-brand-600 text-white'
-                  : i < step
-                    ? 'bg-brand-100 text-brand-700'
-                    : 'bg-stone-100 text-stone-400'
-              }`}
-            >
-              {i + 1}
-            </span>
-            <span class={i === step ? 'font-semibold text-ink-900' : 'text-stone-500'}>{label}</span>
-            {i < STEPS.length - 1 ? <span class="text-stone-300">›</span> : null}
-          </li>
-        ))}
+        {STEPS.map((label, i) => {
+          const reachable = canReach(i);
+          return (
+            <li key={label} class="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid={`wizard-step-${i}`}
+                disabled={!reachable}
+                onClick={() => reachable && setStep(i)}
+                class={`flex items-center gap-2 rounded-lg ${reachable ? 'cursor-pointer' : 'cursor-not-allowed'}`}
+                title={reachable ? `Go to ${label}` : `Complete earlier steps first`}
+              >
+                <span
+                  class={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                    i === step
+                      ? 'bg-brand-600 text-white'
+                      : i < step
+                        ? 'bg-brand-100 text-brand-700'
+                        : 'bg-stone-100 text-stone-400'
+                  }`}
+                >
+                  {i + 1}
+                </span>
+                <span
+                  class={
+                    i === step
+                      ? 'font-semibold text-ink-900'
+                      : reachable
+                        ? 'text-stone-600 hover:text-ink-900'
+                        : 'text-stone-400'
+                  }
+                >
+                  {label}
+                </span>
+              </button>
+              {i < STEPS.length - 1 ? <span class="text-stone-300">›</span> : null}
+            </li>
+          );
+        })}
       </ol>
 
       <Card class="max-w-2xl p-5">
@@ -479,32 +690,75 @@ export function BroadcastWizard({ id }: { id?: string }) {
             </Field>
           </div>
         ) : step === 1 ? (
-          <div class="space-y-2">
-            <div class="flex items-end justify-between gap-3">
-              <Field label="Email" class="flex-1">
-                <Select
-                  data-testid="broadcast-template"
-                  value={tplId}
-                  onChange={(e: Event) => void pickTemplate((e.target as HTMLSelectElement).value)}
+          <div class="space-y-3">
+            {attachedCopy ? (
+              <>
+                {/* An email instance exists. The template was only a starting point;
+                    this copy is independent — you edit it or start over, you don't
+                    swap the underlying template. */}
+                <div
+                  data-testid="email-instance"
+                  class="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50/60 p-4"
                 >
-                  <option value="">Select template</option>
-                  {attachedCopy ? (
-                    <option value={attachedCopy.id}>{attachedCopy.name} — this broadcast's copy</option>
-                  ) : null}
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Button data-testid="design-email" variant="secondary" onClick={designEmail}>
-                Design email
-              </Button>
-            </div>
-            <p class="text-xs text-stone-500">
-              Subject, From and To are set inside the email itself — open it with “Design email”.
-            </p>
+                  <span class="flex min-w-0 flex-col">
+                    <span class="truncate font-medium text-ink-900">{attachedCopy.name}</span>
+                    <span class="text-xs text-stone-500">This broadcast's own email</span>
+                  </span>
+                  <span class="flex shrink-0 items-center gap-2">
+                    <Button data-testid="design-email" variant="secondary" onClick={designEmail}>
+                      Edit email
+                    </Button>
+                    <Button data-testid="email-replace" variant="ghost" onClick={resetEmail}>
+                      Start over
+                    </Button>
+                  </span>
+                </div>
+                {missingEnvelope.length > 0 ? (
+                  <p data-testid="email-incomplete" class="text-xs font-medium text-amber-700">
+                    Before continuing, set {missingEnvelope.join(', ')} in the email — open “Edit email”. The From must
+                    be a real sender (add one under Sending domains); there is no no-reply fallback.
+                  </p>
+                ) : (
+                  <p data-testid="email-complete" class="text-xs text-emerald-700">
+                    From, To and Subject are all set — ready to continue.
+                  </p>
+                )}
+                <p class="text-xs text-stone-500">
+                  This is the broadcast's own copy — the template was only a starting point, so edits here
+                  don't change the library.
+                </p>
+              </>
+            ) : (
+              <>
+                {/* No email yet — start from a template or from a blank design. Once
+                    chosen it becomes this broadcast's own copy (no re-picking). */}
+                <p class="text-sm text-stone-600">
+                  Create the email for this broadcast — start from a template, or from a blank design.
+                </p>
+                <Field label="Start from a template">
+                  <Select
+                    data-testid="broadcast-template"
+                    value=""
+                    onChange={(e: Event) => void pickTemplate((e.target as HTMLSelectElement).value)}
+                  >
+                    <option value="">Choose a template…</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <div class="flex items-center gap-3 text-xs uppercase tracking-wide text-stone-400">
+                  <span class="h-px flex-1 bg-stone-200" />
+                  or
+                  <span class="h-px flex-1 bg-stone-200" />
+                </div>
+                <Button data-testid="design-email" variant="secondary" onClick={designEmail}>
+                  Start from a blank design
+                </Button>
+              </>
+            )}
           </div>
         ) : (
           <div class="space-y-4">
@@ -514,19 +768,40 @@ export function BroadcastWizard({ id }: { id?: string }) {
                 value={scheduleMode}
                 onChange={(e: Event) => setScheduleMode((e.target as HTMLSelectElement).value as 'now' | 'later')}
               >
-                <option value="now">Send manually (save as draft)</option>
+                <option value="now">Send now</option>
                 <option value="later">Schedule for a date &amp; time</option>
               </Select>
             </Field>
             {scheduleMode === 'later' ? (
-              <Field label="Scheduled time">
-                <Input
-                  data-testid="broadcast-scheduled-at"
-                  type="datetime-local"
-                  value={scheduledAt}
-                  onInput={(e: Event) => setScheduledAt((e.target as HTMLInputElement).value)}
-                />
-              </Field>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <Field label="Scheduled time">
+                  <Input
+                    data-testid="broadcast-scheduled-at"
+                    type="datetime-local"
+                    min={minScheduledInput}
+                    value={scheduledAt}
+                    onInput={(e: Event) => setScheduledAt((e.target as HTMLInputElement).value)}
+                  />
+                  {scheduleTooEarly ? (
+                    <p data-testid="schedule-too-early" class="mt-1 text-xs font-medium text-amber-700">
+                      Pick a time at least 5 minutes from now.
+                    </p>
+                  ) : null}
+                </Field>
+                <Field label="Timezone">
+                  <Select
+                    data-testid="schedule-tz"
+                    value={timeZone}
+                    onChange={(e: Event) => setTimeZone((e.target as HTMLSelectElement).value)}
+                  >
+                    {timeZoneList().map((z) => (
+                      <option key={z} value={z}>
+                        {z.replace(/_/g, ' ')}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
             ) : null}
 
             {/* Review */}
@@ -538,11 +813,13 @@ export function BroadcastWizard({ id }: { id?: string }) {
               <dd class="text-ink-900">{name || '—'}</dd>
               <dt class="text-stone-500">Audience</dt>
               <dd class="text-ink-900">{segName}</dd>
-              <dt class="text-stone-500">Template</dt>
+              <dt class="text-stone-500">Email</dt>
               <dd class="text-ink-900">{tplName}</dd>
               <dt class="text-stone-500">When</dt>
               <dd class="text-ink-900">
-                {scheduleMode === 'later' && scheduledAt ? fmtDate(new Date(scheduledAt).toISOString()) : 'Manual (draft)'}
+                {scheduleMode === 'later' && scheduledAt
+                  ? `${whenLabel(zonedInputToUtcIso(scheduledAt, timeZone), timeZone)} · ${timeZone.replace(/_/g, ' ')}`
+                  : 'Immediately'}
               </dd>
             </dl>
           </div>
@@ -561,12 +838,102 @@ export function BroadcastWizard({ id }: { id?: string }) {
               Next
             </Button>
           ) : (
-            <Button data-testid="wizard-save" disabled={!canSave || saving} onClick={save}>
-              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create broadcast'}
-            </Button>
+            <div class="ml-auto flex items-center gap-3">
+              {/* Save without sending OR scheduling → a plain draft. */}
+              <Button
+                data-testid="wizard-save-draft"
+                variant="ghost"
+                disabled={saving || !(step0Valid && step1Valid)}
+                onClick={() => finish('draft')}
+              >
+                Save as draft
+              </Button>
+              <Button
+                data-testid="wizard-save"
+                loading={saving}
+                disabled={!canSave || saving}
+                onClick={() => finish(scheduleMode === 'now' ? 'now' : 'schedule')}
+              >
+                {saving
+                  ? scheduleMode === 'now'
+                    ? 'Sending…'
+                    : 'Saving…'
+                  : scheduleMode === 'now'
+                    ? 'Send now'
+                    : editing
+                      ? 'Save schedule'
+                      : 'Schedule send'}
+              </Button>
+            </div>
           )}
         </div>
       </Card>
+    </section>
+  );
+}
+
+// --- Read-only preview of a sent (non-editable) broadcast -------------------
+
+interface PreviewData {
+  name: string;
+  status: string;
+  sent_at: string | null;
+  subject: string;
+  from: string;
+  to_address: string;
+  audience: string;
+  html: string;
+}
+
+/** A read-only view of a broadcast's email — opened by clicking a sent broadcast
+ *  in the list. Shows the resolved envelope + the compiled HTML body, rendered in
+ *  a fully sandboxed iframe (the email is static HTML; no scripts run). */
+function BroadcastPreview({ id }: { id: string }) {
+  const [data, setData] = useState<PreviewData | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void api
+      .get<PreviewData>(`/broadcasts/${id}/preview`)
+      .then(setData)
+      .catch(() => setError('Could not load this broadcast.'));
+  }, [id]);
+
+  return (
+    <section data-testid="broadcast-preview">
+      <button data-testid="broadcasts-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/broadcasts')}>
+        ← Back to broadcasts
+      </button>
+      <PageHeader
+        title={data?.name ?? 'Broadcast'}
+        subtitle="A read-only preview of the email for this broadcast."
+        actions={data ? <Badge tone={toneFor(data.status)}>{data.status}</Badge> : undefined}
+      />
+      {error ? (
+        <p class="text-sm text-rose-600">{error}</p>
+      ) : !data ? (
+        <p class="text-sm text-stone-500">Loading…</p>
+      ) : (
+        <Card class="max-w-3xl overflow-hidden p-0">
+          <dl class="grid grid-cols-[5rem_1fr] gap-y-1.5 border-b border-stone-200 p-4 text-sm">
+            <dt class="text-stone-500">From</dt>
+            <dd data-testid="preview-from" class="text-ink-900">{data.from}</dd>
+            <dt class="text-stone-500">To</dt>
+            <dd class="text-ink-900">{data.to_address || '—'}</dd>
+            <dt class="text-stone-500">Subject</dt>
+            <dd data-testid="preview-subject" class="font-medium text-ink-900">{data.subject || '—'}</dd>
+            <dt class="text-stone-500">Audience</dt>
+            <dd class="text-ink-900">{data.audience}</dd>
+          </dl>
+          <iframe
+            data-testid="preview-body"
+            title="Email preview"
+            sandbox=""
+            srcdoc={data.html}
+            class="h-[600px] w-full bg-white"
+          />
+        </Card>
+      )}
     </section>
   );
 }

@@ -79,11 +79,37 @@ export async function devLogin(
     active = memberships[0]?.workspaceId ?? null;
   }
 
-  // A user with NO workspace access and who is NOT a platform admin can't do
-  // anything — reject instead of minting a token that lands on an empty
-  // dashboard. (Platform admins legitimately have no membership; they pick or
-  // create a company.)
+  // A non-platform-admin with no active workspace is one of two cases:
+  //  - a COMPANY OWNER who has registered but not yet created a workspace →
+  //    log them in to the "create your first workspace" state (needs_workspace),
+  //  - anyone else → genuinely no access, reject (don't mint a token that lands
+  //    on an empty dashboard).
   if (active === null && !isPlatformAdmin) {
+    const owned = await pool.query<{ id: string; name: string; email: string | null; user_name: string | null }>(
+      `SELECT c.id, c.name, u.email, u.name AS user_name
+         FROM companies c JOIN users u ON u.id = c.owner_user_id
+        WHERE c.owner_user_id = $1
+        LIMIT 1`,
+      [sub],
+    );
+    if (owned.rows[0]) {
+      const co = owned.rows[0];
+      const token = encodeDevToken({ sub, workspace_id: null });
+      return {
+        status: 200,
+        body: {
+          token,
+          sub,
+          workspace_id: null,
+          is_platform_admin: false,
+          memberships: [],
+          needs_workspace: true,
+          company: { id: co.id, name: co.name },
+          email: co.email,
+          name: co.user_name,
+        },
+      };
+    }
     return {
       status: 403,
       body: { error: 'This account has no workspace access. Ask an owner to invite you, or register a new company.' },
@@ -106,10 +132,13 @@ export async function devLogin(
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 /**
- * POST /auth/register — self-service company-owner signup. Creates a company, a
- * workspace, and the owner user (with a hashed local credential), makes them the
- * workspace owner, and mints a token logged into that workspace. Pre-auth, like
- * dev-login. (Production would do this through Supabase Auth + onboarding.)
+ * POST /auth/register — self-service company-owner signup. Creates a COMPANY and
+ * the owner user (with a hashed local credential) and records them as the
+ * company's owner — but deliberately does NOT create a workspace. A company and a
+ * workspace are distinct concepts (a company may own several workspaces), so the
+ * owner creates their first workspace manually afterwards (POST /workspace/bootstrap,
+ * surfaced as the "create your first workspace" screen). The minted token is
+ * logged in but workspace-less (`needs_workspace`). Pre-auth, like dev-login.
  */
 export async function registerOwner(pool: Pool, body: unknown): Promise<SessionResult> {
   const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
@@ -130,35 +159,32 @@ export async function registerOwner(pool: Pool, body: unknown): Promise<SessionR
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const company = await client.query<{ id: string }>(
-      'INSERT INTO companies (name) VALUES ($1) RETURNING id',
-      [companyName],
-    );
-    const companyId = company.rows[0]!.id;
-    const ws = await client.query<{ id: string }>(
-      "INSERT INTO workspaces (name, status, company_id) VALUES ($1, 'active', $2) RETURNING id",
-      [companyName, companyId],
-    );
-    const wsId = ws.rows[0]!.id;
+    // The owner user first (the company references it), then the company tagged
+    // with that owner. No workspace, no workspace_users — that comes later.
     const userId = randomUUID();
     await client.query(
       'INSERT INTO users (id, name, email, password_hash) VALUES ($1, $2, $3, $4)',
       [userId, name || null, email, hashPassword(password)],
     );
-    await client.query(
-      "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
-      [wsId, userId],
+    const company = await client.query<{ id: string }>(
+      'INSERT INTO companies (name, owner_user_id) VALUES ($1, $2) RETURNING id',
+      [companyName, userId],
     );
+    const companyId = company.rows[0]!.id;
     await client.query('COMMIT');
-    const token = encodeDevToken({ sub: userId, workspace_id: wsId });
+    const token = encodeDevToken({ sub: userId, workspace_id: null });
     return {
       status: 201,
       body: {
         token,
         sub: userId,
-        workspace_id: wsId,
+        workspace_id: null,
         is_platform_admin: false,
-        memberships: [{ workspaceId: wsId, role: 'owner' }],
+        memberships: [],
+        needs_workspace: true,
+        company: { id: companyId, name: companyName },
+        email,
+        name: name || null,
       },
     };
   } catch (e) {
@@ -166,6 +192,71 @@ export async function registerOwner(pool: Pool, body: unknown): Promise<SessionR
     if ((e as { code?: string }).code === '23505') {
       return { status: 409, body: { error: 'that email is already registered' } };
     }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * POST /workspace/bootstrap — a company OWNER creates a workspace in the company
+ * they own and is logged into it. This is the only way to create the FIRST
+ * workspace: a workspace-less non-admin token is rejected by the strict authorizer
+ * (so it can't reach the capability-gated POST /workspaces), hence — like
+ * dev-login/switch — this is a session route that authenticates the token directly
+ * and re-mints it with the new active workspace.
+ *
+ * The target company is NEVER client-supplied (inv.2): it is resolved server-side
+ * from `companies.owner_user_id = <token sub>`. The creator becomes its owner.
+ */
+export async function createFirstWorkspace(
+  pool: Pool,
+  authorization: string | null,
+  body: unknown,
+): Promise<SessionResult> {
+  const bearer = extractBearer(authorization);
+  const jwt = bearer ? decodeDevToken(bearer) : null;
+  if (!jwt) return { status: 401, body: { error: 'invalid token' } };
+
+  const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const name = String(b.name ?? '').trim();
+  if (!name) return { status: 400, body: { error: 'workspace name is required' } };
+
+  const owned = await pool.query<{ id: string }>(
+    'SELECT id FROM companies WHERE owner_user_id = $1 LIMIT 1',
+    [jwt.sub],
+  );
+  const companyId = owned.rows[0]?.id;
+  if (!companyId) {
+    return { status: 403, body: { error: 'no company to add a workspace to' } };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ws = await client.query<{ id: string; name: string }>(
+      "INSERT INTO workspaces (name, status, company_id) VALUES ($1, 'active', $2) RETURNING id, name",
+      [name, companyId],
+    );
+    const wsId = ws.rows[0]!.id;
+    await client.query(
+      "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT DO NOTHING",
+      [wsId, jwt.sub],
+    );
+    await client.query('COMMIT');
+    const token = encodeDevToken({ sub: jwt.sub, workspace_id: wsId });
+    return {
+      status: 201,
+      body: {
+        token,
+        sub: jwt.sub,
+        workspace_id: wsId,
+        is_platform_admin: false,
+        memberships: [{ workspaceId: wsId, role: 'owner', name: ws.rows[0]!.name }],
+      },
+    };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
     throw e;
   } finally {
     client.release();

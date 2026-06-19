@@ -4,6 +4,21 @@
 # [x] Soft bounces → permanent_soft_bounce after 3 DISTINCT days (no delivery in between);
 #     email_status flips to permanent_soft_bounce + suppression(permanent_soft_bounce); replaced the old 5-rule. commit fc0e18c
 
+# DONE (2026-06-18)
+# [x] From/To/Subject ALL mandatory to send (From = real named sender, NO no-reply fallback);
+#     gate on sender_id; wizard Content step gated (missingEnvelope). v0.26.0.
+# [x] Consolidated broadcast row actions into a reusable kebab (⋮) ActionMenu (ui/kit.tsx). v0.27.0.
+# [x] Email scheduling must be 5 mins minimum to the future — picker min + disabled save + 400 on
+#     create/update (MIN_SCHEDULE_LEAD_MS, scheduleLeadError). v0.27.0.
+# [x] Browser localStorage encapsulation: profile column prefs are now PER-WORKSPACE
+#     (keyed cdp.profileColumns:<ws>, old global key migrated once) — a super-admin
+#     switching companies no longer bleeds the column selection. v0.27.1.
+# [x] BUG: email SUBJECT merge tags ({{customer.attributes.first_name}}) weren't replaced
+#     — buildSendEmailInput now renders the subject through renderTemplateBody (like To/body). v0.27.2.
+# [x] Profile actions dropdown (⋮): moved Merge into it + added "Send event" — a single
+#     manual event (type + JSON payload) on the profile's behalf; POST /profiles/:id/events
+#     inserts into events + recomputes features + re-evals segments (shared helper). v0.28.0.
+
 # DONE (2026-06-15)
 # [x] Segment date-rule tenure guard: absence-based windowed rules (e.g. "never opened in 3 months")
 #     exclude profiles too new to qualify (p.created_at <= now - N days). v0.5.1.
@@ -15,10 +30,11 @@
 #     suppression-by-reason + sends-per-day sparkline. GET /dashboards/delivery-health. v0.7.0.
 
 # REMAINING
-* proper campaign builder with if, wait, wait until, hour of day time window, send email, call webhook widgets.
+* Proper campaign builder with if, wait, wait until, hour of day time window, send email, call webhook widgets.
   (NOT started — the current builder is one lean trigger->wait->send->exit graph with a single send step.
    This is a large, design-heavy effort: per-node editing UI + new node types (wait-until, hour-of-day
    window, webhook action) + DSL/runner support + validation. Tackle as its own focused task.)
+
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).

@@ -83,7 +83,11 @@ describe('validateCampaignDefinition', () => {
     );
   });
 
-  it('requires a reachable exit', () => {
+  it('requires a reachable exit (no-exit graph rejected)', () => {
+    // The OLD fixture (a wait whose next loops back to the trigger) is now a CYCLE,
+    // so cycle-rejection fires first. A finite graph where every edge resolves and
+    // only `exit` is edge-less MUST reach an exit unless it cycles — so a no-exit
+    // graph is necessarily cyclic. We assert it is rejected (cycle and/or no-exit).
     const noExit = {
       startNode: 't',
       nodes: {
@@ -91,7 +95,7 @@ describe('validateCampaignDefinition', () => {
         w: { type: 'wait', delay: { seconds: 1 }, next: 't' }, // loops, no exit
       },
     };
-    expect(() => validateCampaignDefinition(noExit)).toThrow(/no exit/);
+    expect(() => validateCampaignDefinition(noExit)).toThrow(/cycle|back-edge|no exit/);
   });
 
   it('enforces per-type required fields', () => {
@@ -139,6 +143,215 @@ describe('validateCampaignDefinition', () => {
       },
     };
     expect(() => validateCampaignDefinition(bad)).toThrow(/unknown\/invalid type/);
+  });
+});
+
+describe('validateCampaignDefinition: hour_of_day_window node', () => {
+  // trigger -> window -> send -> exit
+  function withWindow(win: Record<string, unknown>): unknown {
+    return {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'win' },
+        win: { type: 'hour_of_day_window', next: 'a', ...win },
+        a: { type: 'action', kind: 'send', template_id: 'tpl-1', next: 'x' },
+        x: { type: 'exit' },
+      },
+    };
+  }
+
+  it('accepts a well-formed hour_of_day_window', () => {
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 9, endHour: 17 }))).not.toThrow();
+  });
+
+  it('accepts an optional daysOfWeek (Mon–Fri)', () => {
+    expect(() =>
+      validateCampaignDefinition(withWindow({ startHour: 9, endHour: 17, daysOfWeek: [1, 2, 3, 4, 5] })),
+    ).not.toThrow();
+  });
+
+  it('accepts an overnight (wrap-around) window startHour > endHour', () => {
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 22, endHour: 6 }))).not.toThrow();
+  });
+
+  it('rejects a missing startHour or endHour', () => {
+    expect(() => validateCampaignDefinition(withWindow({ endHour: 17 }))).toThrow(/startHour|hour window/);
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 9 }))).toThrow(/endHour|hour window/);
+  });
+
+  it('rejects out-of-range / non-integer hours', () => {
+    expect(() => validateCampaignDefinition(withWindow({ startHour: -1, endHour: 17 }))).toThrow(/hour/);
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 9, endHour: 24 }))).toThrow(/hour/);
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 9.5, endHour: 17 }))).toThrow(/hour/);
+  });
+
+  it('rejects an invalid daysOfWeek (out-of-range, duplicate, non-array, empty)', () => {
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 9, endHour: 17, daysOfWeek: [7] }))).toThrow(/day/);
+    expect(() =>
+      validateCampaignDefinition(withWindow({ startHour: 9, endHour: 17, daysOfWeek: [1, 1] })),
+    ).toThrow(/day/);
+    expect(() =>
+      validateCampaignDefinition(withWindow({ startHour: 9, endHour: 17, daysOfWeek: 'mon' })),
+    ).toThrow(/day/);
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 9, endHour: 17, daysOfWeek: [] }))).toThrow(/day/);
+  });
+
+  it('rejects a missing/unresolvable next edge', () => {
+    const broken = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'win' },
+        win: { type: 'hour_of_day_window', startHour: 9, endHour: 17, next: 'ghost' },
+        x: { type: 'exit' },
+      },
+    };
+    expect(() => validateCampaignDefinition(broken)).toThrow(/next|unresolvable/);
+  });
+
+  it('an hour_of_day_window on the only path keeps a reachable exit valid', () => {
+    // (Already covered by the accept cases — the window contributes [next] to reachability.)
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 0, endHour: 23 }))).not.toThrow();
+  });
+});
+
+describe('validateCampaignDefinition: webhook action', () => {
+  function withWebhook(cfg: Record<string, unknown>): unknown {
+    return {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'h' },
+        h: { type: 'action', kind: 'webhook', next: 'x', ...cfg },
+        x: { type: 'exit' },
+      },
+    };
+  }
+
+  it('accepts a fully-configured webhook action', () => {
+    expect(() =>
+      validateCampaignDefinition(
+        withWebhook({
+          url: 'https://hooks.example.com/x',
+          method: 'POST',
+          headers: {},
+          bodyTemplate: '{}',
+          timeoutMs: 5000,
+          maxRetries: 2,
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('rejects a webhook missing url', () => {
+    expect(() => validateCampaignDefinition(withWebhook({ method: 'POST' }))).toThrow(/url/);
+  });
+
+  it('rejects a webhook with a missing/invalid method', () => {
+    expect(() => validateCampaignDefinition(withWebhook({ url: 'https://h.example/x' }))).toThrow(/method/);
+    expect(() =>
+      validateCampaignDefinition(withWebhook({ url: 'https://h.example/x', method: 'TRACE' })),
+    ).toThrow(/method/);
+  });
+
+  it('rejects a webhook with a non-http(s) url scheme (SSRF pre-check)', () => {
+    for (const url of ['file:///etc/passwd', 'ftp://h/x', 'javascript:alert(1)']) {
+      expect(() => validateCampaignDefinition(withWebhook({ url, method: 'POST' }))).toThrow(/url|scheme|https?/);
+    }
+  });
+
+  it('rejects a webhook with non-object headers, non-positive timeoutMs, or negative maxRetries', () => {
+    const base = { url: 'https://h.example/x', method: 'POST' };
+    expect(() => validateCampaignDefinition(withWebhook({ ...base, headers: 'nope' }))).toThrow();
+    expect(() => validateCampaignDefinition(withWebhook({ ...base, timeoutMs: 0 }))).toThrow();
+    expect(() => validateCampaignDefinition(withWebhook({ ...base, timeoutMs: -5 }))).toThrow();
+    expect(() => validateCampaignDefinition(withWebhook({ ...base, maxRetries: -1 }))).toThrow();
+  });
+
+  it('still requires template_id for kind=send and key for kind=set_attribute (no regression)', () => {
+    const badSend = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'a' },
+        a: { type: 'action', kind: 'send', next: 'x' },
+        x: { type: 'exit' },
+      },
+    };
+    expect(() => validateCampaignDefinition(badSend)).toThrow(/template_id/);
+  });
+});
+
+describe('validateCampaignDefinition: cycle + orphan detection', () => {
+  it('rejects a back-edge to an ancestor (cycle)', () => {
+    const cyclic = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'w' },
+        w: { type: 'wait', delay: { seconds: 1 }, next: 'c' },
+        c: {
+          type: 'condition',
+          ast: { field: 'total_events', operator: '>=', value: 1 },
+          onTrue: 'w', // back-edge to ancestor
+          onFalse: 'x',
+        },
+        x: { type: 'exit' },
+      },
+    };
+    expect(() => validateCampaignDefinition(cyclic)).toThrow(/cycle|back-edge/);
+  });
+
+  it('rejects a self-loop', () => {
+    const selfLoop = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'w' },
+        w: { type: 'wait', delay: { seconds: 1 }, next: 'w' }, // points to itself
+        x: { type: 'exit' },
+      },
+    };
+    expect(() => validateCampaignDefinition(selfLoop)).toThrow(/cycle/);
+  });
+
+  it('rejects an orphan node not reachable from startNode', () => {
+    const orphaned = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'x' },
+        x: { type: 'exit' },
+        // unreachable island (still individually valid):
+        lonely: { type: 'action', kind: 'set_attribute', key: 'k', value: 1, next: 'x' },
+      },
+    };
+    expect(() => validateCampaignDefinition(orphaned)).toThrow(/orphan|unreachable|not reachable/);
+  });
+
+  it('ACCEPTS a diamond (two paths converging on one node) — not a cycle', () => {
+    const diamond = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'c' },
+        c: {
+          type: 'condition',
+          ast: { field: 'total_events', operator: '>=', value: 1 },
+          onTrue: 'm',
+          onFalse: 'n',
+        },
+        m: { type: 'action', kind: 'set_attribute', key: 'a', value: 1, next: 'x' },
+        n: { type: 'action', kind: 'set_attribute', key: 'b', value: 2, next: 'x' },
+        x: { type: 'exit' }, // both m and n converge here — a re-convergence, not a cycle
+      },
+    };
+    expect(() => validateCampaignDefinition(diamond)).not.toThrow();
+  });
+
+  it('a second trigger that is also an orphan still reports a deterministic error', () => {
+    const twoTriggers = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'x' },
+        x: { type: 'exit' },
+        t2: { type: 'trigger', kind: 'event', next: 'x' }, // extra trigger + orphan
+      },
+    };
+    expect(() => validateCampaignDefinition(twoTriggers)).toThrow(/exactly one trigger|orphan|unreachable/);
   });
 });
 

@@ -9,11 +9,17 @@
 //     writeAuditEntry.
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { promises as dns } from 'node:dns';
 import { createSesClient, type SesEmailClient } from '@cdp/email';
 import { dispatchOutbox, type DispatchDeps } from '@cdp/service-dispatcher';
-import { DEV_USERS, OPEN_EVENT_TYPES, PURCHASE_EVENT_TYPES, type WorkspaceContext } from '@cdp/shared';
+import {
+  DEV_USERS,
+  OPEN_EVENT_TYPES,
+  PURCHASE_EVENT_TYPES,
+  isValidTimeZone,
+  type WorkspaceContext,
+} from '@cdp/shared';
 import { scopedQuery, encryptSecret, decryptSecret, isEncryptedSecret } from '@cdp/db';
 
 // Resolve an app user's email from the dev credential fixture (in production this
@@ -52,7 +58,7 @@ import {
   type AstNode,
 } from '@cdp/segments';
 import { validateCampaignDefinition } from '@cdp/service-campaign-runner';
-import { runBroadcast } from '@cdp/service-broadcast';
+import { runBroadcast, buildDueScheduledBroadcastsQuery } from '@cdp/service-broadcast';
 import {
   computeCostViewForWorkspaces,
   monthBucket,
@@ -310,6 +316,8 @@ export const getWorkspaceSettings: Handler = async (ctx, pool) => {
       ...settings,
       lowercase_emails: settings.lowercase_emails !== false, // default ON
       link_tracking: settings.link_tracking === true, // default OFF
+      // The workspace clock for all campaign time math (§9B). Default UTC.
+      timezone: typeof settings.timezone === 'string' && settings.timezone ? settings.timezone : 'UTC',
     },
   });
 };
@@ -320,6 +328,15 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
   const patch: Record<string, unknown> = {};
   if (b.lowercase_emails !== undefined) patch.lowercase_emails = Boolean(b.lowercase_emails);
   if (b.link_tracking !== undefined) patch.link_tracking = Boolean(b.link_tracking);
+  if (b.timezone !== undefined) {
+    // The workspace timezone (§9B clock). Validate against a real IANA zone before
+    // it ever drives campaign waits/windows. workspace_id is taken from ctx only —
+    // never from the body (inv.2).
+    if (typeof b.timezone !== 'string' || !isValidTimeZone(b.timezone)) {
+      return ok({ error: 'invalid timezone (must be a valid IANA zone)' }, 400);
+    }
+    patch.timezone = b.timezone;
+  }
   if (Object.keys(patch).length === 0) return ok({ error: 'no recognized settings' }, 400);
   const { rows } = await pool.query(
     `UPDATE workspaces SET settings = settings || $2::jsonb WHERE id = $1 RETURNING settings`,
@@ -427,6 +444,33 @@ async function dispatchBroadcastNow(
   for (const r of rows) {
     await dispatchOutbox(dispatchDeps, r.id);
   }
+}
+
+/**
+ * Send every SCHEDULED broadcast whose time has arrived — the LOCAL equivalent of
+ * the production EventBridge "scheduled sweep" (`@cdp/service-broadcast`
+ * scheduledSweepHandler), which the dev server has no scheduler to run. For each
+ * due broadcast we run it (enqueue → flip status) then dispatch it for real (when
+ * the company has SES creds), exactly as the manual Send does. Failures are
+ * isolated so one bad broadcast can't abort the sweep. Returns how many it ran.
+ */
+export async function sweepDueScheduledBroadcasts(pool: Pool, deps: LocalApiDeps): Promise<number> {
+  const q = buildDueScheduledBroadcastsQuery(new Date());
+  const { rows } = await pool.query<{ id: string }>(q.text, q.values);
+  let processed = 0;
+  for (const { id } of rows) {
+    const w = await pool.query<{ workspace_id: string }>('SELECT workspace_id FROM broadcasts WHERE id = $1', [id]);
+    const workspaceId = w.rows[0]?.workspace_id;
+    if (!workspaceId) continue;
+    try {
+      await runBroadcast(deps.broadcast, id);
+      await dispatchBroadcastNow(workspaceId, pool, deps, id);
+      processed++;
+    } catch {
+      /* isolate: one failed broadcast must not abort the sweep; next tick retries */
+    }
+  }
+  return processed;
 }
 
 /** GET /company/ses-config — region + access key id + whether a secret is set (NEVER the secret). */
@@ -1088,8 +1132,8 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
   const sender = await validateSenderId(ctx.workspaceId, pool, b.sender_id);
   if ('error' in sender) return ok({ error: sender.error }, 400);
   const { rows } = await pool.query(
-    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, subject, sender_id, to_address)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, COALESCE($9, '{{customer.email}}')) RETURNING id, name, updated_at`,
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, subject, sender_id, to_address, from_selected)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, COALESCE($9, '{{customer.email}}'), $10) RETURNING id, name, updated_at`,
     [
       ctx.workspaceId,
       name,
@@ -1100,6 +1144,7 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
       b.subject !== undefined && b.subject !== null ? String(b.subject) : null,
       sender.senderId,
       b.to_address !== undefined && b.to_address !== null ? String(b.to_address) : null,
+      b.from_selected === true,
     ],
   );
   return ok({ template: rows[0] }, 201);
@@ -1110,7 +1155,7 @@ export const getTemplate: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, mjml, design, kind, source_template_id, subject, sender_id, to_address, updated_at FROM email_templates WHERE id = $1',
+    'SELECT id, name, mjml, design, kind, source_template_id, subject, sender_id, to_address, from_selected, updated_at FROM email_templates WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -1139,6 +1184,7 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
        subject = CASE WHEN $7::boolean THEN $8 ELSE subject END,
        sender_id = CASE WHEN $9::boolean THEN $10 ELSE sender_id END,
        to_address = CASE WHEN $11::boolean THEN COALESCE($12, '{{customer.email}}') ELSE to_address END,
+       from_selected = CASE WHEN $13::boolean THEN $14 ELSE from_selected END,
        updated_at = now()
      WHERE id = $6`,
     [
@@ -1154,6 +1200,8 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
       sender.senderId,
       b.to_address !== undefined,
       b.to_address !== undefined && b.to_address !== null ? String(b.to_address) : null,
+      b.from_selected !== undefined,
+      b.from_selected === true,
     ],
   );
   const { rowCount } = await pool.query(q.text, q.values);
@@ -1172,8 +1220,8 @@ export const cloneTemplate: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const q = scopedQuery(
     ctx.workspaceId,
-    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address)
-     SELECT workspace_id, COALESCE($2, name), mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address, from_selected)
+     SELECT workspace_id, COALESCE($2, name), mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address, from_selected
      FROM email_templates WHERE id = $1`,
     [id, b.name !== undefined ? String(b.name) : null],
   );
@@ -1399,7 +1447,7 @@ export const listBroadcasts: Handler = async (ctx, pool) => {
   // otherwise inject its WHERE after the ORDER BY → invalid SQL).
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, sent_at, updated_at FROM broadcasts',
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz, sent_at, updated_at FROM broadcasts',
   );
   const { rows } = await pool.query<Record<string, unknown>>(`${q.text} ORDER BY created_at DESC`, q.values);
 
@@ -1455,7 +1503,7 @@ export const getBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at FROM broadcasts WHERE id = $1',
+    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz FROM broadcasts WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -1463,9 +1511,112 @@ export const getBroadcast: Handler = async (ctx, pool, req) => {
   return ok({ broadcast: rows[0] });
 };
 
+/**
+ * GET /broadcasts/:id/preview — a READ-ONLY view of the email that was (or will
+ * be) sent: the envelope (resolved From / To / Subject), the audience name, and
+ * the compiled HTML body. The From is resolved exactly as the dispatcher does —
+ * a named sender if the template has one, else `no-reply@<verified domain>`.
+ */
+export const previewBroadcast: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const bq = scopedQuery(
+    ctx.workspaceId,
+    'SELECT name, status, sent_at, scheduled_at, scheduled_tz, audience_kind, audience_ref, template_id FROM broadcasts WHERE id = $1',
+    [id],
+  );
+  const b = (await pool.query(bq.text, bq.values)).rows[0] as
+    | {
+        name: string;
+        status: string;
+        sent_at: string | null;
+        scheduled_at: string | null;
+        scheduled_tz: string | null;
+        audience_kind: string;
+        audience_ref: string | null;
+        template_id: string | null;
+      }
+    | undefined;
+  if (!b) return ok({ error: 'not found' }, 404);
+
+  let subject = '';
+  let html = '';
+  let toAddress = '';
+  let senderId: string | null = null;
+  if (b.template_id) {
+    const tq = scopedQuery(
+      ctx.workspaceId,
+      'SELECT subject, compiled_html, to_address, sender_id FROM email_templates WHERE id = $1',
+      [b.template_id],
+    );
+    const t = (await pool.query(tq.text, tq.values)).rows[0] as
+      | { subject: string | null; compiled_html: string | null; to_address: string | null; sender_id: string | null }
+      | undefined;
+    if (t) {
+      subject = t.subject ?? '';
+      html = t.compiled_html ?? '';
+      toAddress = t.to_address ?? '';
+      senderId = t.sender_id ?? null;
+    }
+  }
+
+  // Resolve From the way the dispatcher does: named sender → no-reply@<verified domain>.
+  let from = '';
+  if (senderId) {
+    const sq = scopedQuery(ctx.workspaceId, 'SELECT name, email FROM domain_senders WHERE id = $1', [senderId]);
+    const s = (await pool.query(sq.text, sq.values)).rows[0] as { name: string | null; email: string } | undefined;
+    if (s) from = s.name ? `${s.name} <${s.email}>` : s.email;
+  }
+  if (!from) {
+    // Explicit workspace scoping (scopedQuery wraps everything after WHERE in
+    // parens, which would swallow ORDER BY/LIMIT into the condition).
+    const d = (
+      await pool.query<{ domain: string }>(
+        'SELECT domain FROM sending_domains WHERE workspace_id = $1 AND verified = true ORDER BY domain LIMIT 1',
+        [ctx.workspaceId],
+      )
+    ).rows[0];
+    from = d ? `no-reply@${d.domain}` : 'no-reply (no verified domain)';
+  }
+
+  let audience = '—';
+  if (b.audience_kind === 'segment' && b.audience_ref) {
+    const segq = scopedQuery(ctx.workspaceId, 'SELECT name FROM segments WHERE id = $1', [b.audience_ref]);
+    const seg = (await pool.query(segq.text, segq.values)).rows[0] as { name: string } | undefined;
+    audience = seg?.name ?? '—';
+  }
+
+  return ok({
+    name: b.name,
+    status: b.status,
+    sent_at: b.sent_at,
+    scheduled_at: b.scheduled_at,
+    scheduled_tz: b.scheduled_tz,
+    subject,
+    from,
+    to_address: toAddress,
+    audience,
+    html,
+  });
+};
+
 /** A scheduled_at present → status 'scheduled', else 'draft' (a not-yet-sent broadcast). */
 function scheduleStatus(scheduledAt: string | null): 'draft' | 'scheduled' {
   return scheduledAt ? 'scheduled' : 'draft';
+}
+
+/** A scheduled send must be at least this far in the future (mirrors the wizard). */
+const MIN_SCHEDULE_LEAD_MS = 5 * 60 * 1000;
+
+/** Returns an error string when a scheduled_at is set but is invalid or sooner
+ *  than the minimum lead time from now; null when absent or far enough out. */
+function scheduleLeadError(scheduledAt: string | null): string | null {
+  if (!scheduledAt) return null;
+  const t = new Date(scheduledAt).getTime();
+  if (Number.isNaN(t)) return 'scheduled_at is not a valid time';
+  if (t < Date.now() + MIN_SCHEDULE_LEAD_MS) {
+    return 'A broadcast must be scheduled at least 5 minutes from now.';
+  }
+  return null;
 }
 
 /**
@@ -1489,9 +1640,13 @@ async function validateSenderId(
 export const createBroadcast: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
+  const leadErr = scheduleLeadError(scheduledAt);
+  if (leadErr) return ok({ error: leadErr }, 400);
+  // The zone is only meaningful alongside a scheduled time.
+  const scheduledTz = scheduledAt && b.scheduled_tz ? String(b.scheduled_tz) : null;
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, scheduled_at, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, status`,
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, scheduled_at, scheduled_tz, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, name, status`,
     [
       ctx.workspaceId,
       String(b.name ?? 'Untitled'),
@@ -1499,6 +1654,7 @@ export const createBroadcast: Handler = async (ctx, pool, req) => {
       String(b.audience_kind ?? 'segment'),
       b.audience_ref ?? null,
       scheduledAt,
+      scheduledTz,
       scheduleStatus(scheduledAt),
       ctx.userId ?? null,
     ],
@@ -1521,6 +1677,9 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
     return ok({ error: `a ${curRows[0].status} broadcast can no longer be edited` }, 409);
   }
   const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
+  const leadErr = scheduleLeadError(scheduledAt);
+  if (leadErr) return ok({ error: leadErr }, 400);
+  const scheduledTz = scheduledAt && b.scheduled_tz ? String(b.scheduled_tz) : null;
   const upd = scopedQuery(
     ctx.workspaceId,
     `UPDATE broadcasts SET
@@ -1529,21 +1688,90 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
        audience_ref = COALESCE($3, audience_ref),
        template_id = $4,
        scheduled_at = $5,
-       status = $6,
+       scheduled_tz = $6,
+       status = $7,
        updated_at = now()
-     WHERE id = $7`,
+     WHERE id = $8`,
     [
       b.name !== undefined ? String(b.name) : null,
       b.audience_kind !== undefined ? String(b.audience_kind) : null,
       b.audience_ref ?? null,
       b.template_id ?? null,
       scheduledAt,
+      scheduledTz,
       scheduleStatus(scheduledAt),
       id,
     ],
   );
   const { rowCount } = await pool.query(upd.text, upd.values);
   return ok({ updated: rowCount ?? 0 });
+};
+
+/**
+ * POST /broadcasts/:id/duplicate — copy a broadcast into a fresh DRAFT so you can
+ * tweak + resend without touching the source. Each broadcast owns its email, so
+ * we clone the source's template into a new working copy (the duplicate's edits
+ * never affect the original's email). Scoped.
+ */
+export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const src = scopedQuery(
+    ctx.workspaceId,
+    'SELECT name, template_id, audience_kind, audience_ref FROM broadcasts WHERE id = $1',
+    [id],
+  );
+  const b = (await pool.query(src.text, src.values)).rows[0] as
+    | { name: string; template_id: string | null; audience_kind: string; audience_ref: string }
+    | undefined;
+  if (!b) return ok({ error: 'not found' }, 404);
+
+  let templateId: string | null = null;
+  if (b.template_id) {
+    const cl = scopedQuery(
+      ctx.workspaceId,
+      `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address, from_selected)
+       SELECT workspace_id, name, mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address, from_selected
+       FROM email_templates WHERE id = $1`,
+      [b.template_id],
+    );
+    const t = (await pool.query(`${cl.text} RETURNING id`, cl.values)).rows[0] as { id: string } | undefined;
+    templateId = t?.id ?? null;
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, 'draft', $6) RETURNING id, name, status`,
+    [ctx.workspaceId, `${b.name} (copy)`, templateId, b.audience_kind, b.audience_ref, ctx.userId ?? null],
+  );
+  return ok({ broadcast: rows[0] }, 201);
+};
+
+/**
+ * DELETE /broadcasts/:id — delete an UNSENT broadcast (draft or scheduled ONLY; a
+ * sending/sent/cancelled broadcast is history and is never deletable). Also drops
+ * the broadcast's private working-copy email when nothing else references it. Scoped.
+ */
+export const deleteBroadcast: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const cur = scopedQuery(ctx.workspaceId, 'SELECT status, template_id FROM broadcasts WHERE id = $1', [id]);
+  const row = (await pool.query(cur.text, cur.values)).rows[0] as
+    | { status: string; template_id: string | null }
+    | undefined;
+  if (!row) return ok({ error: 'not found' }, 404);
+  if (row.status !== 'draft' && row.status !== 'scheduled') {
+    return ok({ error: `a ${row.status} broadcast can’t be deleted` }, 409);
+  }
+  const del = scopedQuery(ctx.workspaceId, 'DELETE FROM broadcasts WHERE id = $1', [id]);
+  await pool.query(del.text, del.values);
+  // Clean up the now-orphaned working copy (only if no other broadcast uses it).
+  if (row.template_id) {
+    await pool.query(
+      `DELETE FROM email_templates t
+        WHERE t.workspace_id = $1 AND t.id = $2 AND t.kind = 'copy'
+          AND NOT EXISTS (SELECT 1 FROM broadcasts b WHERE b.workspace_id = $1 AND b.template_id = $2)`,
+      [ctx.workspaceId, row.template_id],
+    );
+  }
+  return ok({ deleted: 1 });
 };
 
 /** POST /broadcasts/:id/send — runs the broadcast core (SQS mocked at the boundary). */
@@ -1558,15 +1786,26 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
   // confirm the broadcast is in this workspace AND that its email has a subject.
   // (Explicit b.workspace_id scope — scopedQuery's unqualified column would be
   // ambiguous across the JOIN.)
-  const { rows: guardRows } = await pool.query<{ template_id: string | null; subject: string | null }>(
-    `SELECT b.template_id, t.subject FROM broadcasts b
+  const { rows: guardRows } = await pool.query<{
+    template_id: string | null;
+    subject: string | null;
+    sender_id: string | null;
+    to_address: string | null;
+  }>(
+    `SELECT b.template_id, t.subject, t.sender_id, t.to_address FROM broadcasts b
        LEFT JOIN email_templates t ON t.id = b.template_id AND t.workspace_id = b.workspace_id
       WHERE b.workspace_id = $1 AND b.id = $2`,
     [ctx.workspaceId, id],
   );
   if (!guardRows[0]) return ok({ error: 'not found' }, 404);
-  // A subject is required to send — an empty subject line is never intentional.
-  // (Subject is edited on the email itself, in the email editor.)
+  // From / To / Subject are ALL required, set on the email itself (the editor).
+  // The From must be a real named sender — there is no no-reply fallback.
+  if (!guardRows[0].sender_id) {
+    return ok({ error: 'Choose who the email is from — open the email and pick a sender (add one under Sending domains).' }, 409);
+  }
+  if (!guardRows[0].to_address || !guardRows[0].to_address.trim()) {
+    return ok({ error: 'Set the To field on the email before sending.' }, 409);
+  }
   if (!guardRows[0].subject || !guardRows[0].subject.trim()) {
     return ok({ error: 'Add a subject line to the email before sending.' }, 409);
   }
@@ -1766,6 +2005,12 @@ export const createProfile: Handler = async (ctx, pool, req) => {
      ON CONFLICT (profile_id) DO NOTHING`,
     [profileId, ctx.workspaceId],
   );
+  // Surface the creation in the workspace Activity log.
+  await pool.query(
+    `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
+     VALUES ($1, $2, 'profile', 'profile_created', 'info', 'created manually')`,
+    [ctx.workspaceId, profileId],
+  );
   return ok({ profile: rows[0] }, 201);
 };
 
@@ -1825,6 +2070,15 @@ export const importProfilesCsv: Handler = async (ctx, pool, req) => {
     } catch (e) {
       errors.push({ row: i + 1, email, error: (e as { message?: string }).message ?? 'insert failed' });
     }
+  }
+  // One summary row in the Activity log (a per-profile row would flood it on a
+  // bulk import). Only when something actually landed.
+  if (created > 0 || updated > 0) {
+    await pool.query(
+      `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
+       VALUES ($1, NULL, 'import', 'profiles_imported', 'info', $2)`,
+      [ctx.workspaceId, `CSV import — ${created} created, ${updated} updated`],
+    );
   }
   return ok({ created, updated, skipped: errors.length, total: rows.length, errors: errors.slice(0, 50) });
 };
@@ -2014,13 +2268,29 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
         [ctx.workspaceId, updated.email, reason],
       );
     } else {
-      // Subscribed + deliverable again → lift the MANUAL suppression only.
+      // Subscribed + deliverable again → lift the consent (unsubscribe) suppression
+      // REGARDLESS of source — it may have been written by the recipient's own
+      // unsubscribe link (source='one-click'), not just a manual edit — plus any
+      // manual suppression. A pipeline-written bounce/complaint (reason not
+      // 'unsubscribe', source not 'manual') is preserved.
       await pool.query(
-        `DELETE FROM suppressions WHERE workspace_id = $1 AND email = $2 AND source = 'manual'`,
+        `DELETE FROM suppressions WHERE workspace_id = $1 AND email = $2 AND (reason = 'unsubscribe' OR source = 'manual')`,
         [ctx.workspaceId, updated.email],
       );
     }
   }
+  // Record the edit in the workspace Activity log (NOT the behavioral `events`
+  // table — that's producer-ingested + feeds segments). Names the changed fields.
+  const changed: string[] = [];
+  if (b.email !== undefined) changed.push('email');
+  if (b.external_id !== undefined) changed.push('external_id');
+  if (emailStatus !== null) changed.push('email_status');
+  if (hasAttrs) changed.push('attributes');
+  await pool.query(
+    `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
+     VALUES ($1, $2, 'profile', 'profile_updated', 'info', $3)`,
+    [ctx.workspaceId, id, changed.length ? `edited ${changed.join(', ')}` : 'edited'],
+  );
   return ok({ profile: rows[0] });
 };
 
@@ -2073,6 +2343,7 @@ export const mergeProfiles: Handler = async (ctx, pool, req) => {
     await reassign('messages_log');
     await reassign('outbox');
     await reassign('segment_change_log');
+    await reassign('activity_log'); // the merged-away profile's activity follows the survivor
     // Memberships: UNIQUE(segment_id, profile_id) — move missing, drop the rest.
     await client.query(
       `INSERT INTO segment_memberships (segment_id, profile_id, workspace_id, source, entered_at)
@@ -2107,50 +2378,13 @@ export const mergeProfiles: Handler = async (ctx, pool, req) => {
       );
     }
 
-    // Recompute the lead's rolling features from ALL its (now-merged) events,
-    // mirroring the processor's aggregates (§6).
-    await client.query(
-      `WITH agg AS (
-         SELECT count(*)::int AS total_events,
-                max(occurred_at) AS last_event_at,
-                max(occurred_at) FILTER (WHERE type = ANY($3::text[])) AS last_email_open_at,
-                COALESCE(sum((payload->>'amount')::numeric) FILTER (WHERE type = ANY($4::text[])), 0) AS monetary_total
-           FROM events WHERE workspace_id = $1 AND profile_id = $2
-       ),
-       cnt AS (
-         SELECT COALESCE(jsonb_object_agg(type, c), '{}'::jsonb) AS counters
-           FROM (SELECT type, count(*)::int c FROM events WHERE workspace_id = $1 AND profile_id = $2 GROUP BY type) t
-       )
-       INSERT INTO profile_features
-         (profile_id, workspace_id, total_events, last_event_at, last_email_open_at, counters, monetary_total, updated_at)
-       SELECT $2, $1, agg.total_events, agg.last_event_at, agg.last_email_open_at, cnt.counters, agg.monetary_total, now()
-         FROM agg, cnt
-       ON CONFLICT (profile_id) DO UPDATE SET
-         total_events = EXCLUDED.total_events,
-         last_event_at = EXCLUDED.last_event_at,
-         last_email_open_at = EXCLUDED.last_email_open_at,
-         counters = EXCLUDED.counters,
-         monetary_total = EXCLUDED.monetary_total,
-         updated_at = now()`,
-      [ws, lead, OPEN_EVENT_TYPES as readonly string[], PURCHASE_EVENT_TYPES as readonly string[]],
-    );
-
-    // Remove the secondary (features first — FK).
+    // Remove the secondary (features first — FK) BEFORE recompute/re-eval.
     await client.query('DELETE FROM profile_features WHERE workspace_id = $1 AND profile_id = $2', [ws, secondary]);
     await client.query('DELETE FROM profiles WHERE workspace_id = $1 AND id = $2', [ws, secondary]);
 
-    // Re-evaluate the lead's realtime segments against its merged features, in
-    // the SAME tx (membership diff + change_log via the shared evaluator).
-    await evaluateRealtimeSegmentsForProfile(
-      {
-        reader: { query: (text, values) => client.query(text, values) },
-        runInWorkspaceTx: async (_w, statements) => {
-          for (const s of statements) await client.query(s.text, s.values);
-        },
-      },
-      ws,
-      lead,
-    );
+    // Recompute the lead's rolling features from ALL its (now-merged) events and
+    // re-evaluate its realtime segments, in the SAME tx.
+    await recomputeFeaturesAndSegments(client, ws, lead);
 
     await client.query('COMMIT');
   } catch (e) {
@@ -2165,6 +2399,100 @@ export const mergeProfiles: Handler = async (ctx, pool, req) => {
     [ws, lead],
   );
   return ok({ profile: rows[0] });
+};
+
+/**
+ * Recompute a profile's rolling features from its events (mirrors the processor's
+ * aggregates, §6) and re-evaluate its dynamic_realtime segments — both on the
+ * given client so callers compose it into their OWN transaction. Shared by the
+ * merge and the manual "send event" paths.
+ */
+async function recomputeFeaturesAndSegments(client: PoolClient, ws: string, profileId: string): Promise<void> {
+  await client.query(
+    `WITH agg AS (
+       SELECT count(*)::int AS total_events,
+              max(occurred_at) AS last_event_at,
+              max(occurred_at) FILTER (WHERE type = ANY($3::text[])) AS last_email_open_at,
+              COALESCE(sum((payload->>'amount')::numeric) FILTER (WHERE type = ANY($4::text[])), 0) AS monetary_total
+         FROM events WHERE workspace_id = $1 AND profile_id = $2
+     ),
+     cnt AS (
+       SELECT COALESCE(jsonb_object_agg(type, c), '{}'::jsonb) AS counters
+         FROM (SELECT type, count(*)::int c FROM events WHERE workspace_id = $1 AND profile_id = $2 GROUP BY type) t
+     )
+     INSERT INTO profile_features
+       (profile_id, workspace_id, total_events, last_event_at, last_email_open_at, counters, monetary_total, updated_at)
+     SELECT $2, $1, agg.total_events, agg.last_event_at, agg.last_email_open_at, cnt.counters, agg.monetary_total, now()
+       FROM agg, cnt
+     ON CONFLICT (profile_id) DO UPDATE SET
+       total_events = EXCLUDED.total_events,
+       last_event_at = EXCLUDED.last_event_at,
+       last_email_open_at = EXCLUDED.last_email_open_at,
+       counters = EXCLUDED.counters,
+       monetary_total = EXCLUDED.monetary_total,
+       updated_at = now()`,
+    [ws, profileId, OPEN_EVENT_TYPES as readonly string[], PURCHASE_EVENT_TYPES as readonly string[]],
+  );
+  await evaluateRealtimeSegmentsForProfile(
+    {
+      reader: { query: (text, values) => client.query(text, values) },
+      runInWorkspaceTx: async (_w, statements) => {
+        for (const s of statements) await client.query(s.text, s.values);
+      },
+    },
+    ws,
+    profileId,
+  );
+}
+
+/**
+ * POST /profiles/:id/events — manually record a SINGLE behavioral event "on the
+ * profile's behalf": a caller-supplied `type` + JSON `payload`. It lands in the
+ * same `events` table as ingested events, so it feeds segment rules, the profile
+ * timeline, and the rolling features (recomputed + segments re-evaluated in one
+ * workspace-scoped tx — exactly like ingestion). Scoped to the token's workspace.
+ */
+export const sendProfileEvent: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const type = typeof b.type === 'string' ? b.type.trim() : '';
+  if (!type) return ok({ error: 'an event type is required' }, 400);
+  // payload defaults to {}; reject a non-object (arrays included) so it stays a
+  // JSON document we can index/merge on.
+  let payload: Record<string, unknown> = {};
+  if (b.payload !== undefined && b.payload !== null) {
+    if (typeof b.payload !== 'object' || Array.isArray(b.payload)) {
+      return ok({ error: 'payload must be a JSON object' }, 400);
+    }
+    payload = b.payload as Record<string, unknown>;
+  }
+
+  const ws = ctx.workspaceId;
+  const client = await pool.connect();
+  let eventId = '';
+  try {
+    // The profile must exist in THIS workspace (never another tenant's id).
+    const present = await client.query('SELECT 1 FROM profiles WHERE workspace_id = $1 AND id = $2', [ws, id]);
+    if (!present.rowCount) {
+      client.release();
+      return ok({ error: 'not found' }, 404);
+    }
+    await client.query('BEGIN');
+    const ins = await client.query<{ event_id: string }>(
+      `INSERT INTO events (event_id, workspace_id, profile_id, type, occurred_at, payload)
+       VALUES (gen_random_uuid(), $1, $2, $3, now(), $4::jsonb) RETURNING event_id`,
+      [ws, id, type, JSON.stringify(payload)],
+    );
+    eventId = ins.rows[0]!.event_id;
+    await recomputeFeaturesAndSegments(client, ws, id);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    throw e;
+  }
+  client.release();
+  return ok({ event: { event_id: eventId, type, payload } }, 201);
 };
 
 /** GET /profiles/:id/events — this profile's event history, newest first (scoped). */
@@ -2324,6 +2652,9 @@ export const listActivity: Handler = async (ctx, pool, req) => {
                 CASE WHEN status = 'sent' THEN 'success' ELSE 'failure' END,
                 profile_id, status
            FROM messages_log WHERE workspace_id = $1
+         UNION ALL
+         SELECT at, source, type, outcome, profile_id, detail
+           FROM activity_log WHERE workspace_id = $1
        ) a
        LEFT JOIN profiles p ON p.id = a.profile_id AND p.workspace_id = $1
       WHERE ($2::timestamptz IS NULL OR a.at >= $2::timestamptz)
@@ -2817,7 +3148,10 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /broadcasts': listBroadcasts,
   'POST /broadcasts': createBroadcast,
   'GET /broadcasts/:id': getBroadcast,
+  'GET /broadcasts/:id/preview': previewBroadcast,
   'PUT /broadcasts/:id': updateBroadcast,
+  'DELETE /broadcasts/:id': deleteBroadcast,
+  'POST /broadcasts/:id/duplicate': duplicateBroadcast,
   'POST /broadcasts/:id/send': sendBroadcast,
   'GET /campaigns': listCampaigns,
   'POST /campaigns': createCampaign,
@@ -2834,6 +3168,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PATCH /profiles/:id': updateProfile,
   'POST /profiles/:id/merge': mergeProfiles,
   'GET /profiles/:id/events': listProfileEvents,
+  'POST /profiles/:id/events': sendProfileEvent,
   'GET /profiles/:id/delivery': getProfileDelivery,
   'GET /profiles/:id/segments': listProfileSegments,
   'GET /activity': listActivity,

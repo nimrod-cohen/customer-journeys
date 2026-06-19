@@ -160,7 +160,7 @@ export function SystemAdminConsole() {
                     value={coRenameText}
                     onInput={(e: Event) => setCoRenameText((e.target as HTMLInputElement).value)}
                   />
-                  <Button data-testid="company-rename-save" size="sm" onClick={() => void saveCompanyRename(c.id)}>
+                  <Button data-testid="company-rename-save" size="sm" onClick={() => saveCompanyRename(c.id)}>
                     Save
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setCoRenameId(null)}>
@@ -224,7 +224,7 @@ export function SystemAdminConsole() {
                               value={renameText}
                               onInput={(e: Event) => setRenameText((e.target as HTMLInputElement).value)}
                             />
-                            <Button data-testid="rename-save" size="sm" onClick={() => void saveRename(w.id)}>
+                            <Button data-testid="rename-save" size="sm" onClick={() => saveRename(w.id)}>
                               Save
                             </Button>
                             <Button variant="ghost" size="sm" onClick={() => setRenameId(null)}>
