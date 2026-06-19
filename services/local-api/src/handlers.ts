@@ -1863,15 +1863,44 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
   );
   const { rows } = await pool.query(q.text, q.values);
   if (rows.length === 0) return ok({ error: 'campaign not found' }, 404);
-  return ok({ campaign: rows[0] });
+  // The workspace timezone (§9B clock) is needed by the wait-until / hour-window
+  // editors, which run under manage_content (GET /workspace/settings is gated on
+  // manage_workspace_users a marketer lacks) — surface it here, workspace-scoped.
+  const tzRow = await pool.query<{ settings: Record<string, unknown> | null }>(
+    'SELECT settings FROM workspaces WHERE id = $1',
+    [ctx.workspaceId],
+  );
+  const settings = tzRow.rows[0]?.settings ?? {};
+  const timezone = typeof settings.timezone === 'string' && settings.timezone ? settings.timezone : 'UTC';
+  return ok({ campaign: rows[0], timezone });
 };
+
+/**
+ * Map a validateCampaignDefinition throw to a TYPED 400 (the structural gate is
+ * USER input, not a server fault — a malformed graph must never be a 500). Returns
+ * the 400 HandlerResponse on a validation error, or null when the definition is
+ * structurally valid (the caller proceeds). §9B phase-6 follow-up.
+ */
+function validateDefinitionOr400(definition: unknown): HandlerResponse | null {
+  try {
+    validateCampaignDefinition(definition);
+    return null;
+  } catch (e) {
+    return ok({ error: e instanceof Error ? e.message : 'invalid campaign definition' }, 400);
+  }
+}
 
 export const createCampaign: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const name = String(b.name ?? '');
   const definition = b.definition;
   if (!name) return ok({ error: 'name required' }, 400);
-  validateCampaignDefinition(definition); // reject malformed graphs (§9B)
+  const invalid = validateDefinitionOr400(definition); // reject malformed graphs (§9B) as a TYPED 400
+  if (invalid) return invalid;
+  // A client-supplied trigger_segment_id must resolve INSIDE the token's workspace
+  // (inv.2) — a foreign segment id is rejected, never silently stored.
+  const triggerSegmentId = await resolveTriggerSegmentId(pool, ctx.workspaceId, b.trigger_segment_id);
+  if (triggerSegmentId === REJECT) return ok({ error: 'trigger_segment_id not found in this workspace' }, 400);
   // trigger_on: fire on segment ENTER (default) or EXIT. keep_while_in_segment:
   // optional gate that exits the enrollment when the profile leaves that segment.
   const triggerOn = b.trigger_on === 'exit' ? 'exit' : 'enter';
@@ -1882,7 +1911,7 @@ export const createCampaign: Handler = async (ctx, pool, req) => {
       ctx.workspaceId,
       name,
       JSON.stringify(definition),
-      b.trigger_segment_id ?? null,
+      triggerSegmentId,
       triggerOn,
       b.keep_while_in_segment ?? null,
     ],
@@ -1890,10 +1919,44 @@ export const createCampaign: Handler = async (ctx, pool, req) => {
   return ok({ campaign: rows[0] }, 201);
 };
 
+/** Sentinel: a supplied trigger_segment_id did not resolve in the workspace. */
+const REJECT = Symbol('reject-trigger-segment');
+
+/**
+ * Resolve a client-supplied trigger_segment_id to a value safe to store. `undefined`
+ * (not in the body) → null (no change intent on create / leave as-is downstream).
+ * `null` → null (explicit clear). A non-empty id MUST belong to ctx.workspaceId
+ * (inv.2) — a foreign/unknown id returns the REJECT sentinel so the caller 400s.
+ */
+async function resolveTriggerSegmentId(
+  pool: Pool,
+  workspaceId: string,
+  raw: unknown,
+): Promise<string | null | typeof REJECT> {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string') return REJECT;
+  const q = scopedQuery(workspaceId, 'SELECT 1 FROM segments WHERE id = $1', [raw]);
+  const { rowCount } = await pool.query(q.text, q.values);
+  return (rowCount ?? 0) > 0 ? raw : REJECT;
+}
+
 export const updateCampaign: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const id = req.params.id!;
-  if (b.definition !== undefined) validateCampaignDefinition(b.definition);
+  if (b.definition !== undefined) {
+    const invalid = validateDefinitionOr400(b.definition); // typed 400, never a 500
+    if (invalid) return invalid;
+  }
+  // The segment_entry trigger's segment is a CAMPAIGN-ROW field. When the body
+  // supplies trigger_segment_id it MUST resolve inside the token's workspace (inv.2)
+  // — a foreign id is a 400, never silently stored. Absent → leave the column as-is.
+  const setTriggerSegment = b.trigger_segment_id !== undefined;
+  let triggerSegmentId: string | null = null;
+  if (setTriggerSegment) {
+    const resolved = await resolveTriggerSegmentId(pool, ctx.workspaceId, b.trigger_segment_id);
+    if (resolved === REJECT) return ok({ error: 'trigger_segment_id not found in this workspace' }, 400);
+    triggerSegmentId = resolved;
+  }
   const q = scopedQuery(
     ctx.workspaceId,
     `UPDATE campaigns SET
@@ -1901,7 +1964,8 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
        definition = CASE WHEN $3::boolean THEN $2::jsonb ELSE definition END,
        status = COALESCE($4, status),
        trigger_on = COALESCE($6, trigger_on),
-       keep_while_in_segment = CASE WHEN $7::boolean THEN $8 ELSE keep_while_in_segment END
+       keep_while_in_segment = CASE WHEN $7::boolean THEN $8 ELSE keep_while_in_segment END,
+       trigger_segment_id = CASE WHEN $9::boolean THEN $10 ELSE trigger_segment_id END
      WHERE id = $5`,
     [
       b.name !== undefined ? String(b.name) : null,
@@ -1912,6 +1976,8 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
       b.trigger_on === 'enter' || b.trigger_on === 'exit' ? b.trigger_on : null,
       b.keep_while_in_segment !== undefined,
       (b.keep_while_in_segment ?? null) as string | null,
+      setTriggerSegment,
+      triggerSegmentId,
     ],
   );
   const { rowCount } = await pool.query(q.text, q.values);
@@ -1992,6 +2058,12 @@ export const activateCampaign: Handler = async (ctx, pool, req) => {
   if (!campRows.rows[0]) return ok({ error: 'not found' }, 404);
   const def = campRows.rows[0].definition;
 
+  // The stored definition must be structurally valid (and the trigger complete —
+  // an event trigger missing eventType is rejected here) BEFORE the envelope gate.
+  // A malformed stored graph is a TYPED 400 (never a 500), status stays 'draft'.
+  const invalid = validateDefinitionOr400(def);
+  if (invalid) return invalid;
+
   // Load each send node's copy envelope (scoped) → compute the ordered gaps. A copy
   // from another workspace never resolves here, so it can never satisfy the gate.
   const sendTemplateIds = Object.values(def.nodes ?? {})
@@ -2020,7 +2092,8 @@ export const activateCampaign: Handler = async (ctx, pool, req) => {
         : g.missing === 'to'
           ? `Set the To field on the "${g.nodeId}" send step's email before activating.`
           : `Add a subject line to the "${g.nodeId}" send step's email before activating.`;
-    return ok({ error: msg }, 409);
+    // Machine-usable shape so the SPA renders the reason against the offending node.
+    return ok({ error: msg, node: g.nodeId, missing: g.missing }, 409);
   }
 
   // Verified-domain gate runs AFTER the per-node envelope checks (sendBroadcast
@@ -2030,7 +2103,7 @@ export const activateCampaign: Handler = async (ctx, pool, req) => {
     const verified = await pool.query(vq.text, vq.values);
     if (!verified.rowCount) {
       return ok(
-        { error: 'No verified sending domain. Verify one in Workspace settings → Sending domains before activating.' },
+        { error: 'No verified sending domain. Verify one in Workspace settings → Sending domains before activating.', missing: 'verified_domain' },
         409,
       );
     }

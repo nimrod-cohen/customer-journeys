@@ -55,6 +55,13 @@ function screenFor(path: string): JSX.Element {
   if (path.startsWith('/editor/')) {
     return <TemplateEditor id={path.slice('/editor/'.length)} />;
   }
+  // Campaigns: the builder lives at /campaigns; returning from a send node's
+  // "Design email" navigates to /campaigns/:id — the SAME combined list+canvas
+  // screen, which re-opens that campaign on mount (takeReturnedTo). Without this
+  // sub-route the editor's Back landed on the dashboard (the switch default).
+  if (path.startsWith('/campaigns/')) {
+    return <CampaignBuilder />;
+  }
   // Workspace settings tabs: /settings (workspace) and /settings/domains (sending
   // domains, per-workspace). The per-domain setup screen is /settings/domains/new
   // and /settings/domains/:id.

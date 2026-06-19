@@ -58,12 +58,17 @@ export function orthogonalPath(from: Point, to: Point, radius: number = CORNER_R
 }
 
 /**
- * edgeMidpoint(from, to) — the anchor for the (+) edge-insertion control, placed
- * on the connector's first vertical run (always directly below the source, so it
- * sits on a clean down segment regardless of any horizontal jog).
+ * edgeMidpoint(from, to) — the anchor for the (+) edge-insertion control. It sits
+ * at the connector's vertical midpoint (`midY`), where an offset connector runs
+ * HORIZONTALLY (the `H` run between the two rounded corners). We anchor its x at
+ * the horizontal midpoint `(from.x + to.x) / 2` so that two edges leaving the SAME
+ * source (a condition's onTrue/onFalse arms fanning to different target columns)
+ * get DISTINCT (+) positions instead of stacking on top of each other — stacked
+ * buttons make the lower one un-clickable (it intercepts the upper one's pointer
+ * events). A straight-down edge (same x) keeps its (+) directly below the source.
  */
 export function edgeMidpoint(from: Point, to: Point): Point {
-  return { x: from.x, y: (from.y + to.y) / 2 };
+  return { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
 }
 
 /** Format a number for an SVG path (trim noisy float tails, keep it compact). */

@@ -1,0 +1,49 @@
+{
+  "filesCreated": [
+    "web/src/campaigns/editors/NodeEditor.tsx",
+    "web/src/campaigns/node-config.ts",
+    "web/src/campaigns/node-config.test.ts",
+    "web/src/campaigns/node-config.serialize.test.ts",
+    "web/src/segments/RuleBuilder.tsx",
+    "web/e2e/campaign-node-editors.browser.e2e.spec.ts",
+    "web/e2e/campaign-publish-gate.browser.e2e.spec.ts",
+    "services/local-api/test/campaign-activate-gate.integration.test.ts",
+    "services/local-api/test/campaign-node-editors.integration.test.ts",
+    "services/campaign-runner/test/send-node-default-no-placeholder.test.ts"
+  ],
+  "filesModified": [
+    "web/src/campaigns/orthogonal-path.ts",
+    "web/src/campaigns/orthogonal-path.test.ts",
+    "web/src/campaigns/CampaignCanvas.tsx",
+    "web/src/campaigns/model.ts",
+    "web/src/campaigns/model.test.ts",
+    "web/src/AppShell.tsx",
+    "web/src/api/client.ts",
+    "web/src/screens/CampaignBuilder.tsx",
+    "web/src/screens/SegmentBuilder.tsx",
+    "services/campaign-runner/src/dsl.ts",
+    "services/campaign-runner/test/node-dsl-and-validation.test.ts",
+    "services/local-api/src/handlers.ts",
+    "services/local-api/test/get-campaign.integration.test.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "migrationsApplied": [],
+  "versionBump": "0.34.0",
+  "testsPass": true,
+  "testSummary": "web unit: 115 passed / 4 skipped (campaigns 59 incl. node-config 17 + serialize 3 + model 15 + mutate 9 + layout 9 + orthogonal-path 6 — added 1 edgeMidpoint case). Full workspace typecheck: 43/43 packages clean. local-api integration tier (205) untouched: no local-api SOURCE changed in this finishing pass — the activate handler already returned {error,node,missing}; the bug was the SPA API client dropping those extra fields. SES/AWS mocks unchanged.",
+  "e2eSummary": "All 17 campaign specs PASS in ONE invocation: campaign-builder 7 + campaign-node-editors 8 + campaign-publish-gate 2. Regression sweep also green: broadcast-and-campaign 13 + build-segment 9 = 22 passed. One-spec/suite-at-a-time discipline observed (killed playwright/chrome + freed :8788/:5174 between every run).",
+  "typecheckOk": true,
+  "lintOk": true,
+  "commandsRun": [
+    "pnpm --filter @cdp/web exec vitest run src/campaigns",
+    "pnpm --filter @cdp/web exec vitest run",
+    "pnpm typecheck",
+    "pnpm --filter @cdp/web lint",
+    "pnpm exec playwright test campaign-node-editors.browser.e2e.spec.ts",
+    "pnpm exec playwright test campaign-publish-gate.browser.e2e.spec.ts",
+    "pnpm exec playwright test campaign-builder campaign-node-editors campaign-publish-gate",
+    "pnpm exec playwright test broadcast-and-campaign segment"
+  ],
+  "notes": "5 originally-failing specs were 4 APP bugs (multiple root causes) + 1 SPEC bug. APP BUG A (the (+) edge-insert stacked): for a condition's two arms, edgeMidpoint returned identical (from.x, midY), so the two '+' buttons fully overlapped and the lower intercepted the upper's clicks ('intercepts pointer events'); the '+' at z-20 also sat over a card's ActionMenu dropdown. Fixed in orthogonal-path.ts (edgeMidpoint x=(from.x+to.x)/2 -> arms fan to distinct anchors) + CampaignCanvas.tsx ('+' lowered to z-10 so the dropdown paints over it). This alone fixed builder:181(delete), node-editors:106(webhook), node-editors:134(update-profile), and node-editors:155's first hop. Updated the edgeMidpoint unit test (it asserted the buggy behavior) + added a straight-down case. APP BUG B (node-editors:155 SEND attach): openEditor only persisted for NEW campaigns, so a freshly-inserted send node on an EXISTING campaign 404'd on attach-template (drawer never closed) -> openEditor now ALWAYS persists first; and after attach the model wasn't refreshed, so reopening re-persisted the stale no-template model and wiped the attach -> added onReloadCampaign (GET /campaigns/:id) before onDone (this also fixed the cross-test pollution that made publish-gate:18 fail in the combined run). APP BUG C (publish-gate:30 node-publish-error missing): the typed API client threw only {status,error}, DROPPING the activate 409's node/missing -> ApiError now spreads the full error body. APP BUG D (publish-gate:30 / node-editors:155 return): AppShell.screenFor had NO /campaigns/:id sub-route, so the editor's Back fell through to Dashboards -> added /campaigns/:id -> CampaignBuilder (re-opens via takeReturnedTo). SPEC BUG: publish-gate:30 line 58 assumed the abandoned blank-design left an instance (send-start-over); but an immediate editor-back with no edits creates no copy (identical to the broadcast wizard flow), so the node correctly shows the PICKER -> removed the bogus send-start-over round-trip, pick the template directly. Final: 17/17 campaign specs green in a single invocation; no regression in broadcast/segment suites. lintOk=true = the KNOWN-7 pre-existing react-hooks/exhaustive-deps rule-definition errors only (config issue, all in files NOT touched here); changed files add no lint errors. NOT pushed."
+}

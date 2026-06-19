@@ -41,10 +41,16 @@ export function CampaignCanvas({
   model,
   onInsert,
   onDelete,
+  onOpen,
+  publishErrors,
 }: {
   model: CanvasModel;
   onInsert: (edge: CanvasEdge) => void;
   onDelete: (node: CanvasNode) => void | Promise<void>;
+  /** Open a node's config editor (card click / "Edit step"). */
+  onOpen: (node: CanvasNode) => void;
+  /** Per-node publish-gate reasons (node id → message), surfaced on the card. */
+  publishErrors?: Readonly<Record<string, string>>;
 }): JSX.Element {
   const layout = layoutDefinition(buildDefinition(model));
 
@@ -79,7 +85,12 @@ export function CampaignCanvas({
               data-testid="campaign-edge-insert"
               aria-label="Insert a step on this edge"
               onClick={() => onInsert(edge)}
-              class="absolute z-20 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-stone-300 bg-white text-sm font-bold text-stone-500 shadow-sm transition-colors hover:border-brand-400 hover:text-brand-600"
+              // z-10 (same as cards, rendered BEFORE them) so a card's open
+              // ActionMenu dropdown — which lives inside the card's z-10 stacking
+              // context and can extend DOWN past the card — paints OVER these (+)
+              // controls instead of being intercepted by them. The (+) sit in the
+              // inter-row gap, so no card ever covers a (+) where it must be clicked.
+              class="absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-stone-300 bg-white text-sm font-bold text-stone-500 shadow-sm transition-colors hover:border-brand-400 hover:text-brand-600"
               style={{ left: `${mid.x}px`, top: `${mid.y}px` }}
             >
               +
@@ -92,12 +103,16 @@ export function CampaignCanvas({
           const pos = layout.positions.get(cn.id)!;
           const dt = displayType(cn.node);
           const isTrigger = cn.node.type === 'trigger';
+          const isExit = cn.node.type === 'exit';
+          const publishErr = publishErrors?.[cn.id];
           return (
             <div
               key={cn.id}
               data-testid={`node-${dt}`}
               data-node-id={cn.id}
-              class="absolute z-10 rounded-xl border bg-white shadow-card ring-1 ring-inset ring-stone-200"
+              class={`absolute z-10 rounded-xl border bg-white shadow-card ring-1 ring-inset ${
+                publishErr ? 'ring-rose-300' : 'ring-stone-200'
+              }`}
               style={{
                 left: `${pos.x - LAYOUT.cardWidth / 2}px`,
                 top: `${pos.y}px`,
@@ -105,7 +120,14 @@ export function CampaignCanvas({
               }}
             >
               <div class="flex items-start justify-between gap-2 p-3">
-                <div class="min-w-0">
+                <button
+                  type="button"
+                  // Exit has no config; every other node opens its editor on click.
+                  data-testid={isExit ? undefined : `node-open-${cn.id}`}
+                  onClick={isExit ? undefined : () => onOpen(cn)}
+                  disabled={isExit}
+                  class="min-w-0 flex-1 text-left disabled:cursor-default"
+                >
                   <span
                     class={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${
                       NODE_STYLE[dt] ?? NODE_STYLE.exit
@@ -114,12 +136,15 @@ export function CampaignCanvas({
                     {TYPE_LABEL[dt] ?? dt}
                   </span>
                   <p class="mt-1.5 truncate text-sm font-medium text-ink-900">{nodeSummary(cn)}</p>
-                </div>
+                </button>
                 {isTrigger ? null : (
                   <ActionMenu
                     data-testid={`node-actions-${cn.id}`}
                     label="Step actions"
                     items={[
+                      ...(isExit
+                        ? []
+                        : [{ label: 'Edit step', 'data-testid': 'node-edit', onSelect: () => onOpen(cn) }]),
                       {
                         label: 'Delete step',
                         danger: true,
@@ -130,6 +155,11 @@ export function CampaignCanvas({
                   />
                 )}
               </div>
+              {publishErr ? (
+                <p data-testid="node-publish-error" class="border-t border-rose-100 bg-rose-50 px-3 py-1.5 text-[11px] text-rose-700">
+                  {publishErr}
+                </p>
+              ) : null}
             </div>
           );
         })}

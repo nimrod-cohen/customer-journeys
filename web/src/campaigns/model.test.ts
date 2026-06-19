@@ -101,8 +101,11 @@ describe('defaultNodeConfig stubs', () => {
     expect(n.type).toBe('condition');
     expect(n).toHaveProperty('ast');
   });
-  it('send → a structurally-valid placeholder template_id', () => {
-    expect(defaultNodeConfig('send', now)).toMatchObject({ type: 'action', kind: 'send', template_id: 'placeholder' });
+  it('send → NO placeholder template_id (reads as "needs an email")', () => {
+    const node = defaultNodeConfig('send', now);
+    expect(node).toMatchObject({ type: 'action', kind: 'send' });
+    expect((node as { template_id?: string }).template_id ?? '').not.toBe('placeholder');
+    expect('template_id' in (node as object)).toBe(false);
   });
   it('set_attribute → a key', () => {
     expect(defaultNodeConfig('set_attribute', now)).toMatchObject({ type: 'action', kind: 'set_attribute', key: 'stage' });

@@ -186,8 +186,11 @@ export function defaultWaitUntilIso(now: Date = new Date()): string {
  * defaultNodeConfig(type) — a sensible-default STUB config per palette type that
  * keeps the graph structurally valid once wired (per-node editors are phase 6).
  * The `next` (or onTrue/onFalse) edges are filled in by insertOnEdge; here we set
- * the non-edge config. A send stub uses a placeholder template_id so the graph
- * validates structurally (the real clone-into-copy attach is phase 6).
+ * the non-edge config. A send stub carries NO template_id — a freshly-inserted
+ * send node reads as "needs an email" (sendNodeNeedsEmail) and is configured by
+ * the SEND editor's clone/attach flow (phase 6). It is structurally valid as a
+ * DRAFT; the PUBLISH gate (collectSendNodeEnvelopeGaps) blocks activation until an
+ * email with a From/To/Subject is attached.
  */
 export function defaultNodeConfig(type: PaletteType, now: Date = new Date()): DslNode {
   switch (type) {
@@ -205,7 +208,7 @@ export function defaultNodeConfig(type: PaletteType, now: Date = new Date()): Ds
         onFalse: '',
       };
     case 'send':
-      return { type: 'action', kind: 'send', template_id: 'placeholder', next: '' };
+      return { type: 'action', kind: 'send', next: '' };
     case 'set_attribute':
       return { type: 'action', kind: 'set_attribute', key: 'stage', value: '', next: '' };
     case 'webhook':

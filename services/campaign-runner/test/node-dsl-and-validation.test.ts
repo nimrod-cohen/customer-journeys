@@ -99,12 +99,23 @@ describe('validateCampaignDefinition', () => {
   });
 
   it('enforces per-type required fields', () => {
-    // send action without template_id
-    const badSend = {
+    // An UNATTACHED send (no template_id) is a valid DRAFT (§9B phase 6 — the
+    // publish gate, not structural validation, blocks an emailless send).
+    const draftSend = {
       startNode: 't',
       nodes: {
         t: { type: 'trigger', kind: 'manual', next: 'a' },
         a: { type: 'action', kind: 'send', next: 'x' },
+        x: { type: 'exit' },
+      },
+    };
+    expect(() => validateCampaignDefinition(draftSend)).not.toThrow();
+    // …but a PRESENT template_id must be a non-empty string.
+    const badSend = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'a' },
+        a: { type: 'action', kind: 'send', template_id: '', next: 'x' },
         x: { type: 'exit' },
       },
     };
@@ -266,8 +277,8 @@ describe('validateCampaignDefinition: webhook action', () => {
     expect(() => validateCampaignDefinition(withWebhook({ ...base, maxRetries: -1 }))).toThrow();
   });
 
-  it('still requires template_id for kind=send and key for kind=set_attribute (no regression)', () => {
-    const badSend = {
+  it('allows an unattached send (draft) but rejects an empty template_id; still requires key for set_attribute', () => {
+    const draftSend = {
       startNode: 't',
       nodes: {
         t: { type: 'trigger', kind: 'manual', next: 'a' },
@@ -275,7 +286,9 @@ describe('validateCampaignDefinition: webhook action', () => {
         x: { type: 'exit' },
       },
     };
-    expect(() => validateCampaignDefinition(badSend)).toThrow(/template_id/);
+    expect(() => validateCampaignDefinition(draftSend)).not.toThrow();
+    const emptyTpl = { ...draftSend, nodes: { ...draftSend.nodes, a: { type: 'action', kind: 'send', template_id: '', next: 'x' } } };
+    expect(() => validateCampaignDefinition(emptyTpl)).toThrow(/template_id/);
   });
 });
 

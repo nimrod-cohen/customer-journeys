@@ -1,15 +1,18 @@
-// CampaignBuilder (§12, §9B phase 5): a constrained DOWNWARD CANVAS over the node
+// CampaignBuilder (§12, §9B phase 5–6): a constrained DOWNWARD CANVAS over the node
 // DSL. It RENDERS a CampaignDefinition with auto-layout + rounded orthogonal
 // connectors (no manual drag, no stored coordinates), lets you INSERT a step on
-// any edge (the (+) control → an 8-type palette) and DELETE a step (re-linking the
-// graph), then SAVES the assembled definition via POST/PUT /campaigns — the server
-// re-validates with validateCampaignDefinition. Reload via GET /campaigns/:id
-// round-trips. Server-calling buttons RETURN the promise (kit Button auto-locks);
-// no native dialogs (askConfirm for delete, showToast for errors).
+// any edge (the (+) control → an 8-type palette), DELETE a step (re-linking the
+// graph), and now (phase 6) EDIT each step via a per-node Drawer editor. SAVES the
+// assembled definition via POST/PUT /campaigns — the server re-validates with
+// validateCampaignDefinition (a malformed graph is a TYPED 400). PUBLISH (Draft →
+// Active) runs the send-node envelope + verified-domain gate; a 409 reason is
+// rendered INLINE against the offending node card (no native dialog). Reload via
+// GET /campaigns/:id round-trips. Server-calling buttons RETURN the promise (kit
+// Button auto-locks); no native dialogs (askConfirm for delete, showToast/inline).
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { clearEditorReturn } from '../store/editorReturn.js';
+import { clearEditorReturn, takeReturnedTo } from '../store/editorReturn.js';
 import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor, Drawer } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.js';
 import { showToast } from '../ui/toast.js';
@@ -24,12 +27,19 @@ import {
   type CanvasNode,
   type PaletteType,
 } from '../campaigns/model.js';
+import { applyNodeConfig } from '../campaigns/node-config.js';
 import { insertOnEdge, deleteNode, MutationError } from '../campaigns/mutate.js';
+import { NodeEditorBody, nodeEditorTestId, nodeEditorTitle } from '../campaigns/editors/NodeEditor.js';
 
 interface Campaign {
   id: string;
   name: string;
   status: string;
+}
+
+interface SegmentLite {
+  id: string;
+  name: string;
 }
 
 /** The insert palette — all eight node types, each with a stable testid. */
@@ -49,8 +59,16 @@ export function CampaignBuilder() {
   const [name, setName] = useState('');
   const [model, setModel] = useState<CanvasModel>(() => starterModel());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>('draft');
+  const [timeZone, setTimeZone] = useState('UTC');
+  const [triggerSegmentId, setTriggerSegmentId] = useState<string | null>(null);
+  const [segments, setSegments] = useState<SegmentLite[]>([]);
   const [paletteEdge, setPaletteEdge] = useState<CanvasEdge | null>(null);
+  const [openNode, setOpenNode] = useState<CanvasNode | null>(null);
   const [error, setError] = useState('');
+  // Publish-gate feedback: a top-level reason + a per-node-id error for the card.
+  const [publishReason, setPublishReason] = useState('');
+  const [publishErrors, setPublishErrors] = useState<Record<string, string>>({});
 
   const reloadList = async () => {
     const c = await api.get<{ campaigns: Campaign[] }>('/campaigns');
@@ -59,6 +77,17 @@ export function CampaignBuilder() {
 
   useEffect(() => {
     void reloadList();
+    void api.get<{ segments: SegmentLite[] }>('/segments').then((r) => setSegments(r.segments)).catch(() => undefined);
+  }, []);
+
+  // Returning from the email editor (a SEND node's "Design email"): re-open the
+  // campaign we left so the SEND editor shows the freshly-attached/edited copy.
+  useEffect(() => {
+    const returnedTo = takeReturnedTo();
+    if (returnedTo && returnedTo.startsWith('/campaigns/')) {
+      const id = returnedTo.slice('/campaigns/'.length);
+      if (id) void openById(id);
+    }
   }, []);
 
   // Start a brand-new campaign (the minimal trigger → exit starter).
@@ -66,17 +95,34 @@ export function CampaignBuilder() {
     setEditingId(null);
     setName('');
     setModel(starterModel());
+    setStatus('draft');
+    setTriggerSegmentId(null);
+    clearPublish();
     setError('');
   };
 
-  // Open an existing campaign — GET /campaigns/:id round-trips the DSL → canvas.
-  const open = async (c: Campaign) => {
-    const res = await api.get<{ campaign: { name: string; definition: CampaignDefinition } }>(`/campaigns/${c.id}`);
-    setEditingId(c.id);
+  const clearPublish = () => {
+    setPublishReason('');
+    setPublishErrors({});
+  };
+
+  // Load an existing campaign — GET /campaigns/:id round-trips the DSL → canvas
+  // (and the workspace timezone + trigger_segment_id for the editors).
+  const openById = async (id: string) => {
+    const res = await api.get<{
+      campaign: { id: string; name: string; status: string; definition: CampaignDefinition; trigger_segment_id: string | null };
+      timezone: string;
+    }>(`/campaigns/${id}`);
+    setEditingId(res.campaign.id);
     setName(res.campaign.name);
+    setStatus(res.campaign.status);
     setModel(parseDefinition(res.campaign.definition));
+    setTriggerSegmentId(res.campaign.trigger_segment_id ?? null);
+    setTimeZone(res.timezone || 'UTC');
+    clearPublish();
     setError('');
   };
+  const open = (c: Campaign) => openById(c.id);
 
   // Insert a node on the chosen edge (from the palette).
   const insert = (type: PaletteType) => {
@@ -108,26 +154,105 @@ export function CampaignBuilder() {
     }
   };
 
-  // Save: POST (new) or PUT (existing). The server validates the definition; an
-  // invalid graph surfaces as a styled error + toast (never a native dialog).
+  // Persist the current model to the server (POST new / PUT existing), returning the
+  // campaign id. The server validates the definition; an invalid graph throws (the
+  // caller surfaces it). Used by Save AND before a node-config PUT/Publish so the
+  // gate always sees the latest copy.
+  const persist = async (overrideModel?: CanvasModel): Promise<string> => {
+    const definition = buildDefinition(overrideModel ?? model);
+    if (editingId) {
+      await api.put(`/campaigns/${editingId}`, { body: { name: name || 'Untitled campaign', definition } });
+      return editingId;
+    }
+    const r = await api.post<{ campaign: { id: string } }>('/campaigns', {
+      body: { name: name || 'Untitled campaign', definition },
+    });
+    setEditingId(r.campaign.id);
+    return r.campaign.id;
+  };
+
+  // Save: persist the definition; surface an invalid graph inline + via toast.
   const save = async () => {
     setError('');
     try {
-      const definition = buildDefinition(model);
-      if (editingId) {
-        await api.put(`/campaigns/${editingId}`, { body: { name: name || 'Untitled campaign', definition } });
-      } else {
-        const r = await api.post<{ campaign: { id: string } }>('/campaigns', {
-          body: { name: name || 'Untitled campaign', definition },
-        });
-        setEditingId(r.campaign.id);
-      }
+      await persist();
       await reloadList();
       showToast('Campaign saved', { tone: 'success' });
     } catch (err) {
       const msg = (err as { error?: string })?.error ?? String(err);
       setError(msg);
       showToast(msg, { tone: 'error' });
+    }
+  };
+
+  // A node editor saved its config: patch the model immutably, persist, reopen so
+  // the editor reflects the round-tripped state (esp. the SEND clone).
+  const saveNode = async (nodeId: string, patch: CampaignDefinition['nodes'][string]): Promise<void> => {
+    const next = applyNodeConfig(model, nodeId, patch);
+    setModel(next);
+    clearPublish();
+    try {
+      const id = await persist(next);
+      await openById(id);
+      await reloadList();
+    } catch (err) {
+      const msg = (err as { error?: string })?.error ?? String(err);
+      showToast(msg, { tone: 'error' });
+      throw err;
+    }
+  };
+
+  // The SEND editor's attach-template / design-email act on the node SERVER-SIDE
+  // (POST .../send-nodes/:nodeId/attach-template reads the node from the stored
+  // definition). So a freshly-inserted node must be PERSISTED before its editor
+  // opens — for an EXISTING campaign too, not just a brand-new one (otherwise the
+  // in-memory-only node 404s on attach and the drawer never closes). Node ids are
+  // stable across persist (no re-layout), so the passed node stays valid. A
+  // malformed in-progress graph surfaces as a toast and we don't open.
+  const openEditor = async (node: CanvasNode): Promise<void> => {
+    clearPublish();
+    try {
+      await persist();
+      await reloadList();
+    } catch (err) {
+      showToast((err as { error?: string })?.error ?? String(err), { tone: 'error' });
+      return;
+    }
+    setOpenNode(node);
+  };
+
+  const saveTriggerSegment = async (segmentId: string | null): Promise<void> => {
+    if (!editingId) await persist();
+    const id = editingId ?? (await persist());
+    await api.put(`/campaigns/${id}`, { body: { trigger_segment_id: segmentId } });
+    setTriggerSegmentId(segmentId);
+  };
+
+  // PUBLISH (Draft → Active). Persist first so the gate sees the latest definition,
+  // then POST /activate. A 409 carries {error, node?, missing?} → render inline
+  // against the offending node; a 400 is a structural reason; 200 flips to active.
+  const publish = async (): Promise<void> => {
+    clearPublish();
+    setError('');
+    let id: string;
+    try {
+      id = await persist();
+      await reloadList();
+    } catch (err) {
+      const msg = (err as { error?: string })?.error ?? String(err);
+      setPublishReason(msg);
+      return;
+    }
+    try {
+      await api.post(`/campaigns/${id}/activate`, { body: {} });
+      setStatus('active');
+      await reloadList();
+      showToast('Campaign published', { tone: 'success' });
+    } catch (err) {
+      const body = err as { error?: string; node?: string; missing?: string };
+      const msg = body?.error ?? 'Could not publish this campaign.';
+      setPublishReason(msg);
+      if (body?.node) setPublishErrors({ [body.node]: msg });
     }
   };
 
@@ -156,24 +281,50 @@ export function CampaignBuilder() {
       />
 
       <Card class="p-5">
-        <Field label="Campaign name" class="max-w-sm">
-          <Input
-            data-testid="campaign-name"
-            placeholder="Welcome series"
-            value={name}
-            onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
-          />
-        </Field>
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <Field label="Campaign name" class="max-w-sm flex-1">
+            <Input
+              data-testid="campaign-name"
+              placeholder="Welcome series"
+              value={name}
+              onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          {editingId ? (
+            <Badge data-testid="campaign-status" tone={toneFor(status)}>
+              {status}
+            </Badge>
+          ) : null}
+        </div>
 
         <span class="label mt-5">Workflow</span>
-        <CampaignCanvas model={model} onInsert={(edge) => setPaletteEdge(edge)} onDelete={remove} />
+        <CampaignCanvas
+          model={model}
+          onInsert={(edge) => setPaletteEdge(edge)}
+          onDelete={remove}
+          onOpen={(node) => void openEditor(node)}
+          publishErrors={publishErrors}
+        />
 
-        <div class="mt-4 flex items-center gap-3">
+        <div class="mt-4 flex flex-wrap items-center gap-3">
           <Button data-testid="save-campaign" onClick={save}>
             {editingId ? 'Save changes' : 'Save campaign'}
           </Button>
+          {editingId ? (
+            <Button data-testid="campaign-publish" variant="secondary" onClick={publish}>
+              Publish
+            </Button>
+          ) : null}
           {editingId ? <span class="text-xs text-stone-400">Editing an existing campaign</span> : null}
         </div>
+        {publishReason ? (
+          <p
+            data-testid="publish-reason"
+            class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200"
+          >
+            {publishReason}
+          </p>
+        ) : null}
         {error ? (
           <p
             data-testid="campaign-error"
@@ -231,6 +382,31 @@ export function CampaignBuilder() {
             </button>
           ))}
         </div>
+      </Drawer>
+
+      {/* The per-node config editor (a side drawer, one body per node type). */}
+      <Drawer
+        open={openNode !== null}
+        onClose={() => setOpenNode(null)}
+        title={openNode ? nodeEditorTitle(openNode) : 'Edit step'}
+        subtitle="Configure this step. Changes save into the journey."
+        testId={openNode ? nodeEditorTestId(openNode) : 'node-editor'}
+      >
+        {openNode ? (
+          <NodeEditorBody
+            campaignId={editingId}
+            node={openNode}
+            timeZone={timeZone}
+            segments={segments}
+            triggerSegmentId={triggerSegmentId}
+            onSaveNode={(patch) => saveNode(openNode.id, patch)}
+            onSaveTriggerSegment={saveTriggerSegment}
+            onReloadCampaign={async () => {
+              if (editingId) await openById(editingId);
+            }}
+            onDone={() => setOpenNode(null)}
+          />
+        ) : null}
       </Drawer>
     </section>
   );

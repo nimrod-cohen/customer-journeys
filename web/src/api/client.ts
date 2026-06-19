@@ -22,6 +22,13 @@ export function apiBaseUrl(): string {
 export interface ApiError {
   readonly status: number;
   readonly error: string;
+  /**
+   * Any EXTRA fields the server put on the error body (beyond `error`) are carried
+   * through verbatim — e.g. the campaign publish gate's `{ node, missing }`, which
+   * the builder reads to render the reason against the offending node card. Without
+   * this the client used to drop them and only surface a generic `error` string.
+   */
+  readonly [key: string]: unknown;
 }
 
 /** A token provider — returns the current bearer token, or null when logged out. */
@@ -95,7 +102,11 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
     const text = await res.text();
     const json = text ? (JSON.parse(text) as unknown) : undefined;
     if (!res.ok) {
+      // Carry the full server error body (so extra fields like the publish gate's
+      // `node`/`missing` survive), with `status`/`error` normalized on top.
+      const body = (json && typeof json === 'object' ? (json as Record<string, unknown>) : {});
       const err: ApiError = {
+        ...body,
         status: res.status,
         error: (json as { error?: string } | undefined)?.error ?? res.statusText,
       };

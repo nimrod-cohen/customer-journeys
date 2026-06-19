@@ -74,8 +74,15 @@ describe('orthogonalPath', () => {
 });
 
 describe('edgeMidpoint', () => {
-  it('sits on the source vertical run (same x as the source)', () => {
+  it('sits at the horizontal+vertical midpoint (on the connector’s H run)', () => {
+    // x is the midpoint of source/target so two arms from the SAME source (a
+    // condition fanning sideways) get DISTINCT (+) anchors instead of stacking.
     const mid = edgeMidpoint({ x: 100, y: 50 }, { x: 340, y: 250 });
+    expect(mid).toEqual({ x: 220, y: 150 });
+  });
+
+  it('stays directly below the source for a straight-down edge (same x)', () => {
+    const mid = edgeMidpoint({ x: 100, y: 50 }, { x: 100, y: 250 });
     expect(mid).toEqual({ x: 100, y: 150 });
   });
 });

@@ -152,7 +152,7 @@ describeMaybe('GET /campaigns/:id — definition round-trip (real Postgres)', ()
         token: tok(),
         body: { name: 'Bad', definition: def },
       });
-      expect(res.status).toBe(500); // the validator throws → dispatch maps to 500
+      expect(res.status).toBe(400); // a malformed graph is USER input → a TYPED 400 (§9B phase-6)
       expect(JSON.stringify(res.body)).toMatch(re);
     }
   });
@@ -176,7 +176,7 @@ describeMaybe('GET /campaigns/:id — definition round-trip (real Postgres)', ()
       token: tok(),
       body: { definition: bad },
     });
-    expect(put.status).toBe(500);
+    expect(put.status).toBe(400);
 
     // Re-GET shows the ORIGINAL definition (untouched).
     const got = await call(world.env, 'GET', `/campaigns/${id}`, { token: tok() });

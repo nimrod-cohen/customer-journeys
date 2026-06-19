@@ -1,0 +1,88 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "criteria": [
+            "Each node type opens a working editor that persists its config into the definition and round-trips; the IF editor reuses the segment rule builder and compiles to a valid AstNode; the SEND editor clones+edits a per-node email copy (envelope) reusing the broadcast flow.",
+            "Publish is blocked (with specific, inline reasons) when the graph is invalid or a send node lacks From/To/Subject or the trigger is incomplete; it succeeds once everything is valid. Verified in a REAL browser per node type.",
+            "All server-calling buttons spinner+lock; no native dialogs; data-testid on every control; workspace-scoped throughout."
+          ],
+          "frontend": true,
+          "id": "phase6-node-editors",
+          "refs": "CLAUDE.md (segment rule builder for if, broadcast email-instance flow for send, kit Drawer/Field) + the trigger design",
+          "scope": [
+            "Inline/drawer editors for every node: TRIGGER (segment_entry → segment picker; event → event-type + optional filter; manual), WAIT (duration), WAIT-UNTIL (date/time in workspace tz), HOUR-OF-DAY WINDOW (hour range + days), IF (REUSE the segment rule builder → AstNode), SEND (the email-instance picker + \"Design email\" → editor, reusing the broadcast clone/return flow + envelope), UPDATE-PROFILE (attribute key picker + a value that is either a LITERAL or an expression — customer.* / event.* token, with a hint that event.* pulls from the trigger event), WEBHOOK (url/method/headers/body/timeout/retries; secret header write-only).",
+            "PUBLISH flow: a Draft → Active transition that runs validateCampaignDefinition + the send-node envelope gating + trigger validity; surface inline what is missing and BLOCK publish until valid (buttons spinner+lock; no native dialogs).",
+            "Wire the editors to save into the definition (autosave or explicit save consistent with the broadcast wizard); preserve the editor return-context for the send-node email (← Back to campaign)."
+          ],
+          "title": "Builder: per-node editors + publish validation"
+        },
+        "score": 96
+      },
+      "instructions": [
+        "Run `git add -A`. If not on a feature branch and on the default branch, create/use a branch first.",
+        "Commit with a clear conventional message describing the phase (Builder: per-node editors + publish validation), gate score (96), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Builder: per-node editors + publish validation\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KVGWH2Y6BV3ASB54VVXEK5VG/input.json",
+    "outputJsonPath": "tasks/01KVGWH2Y6BV3ASB54VVXEK5VG/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "phase6-node-editors"
+  ],
+  "title": "Commit: Builder: per-node editors + publish validation",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KVGWH2Y6BV3ASB54VVXEK5VG",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/campaign-builder:S000024:commit-phase",
+  "stepId": "S000024",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "criteria": [
+        "Each node type opens a working editor that persists its config into the definition and round-trips; the IF editor reuses the segment rule builder and compiles to a valid AstNode; the SEND editor clones+edits a per-node email copy (envelope) reusing the broadcast flow.",
+        "Publish is blocked (with specific, inline reasons) when the graph is invalid or a send node lacks From/To/Subject or the trigger is incomplete; it succeeds once everything is valid. Verified in a REAL browser per node type.",
+        "All server-calling buttons spinner+lock; no native dialogs; data-testid on every control; workspace-scoped throughout."
+      ],
+      "frontend": true,
+      "id": "phase6-node-editors",
+      "refs": "CLAUDE.md (segment rule builder for if, broadcast email-instance flow for send, kit Drawer/Field) + the trigger design",
+      "scope": [
+        "Inline/drawer editors for every node: TRIGGER (segment_entry → segment picker; event → event-type + optional filter; manual), WAIT (duration), WAIT-UNTIL (date/time in workspace tz), HOUR-OF-DAY WINDOW (hour range + days), IF (REUSE the segment rule builder → AstNode), SEND (the email-instance picker + \"Design email\" → editor, reusing the broadcast clone/return flow + envelope), UPDATE-PROFILE (attribute key picker + a value that is either a LITERAL or an expression — customer.* / event.* token, with a hint that event.* pulls from the trigger event), WEBHOOK (url/method/headers/body/timeout/retries; secret header write-only).",
+        "PUBLISH flow: a Draft → Active transition that runs validateCampaignDefinition + the send-node envelope gating + trigger validity; surface inline what is missing and BLOCK publish until valid (buttons spinner+lock; no native dialogs).",
+        "Wire the editors to save into the definition (autosave or explicit save consistent with the broadcast wizard); preserve the editor return-context for the send-node email (← Back to campaign)."
+      ],
+      "title": "Builder: per-node editors + publish validation"
+    },
+    "score": 96
+  }
+}

@@ -182,7 +182,8 @@ function isNodeObject(v: unknown): v is Node {
  *   - exactly ONE trigger node.
  *   - unique node ids (guaranteed by the map; the start id must resolve).
  *   - per-type required fields (trigger.kind/next, wait.next + delay|until,
- *     condition.ast/onTrue/onFalse, action.kind + send→template_id /
+ *     condition.ast/onTrue/onFalse, action.kind + send→(optional template_id; an
+ *     unattached send is a valid DRAFT, the publish gate blocks activation) /
  *     set_attribute→key, webhook→url(http(s))/method/positive timeoutMs/non-neg
  *     maxRetries, hour_of_day_window.startHour/endHour 0–23 + optional daysOfWeek,
  *     and the node's next/onTrue/onFalse edges).
@@ -315,8 +316,13 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
         throw new Error(`validateCampaignDefinition: action "${id}" has an invalid kind`);
       }
       const act = node as ActionNode;
-      if (kind === 'send' && (typeof act.template_id !== 'string' || !act.template_id)) {
-        throw new Error(`validateCampaignDefinition: send action "${id}" needs a template_id`);
+      // A send node's email is attached via the SEND editor's clone/attach flow
+      // (§9B phase 6); an UNATTACHED send node (no template_id) is a structurally
+      // valid DRAFT — the PUBLISH gate (collectSendNodeEnvelopeGaps) blocks
+      // activation until an email with a From/To/Subject is attached. When a
+      // template_id IS present it must be a non-empty string.
+      if (kind === 'send' && act.template_id !== undefined && (typeof act.template_id !== 'string' || !act.template_id)) {
+        throw new Error(`validateCampaignDefinition: send action "${id}" template_id must be a non-empty string`);
       }
       if (kind === 'set_attribute') {
         if (typeof act.key !== 'string' || !act.key) {
