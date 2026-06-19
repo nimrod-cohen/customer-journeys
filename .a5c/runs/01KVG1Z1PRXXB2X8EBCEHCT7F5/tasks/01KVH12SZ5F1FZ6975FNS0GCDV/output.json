@@ -1,0 +1,38 @@
+{
+  "score": 96,
+  "testsPass": true,
+  "criteriaAllMet": true,
+  "criteriaCoverage": [
+    {
+      "criterion": "The campaigns screen is a LIST (like broadcasts); creating/opening a campaign routes to a SEPARATE /campaigns/:id builder page; there is NO \"Design email\" button on the campaigns list page (email design is only inside a send-node editor). Verified in a REAL browser.",
+      "met": true,
+      "evidence": "AppShell.screenFor: '/campaigns' -> <CampaignsList/>; '/campaigns/new' & '/campaigns/:id' -> <CampaignDetail/> (mirrors broadcasts list/wizard split). CampaignBuilder.tsx CampaignsList (campaigns-list-screen) has only a 'New campaign' action + per-row ActionMenu; the standalone design-email Button was removed (grep: 'design-email' no longer in CampaignBuilder.tsx; only present in BroadcastComposer + NodeEditor's 'send-design-email'). REAL Chromium e2e campaign-list-detail.browser.e2e.spec.ts 6/6 PASSED: asserts list (no campaign-canvas, no campaign-builder, design-email count 0 on #/campaigns), New campaign -> separate detail route + canvas, open seeded row -> /campaigns/:id reconstructs DSL, send-node drawer exposes send-design-email, status badge + counts cell, campaigns-back returns to list."
+    },
+    {
+      "criterion": "The campaign list shows lifecycle status + enrollment counts; publish/pause/resume work and are capability-gated + workspace-scoped; an active campaign enrolls + advances profiles. Verified in a REAL browser + against REAL Postgres.",
+      "met": true,
+      "evidence": "GET /campaigns returns status + counts via ONE workspace-scoped GROUP BY (campaign_id,status) folded by pure campaignCountsShape. POST /campaigns/:id/{pause,resume,archive} = manage_content (routes.ts), workspace-scoped scopedQuery (foreign id 404), typed 409 via pure nextLifecycle, idempotent no-op. REAL Postgres: campaign-lifecycle.integration 5/5 (idempotent pause 200, illegal resume 409, archive blocks enrollment, cross-ws 404, accounting 403); campaign-enrollment-counts 2/2 (exact per-campaign buckets, WS_B's 5-active never summed, empty all-zero, GET/:id regression). REAL Chromium campaign-lifecycle.browser.e2e 2/2 (publish->pause->resume->archive via ActionMenu + askConfirm; workspace-scoped re-scope on switch). Capability-gating (accounting 403) verified at integration tier; the browser spec covers the marketer-visible flow."
+    },
+    {
+      "criterion": "The full journey acceptance test passes: a built campaign enrolls (segment/event/manual), advances through wait/hour-window/if/send/webhook/exit with an injected clock, sends via the Dispatcher (messages_log, campaign_id) and fires the mocked webhook, idempotently, all workspace-scoped.",
+      "met": true,
+      "evidence": "campaign-journey-live-enroll.integration.test.ts 2/2 PASSED on REAL Postgres. Non-vacuous: enrolls via LIVE local-api POST /profiles/:id/events (status 201, idempotent on replay) + enrollProfileManually + enrollSegmentSnapshot (each one row). Injected clock T0/T0+ ticks through trigger->wait(park@w)->hour_of_day_window(defer@win, NY tz DST-correct)->condition(true)->set_attribute->send->webhook->exit (completed). Event-sourced attribute: last_purchase_amount='42.5' from {{event.amount}} + welcomed='y' literal. REAL Dispatcher send (CountingSes mock): messages_log.campaign_id set, ses_message_id, status='sent', From '\"Acme Team\" <team@mail.acme.com>', To/subject/body merge rendered. Injected webhook fired exactly once to allowlisted host, secret decrypted at call-time (activity_log detail does NOT contain PLAINTEXT-TOKEN). Idempotent re-tick: skipped, no 2nd outbox/send/webhook. WS_B parallel campaign untouched (still active@trigger, no messages_log/outbox)."
+    },
+    {
+      "criterion": "CLAUDE.md updated; root version bumped; no regression across the full Vitest + e2e suite (cold).",
+      "met": true,
+      "evidence": "package.json version 0.36.0 (0.35.0 -> 0.36.0, minor). CLAUDE.md has a detailed phase-7 paragraph (list+detail split, design-email removed, lifecycle endpoints+capability+counts, runner pause gate, full journey test). Cold runs by reviewer: pnpm typecheck EXIT 0; DATABASE_URL=...:5433/cdp pnpm test 43/43 turbo tasks pass, test tasks force-executed (cache:false honored), campaign-runner + local-api ran vs real Postgres (172 + 214 tests); pnpm lint shows ONLY the known-7 react-hooks 'rule not found' errors in pre-existing files (none in CampaignBuilder/AppShell/kit). E2E SOLO Chromium: new specs 9/9 pass; regression campaign-builder+node-editors+publish-gate+broadcast-and-campaign 31 passed (2 flaky retry-recovered, unrelated click-timing in broadcast wizard + a branch test); build-segment+login-workspace-switch 14/14 pass."
+    }
+  ],
+  "isolationOk": true,
+  "idempotencyOk": true,
+  "webhookSafetyOk": true,
+  "browserVerified": true,
+  "scopeCreep": [],
+  "recommendations": [
+    "Consider a thin browser-level assertion that the accounting role cannot see/use the lifecycle ActionMenu actions (currently the 403 capability gate is verified only at the integration tier; the lifecycle e2e covers the marketer path). The plan listed a capability-visibility e2e flow that landed only as an integration assertion.",
+    "The journey test exercises only the happy/allowlisted webhook path; the SSRF-blocked-target isolation (failure recorded, tick does not crash/double-advance) is covered by the separate runner-webhook + webhook-node-tick tests — fine, but a one-line blocked-target assertion inside the composed journey would make the SSRF guarantee self-contained in the acceptance test.",
+    "Two e2e specs (broadcast wizard Send-now, campaign-builder empty-arm branch) were flaky and recovered on retry #1; worth stabilizing the click waits to keep the suite deterministic under retries:1."
+  ],
+  "criticalIssues": []
+}

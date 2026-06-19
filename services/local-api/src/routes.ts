@@ -92,6 +92,9 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /campaigns': 'manage_content',
   'PUT /campaigns/:id': 'manage_content',
   'POST /campaigns/:id/activate': 'manage_content',
+  'POST /campaigns/:id/pause': 'manage_content',
+  'POST /campaigns/:id/resume': 'manage_content',
+  'POST /campaigns/:id/archive': 'manage_content',
   'POST /campaigns/:id/send-nodes/:nodeId/attach-template': 'manage_content',
   'POST /campaigns/:id/enroll': 'manage_content',
 

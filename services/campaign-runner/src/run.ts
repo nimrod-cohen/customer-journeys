@@ -30,6 +30,7 @@ import {
   buildCampaignDedupeKey,
   buildSetAttribute,
   buildWebhookActivityInsert,
+  isEnrollableCampaignStatus,
   DEFAULT_WORKSPACE_TZ,
   type EnrollmentState,
   type SideEffect,
@@ -383,13 +384,26 @@ async function runEnrollmentInTx(
 
     // 2. Load + validate the campaign definition (same tx client) and the
     //    WORKSPACE timezone (governs all window/wait time math, never per-broadcast).
-    const { rows: campRows } = await tx.query<{ definition: unknown }>(
-      `SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2`,
+    //    The campaign STATUS is read INSIDE the lock too: only an 'active' campaign
+    //    advances (§9B phase 7). A paused/archived campaign's due enrollment is
+    //    left PARKED exactly where it is (no node move, no send, no webhook) — a
+    //    reversible halt, not a data mutation. Resuming (status→'active') lets the
+    //    next sweep advance it normally. The FOR UPDATE lock + idempotency are
+    //    unchanged: we simply decline to advance while paused.
+    const { rows: campRows } = await tx.query<{ definition: unknown; status: string }>(
+      `SELECT definition, status FROM campaigns WHERE workspace_id = $1 AND id = $2`,
       [workspaceId, row.campaign_id],
     );
     const def = campRows[0]?.definition;
     if (def === undefined) {
       return { result: { result: 'skipped', reason: 'campaign not found' }, enqueue: null, webhooks: null };
+    }
+    if (!isEnrollableCampaignStatus(campRows[0]?.status)) {
+      return {
+        result: { result: 'skipped', reason: `campaign not active (status=${campRows[0]?.status})` },
+        enqueue: null,
+        webhooks: null,
+      };
     }
     let definition: CampaignDefinition;
     try {
@@ -504,13 +518,18 @@ async function runEnrollmentLegacy(
   }
   const workspaceId = row.workspace_id;
 
-  // 2. Load + validate the campaign definition.
-  const { rows: campRows } = await deps.reader.query<{ definition: unknown }>(
-    `SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2`,
+  // 2. Load + validate the campaign definition. Read the campaign STATUS too: a
+  //    paused/archived campaign does NOT advance (§9B phase 7) — the enrollment is
+  //    left parked where it is (the CAS claim below is never taken).
+  const { rows: campRows } = await deps.reader.query<{ definition: unknown; status: string }>(
+    `SELECT definition, status FROM campaigns WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, row.campaign_id],
   );
   const def = campRows[0]?.definition;
   if (def === undefined) return { result: 'skipped', reason: 'campaign not found' };
+  if (!isEnrollableCampaignStatus(campRows[0]?.status)) {
+    return { result: 'skipped', reason: `campaign not active (status=${campRows[0]?.status})` };
+  }
   let definition: CampaignDefinition;
   try {
     validateCampaignDefinition(def);

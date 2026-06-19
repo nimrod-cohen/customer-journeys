@@ -12,7 +12,7 @@ import { ICONS } from './ui/icons.js';
 import { SegmentBuilder } from './screens/SegmentBuilder.js';
 import { SegmentsList } from './screens/SegmentsList.js';
 import { BroadcastComposer, BroadcastWizard } from './screens/BroadcastComposer.js';
-import { CampaignBuilder } from './screens/CampaignBuilder.js';
+import { CampaignsList, CampaignDetail } from './screens/CampaignBuilder.js';
 import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
 import { CompanySettings } from './screens/CompanySettings.js';
 import { SendingDomainDetail } from './screens/SendingDomainDetail.tsx';
@@ -55,12 +55,13 @@ function screenFor(path: string): JSX.Element {
   if (path.startsWith('/editor/')) {
     return <TemplateEditor id={path.slice('/editor/'.length)} />;
   }
-  // Campaigns: the builder lives at /campaigns; returning from a send node's
-  // "Design email" navigates to /campaigns/:id — the SAME combined list+canvas
-  // screen, which re-opens that campaign on mount (takeReturnedTo). Without this
-  // sub-route the editor's Back landed on the dashboard (the switch default).
+  // Campaigns: the LIST at /campaigns; the canvas builder at /campaigns/new and
+  // /campaigns/:id (mirrors the broadcasts list/wizard split). Returning from a
+  // send node's "Design email" navigates to /campaigns/:id → CampaignDetail
+  // re-opens that campaign on mount (openById from the path id).
   if (path.startsWith('/campaigns/')) {
-    return <CampaignBuilder />;
+    const rest = path.slice('/campaigns/'.length);
+    return rest === 'new' ? <CampaignDetail /> : <CampaignDetail id={rest} />;
   }
   // Workspace settings tabs: /settings (workspace) and /settings/domains (sending
   // domains, per-workspace). The per-domain setup screen is /settings/domains/new
@@ -82,7 +83,7 @@ function screenFor(path: string): JSX.Element {
     case '/templates':
       return <TemplatesList />;
     case '/campaigns':
-      return <CampaignBuilder />;
+      return <CampaignsList />;
     case '/editor':
       return <TemplateEditor />;
     case '/profiles':

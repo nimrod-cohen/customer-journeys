@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-19T22:25:10.964Z",
+  "data": {
+    "effectId": "01KVGZSW90JZ9J6TXGB0TX7MAG",
+    "invocationKey": "cdp/campaign-builder:S000030:implement-phase",
+    "invocationHash": "48772ca882791a3d7d9029d8a91ac11af3a612f9388fb9d674febef41ed52aeb",
+    "stepId": "S000030",
+    "taskId": "implement-phase",
+    "kind": "agent",
+    "label": "implement",
+    "taskDefRef": "tasks/01KVGZSW90JZ9J6TXGB0TX7MAG/task.json",
+    "labels": [
+      "implement",
+      "phase7-lifecycle-journey",
+      "iteration-1"
+    ]
+  },
+  "checksum": "62f7063c173f289a3920d4fbd5ee0c22cbfecf7c58d7359b8fd4af9c01f6b501"
+}

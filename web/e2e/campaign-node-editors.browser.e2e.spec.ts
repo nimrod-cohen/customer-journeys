@@ -11,7 +11,8 @@ import { DEV_MKT } from './seed.js';
 async function openCampaigns(page: Page): Promise<void> {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-campaigns').click();
-  await page.getByTestId('campaign-builder').waitFor();
+  // Campaigns is now a LIST page; openSeeded opens a row → the canvas builder.
+  await page.getByTestId('campaigns-list-screen').waitFor();
 }
 
 /** Open the seeded "Welcome journey" campaign in the builder. */

@@ -868,3 +868,105 @@ export function buildSetAttribute(
     values: [workspaceId, profileId, `{${key}}`, JSON.stringify(value ?? null)],
   };
 }
+
+// --- Campaign lifecycle (§9B phase 7) ---------------------------------------
+//
+// A campaign's free-text `status` (campaigns.status: draft|active|paused|
+// archived) gates enrollment AND the runner's per-tick advance. These pure
+// functions are the SINGLE source of truth for the transition table + the
+// "is this campaign live?" predicate, reused by the local-api lifecycle handlers
+// AND the runner pause gate (so a paused campaign's due enrollment is parked,
+// never advanced) — testable without Postgres.
+
+/** The campaign lifecycle statuses we recognize (free-text column, validated here). */
+export type CampaignStatus = 'draft' | 'active' | 'paused' | 'archived';
+
+/** A lifecycle action the API exposes (publish is the existing activate handler). */
+export type CampaignLifecycleAction = 'pause' | 'resume' | 'archive';
+
+/** The result of a lifecycle transition: a next status, or a typed rejection. */
+export type CampaignLifecycleResult =
+  | { readonly ok: true; readonly next: CampaignStatus; readonly noop: boolean }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * ONLY an 'active' campaign enrolls new profiles AND advances in-flight ones.
+ * Reused by the runner pause gate (run.ts) and asserted by the enroll cores so a
+ * paused/archived/draft campaign is a no-op — a reversible halt, never a data
+ * mutation on the parked enrollment.
+ */
+export function isEnrollableCampaignStatus(status: string | null | undefined): boolean {
+  return status === 'active';
+}
+
+/**
+ * Pure transition table for a lifecycle action (§9B phase 7). Idempotent where it
+ * makes sense (pausing a paused / archiving an archived campaign is a 200 no-op,
+ * not an error); an illegal transition (e.g. resuming a non-paused campaign)
+ * returns a typed rejection the handler maps to a 409. Never throws.
+ *   - pause:   active → paused (paused → paused no-op); else rejected.
+ *   - resume:  paused → active (active → active no-op); else rejected.
+ *   - archive: any non-archived → archived (archived → archived no-op).
+ */
+export function nextLifecycle(
+  current: string | null | undefined,
+  action: CampaignLifecycleAction,
+): CampaignLifecycleResult {
+  const cur = (current ?? '') as CampaignStatus;
+  if (action === 'pause') {
+    if (cur === 'paused') return { ok: true, next: 'paused', noop: true };
+    if (cur === 'active') return { ok: true, next: 'paused', noop: false };
+    return { ok: false, reason: 'Only an active campaign can be paused.' };
+  }
+  if (action === 'resume') {
+    if (cur === 'active') return { ok: true, next: 'active', noop: true };
+    if (cur === 'paused') return { ok: true, next: 'active', noop: false };
+    return { ok: false, reason: 'Only a paused campaign can be resumed.' };
+  }
+  // archive: terminal from any state; archiving an archived campaign is a no-op.
+  if (cur === 'archived') return { ok: true, next: 'archived', noop: true };
+  return { ok: true, next: 'archived', noop: false };
+}
+
+/** The enrollment-status buckets surfaced as per-campaign counts on the list. */
+export interface CampaignEnrollmentCounts {
+  readonly active: number;
+  readonly completed: number;
+  readonly exited: number;
+  readonly failed: number;
+}
+
+/** A GROUP BY (campaign_id, status) aggregate row from campaign_enrollments. */
+export interface CampaignCountRow {
+  readonly campaign_id: string;
+  readonly status: string;
+  readonly n: number | string;
+}
+
+/**
+ * Fold GROUP BY (campaign_id, status) rows into a per-campaign counts record,
+ * defaulting every bucket to 0 (so a campaign with no enrollments yields all
+ * zeros). An unknown/defensive status is ignored (never breaks the shape). Pure
+ * — used to shape GET /campaigns without a DB.
+ */
+export function campaignCountsShape(
+  rows: readonly CampaignCountRow[],
+): Record<string, CampaignEnrollmentCounts> {
+  const out: Record<string, { active: number; completed: number; exited: number; failed: number }> = {};
+  const zero = (): { active: number; completed: number; exited: number; failed: number } => ({
+    active: 0,
+    completed: 0,
+    exited: 0,
+    failed: 0,
+  });
+  for (const r of rows) {
+    const bucket = (out[r.campaign_id] ??= zero());
+    const n = typeof r.n === 'string' ? Number.parseInt(r.n, 10) : r.n;
+    if (r.status === 'active') bucket.active = n;
+    else if (r.status === 'completed') bucket.completed = n;
+    else if (r.status === 'exited') bucket.exited = n;
+    else if (r.status === 'failed') bucket.failed = n;
+    // any other status (defensive) is ignored — the shape stays the four buckets
+  }
+  return out;
+}

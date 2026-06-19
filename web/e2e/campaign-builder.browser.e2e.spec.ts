@@ -104,7 +104,9 @@ async function conditionBottom(page: Page): Promise<number> {
 async function openCampaigns(page: Page): Promise<void> {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-campaigns').click();
-  await page.getByTestId('campaign-builder').waitFor();
+  // Campaigns is now a LIST page; the canvas builder lives at /campaigns/new and
+  // /campaigns/:id (reached via New campaign or opening a row).
+  await page.getByTestId('campaigns-list-screen').waitFor();
 }
 
 test('renders a seeded definition as a downward tree with axis-aligned connectors', async ({ page }) => {
@@ -174,9 +176,10 @@ test('assemble trigger→wait→send→exit via the (+) palette, then save', asy
   await page.getByTestId('palette-send').click();
   await expect(page.getByTestId('node-send')).toBeVisible();
 
-  // Save → the server validates the definition; it appears in the list.
+  // Save → the server validates the definition; back on the list it appears.
   await page.getByTestId('save-campaign').click();
   await expect(page.getByTestId('toast')).toBeVisible();
+  await page.getByTestId('campaigns-back').click();
   await expect(page.getByTestId('campaign-list')).toContainText('Assembled linear');
 });
 
@@ -305,6 +308,7 @@ test('round-trip: save then reopen reconstructs the same graph', async ({ page }
   await expect(page.getByTestId('toast')).toBeVisible();
 
   // Reopen via the list → the canvas rebuilds the SAME node set (trigger/wait/exit).
+  await page.getByTestId('campaigns-back').click();
   await page.getByTestId('campaign-item').filter({ hasText: 'Round trip me' }).getByTestId('campaign-open').click();
   await expect(page.getByTestId('campaign-name')).toHaveValue('Round trip me');
   await expect(page.getByTestId('node-trigger')).toBeVisible();
@@ -329,6 +333,7 @@ test('round-trip: a populated-arm diamond reopens with the same node set + conve
   await expect(page.getByTestId('toast')).toBeVisible();
 
   // Reopen → the canvas rebuilds the SAME node set, connectors still converge.
+  await page.getByTestId('campaigns-back').click();
   await page.getByTestId('campaign-item').filter({ hasText: 'Diamond trip' }).getByTestId('campaign-open').click();
   await page.getByTestId('campaign-canvas').waitFor();
   await expect(page.getByTestId('node-condition')).toBeVisible();
@@ -370,6 +375,7 @@ test('delete the condition of a diamond re-links to a valid converging graph', a
   await expect(page.getByTestId('node-exit')).toHaveCount(1);
   await page.getByTestId('save-campaign').click();
   await expect(page.getByTestId('toast')).toBeVisible();
+  await page.getByTestId('campaigns-back').click();
   await expect(page.getByTestId('campaign-list')).toContainText('Delete cond');
 });
 
@@ -398,6 +404,7 @@ test('delete a node re-links the graph and stays valid', async ({ page }) => {
   // Save still succeeds (the graph is valid).
   await page.getByTestId('save-campaign').click();
   await expect(page.getByTestId('toast')).toBeVisible();
+  await page.getByTestId('campaigns-back').click();
   await expect(page.getByTestId('campaign-list')).toContainText('Deletable');
 });
 

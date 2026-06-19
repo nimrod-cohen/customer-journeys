@@ -390,9 +390,11 @@ test('returning from the email designer lands back on the Content step (not Audi
 test('build and save a campaign workflow', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-campaigns').click();
-  await page.getByTestId('campaign-builder').waitFor();
+  // Campaigns is now a LIST; New campaign → the SEPARATE /campaigns/new builder.
+  await page.getByTestId('campaigns-list-screen').waitFor();
 
   await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-builder').waitFor();
   await page.getByTestId('campaign-name').fill('Onboarding journey');
   // Insert a wait step on the starter trigger→exit edge via the (+) palette →
   // graph becomes trigger→wait→exit.
@@ -402,6 +404,8 @@ test('build and save a campaign workflow', async ({ page }) => {
   await expect(page.getByTestId('node-wait')).toBeVisible();
 
   await page.getByTestId('save-campaign').click();
-  // The saved campaign appears in the list (server validated the definition).
+  await expect(page.getByTestId('toast')).toBeVisible();
+  // Back on the list, the saved campaign appears (server validated the definition).
+  await page.getByTestId('campaigns-back').click();
   await expect(page.getByTestId('campaign-item').first()).toBeVisible();
 });

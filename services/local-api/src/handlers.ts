@@ -64,6 +64,10 @@ import {
   enrollProfileManually,
   enrollSegmentSnapshot,
   collectSendNodeEnvelopeGaps,
+  nextLifecycle,
+  campaignCountsShape,
+  type CampaignLifecycleAction,
+  type CampaignCountRow,
   type EnrollDeps,
   type CampaignDefinition,
 } from '@cdp/service-campaign-runner';
@@ -1842,10 +1846,59 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
 // ---------------------------------------------------------------------------
 
 export const listCampaigns: Handler = async (ctx, pool) => {
+  // ORDER BY is appended AFTER scopedQuery builds the WHERE (scopedQuery anchors
+  // the workspace_id clause at the tail when the fragment has no WHERE of its own).
   const q = scopedQuery(ctx.workspaceId, 'SELECT id, name, status FROM campaigns');
-  const { rows } = await pool.query(q.text, q.values);
-  return ok({ campaigns: rows });
+  const { rows } = await pool.query<{ id: string; name: string; status: string }>(
+    `${q.text} ORDER BY created_at DESC`,
+    q.values,
+  );
+  // Per-campaign enrollment counts in ONE workspace-scoped round-trip: GROUP BY
+  // (campaign_id, status) over campaign_enrollments, then fold into {active,
+  // completed, exited, failed} (defaulting all-zero) via the pure shaper. Scoped
+  // to ctx.workspaceId so a campaign never sums another tenant's enrollments.
+  // GROUP BY is appended AFTER scopedQuery anchors the workspace_id WHERE at the
+  // tail (a fragment with no WHERE of its own).
+  const cq = scopedQuery(ctx.workspaceId, 'SELECT campaign_id, status, count(*)::int AS n FROM campaign_enrollments');
+  const { rows: countRows } = await pool.query<CampaignCountRow>(
+    `${cq.text} GROUP BY campaign_id, status`,
+    cq.values,
+  );
+  const byCampaign = campaignCountsShape(countRows);
+  const zero = { active: 0, completed: 0, exited: 0, failed: 0 };
+  const campaigns = rows.map((c) => ({ ...c, counts: byCampaign[c.id] ?? zero }));
+  return ok({ campaigns });
 };
+
+/**
+ * POST /campaigns/:id/{pause,resume,archive} — campaign LIFECYCLE transitions
+ * (§9B phase 7). Each is workspace-scoped (the campaign must resolve INSIDE
+ * ctx.workspaceId — a foreign id 404s, inv.1/inv.2; workspace_id is NEVER taken
+ * from the body) and capability-gated (manage_content, in routes.ts). The pure
+ * `nextLifecycle` transition table decides: an illegal transition (e.g. resume a
+ * non-paused campaign) is a typed 409; an idempotent no-op (pause a paused one)
+ * is a 200. The runner reads campaigns.status inside its locked tick, so pausing
+ * halts advancement without touching in-flight enrollment rows.
+ */
+function makeLifecycleHandler(action: CampaignLifecycleAction): Handler {
+  return async (ctx, pool, req) => {
+    const id = req.params.id!;
+    const sel = scopedQuery(ctx.workspaceId, 'SELECT status FROM campaigns WHERE id = $1', [id]);
+    const { rows } = await pool.query<{ status: string }>(sel.text, sel.values);
+    if (rows.length === 0) return ok({ error: 'not found' }, 404);
+    const decision = nextLifecycle(rows[0]!.status, action);
+    if (!decision.ok) return ok({ error: decision.reason }, 409);
+    if (!decision.noop) {
+      const upd = scopedQuery(ctx.workspaceId, 'UPDATE campaigns SET status = $1 WHERE id = $2', [decision.next, id]);
+      await pool.query(upd.text, upd.values);
+    }
+    return ok({ status: decision.next });
+  };
+}
+
+export const pauseCampaign: Handler = makeLifecycleHandler('pause');
+export const resumeCampaign: Handler = makeLifecycleHandler('resume');
+export const archiveCampaign: Handler = makeLifecycleHandler('archive');
 
 /**
  * GET /campaigns/:id — the full campaign + its definition for the builder to
@@ -3504,6 +3557,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /campaigns': createCampaign,
   'PUT /campaigns/:id': updateCampaign,
   'POST /campaigns/:id/activate': activateCampaign,
+  'POST /campaigns/:id/pause': pauseCampaign,
+  'POST /campaigns/:id/resume': resumeCampaign,
+  'POST /campaigns/:id/archive': archiveCampaign,
   'POST /campaigns/:id/send-nodes/:nodeId/attach-template': attachCampaignSendTemplate,
   'POST /campaigns/:id/enroll': enrollIntoCampaign,
   'GET /profiles': listProfiles,

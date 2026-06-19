@@ -60,7 +60,9 @@ function makeDeps(opts: FakeOpts = {}) {
         };
       }
       if (/FROM campaigns WHERE/.test(text)) {
-        return { rows: [{ definition: DEF }] as unknown as T[] };
+        // The runner now reads campaigns.status alongside the definition (§9B
+        // phase 7 pause gate) — only an 'active' campaign advances.
+        return { rows: [{ definition: DEF, status: 'active' }] as unknown as T[] };
       }
       if (/UPDATE campaign_enrollments[\s\S]*RETURNING/.test(text)) {
         // The CAS claim.

@@ -150,6 +150,27 @@ export async function seed(): Promise<void> {
       ],
     );
 
+    // A couple of seeded enrollments on CAMP_A (varied status) so the campaigns
+    // LIST shows NON-ZERO enrollment counts in the e2e (active + completed).
+    {
+      const e1 = await pool.query<{ id: string }>(
+        'INSERT INTO profiles (workspace_id, email) VALUES ($1,$2) RETURNING id',
+        [WS_A, 'enr-active@acme.com'],
+      );
+      const e2 = await pool.query<{ id: string }>(
+        'INSERT INTO profiles (workspace_id, email) VALUES ($1,$2) RETURNING id',
+        [WS_A, 'enr-completed@acme.com'],
+      );
+      await pool.query(
+        "INSERT INTO campaign_enrollments (workspace_id, campaign_id, profile_id, current_node, status, next_run_at) VALUES ($1,$2,$3,'trigger','active', now())",
+        [WS_A, CAMP_A, e1.rows[0]!.id],
+      );
+      await pool.query(
+        "INSERT INTO campaign_enrollments (workspace_id, campaign_id, profile_id, current_node, status) VALUES ($1,$2,$3,'exit1','completed')",
+        [WS_A, CAMP_A, e2.rows[0]!.id],
+      );
+    }
+
     let firstProfileId = '';
     // a1/a2/a3 are ESTABLISHED accounts (created long ago) — their events date to
     // early 2026, so a months-old created_at is the faithful value. a4 is a
@@ -249,6 +270,7 @@ export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void>
     await pool.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM outbox WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM broadcasts WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM campaign_enrollments WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM segments WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM email_templates WHERE workspace_id = $1', [ws]);

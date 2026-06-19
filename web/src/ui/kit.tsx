@@ -275,8 +275,9 @@ export function toneFor(status: string | undefined | null): Tone {
   const s = (status ?? '').toLowerCase();
   if (['active', 'sent', 'verified', 'true', 'found', 'ok', 'completed', 'success'].some((k) => s.includes(k)))
     return 'success';
-  if (['pending', 'warming', 'draft', 'sending', 'onboarding', 'scheduled'].some((k) => s.includes(k)))
+  if (['pending', 'warming', 'draft', 'sending', 'onboarding', 'scheduled', 'paused'].some((k) => s.includes(k)))
     return 'warn';
+  if (s === 'archived') return 'neutral';
   if (
     ['suspended', 'failed', 'bounce', 'complained', 'mismatch', 'false', 'error', 'refuse'].some((k) =>
       s.includes(k),

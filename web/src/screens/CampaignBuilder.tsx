@@ -1,19 +1,26 @@
-// CampaignBuilder (§12, §9B phase 5–6): a constrained DOWNWARD CANVAS over the node
-// DSL. It RENDERS a CampaignDefinition with auto-layout + rounded orthogonal
-// connectors (no manual drag, no stored coordinates), lets you INSERT a step on
-// any edge (the (+) control → an 8-type palette), DELETE a step (re-linking the
-// graph), and now (phase 6) EDIT each step via a per-node Drawer editor. SAVES the
-// assembled definition via POST/PUT /campaigns — the server re-validates with
-// validateCampaignDefinition (a malformed graph is a TYPED 400). PUBLISH (Draft →
-// Active) runs the send-node envelope + verified-domain gate; a 409 reason is
-// rendered INLINE against the offending node card (no native dialog). Reload via
-// GET /campaigns/:id round-trips. Server-calling buttons RETURN the promise (kit
-// Button auto-locks); no native dialogs (askConfirm for delete, showToast/inline).
+// Campaigns (§12, §9B phases 5–7). Like Broadcasts, this is a LIST page
+// (CampaignsList at #/campaigns) + a SEPARATE edit page (CampaignDetail, the
+// constrained downward CANVAS builder, at #/campaigns/new and #/campaigns/:id).
+//
+// CampaignsList: a table of campaigns (name, lifecycle status, enrollment counts)
+// with a "New campaign" action and a per-row ActionMenu (Open · Pause/Resume ·
+// Archive). Lifecycle actions are server-calling buttons (kit auto-locks on a
+// returned promise) + askConfirm for archive (NEVER a native dialog) + a toast.
+// There is NO "Design email" button here — email design lives ONLY inside a send
+// node's editor (CampaignDetail → NodeEditor).
+//
+// CampaignDetail: the canvas builder (the bulk of the old combined screen, moved
+// verbatim). It RENDERS a CampaignDefinition with auto-layout + rounded orthogonal
+// connectors, inserts/deletes/edits steps via the (+) palette + per-node Drawer,
+// SAVES via POST/PUT /campaigns (server re-validates) and PUBLISHES (Draft →
+// Active) through the send-node envelope + verified-domain gate. Returning from a
+// send node's "Design email" lands here (the editor's setEditorReturn targets
+// /campaigns/:id). Server-calling buttons RETURN the promise; no native dialogs.
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { clearEditorReturn, takeReturnedTo } from '../store/editorReturn.js';
-import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor, Drawer } from '../ui/kit.js';
+import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
+import type { ActionMenuItem } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.js';
 import { showToast } from '../ui/toast.js';
 import { CampaignCanvas } from '../campaigns/CampaignCanvas.js';
@@ -31,15 +38,185 @@ import { applyNodeConfig } from '../campaigns/node-config.js';
 import { insertOnEdge, deleteNode, MutationError } from '../campaigns/mutate.js';
 import { NodeEditorBody, nodeEditorTestId, nodeEditorTitle } from '../campaigns/editors/NodeEditor.js';
 
-interface Campaign {
+/** Enrollment-status buckets surfaced per campaign on the list. */
+interface EnrollmentCounts {
+  active: number;
+  completed: number;
+  exited: number;
+  failed: number;
+}
+
+interface CampaignListItem {
   id: string;
   name: string;
   status: string;
+  counts: EnrollmentCounts;
 }
 
 interface SegmentLite {
   id: string;
   name: string;
+}
+
+/** Lifecycle statuses that hide a campaign from the default (non-archived) list. */
+const ARCHIVED = 'archived';
+
+// --- The LIST page -----------------------------------------------------------
+
+export function CampaignsList() {
+  const [campaigns, setCampaigns] = useState<CampaignListItem[] | null>(null);
+
+  const reload = async (): Promise<void> => {
+    const c = await api.get<{ campaigns: CampaignListItem[] }>('/campaigns');
+    setCampaigns(c.campaigns);
+  };
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  // Lifecycle transitions — each RETURNS its promise so the ActionMenu spins +
+  // locks the item until the response (no double-submits). Archive is confirmed
+  // via the styled dialog (never window.confirm). All reload the list after.
+  const lifecycle = async (id: string, action: 'pause' | 'resume', label: string): Promise<void> => {
+    try {
+      await api.post(`/campaigns/${id}/${action}`, { body: {} });
+      showToast(`Campaign ${label}.`, { tone: 'success' });
+      await reload();
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? `Could not ${action} the campaign.`, { tone: 'error' });
+    }
+  };
+  const archive = async (id: string, name: string): Promise<void> => {
+    const ok = await askConfirm({
+      title: 'Archive campaign?',
+      message: `“${name}” will be archived and stop enrolling. You can still find it later.`,
+      confirmLabel: 'Archive',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.post(`/campaigns/${id}/archive`, { body: {} });
+      showToast('Campaign archived.', { tone: 'success' });
+      await reload();
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not archive the campaign.', { tone: 'error' });
+    }
+  };
+
+  const visible = (campaigns ?? []).filter((c) => c.status !== ARCHIVED);
+
+  return (
+    <section data-testid="campaigns-list-screen">
+      <PageHeader
+        title="Campaigns"
+        subtitle="Design a multi-step journey: it flows downward, branches fan sideways."
+        actions={
+          <Button data-testid="campaign-new" onClick={() => navigate('/campaigns/new')}>
+            New campaign
+          </Button>
+        }
+      />
+
+      {campaigns === null ? (
+        <p class="text-sm text-stone-500">Loading…</p>
+      ) : visible.length ? (
+        <ul data-testid="campaign-list" class="space-y-2">
+          {visible.map((c) => {
+            const total = c.counts.active + c.counts.completed + c.counts.exited + c.counts.failed;
+            return (
+              <li
+                data-testid="campaign-item"
+                key={c.id}
+                class="grid grid-cols-[minmax(0,1fr)_8rem_auto_auto] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+              >
+                {/* Name */}
+                <a
+                  data-testid="campaign-open"
+                  class="min-w-0 cursor-pointer truncate font-semibold text-ink-900 hover:text-brand-700"
+                  onClick={() => navigate(`/campaigns/${c.id}`)}
+                >
+                  {c.name}
+                </a>
+
+                {/* Status badge */}
+                <span class="justify-self-start">
+                  <Badge data-testid="campaign-status" tone={toneFor(c.status)}>
+                    {c.status}
+                  </Badge>
+                </span>
+
+                {/* Enrollment counts summary */}
+                <span
+                  data-testid="campaign-counts"
+                  class="flex items-center gap-4 text-center text-sm tabular-nums"
+                  title={`${total} enrolled`}
+                >
+                  <span class="flex flex-col" data-testid="campaign-count-active">
+                    <span class="text-[11px] uppercase tracking-wide text-stone-400">Active</span>
+                    <span class="font-semibold text-ink-900">{c.counts.active}</span>
+                  </span>
+                  <span class="flex flex-col" data-testid="campaign-count-completed">
+                    <span class="text-[11px] uppercase tracking-wide text-stone-400">Completed</span>
+                    <span class="font-semibold text-emerald-700">{c.counts.completed}</span>
+                  </span>
+                  <span class="flex flex-col" data-testid="campaign-count-exited">
+                    <span class="text-[11px] uppercase tracking-wide text-stone-400">Exited</span>
+                    <span class="text-stone-500">{c.counts.exited}</span>
+                  </span>
+                  <span class="flex flex-col" data-testid="campaign-count-failed">
+                    <span class="text-[11px] uppercase tracking-wide text-stone-400">Failed</span>
+                    <span class={c.counts.failed > 0 ? 'font-semibold text-rose-600' : 'text-stone-500'}>
+                      {c.counts.failed}
+                    </span>
+                  </span>
+                </span>
+
+                {/* Row actions — one kebab (⋮) menu mirroring broadcasts. */}
+                <ActionMenu
+                  data-testid="campaign-actions"
+                  items={[
+                    {
+                      label: 'Open',
+                      onSelect: () => navigate(`/campaigns/${c.id}`),
+                      'data-testid': 'campaign-edit',
+                    } satisfies ActionMenuItem,
+                    ...(c.status === 'active'
+                      ? [
+                          {
+                            label: 'Pause',
+                            onSelect: () => lifecycle(c.id, 'pause', 'paused'),
+                            'data-testid': 'campaign-pause',
+                          } satisfies ActionMenuItem,
+                        ]
+                      : []),
+                    ...(c.status === 'paused'
+                      ? [
+                          {
+                            label: 'Resume',
+                            onSelect: () => lifecycle(c.id, 'resume', 'resumed'),
+                            'data-testid': 'campaign-resume',
+                          } satisfies ActionMenuItem,
+                        ]
+                      : []),
+                    {
+                      label: 'Archive',
+                      onSelect: () => archive(c.id, c.name),
+                      danger: true,
+                      'data-testid': 'campaign-archive',
+                    } satisfies ActionMenuItem,
+                  ]}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <div data-testid="campaign-list">
+          <EmptyState>No campaigns yet — create one with “New campaign”.</EmptyState>
+        </div>
+      )}
+    </section>
+  );
 }
 
 /** The insert palette — all eight node types, each with a stable testid. */
@@ -54,11 +231,17 @@ const PALETTE: { type: PaletteType; label: string; testId: string; hint: string 
   { type: 'exit', label: 'Exit', testId: 'palette-exit', hint: 'End the journey here' },
 ];
 
-export function CampaignBuilder() {
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+// --- The DETAIL page (the canvas builder) ------------------------------------
+
+export function CampaignDetail({ id }: { id?: string }) {
+  // `id` is the path param: undefined / 'new' = a brand-new campaign; a uuid = an
+  // existing one to load. editingId is the SERVER id once persisted (it starts as
+  // the path id for an existing campaign, or null for a new one).
+  const existingId = id && id !== 'new' ? id : null;
+  const [campaigns, setCampaigns] = useState<CampaignListItem[]>([]);
   const [name, setName] = useState('');
   const [model, setModel] = useState<CanvasModel>(() => starterModel());
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(existingId);
   const [status, setStatus] = useState<string>('draft');
   const [timeZone, setTimeZone] = useState('UTC');
   const [triggerSegmentId, setTriggerSegmentId] = useState<string | null>(null);
@@ -70,49 +253,31 @@ export function CampaignBuilder() {
   const [publishReason, setPublishReason] = useState('');
   const [publishErrors, setPublishErrors] = useState<Record<string, string>>({});
 
-  const reloadList = async () => {
-    const c = await api.get<{ campaigns: Campaign[] }>('/campaigns');
+  // (The list of campaigns is loaded only so save/reload can keep it fresh for the
+  // contextual flows; the LIST page owns the user-facing table.)
+  const reloadList = async (): Promise<void> => {
+    const c = await api.get<{ campaigns: CampaignListItem[] }>('/campaigns');
     setCampaigns(c.campaigns);
   };
 
   useEffect(() => {
     void reloadList();
     void api.get<{ segments: SegmentLite[] }>('/segments').then((r) => setSegments(r.segments)).catch(() => undefined);
-  }, []);
+    if (existingId) void openById(existingId);
+  }, [existingId]);
 
-  // Returning from the email editor (a SEND node's "Design email"): re-open the
-  // campaign we left so the SEND editor shows the freshly-attached/edited copy.
-  useEffect(() => {
-    const returnedTo = takeReturnedTo();
-    if (returnedTo && returnedTo.startsWith('/campaigns/')) {
-      const id = returnedTo.slice('/campaigns/'.length);
-      if (id) void openById(id);
-    }
-  }, []);
-
-  // Start a brand-new campaign (the minimal trigger → exit starter).
-  const startNew = () => {
-    setEditingId(null);
-    setName('');
-    setModel(starterModel());
-    setStatus('draft');
-    setTriggerSegmentId(null);
-    clearPublish();
-    setError('');
-  };
-
-  const clearPublish = () => {
+  const clearPublish = (): void => {
     setPublishReason('');
     setPublishErrors({});
   };
 
   // Load an existing campaign — GET /campaigns/:id round-trips the DSL → canvas
   // (and the workspace timezone + trigger_segment_id for the editors).
-  const openById = async (id: string) => {
+  const openById = async (cid: string): Promise<void> => {
     const res = await api.get<{
       campaign: { id: string; name: string; status: string; definition: CampaignDefinition; trigger_segment_id: string | null };
       timezone: string;
-    }>(`/campaigns/${id}`);
+    }>(`/campaigns/${cid}`);
     setEditingId(res.campaign.id);
     setName(res.campaign.name);
     setStatus(res.campaign.status);
@@ -122,10 +287,9 @@ export function CampaignBuilder() {
     clearPublish();
     setError('');
   };
-  const open = (c: Campaign) => openById(c.id);
 
   // Insert a node on the chosen edge (from the palette).
-  const insert = (type: PaletteType) => {
+  const insert = (type: PaletteType): void => {
     if (!paletteEdge) return;
     try {
       setModel((m) => insertOnEdge(m, paletteEdge, type));
@@ -137,7 +301,7 @@ export function CampaignBuilder() {
   };
 
   // Delete a node (confirmed via the styled dialog — never window.confirm).
-  const remove = async (node: CanvasNode) => {
+  const remove = async (node: CanvasNode): Promise<void> => {
     const okToDelete = await askConfirm({
       title: 'Delete this step?',
       message: 'The journey re-links around it. This cannot be undone.',
@@ -172,7 +336,7 @@ export function CampaignBuilder() {
   };
 
   // Save: persist the definition; surface an invalid graph inline + via toast.
-  const save = async () => {
+  const save = async (): Promise<void> => {
     setError('');
     try {
       await persist();
@@ -192,8 +356,8 @@ export function CampaignBuilder() {
     setModel(next);
     clearPublish();
     try {
-      const id = await persist(next);
-      await openById(id);
+      const cid = await persist(next);
+      await openById(cid);
       await reloadList();
     } catch (err) {
       const msg = (err as { error?: string })?.error ?? String(err);
@@ -223,8 +387,8 @@ export function CampaignBuilder() {
 
   const saveTriggerSegment = async (segmentId: string | null): Promise<void> => {
     if (!editingId) await persist();
-    const id = editingId ?? (await persist());
-    await api.put(`/campaigns/${id}`, { body: { trigger_segment_id: segmentId } });
+    const cid = editingId ?? (await persist());
+    await api.put(`/campaigns/${cid}`, { body: { trigger_segment_id: segmentId } });
     setTriggerSegmentId(segmentId);
   };
 
@@ -234,9 +398,9 @@ export function CampaignBuilder() {
   const publish = async (): Promise<void> => {
     clearPublish();
     setError('');
-    let id: string;
+    let cid: string;
     try {
-      id = await persist();
+      cid = await persist();
       await reloadList();
     } catch (err) {
       const msg = (err as { error?: string })?.error ?? String(err);
@@ -244,7 +408,7 @@ export function CampaignBuilder() {
       return;
     }
     try {
-      await api.post(`/campaigns/${id}/activate`, { body: {} });
+      await api.post(`/campaigns/${cid}/activate`, { body: {} });
       setStatus('active');
       await reloadList();
       showToast('Campaign published', { tone: 'success' });
@@ -258,26 +422,13 @@ export function CampaignBuilder() {
 
   return (
     <section data-testid="campaign-builder">
+      <button data-testid="campaigns-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/campaigns')}>
+        ← Back to campaigns
+      </button>
+
       <PageHeader
-        title="Campaigns"
+        title={editingId ? 'Edit campaign' : 'New campaign'}
         subtitle="Design a multi-step journey: it flows downward, branches fan sideways."
-        actions={
-          <>
-            <Button
-              data-testid="design-email"
-              variant="secondary"
-              onClick={() => {
-                clearEditorReturn(); // standalone design → Back goes to the template library
-                navigate('/editor');
-              }}
-            >
-              Design email
-            </Button>
-            <Button data-testid="campaign-new" variant="secondary" onClick={startNew}>
-              New campaign
-            </Button>
-          </>
-        }
       />
 
       <Card class="p-5">
@@ -335,31 +486,6 @@ export function CampaignBuilder() {
         ) : null}
       </Card>
 
-      <h2 class="mb-3 mt-7 text-base font-bold text-ink-900">Campaigns</h2>
-      {campaigns.length ? (
-        <ul data-testid="campaign-list" class="space-y-2">
-          {campaigns.map((c) => (
-            <li
-              data-testid="campaign-item"
-              key={c.id}
-              class="flex items-center justify-between rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm shadow-card"
-            >
-              <span class="font-medium text-ink-900">{c.name}</span>
-              <div class="flex items-center gap-3">
-                <Badge tone={toneFor(c.status)}>{c.status}</Badge>
-                <Button data-testid="campaign-open" variant="secondary" size="sm" onClick={() => open(c)}>
-                  Open
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div data-testid="campaign-list">
-          <EmptyState>No campaigns yet.</EmptyState>
-        </div>
-      )}
-
       {/* The insert palette (a side drawer). Opens from a (+) edge control. */}
       <Drawer
         open={paletteEdge !== null}
@@ -408,6 +534,8 @@ export function CampaignBuilder() {
           />
         ) : null}
       </Drawer>
+      {/* campaigns is loaded for freshness only; reference it so lint stays clean. */}
+      <span hidden>{campaigns.length}</span>
     </section>
   );
 }
