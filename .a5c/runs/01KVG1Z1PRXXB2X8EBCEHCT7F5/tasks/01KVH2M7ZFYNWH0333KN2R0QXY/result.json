@@ -1,0 +1,197 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KVH2M7ZFYNWH0333KN2R0QXY",
+  "taskId": "integration-gate",
+  "invocationKey": "cdp/campaign-builder:S000034:integration-gate",
+  "status": "ok",
+  "result": {
+    "allCriteriaVerified": true,
+    "browserVerified": true,
+    "coverage": [
+      {
+        "criterion": "P1: workspace timezone persisted + read back via settings API (owner-gated); invalid IANA zone rejected",
+        "evidence": "services/local-api/test/workspace-settings-timezone.integration.test.ts (real PG): default UTC; persists America/New_York/Asia/Jerusalem round-trip; 'Not/AZone' -> 400 + writes nothing; ignores stray body workspace_id (inv.2); merges without clobbering link_tracking. owner-gated via PUT /workspace/settings (manage_workspace_users). CLAUDE.md documents workspaces.settings.timezone.",
+        "verified": true
+      },
+      {
+        "criterion": "P1: validateCampaignDefinition accepts hour_of_day_window + webhook; rejects bad window range, webhook missing url/method, cycle/back-edge, orphan, >1 trigger, unreachable exit",
+        "evidence": "services/campaign-runner/test/node-dsl-and-validation.test.ts: window missing/out-of-range/fractional hours + bad daysOfWeek toThrow(/hour|day/); webhook TRACE method, non-http(s) scheme, non-object headers, timeoutMs<=0, maxRetries<0 toThrow; back-edge + self-loop toThrow(/cycle/); orphan toThrow(/orphan|unreachable/); two triggers toThrow(/exactly one trigger/); no-exit toThrow(/cycle|no exit/); diamond convergence NOT rejected. dsl.ts uses DFS grey-stack cycle detection + reachable-set orphan BFS + reachable-exit BFS.",
+        "verified": true
+      },
+      {
+        "criterion": "P2: hour-window resumes at correct next-window instant in workspace tz (DST-correct); inside window advances immediately",
+        "evidence": "services/campaign-runner/test/hour-window.integration.test.ts (real PG, injected clock): NY-zone parks until 2026-06-19 09:00 NY == 13:00Z (EDT -4); per-workspace tz proven distinct (NY 13:00Z vs default UTC 09:00Z for same wall-clock); sweep gate honors next_run_at (due-before undefined, due-after defined); resume inside window completes. Plus the journey's t0->t2->t3 park/resume across the NY window.",
+        "verified": true
+      },
+      {
+        "criterion": "P2: webhook calls injected client with right url/method/headers/body, honors timeout+bounded retries, records outcome, isolates failure; SSRF/disallowed refused WITHOUT a call; no real host",
+        "evidence": "packages/runner-webhook/src/{ssrf.ts,execute.ts}: assertWebhookTargetAllowed (deny-by-default allowlist + private/reserved-IP classifier incl. 169.254/127/10/172.16-31/192.168/::1/fc00::/7) runs BEFORE any call; executeWebhook never throws, retries 1+maxRetries only on >=500, decrypts secret at call-time. services/campaign-runner/test/webhook-node-tick.integration.test.ts (real PG): 169.254.169.254 metadata -> client.calls=0 + activity outcome 'blocked' + no crash + advances; off-allowlist -> 0 calls; success path body/headers rendered, X-Auth decrypted, activity detail never contains PLAINTEXT-TOKEN/SECRET; failure path continue-on-failure (2 calls = 1+retry). Webhook executes POST-COMMIT (core.ts: never inside FOR UPDATE lock).",
+        "verified": true
+      },
+      {
+        "criterion": "P2/P3 idempotency+concurrency: retried/concurrent tick does not double-advance/send/fire webhook",
+        "evidence": "services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts (real PG): 10 concurrent runEnrollment -> exactly 1 completed, 9 skipped, 1 outbox row (FOR UPDATE single-winner). webhook-idempotency.integration.test.ts + paused-campaign-not-advanced + the journey re-tick (skipped; sqs.bodies=0, webhook.calls=0; outbox count stays 1; dispatcher replay claims nothing).",
+        "verified": true
+      },
+      {
+        "criterion": "P3: three trigger kinds enroll idempotently; event-of-configured-type enrolls exactly once on replay; non-matching does not enroll; manual/segment endpoint capability-gated + workspace-scoped + cross-workspace 404",
+        "evidence": "campaign-journey-live-enroll.integration.test.ts: LIVE POST /profiles/:id/events (createApp->sendProfileEvent->enrollFromEvent) enrolls 1 row, replay (new event_id) stays 1; manual enrollProfileManually x2 -> 1 row (ON CONFLICT); enrollSegmentSnapshot >=1. services/local-api/test/campaign-enroll-endpoint.integration.test.ts: cross-workspace campaign/profile/segment id -> 404, no enrollment written (inv.2). enrollment-from-segment-entry / event-enrollment-from-processor / event-payload-filter / reenrollment-policy tests cover the rest.",
+        "verified": true
+      },
+      {
+        "criterion": "P4: send node clones template (kind=copy); editing copy doesn't touch library; envelope persists; cross-workspace template/sender refused",
+        "evidence": "services/local-api/test/campaign-send-node-clone.integration.test.ts + campaign-send-dispatcher-instance.integration.test.ts; attachCampaignSendTemplate scopedQuery + cross-workspace 404 (CLAUDE.md phase-4 note). validateSenderId rejects cross-workspace sender_id.",
+        "verified": true
+      },
+      {
+        "criterion": "P4: publish gating blocks send node missing From/To/Subject with node-specific ordered messages, then verified-domain gate; activates once valid; AWS mocked; real PG",
+        "evidence": "services/local-api/test/campaign-publish-gate.integration.test.ts + campaign-activate-gate: ordered 409s sender_id->to_address->subject naming the offending node, THEN verified sending_domains gate; no-send campaign activates ungated; WS_NOVERIFY blocked. collectSendNodeEnvelopeGaps (dsl.ts) mirrors sendBroadcast.",
+        "verified": true
+      },
+      {
+        "criterion": "P4: campaign send flows outbox -> Dispatcher -> messages_log(campaign_id) with subject/To/body merge; set_attribute literal + event-sourced ({{event.amount}}) workspace-scoped + idempotent; undefined path safe",
+        "evidence": "campaign-journey-live-enroll: outbox dedupe_key campaign:<id>:<profile>:send -> REAL dispatchOutbox (CountingSes) -> from '\"Acme Team\" <team@mail.acme.com>', to/subject/body merge rendered, messages_log.campaign_id set, status sent. attributes.welcomed='y' (literal) + last_purchase_amount='42.5' (from persisted enrollment.state.event). set-attribute-event-sourced.integration.test.ts proves undefined-safe + idempotent; set-attribute-value-spec.test.ts unit-tests the resolver/validation.",
+        "verified": true
+      },
+      {
+        "criterion": "P5: builder renders downward tree, branches fan sideways, rounded orthogonal connectors, no diagonal/upward, auto-layout; assemble+round-trip; no loop/orphan; delete re-links",
+        "evidence": "web/e2e/campaign-builder.browser.e2e.spec.ts (real Chromium): renders seeded def, tokenizes connector 'd' attrs asserting every run axis-aligned + endY>startY (down-only); assemble trigger->wait->send->exit + if-branch via (+) palette (8 types); save/reload round-trip; delete re-links + last-exit delete refused with styled toast (no native dialog). Pure layout.ts/orthogonal-path.ts/mutate.ts/model.ts unit tests.",
+        "verified": true
+      },
+      {
+        "criterion": "P6: per-node working editors round-trip; IF reuses segment RuleBuilder->AstNode; SEND clones per-node copy reusing broadcast flow; publish blocked with inline reasons then succeeds; spinner-lock, no native dialogs, testids",
+        "evidence": "web/e2e/campaign-node-editors.browser.e2e.spec.ts (8, real Chromium): trigger/wait/wait-until/hour-window/if/send/update-profile/webhook editors persist+round-trip; 'no native dialogs' test; SEND send-design-email + send-attach-template clone. web/e2e/campaign-publish-gate.browser.e2e.spec.ts (2): inline publish-reason + node-publish-error then success. services/local-api/test/campaign-node-editors.integration.test.ts.",
+        "verified": true
+      },
+      {
+        "criterion": "P6b: If/branch yields converging diamond (arms rejoin single trunk); per-arm +; empty-arm passthrough; arm Exit terminates only that arm; round-trips; delete re-links; validate passes; no regression",
+        "evidence": "web/e2e/campaign-builder.browser.e2e.spec.ts: 'insert an If -> CONVERGING diamond both arms rejoin a single exit' (tokenizes path endpoints, asserts >=2 paths land on the SAME (x,y) join + all down-only); 'per-arm + with empty passthrough'; 'Exit on an arm terminates only that arm'; populated-arm diamond reopen round-trip; 'delete the condition of a diamond re-links to a valid converging graph'. mutate.ts insertOnEdge rejoins both arms to continuation; validateCampaignDefinition accepts diamonds (not a cycle).",
+        "verified": true
+      },
+      {
+        "criterion": "P7: campaigns LIST (like broadcasts); separate /campaigns/:id builder; NO Design email on list (only in send-node editor); lifecycle status+counts; publish/pause/resume/archive capability-gated+workspace-scoped; runner pause gate; full journey",
+        "evidence": "web/e2e/campaign-list-detail.browser.e2e.spec.ts (5): list (not canvas), design-email count 0 on list, New->/campaigns/new, open row->/campaigns/:id reconstructs DSL, Design email ONLY inside send-node editor (send-design-email), status badge + campaign-counts. web/e2e/campaign-lifecycle.browser.e2e.spec.ts: publish->pause->resume->archive via ActionMenu + WS_A-only scoping + accounting-403. services/local-api/test/campaign-lifecycle + campaign-enrollment-counts (real PG). services/campaign-runner/test/paused-campaign-not-advanced (paused -> skipped, no node move/outbox; resume advances). FULL journey: campaign-journey-live-enroll.integration.test.ts (2/2 pass solo, 108ms, non-vacuous) + campaign-journey-smoke.browser.e2e.spec.ts (build full-node journey + publish to active).",
+        "verified": true
+      },
+      {
+        "criterion": "Cross-cutting: tenant isolation across all campaign paths (service-role bypasses RLS, scoped in code; workspace_id from enrollment row never client)",
+        "evidence": "campaign-journey-live-enroll: parallel WS_B campaign/enrollment stays at 'trigger'/'active', zero WS_B messages_log/outbox after all WS_A ticks. cross-workspace 404s in campaign-enroll-endpoint + campaign-publish-gate + get-campaign + campaign-lifecycle. tests/acceptance/penetration-isolation.test.ts. workspace-scoping.integration.test.ts.",
+        "verified": true
+      },
+      {
+        "criterion": "Cross-cutting: all campaign sends through the Dispatcher gating with mandatory From/To/Subject envelope; merge in subject+To+body; no no-reply fallback for campaigns",
+        "evidence": "journey send goes through the REAL dispatchOutbox; From resolved from sender_id (named sender), subject/To/body merge rendered; publish gate enforces sender_id->to_address->subject + verified-domain before activation; action-send-through-dispatcher + campaign-send-dispatcher-instance integration tests.",
+        "verified": true
+      },
+      {
+        "criterion": "Process hygiene: version 0.36.0, CLAUDE.md current, no scope creep, migrations applied to cdp + cdp_e2e",
+        "evidence": "root package.json version 0.36.0; CLAUDE.md has 25 campaign references documenting all 7 phases (tz, DSL hour-window/webhook, triggers, send instance + publish gating, canvas, node editors, converging branches, lifecycle, full journey) with per-phase version bumps. cdp + cdp_e2e both have 239 tables; e2e re-seeds and all schema-dependent specs pass. Branch diff touches only campaign/web/runner/dispatcher/shared/processor/unsubscribe areas; the only working-tree edit is the test-only profile-detail seed-count fix.",
+        "verified": true
+      }
+    ],
+    "criticalIssues": [],
+    "recommendations": [
+      "COMMIT the working-tree fix: web/e2e/profile-detail.browser.e2e.spec.ts (the toHaveCount 4->6 seed-count correction) is currently UNCOMMITTED on feat/campaign-builder. The e2e suite is green only because it runs against the working tree; a fresh clone / CI checkout of the committed HEAD would FAIL profile-detail until this is committed. This is the one true process gap (the impl report described it as 'the single code change' but did not commit it).",
+      "Optional defense-in-depth (already documented as out of scope): the SSRF guard enforces the literal host/IP + per-workspace allowlist but does not synchronously DNS-resolve a hostname that could resolve to a private IP; ssrf.ts documents this is covered by the deny-by-default allowlist + deploy-time VPC egress policy. Consider a resolve-time check or pinned-IP connect when the runner Lambda's egress is not network-restricted."
+    ],
+    "score": 97,
+    "usesRealPostgres": true,
+    "webhookInjected": true
+  },
+  "startedAt": "2026-06-19T23:22:14.562Z",
+  "finishedAt": "2026-06-19T23:22:14.562Z",
+  "value": {
+    "allCriteriaVerified": true,
+    "browserVerified": true,
+    "coverage": [
+      {
+        "criterion": "P1: workspace timezone persisted + read back via settings API (owner-gated); invalid IANA zone rejected",
+        "evidence": "services/local-api/test/workspace-settings-timezone.integration.test.ts (real PG): default UTC; persists America/New_York/Asia/Jerusalem round-trip; 'Not/AZone' -> 400 + writes nothing; ignores stray body workspace_id (inv.2); merges without clobbering link_tracking. owner-gated via PUT /workspace/settings (manage_workspace_users). CLAUDE.md documents workspaces.settings.timezone.",
+        "verified": true
+      },
+      {
+        "criterion": "P1: validateCampaignDefinition accepts hour_of_day_window + webhook; rejects bad window range, webhook missing url/method, cycle/back-edge, orphan, >1 trigger, unreachable exit",
+        "evidence": "services/campaign-runner/test/node-dsl-and-validation.test.ts: window missing/out-of-range/fractional hours + bad daysOfWeek toThrow(/hour|day/); webhook TRACE method, non-http(s) scheme, non-object headers, timeoutMs<=0, maxRetries<0 toThrow; back-edge + self-loop toThrow(/cycle/); orphan toThrow(/orphan|unreachable/); two triggers toThrow(/exactly one trigger/); no-exit toThrow(/cycle|no exit/); diamond convergence NOT rejected. dsl.ts uses DFS grey-stack cycle detection + reachable-set orphan BFS + reachable-exit BFS.",
+        "verified": true
+      },
+      {
+        "criterion": "P2: hour-window resumes at correct next-window instant in workspace tz (DST-correct); inside window advances immediately",
+        "evidence": "services/campaign-runner/test/hour-window.integration.test.ts (real PG, injected clock): NY-zone parks until 2026-06-19 09:00 NY == 13:00Z (EDT -4); per-workspace tz proven distinct (NY 13:00Z vs default UTC 09:00Z for same wall-clock); sweep gate honors next_run_at (due-before undefined, due-after defined); resume inside window completes. Plus the journey's t0->t2->t3 park/resume across the NY window.",
+        "verified": true
+      },
+      {
+        "criterion": "P2: webhook calls injected client with right url/method/headers/body, honors timeout+bounded retries, records outcome, isolates failure; SSRF/disallowed refused WITHOUT a call; no real host",
+        "evidence": "packages/runner-webhook/src/{ssrf.ts,execute.ts}: assertWebhookTargetAllowed (deny-by-default allowlist + private/reserved-IP classifier incl. 169.254/127/10/172.16-31/192.168/::1/fc00::/7) runs BEFORE any call; executeWebhook never throws, retries 1+maxRetries only on >=500, decrypts secret at call-time. services/campaign-runner/test/webhook-node-tick.integration.test.ts (real PG): 169.254.169.254 metadata -> client.calls=0 + activity outcome 'blocked' + no crash + advances; off-allowlist -> 0 calls; success path body/headers rendered, X-Auth decrypted, activity detail never contains PLAINTEXT-TOKEN/SECRET; failure path continue-on-failure (2 calls = 1+retry). Webhook executes POST-COMMIT (core.ts: never inside FOR UPDATE lock).",
+        "verified": true
+      },
+      {
+        "criterion": "P2/P3 idempotency+concurrency: retried/concurrent tick does not double-advance/send/fire webhook",
+        "evidence": "services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts (real PG): 10 concurrent runEnrollment -> exactly 1 completed, 9 skipped, 1 outbox row (FOR UPDATE single-winner). webhook-idempotency.integration.test.ts + paused-campaign-not-advanced + the journey re-tick (skipped; sqs.bodies=0, webhook.calls=0; outbox count stays 1; dispatcher replay claims nothing).",
+        "verified": true
+      },
+      {
+        "criterion": "P3: three trigger kinds enroll idempotently; event-of-configured-type enrolls exactly once on replay; non-matching does not enroll; manual/segment endpoint capability-gated + workspace-scoped + cross-workspace 404",
+        "evidence": "campaign-journey-live-enroll.integration.test.ts: LIVE POST /profiles/:id/events (createApp->sendProfileEvent->enrollFromEvent) enrolls 1 row, replay (new event_id) stays 1; manual enrollProfileManually x2 -> 1 row (ON CONFLICT); enrollSegmentSnapshot >=1. services/local-api/test/campaign-enroll-endpoint.integration.test.ts: cross-workspace campaign/profile/segment id -> 404, no enrollment written (inv.2). enrollment-from-segment-entry / event-enrollment-from-processor / event-payload-filter / reenrollment-policy tests cover the rest.",
+        "verified": true
+      },
+      {
+        "criterion": "P4: send node clones template (kind=copy); editing copy doesn't touch library; envelope persists; cross-workspace template/sender refused",
+        "evidence": "services/local-api/test/campaign-send-node-clone.integration.test.ts + campaign-send-dispatcher-instance.integration.test.ts; attachCampaignSendTemplate scopedQuery + cross-workspace 404 (CLAUDE.md phase-4 note). validateSenderId rejects cross-workspace sender_id.",
+        "verified": true
+      },
+      {
+        "criterion": "P4: publish gating blocks send node missing From/To/Subject with node-specific ordered messages, then verified-domain gate; activates once valid; AWS mocked; real PG",
+        "evidence": "services/local-api/test/campaign-publish-gate.integration.test.ts + campaign-activate-gate: ordered 409s sender_id->to_address->subject naming the offending node, THEN verified sending_domains gate; no-send campaign activates ungated; WS_NOVERIFY blocked. collectSendNodeEnvelopeGaps (dsl.ts) mirrors sendBroadcast.",
+        "verified": true
+      },
+      {
+        "criterion": "P4: campaign send flows outbox -> Dispatcher -> messages_log(campaign_id) with subject/To/body merge; set_attribute literal + event-sourced ({{event.amount}}) workspace-scoped + idempotent; undefined path safe",
+        "evidence": "campaign-journey-live-enroll: outbox dedupe_key campaign:<id>:<profile>:send -> REAL dispatchOutbox (CountingSes) -> from '\"Acme Team\" <team@mail.acme.com>', to/subject/body merge rendered, messages_log.campaign_id set, status sent. attributes.welcomed='y' (literal) + last_purchase_amount='42.5' (from persisted enrollment.state.event). set-attribute-event-sourced.integration.test.ts proves undefined-safe + idempotent; set-attribute-value-spec.test.ts unit-tests the resolver/validation.",
+        "verified": true
+      },
+      {
+        "criterion": "P5: builder renders downward tree, branches fan sideways, rounded orthogonal connectors, no diagonal/upward, auto-layout; assemble+round-trip; no loop/orphan; delete re-links",
+        "evidence": "web/e2e/campaign-builder.browser.e2e.spec.ts (real Chromium): renders seeded def, tokenizes connector 'd' attrs asserting every run axis-aligned + endY>startY (down-only); assemble trigger->wait->send->exit + if-branch via (+) palette (8 types); save/reload round-trip; delete re-links + last-exit delete refused with styled toast (no native dialog). Pure layout.ts/orthogonal-path.ts/mutate.ts/model.ts unit tests.",
+        "verified": true
+      },
+      {
+        "criterion": "P6: per-node working editors round-trip; IF reuses segment RuleBuilder->AstNode; SEND clones per-node copy reusing broadcast flow; publish blocked with inline reasons then succeeds; spinner-lock, no native dialogs, testids",
+        "evidence": "web/e2e/campaign-node-editors.browser.e2e.spec.ts (8, real Chromium): trigger/wait/wait-until/hour-window/if/send/update-profile/webhook editors persist+round-trip; 'no native dialogs' test; SEND send-design-email + send-attach-template clone. web/e2e/campaign-publish-gate.browser.e2e.spec.ts (2): inline publish-reason + node-publish-error then success. services/local-api/test/campaign-node-editors.integration.test.ts.",
+        "verified": true
+      },
+      {
+        "criterion": "P6b: If/branch yields converging diamond (arms rejoin single trunk); per-arm +; empty-arm passthrough; arm Exit terminates only that arm; round-trips; delete re-links; validate passes; no regression",
+        "evidence": "web/e2e/campaign-builder.browser.e2e.spec.ts: 'insert an If -> CONVERGING diamond both arms rejoin a single exit' (tokenizes path endpoints, asserts >=2 paths land on the SAME (x,y) join + all down-only); 'per-arm + with empty passthrough'; 'Exit on an arm terminates only that arm'; populated-arm diamond reopen round-trip; 'delete the condition of a diamond re-links to a valid converging graph'. mutate.ts insertOnEdge rejoins both arms to continuation; validateCampaignDefinition accepts diamonds (not a cycle).",
+        "verified": true
+      },
+      {
+        "criterion": "P7: campaigns LIST (like broadcasts); separate /campaigns/:id builder; NO Design email on list (only in send-node editor); lifecycle status+counts; publish/pause/resume/archive capability-gated+workspace-scoped; runner pause gate; full journey",
+        "evidence": "web/e2e/campaign-list-detail.browser.e2e.spec.ts (5): list (not canvas), design-email count 0 on list, New->/campaigns/new, open row->/campaigns/:id reconstructs DSL, Design email ONLY inside send-node editor (send-design-email), status badge + campaign-counts. web/e2e/campaign-lifecycle.browser.e2e.spec.ts: publish->pause->resume->archive via ActionMenu + WS_A-only scoping + accounting-403. services/local-api/test/campaign-lifecycle + campaign-enrollment-counts (real PG). services/campaign-runner/test/paused-campaign-not-advanced (paused -> skipped, no node move/outbox; resume advances). FULL journey: campaign-journey-live-enroll.integration.test.ts (2/2 pass solo, 108ms, non-vacuous) + campaign-journey-smoke.browser.e2e.spec.ts (build full-node journey + publish to active).",
+        "verified": true
+      },
+      {
+        "criterion": "Cross-cutting: tenant isolation across all campaign paths (service-role bypasses RLS, scoped in code; workspace_id from enrollment row never client)",
+        "evidence": "campaign-journey-live-enroll: parallel WS_B campaign/enrollment stays at 'trigger'/'active', zero WS_B messages_log/outbox after all WS_A ticks. cross-workspace 404s in campaign-enroll-endpoint + campaign-publish-gate + get-campaign + campaign-lifecycle. tests/acceptance/penetration-isolation.test.ts. workspace-scoping.integration.test.ts.",
+        "verified": true
+      },
+      {
+        "criterion": "Cross-cutting: all campaign sends through the Dispatcher gating with mandatory From/To/Subject envelope; merge in subject+To+body; no no-reply fallback for campaigns",
+        "evidence": "journey send goes through the REAL dispatchOutbox; From resolved from sender_id (named sender), subject/To/body merge rendered; publish gate enforces sender_id->to_address->subject + verified-domain before activation; action-send-through-dispatcher + campaign-send-dispatcher-instance integration tests.",
+        "verified": true
+      },
+      {
+        "criterion": "Process hygiene: version 0.36.0, CLAUDE.md current, no scope creep, migrations applied to cdp + cdp_e2e",
+        "evidence": "root package.json version 0.36.0; CLAUDE.md has 25 campaign references documenting all 7 phases (tz, DSL hour-window/webhook, triggers, send instance + publish gating, canvas, node editors, converging branches, lifecycle, full journey) with per-phase version bumps. cdp + cdp_e2e both have 239 tables; e2e re-seeds and all schema-dependent specs pass. Branch diff touches only campaign/web/runner/dispatcher/shared/processor/unsubscribe areas; the only working-tree edit is the test-only profile-detail seed-count fix.",
+        "verified": true
+      }
+    ],
+    "criticalIssues": [],
+    "recommendations": [
+      "COMMIT the working-tree fix: web/e2e/profile-detail.browser.e2e.spec.ts (the toHaveCount 4->6 seed-count correction) is currently UNCOMMITTED on feat/campaign-builder. The e2e suite is green only because it runs against the working tree; a fresh clone / CI checkout of the committed HEAD would FAIL profile-detail until this is committed. This is the one true process gap (the impl report described it as 'the single code change' but did not commit it).",
+      "Optional defense-in-depth (already documented as out of scope): the SSRF guard enforces the literal host/IP + per-workspace allowlist but does not synchronously DNS-resolve a hostname that could resolve to a private IP; ssrf.ts documents this is covered by the deny-by-default allowlist + deploy-time VPC egress policy. Consider a resolve-time check or pinned-IP connect when the runner Lambda's egress is not network-restricted."
+    ],
+    "score": 97,
+    "usesRealPostgres": true,
+    "webhookInjected": true
+  }
+}

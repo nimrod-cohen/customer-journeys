@@ -1,0 +1,64 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "id": "final-journey",
+          "title": "Full end-to-end campaign journey acceptance"
+        },
+        "score": 97
+      },
+      "instructions": [
+        "Run `git add -A`. If not on a feature branch and on the default branch, create/use a branch first.",
+        "Commit with a clear conventional message describing the phase (Full end-to-end campaign journey acceptance), gate score (97), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Full end-to-end campaign journey acceptance\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KVH32C28BD4W8QTNV370H12K/input.json",
+    "outputJsonPath": "tasks/01KVH32C28BD4W8QTNV370H12K/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "final-journey"
+  ],
+  "title": "Commit: Full end-to-end campaign journey acceptance",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KVH32C28BD4W8QTNV370H12K",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/campaign-builder:S000035:commit-phase",
+  "stepId": "S000035",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "id": "final-journey",
+      "title": "Full end-to-end campaign journey acceptance"
+    },
+    "score": 97
+  }
+}

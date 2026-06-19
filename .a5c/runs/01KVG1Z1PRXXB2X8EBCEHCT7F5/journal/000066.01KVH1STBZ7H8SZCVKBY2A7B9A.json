@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-06-19T23:00:06.143Z",
+  "data": {
+    "effectId": "01KVH1STBD8QFJKMXR6J6GGMT8",
+    "invocationKey": "cdp/campaign-builder:S000033:integration",
+    "invocationHash": "d8d1304ec94e8c3ca5c68447d4b161916e7fc334b868458a7feac6d20a2119c0",
+    "stepId": "S000033",
+    "taskId": "integration",
+    "kind": "agent",
+    "label": "integration",
+    "taskDefRef": "tasks/01KVH1STBD8QFJKMXR6J6GGMT8/task.json",
+    "labels": [
+      "integration",
+      "iteration-1"
+    ]
+  },
+  "checksum": "fa5ae400cad14dcab9b0b8bdd0f41f02abad220d37bb48e53914fa4e31da68a1"
+}

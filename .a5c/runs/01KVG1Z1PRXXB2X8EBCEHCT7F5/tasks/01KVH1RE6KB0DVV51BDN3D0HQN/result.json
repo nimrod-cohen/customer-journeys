@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KVH1RE6KB0DVV51BDN3D0HQN",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/campaign-builder:S000032:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "9e348f86a4df6e5a706392bd55a33788b426b45b",
+    "committed": true,
+    "message": "feat(campaigns): phase 7 — campaigns list + separate edit page, lifecycle, full journey"
+  },
+  "startedAt": "2026-06-19T23:00:05.795Z",
+  "finishedAt": "2026-06-19T23:00:05.795Z",
+  "value": {
+    "commitHash": "9e348f86a4df6e5a706392bd55a33788b426b45b",
+    "committed": true,
+    "message": "feat(campaigns): phase 7 — campaigns list + separate edit page, lifecycle, full journey"
+  }
+}
