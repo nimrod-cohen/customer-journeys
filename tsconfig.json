@@ -6,6 +6,7 @@
     { "path": "packages/db" },
     { "path": "packages/segments" },
     { "path": "packages/email" },
-    { "path": "packages/tenancy" }
+    { "path": "packages/tenancy" },
+    { "path": "packages/runner-webhook" }
   ]
 }

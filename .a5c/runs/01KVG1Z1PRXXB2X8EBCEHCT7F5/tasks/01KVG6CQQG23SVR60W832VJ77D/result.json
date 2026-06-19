@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KVG6CQQG23SVR60W832VJ77D",
+  "taskId": "quality-gate",
+  "invocationKey": "cdp/campaign-builder:S000007:quality-gate",
+  "status": "ok",
+  "result": {
+    "browserVerified": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "An enrollment parked on an hour_of_day_window resumes at the correct next-window instant in the WORKSPACE timezone (DST-correct); inside the window it advances immediately. Verified by unit + real-Postgres integration tests with an injected clock.",
+        "evidence": "Unit: packages/shared/test/timezone-window.test.ts (17 green) covers same-day/before/after, overnight wrap, inclusive :59 end, daysOfWeek keyed on the OPENING day, DST spring-forward+fall-back, isWindowOpen companion. processNode unit hour-window-process.test.ts (6 green) proves advance-inside / park-outside / resumed-inside fast-path / resumed-still-outside re-park / tz threaded (UTC vs Asia/Jerusalem). Integration: services/campaign-runner/test/hour-window.integration.test.ts (3 green, real Postgres, adminPool+withWorkspaceTx, injected clock) asserts EXACT UTC instants: NY 09:00 -> 13:00Z (EDT), per-workspace NY-vs-UTC park at DIFFERENT instants, DST spring-forward 2026-03-08 lands on post-transition 13:00Z (not naive 14:00Z), and the REAL buildSweepQuery gate honors next_run_at (no app timer). nextWindowOpening uses the two-pass zonedInputToUtcIso (tzOffsetMs double-resolve) for DST-correctness.",
+        "met": true
+      },
+      {
+        "criterion": "A webhook action calls the injected HTTP client with the right url/method/headers/rendered-body, honors timeout + bounded retries, records the outcome, and ISOLATES failure (no tick crash, no double-advance). A disallowed/SSRF target is refused WITHOUT a call. No real external host is hit.",
+        "evidence": "Unit: packages/runner-webhook/test (20 green) — webhook-execute asserts client called with method/url/decrypted X-Auth/merge-rendered body, 2xx ok, 500+maxRetries=2 -> 3 calls bounded, maxRetries=0 no retry, 4xx NOT retried, thrown/timeout isolated never-throws, per-attempt+default timeoutMs; webhook-ssrf-allowlist asserts loopback/localhost/[::1], 169.254/16, RFC1918 10/172.16/192.168, IPv6 ULA fc/fd + mapped-v4, non-http(s) schemes, deny-by-default empty allowlist, exact+dotted-suffix host match, blocked target => ZERO client calls. executeWebhook runs assertWebhookTargetAllowed BEFORE any client call; blocked => {ok:false,error:'blocked',attempts:0}, never throws. Integration: webhook-node-tick.integration.test.ts (5 green, real Postgres, injected client) — success advances+activity row (detail redacted: NOT containing PLAINTEXT-TOKEN/SECRET), 500+maxRetries=1 -> 2 calls + activity=failed + enrollment continues (no throw), 169.254 metadata + off-allowlist => client NEVER called + activity=blocked + advances, no crash. The injected fetch fake never hits a real host; production wires fetchWebhookClient (AbortController timeout).",
+        "met": true
+      },
+      {
+        "criterion": "Idempotency/concurrency preserved: a retried/concurrent tick does not double-advance, double-send, or double-fire the webhook (dedupe/guard verified). Integration tier uses REAL Postgres; AWS mocked.",
+        "evidence": "services/campaign-runner/test/webhook-idempotency.integration.test.ts (3 green, real Postgres). Two concurrent runEnrollment via Promise.all on a real FOR UPDATE (withWorkspaceTx): exactly one 'completed', the other 'skipped', injected client fired EXACTLY ONCE, exactly one webhook activity row. Crash-recovery: writing the SAME buildWebhookActivityInsert twice yields ONE row (partial unique index ON CONFLICT (workspace_id,dedupe_key) WHERE source='webhook' DO NOTHING, migration 0036). MAX_STEPS_PER_TICK guard: a >50-node always-inside hour-window chain terminates and parks-as-failed (status='failed'), never spins. The webhook HTTP call runs POST-COMMIT (run.ts runWebhooks, outside the withTx block) so it never holds the FOR UPDATE lock; single-winner advance guarantees at-most-once. Also re-running an already-advanced enrollment does NOT re-fire (node no longer current).",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "idempotencyOk": true,
+    "isolationOk": true,
+    "recommendations": [
+      "At-most-once is honest but worth documenting operationally: a crash strictly BETWEEN the tx commit and the post-commit HTTP fire yields NO webhook + NO activity row (the enrollment is already advanced, the node is no longer current, so a re-sweep won't retry it). The activity_log dedupe marker only de-dupes the recorded row, it does NOT enable a missed-fire recovery. If at-least-once delivery is ever required for a critical integration, add a pending-webhook marker row inside the tx that a recovery sweep can re-drive.",
+      "loadWebhookAllowlist reads settings->'webhook_allowlist' but there is no validation/management surface yet (no API to set it, no DSL/validation guard). When the builder UI lands, ensure the allowlist write path is capability-gated and workspace-scoped (it is correctly server-side only today; deny-by-default is the safe default).",
+      "Consider a resolution-time SSRF defense-in-depth note in deployment docs: the guard covers LITERAL IPs/hosts + the allowlist, but a public allowlisted hostname that DNS-rebinds to a private IP is only defended by the deploy-time egress policy. The code comment documents this; ensure the runner Lambda's VPC egress policy is enforced in infra.",
+      "Minor: fetchWebhookClient aborts on timeout but does not cap response body size or follow-redirect policy. A malicious allowlisted host could redirect to a private IP (fetch follows redirects by default). Consider redirect:'manual' or re-validating the final URL in the production client.",
+      "Pre-existing config gap (NOT this phase): 7 react-hooks/exhaustive-deps 'rule not found' eslint errors in untouched web files (EmailDesigner/Activity/ProfileDetail/SegmentBuilder/SimpleScreens). Wire the eslint-plugin-react-hooks rule so pnpm lint is green at root."
+    ],
+    "scopeCreep": [],
+    "score": 95,
+    "testsPass": true,
+    "webhookSafetyOk": true
+  },
+  "startedAt": "2026-06-19T15:05:50.698Z",
+  "finishedAt": "2026-06-19T15:05:50.698Z",
+  "value": {
+    "browserVerified": true,
+    "criteriaAllMet": true,
+    "criteriaCoverage": [
+      {
+        "criterion": "An enrollment parked on an hour_of_day_window resumes at the correct next-window instant in the WORKSPACE timezone (DST-correct); inside the window it advances immediately. Verified by unit + real-Postgres integration tests with an injected clock.",
+        "evidence": "Unit: packages/shared/test/timezone-window.test.ts (17 green) covers same-day/before/after, overnight wrap, inclusive :59 end, daysOfWeek keyed on the OPENING day, DST spring-forward+fall-back, isWindowOpen companion. processNode unit hour-window-process.test.ts (6 green) proves advance-inside / park-outside / resumed-inside fast-path / resumed-still-outside re-park / tz threaded (UTC vs Asia/Jerusalem). Integration: services/campaign-runner/test/hour-window.integration.test.ts (3 green, real Postgres, adminPool+withWorkspaceTx, injected clock) asserts EXACT UTC instants: NY 09:00 -> 13:00Z (EDT), per-workspace NY-vs-UTC park at DIFFERENT instants, DST spring-forward 2026-03-08 lands on post-transition 13:00Z (not naive 14:00Z), and the REAL buildSweepQuery gate honors next_run_at (no app timer). nextWindowOpening uses the two-pass zonedInputToUtcIso (tzOffsetMs double-resolve) for DST-correctness.",
+        "met": true
+      },
+      {
+        "criterion": "A webhook action calls the injected HTTP client with the right url/method/headers/rendered-body, honors timeout + bounded retries, records the outcome, and ISOLATES failure (no tick crash, no double-advance). A disallowed/SSRF target is refused WITHOUT a call. No real external host is hit.",
+        "evidence": "Unit: packages/runner-webhook/test (20 green) — webhook-execute asserts client called with method/url/decrypted X-Auth/merge-rendered body, 2xx ok, 500+maxRetries=2 -> 3 calls bounded, maxRetries=0 no retry, 4xx NOT retried, thrown/timeout isolated never-throws, per-attempt+default timeoutMs; webhook-ssrf-allowlist asserts loopback/localhost/[::1], 169.254/16, RFC1918 10/172.16/192.168, IPv6 ULA fc/fd + mapped-v4, non-http(s) schemes, deny-by-default empty allowlist, exact+dotted-suffix host match, blocked target => ZERO client calls. executeWebhook runs assertWebhookTargetAllowed BEFORE any client call; blocked => {ok:false,error:'blocked',attempts:0}, never throws. Integration: webhook-node-tick.integration.test.ts (5 green, real Postgres, injected client) — success advances+activity row (detail redacted: NOT containing PLAINTEXT-TOKEN/SECRET), 500+maxRetries=1 -> 2 calls + activity=failed + enrollment continues (no throw), 169.254 metadata + off-allowlist => client NEVER called + activity=blocked + advances, no crash. The injected fetch fake never hits a real host; production wires fetchWebhookClient (AbortController timeout).",
+        "met": true
+      },
+      {
+        "criterion": "Idempotency/concurrency preserved: a retried/concurrent tick does not double-advance, double-send, or double-fire the webhook (dedupe/guard verified). Integration tier uses REAL Postgres; AWS mocked.",
+        "evidence": "services/campaign-runner/test/webhook-idempotency.integration.test.ts (3 green, real Postgres). Two concurrent runEnrollment via Promise.all on a real FOR UPDATE (withWorkspaceTx): exactly one 'completed', the other 'skipped', injected client fired EXACTLY ONCE, exactly one webhook activity row. Crash-recovery: writing the SAME buildWebhookActivityInsert twice yields ONE row (partial unique index ON CONFLICT (workspace_id,dedupe_key) WHERE source='webhook' DO NOTHING, migration 0036). MAX_STEPS_PER_TICK guard: a >50-node always-inside hour-window chain terminates and parks-as-failed (status='failed'), never spins. The webhook HTTP call runs POST-COMMIT (run.ts runWebhooks, outside the withTx block) so it never holds the FOR UPDATE lock; single-winner advance guarantees at-most-once. Also re-running an already-advanced enrollment does NOT re-fire (node no longer current).",
+        "met": true
+      }
+    ],
+    "criticalIssues": [],
+    "idempotencyOk": true,
+    "isolationOk": true,
+    "recommendations": [
+      "At-most-once is honest but worth documenting operationally: a crash strictly BETWEEN the tx commit and the post-commit HTTP fire yields NO webhook + NO activity row (the enrollment is already advanced, the node is no longer current, so a re-sweep won't retry it). The activity_log dedupe marker only de-dupes the recorded row, it does NOT enable a missed-fire recovery. If at-least-once delivery is ever required for a critical integration, add a pending-webhook marker row inside the tx that a recovery sweep can re-drive.",
+      "loadWebhookAllowlist reads settings->'webhook_allowlist' but there is no validation/management surface yet (no API to set it, no DSL/validation guard). When the builder UI lands, ensure the allowlist write path is capability-gated and workspace-scoped (it is correctly server-side only today; deny-by-default is the safe default).",
+      "Consider a resolution-time SSRF defense-in-depth note in deployment docs: the guard covers LITERAL IPs/hosts + the allowlist, but a public allowlisted hostname that DNS-rebinds to a private IP is only defended by the deploy-time egress policy. The code comment documents this; ensure the runner Lambda's VPC egress policy is enforced in infra.",
+      "Minor: fetchWebhookClient aborts on timeout but does not cap response body size or follow-redirect policy. A malicious allowlisted host could redirect to a private IP (fetch follows redirects by default). Consider redirect:'manual' or re-validating the final URL in the production client.",
+      "Pre-existing config gap (NOT this phase): 7 react-hooks/exhaustive-deps 'rule not found' eslint errors in untouched web files (EmailDesigner/Activity/ProfileDetail/SegmentBuilder/SimpleScreens). Wire the eslint-plugin-react-hooks rule so pnpm lint is green at root."
+    ],
+    "scopeCreep": [],
+    "score": 95,
+    "testsPass": true,
+    "webhookSafetyOk": true
+  }
+}

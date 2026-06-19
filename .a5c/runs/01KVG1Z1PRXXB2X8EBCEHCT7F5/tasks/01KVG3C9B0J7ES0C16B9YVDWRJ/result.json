@@ -1,0 +1,309 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KVG3C9B0J7ES0C16B9YVDWRJ",
+  "taskId": "plan-phase",
+  "invocationKey": "cdp/campaign-builder:S000005:plan-phase",
+  "status": "ok",
+  "result": {
+    "e2eFlows": [],
+    "implUnits": [
+      "1. packages/shared/src/timezone.ts: add zonedComponents, isWindowOpen, nextWindowOpening (reuse tzOffsetMs/zonedInputToUtcIso). Export from packages/shared/src/index.ts. (DST-correct, behavior locked by timezone-window.test.ts.)",
+      "2. services/campaign-runner: thread the workspace tz into the tick. Read workspaces.settings->>'timezone' (default 'UTC') once per tick inside runEnrollmentInTx/Legacy (same tx client / reader), pass it to chainTick -> processNode. Implement hour_of_day_window in processNode (advance inside / stay+nextRunAt outside; resumed+inside fast-path). Make computeWaitNextRunAt tz-aware for bare-wall-clock until. (Depends on 1.)",
+      "3. New package @cdp/runner-webhook (or services/campaign-runner/src/webhook/): ssrf.ts (assertWebhookTargetAllowed, isPrivateOrReservedHost) + execute.ts (WebhookHttpClient interface, executeWebhook, renderWebhookBody). Pure + injected client. (Independent of 1/2; can be built in parallel.)",
+      "4. core.ts: buildWebhookActivityInsert + a per-(campaign,profile,node) webhook dedupe marker (either reuse activity_log with a unique key on (workspace_id, source, detail-key) OR a dedicated column; document choice). Add a SideEffect variant {kind:'webhook', node} so chainTick collects webhook intents like sends. (Depends on 3 for the outcome shape.)",
+      "5. run.ts: in chainTick, when an action node is kind='webhook', emit a 'webhook' side effect (do NOT call HTTP inside chainTick). In runEnrollmentInTx, advance + commit the tx FIRST (recording intent), then AFTER COMMIT run executeWebhook for each collected webhook side effect via the injected client and write the activity_log outcome (with the dedupe guard) — mirroring enqueueSends' post-commit pattern. Decide+document continue-vs-park-as-failed. (Depends on 2,3,4.)",
+      "6. deps.ts (campaign-runner): add the injected webhook HTTP client (real fetch-based, honoring timeoutMs via AbortController), the decryptSecret injection, and load/pass the per-workspace webhook allowlist (from workspaces.settings or a dedicated column — document where it lives; default deny). makeProdDeps wires all of it. (Depends on 3,5.)",
+      "7. dsl.ts: no new fields required (webhook fields exist). If the allowlist is stored on the node vs workspace, keep it WORKSPACE-scoped (never client-trusted per-send); confirm/extend validation only if a new field is added. (Likely no change.)",
+      "8. Migration (only if a dedicated webhook-dedupe column or an allowlist column is needed): add to packages/db/supabase/migrations + apply to BOTH cdp and cdp_e2e via a node pg script (psql unavailable). Prefer reusing settings jsonb to avoid a migration if feasible. ",
+      "9. Bump root package.json (minor — feature) and update CLAUDE.md (runner now executes hour_of_day_window tz-aware + webhook with allowlist/SSRF, post-commit webhook policy)."
+    ],
+    "mocks": [
+      "Injected HTTP client (WebhookHttpClient interface with request({method,url,headers,body,timeoutMs}) -> {status} | throws) — a fake in unit + integration tests; NEVER a real fetch/host. Production deps wire a real fetch-based client behind the same interface (mirrors dispatcher's injected SesEmailClient).",
+      "Injected clock deps.now() (already present) — set to fixed UTC instants to drive window/DST boundaries deterministically.",
+      "@aws-sdk/client-sqs SqsSender — the existing noopSqs / aws-sdk-client-mock for enqueueSends (sends still flow through outbox->Dispatcher; no real SES).",
+      "Injected decryptSecret (from @cdp/db secret-crypto) — real in integration (envelope round-trip), can be a stub in pure unit tests; assert plaintext never persisted/logged.",
+      "Optional injected DNS resolver (only if resolution-time SSRF is in scope) — resolves a test hostname to a private IP to assert refusal; otherwise document runtime egress policy.",
+      "Real Postgres (DATABASE_URL local cdp) for ALL integration tiers — NOT mocked (ordering/idempotency/isolation live in SQL)."
+    ],
+    "notes": "WEBHOOK IN-TX vs POST-COMMIT DECISION: the webhook HTTP call runs AFTER the row-lock tx COMMITS, never inside the FOR UPDATE tx — identical to how runEnrollment enqueues sends post-commit. Rationale: (a) an external HTTP call must not hold a Postgres row lock for up to timeoutMs*retries (lock-contention + connection starvation), and (b) a hung host would stall the single-winner lock. The tx records the INTENT (the guarded advance to node.next + an idempotency marker) and commits; the post-commit step calls executeWebhook and writes the activity_log outcome. IDEMPOTENCY ON RETRY: single-winner is preserved by the existing FOR UPDATE/CAS — only one tick advances the enrollment past the webhook node, so only one tick runs the post-commit webhook. The webhook is therefore AT-MOST-ONCE (a crash strictly between commit and the HTTP call yields no fire, recorded as not-delivered) — this is the correct default for a non-idempotent external side effect (vs the at-least-once email path whose Dispatcher claim dedupes). A per-(campaign,profile,node) dedupe key on the activity_log/marker prevents a re-fire if a recovery re-runs the node; a second runEnrollment of an already-advanced enrollment is a no-op because the node is no longer current. SSRF/ALLOWLIST is enforced BEFORE any client call (deny-by-default per-workspace host allowlist + literal loopback/169.254-metadata/RFC1918/IPv6-ULA refusal, http(s)-only); a blocked target returns {ok:false,error:'blocked',attempts:0} with ZERO client invocations and never throws. The allowlist is WORKSPACE-scoped config (settings jsonb or a dedicated column — never trusted from a request body, inv.2). RETRY POLICY: retry on >=500 and network/timeout errors up to maxRetries (bounded by 1+maxRetries); do NOT retry 4xx (deterministic client rejection). FAILURE ISOLATION: executeWebhook never throws; a failed/blocked webhook records an activity_log row and (documented) CONTINUES the journey to node.next (a webhook is a notification side effect, not a gate) rather than park-as-failed — choose continue-on-failure to avoid stranding enrollments on a flaky external host, with the failure visible in Activity. TZ: hour_of_day_window + wait-until read the WORKSPACE tz (workspaces.settings->>'timezone', default 'UTC') loaded inside the tick from the enrollment's workspace_id (never client/per-broadcast); nextWindowOpening uses the existing DST-correct zoned<->UTC helpers so spring-forward/fall-back land on the right UTC instant. TEST-FIRST: write timezone-window + ssrf + webhook-execute unit tests and the hour-window/webhook integration tests RED first, then implement to green; do NOT mock Postgres in the integration tier; mock only the HTTP client + AWS. Verify pnpm typecheck + the campaign-runner + shared vitest suites green, apply any migration to BOTH cdp and cdp_e2e via a node pg script, bump root version (minor), and update CLAUDE.md.",
+    "pureFunctions": [
+      "packages/shared/src/timezone.ts: nextWindowOpening(now: Date, win: {startHour:number; endHour:number; daysOfWeek?:number[]}, tz: string): Date | null — null when already inside the window; else the next opening instant (ws-tz wall-clock -> UTC via the existing zonedInputToUtcIso/tzOffsetMs, DST-correct). Handles same-day, overnight (start>end), inclusive-through-:59 end, and daysOfWeek keyed on the window-OPENING day.",
+      "packages/shared/src/timezone.ts: isWindowOpen(now, win, tz): boolean — companion (true iff nextWindowOpening returns null).",
+      "packages/shared/src/timezone.ts: zonedComponents(now, tz): {year,month,day,hour,minute,weekday} — small helper reusing tzOffsetMs/Intl to read ws-local wall-clock parts (used by nextWindowOpening).",
+      "services/campaign-runner/src/core.ts: extend processNode to accept the workspace tz and implement hour_of_day_window via isWindowOpen/nextWindowOpening (advance when inside; stay+nextRunAt when outside; resumed-and-inside fast-path like wait).",
+      "services/campaign-runner/src/core.ts: make computeWaitNextRunAt tz-aware for a bare-wall-clock `until` (interpret in ws tz via zonedInputToUtcIso; honor explicit-offset untils verbatim).",
+      "packages/runner-webhook/src/ssrf.ts: assertWebhookTargetAllowed(url: string, allowlist: readonly string[]): void — deny-by-default host allowlist + literal-IP SSRF guard (loopback, 169.254/16 metadata, RFC1918, IPv6 ULA/loopback), http(s)-only. THROWS a typed BlockedTargetError.",
+      "packages/runner-webhook/src/ssrf.ts: isPrivateOrReservedHost(host: string): boolean — the IP/host classification used by assertWebhookTargetAllowed.",
+      "packages/runner-webhook/src/execute.ts: renderWebhookBody(node, profile) — reuse customerMerge(profile) + the dispatcher's renderTemplateBody-style {{customer.*}} expansion to render node.bodyTemplate (extract the body-render helper to a shared spot or duplicate the tiny expander; reuse expandCustomerToken from @cdp/shared).",
+      "packages/runner-webhook/src/execute.ts: executeWebhook(client, node, profile, opts): Promise<WebhookOutcome> — allowlist/SSRF check FIRST, then render, then call the injected client with timeout, bounded retry on >=500/network error, return a structured {ok,status,attempts,error?} (never throws).",
+      "services/campaign-runner/src/core.ts: buildWebhookActivityInsert(workspaceId, profileId, campaignId, nodeId, outcome): SqlStatement — append-only activity_log row (source='webhook'), mirroring buildUnsubscribeActivity; redacts secret header values."
+    ],
+    "reuse": [
+      "packages/shared/src/timezone.ts: tzOffsetMs + zonedInputToUtcIso (DST-correct zoned<->UTC) — the SINGLE source of truth for all window/wait time math (extracted from the broadcast scheduler).",
+      "services/campaign-runner/src/run.ts: the one-tx FOR UPDATE tick (runEnrollmentInTx), the legacy CAS path (runEnrollmentLegacy), chainTick + advanceFor, and the AFTER-COMMIT enqueueSends pattern — the webhook post-commit call mirrors enqueueSends exactly (intent in tx, side effect after commit).",
+      "services/campaign-runner/src/core.ts: SideEffect union (add 'webhook'), buildAdvanceEnrollment/buildEnrollmentClaim (idempotent advance), buildCampaignDedupeKey/buildCampaignOutboxInsert (per-(campaign,profile,node) exactly-once), the workspaceId-required throw guards, MAX_STEPS_PER_TICK.",
+      "services/dispatcher/src/core.ts renderTemplateBody + packages/shared/src/customer.ts customerMerge/expandCustomerToken — render the webhook bodyTemplate's {{customer.*}} tags exactly like email bodies (consistent personalization, inv).",
+      "services/unsubscribe/src/core.ts buildUnsubscribeActivity — the template for buildWebhookActivityInsert (workspace-scoped INSERT INTO activity_log with profile_id subselect).",
+      "packages/db/src/secret-crypto.ts encryptSecret/decryptSecret/isEncryptedSecret — decrypt a webhook auth-header secret at call time; never store/return/log plaintext.",
+      "services/dispatcher/src/deps.ts injection style (Reader, injected ses client, runInWorkspaceTx, now) — model the WebhookHttpClient injection identically; the real client behind the same interface, mocked in tests.",
+      "services/campaign-runner/test/wait-deferral.integration.test.ts + idempotent-concurrent-sweep.integration.test.ts — copy the seed/teardown harness (unique WS/CAMP/PROF UUIDs, adminPool, buildSweepQuery, withWorkspaceTx, noopSqs) for the new hour-window + webhook integration tests.",
+      "services/local-api/src/handlers.ts timezone read (settings->>'timezone' default 'UTC', isValidTimeZone) — same read in the runner; keep 'UTC' default behavior identical."
+    ],
+    "testFiles": [
+      {
+        "assertions": [
+          "nextWindowOpening(now, {startHour,endHour}, tz): now inside a same-day window (start<end, e.g. 9..17) and now is 12:00 ws-local -> returns null (already inside).",
+          "now BEFORE a same-day window today (07:00 ws-local, window 9..17) -> returns today 09:00 ws-local converted to UTC (assert exact ISO via zonedInputToUtcIso for that date).",
+          "now AFTER a same-day window today (19:00 ws-local, window 9..17) -> returns TOMORROW 09:00 ws-local -> UTC.",
+          "OVERNIGHT window (startHour=22,endHour=6): now=23:30 ws-local -> inside -> null; now=05:30 -> inside -> null; now=12:00 -> next opening today 22:00 ws-local -> UTC.",
+          "DST SPRING-FORWARD: America/New_York, window opening hour falls on the DST gap day; assert the returned UTC instant is the offset on the CORRECT side of the transition (offset differs from the naive guess), proving zonedInputToUtcIso double-resolve is used (not a fixed UTC offset).",
+          "DST FALL-BACK: a window opening on the fall-back day resolves to a single unambiguous UTC instant (no double-fire).",
+          "daysOfWeek restriction: window allowed only on [1,3] (Mon/Wed); now is Tue inside the hour range -> NOT inside (day not allowed) -> next opening is Wed startHour ws-local -> UTC; now is Mon inside hour range -> null (inside).",
+          "daysOfWeek with overnight window spanning a day boundary: a window 22..6 on day=5 (Fri) is 'inside' at Sat 02:00 only if Fri is the allowed day (the window OPENED on Fri) — assert the day-membership is keyed on the window-opening day, not the wall-clock day.",
+          "endHour is INCLUSIVE through :59 (window 9..17 includes 17:30 ws-local -> inside; 18:00 -> outside, next opening tomorrow 09:00).",
+          "isWindowOpen(now, node, tz) is the boolean companion: returns true exactly when nextWindowOpening returns null.",
+          "tzWaitUntil/zoned 'until': a wait.until given as a bare wall-clock string is interpreted in the WORKSPACE tz via zonedInputToUtcIso (DST-correct), while an until with an explicit Z/offset is honored verbatim (regression: no double-shift)."
+        ],
+        "criterion": "hour_of_day_window parks until the next allowed window opening in the workspace tz (DST-correct); inside the window advances immediately. tz-aware wait/wait-until.",
+        "path": "packages/shared/test/timezone-window.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "processNode(hour_of_day_window, state, _, now, arrival='arrived', tz) when isWindowOpen -> disposition 'advance', nextNode=node.next, no side effects.",
+          "processNode(hour_of_day_window) when OUTSIDE the window -> disposition 'stay', nextRunAt = nextWindowOpening(now,...,tz) (a future Date), nextNode=node.next, no side effects.",
+          "RESUMED on a parked hour-window whose next_run_at has elapsed AND now is inside the window -> advance (mirrors the wait 'resumed+elapsed' fast-path).",
+          "RESUMED but the window edge moved (e.g. daysOfWeek) so now is STILL outside -> re-park with a fresh nextWindowOpening (never advances early).",
+          "processNode is given the workspace tz explicitly (signature extended) — passing tz='UTC' yields UTC-based decisions; passing 'Asia/Jerusalem' shifts the boundary, proving tz is threaded not hard-coded.",
+          "An hour-window with no daysOfWeek treats every day as allowed (parity with validation)."
+        ],
+        "criterion": "hour_of_day_window parks until the next allowed window opening; inside advances immediately (pure processNode decision, injected clock + tz).",
+        "path": "services/campaign-runner/test/hour-window-process.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "Seed workspace with settings.timezone='America/New_York'; campaign def trigger->hour_window(9..17)->send/exit; enroll a profile.",
+          "runEnrollment with injected now = 03:00 UTC (≈ before 09:00 NY): result 'parked' on the hour-window node; row.next_run_at == today 09:00 NY -> UTC (assert exact, read back via SELECT next_run_at::text).",
+          "The REAL buildSweepQuery(now) does NOT return the row while now < next_run_at, and DOES return it once now >= next_run_at (proves no app timer; the next_run_at gate is honored by SQL).",
+          "Resume tick with injected now = 14:00 NY (inside window): enrollment advances past the hour-window to the downstream node (or completes), next_run_at cleared appropriately.",
+          "Workspace tz is READ FROM workspaces.settings->>'timezone' by the runner (default 'UTC' when unset) — a second workspace with no setting parks on a UTC-based boundary; assert the two enrollments park at DIFFERENT UTC instants for the same wall-clock window, proving per-workspace tz.",
+          "Tenant isolation: the tz/settings lookup and every write bind workspace_id loaded FROM the enrollment row; a statement whose values[0] != enrollment workspace_id throws (existing runEnrollment guard still passes).",
+          "DST integration: set tz to a zone mid-spring-forward date via the injected clock; assert the parked next_run_at offset matches the post-transition offset (not a constant)."
+        ],
+        "criterion": "An enrollment parked on an hour_of_day_window resumes at the correct next-window instant in the WORKSPACE timezone (DST-correct); inside advances immediately. Real Postgres + injected clock.",
+        "path": "services/campaign-runner/test/hour-window.integration.test.ts",
+        "tier": "integration"
+      },
+      {
+        "assertions": [
+          "executeWebhook(injectedClient, node, profile, {now, decryptSecret, allowlist}) calls client.request ONCE with method=node.method, url=node.url, headers (with any secret header DECRYPTED via injected decryptSecret), and body = renderTemplateBody(node.bodyTemplate, customerMerge(profile)) — assert the merge tag {{customer.email}} / {{customer.tier}} is expanded in the sent body.",
+          "A 2xx response -> result {ok:true, status, attempts:1}; the injected client was called exactly once.",
+          "A 500 response with maxRetries=2 -> client called 3 times total (1 + 2 retries), result {ok:false, status:500, attempts:3}; retries are BOUNDED (never exceeds 1+maxRetries).",
+          "maxRetries=0 -> a non-2xx is NOT retried (called exactly once, ok:false).",
+          "A thrown/timeout error from the client is treated like a failure and retried up to the bound, then returns {ok:false, error:'timeout'|message, attempts:1+maxRetries} — never throws out of executeWebhook (failure isolation).",
+          "timeoutMs is passed to the injected client per attempt (assert the client received the timeout arg); default timeout applied when node.timeoutMs is undefined.",
+          "A 429/503 is retried; a 400/404 (client error, non-retryable policy if chosen) — document + assert the chosen policy (retry on >=500 and network error; do NOT retry 4xx) so retries don't hammer a deterministic rejection.",
+          "Returns a structured outcome object (status, attempts, ok, error?) that the caller maps to an activity_log row — NO direct DB/HTTP I/O inside executeWebhook beyond the injected client."
+        ],
+        "criterion": "webhook action calls the injected HTTP client with rendered url/method/headers/body, honors timeout + bounded retries, records outcome, isolates failure.",
+        "path": "packages/runner-webhook/test/webhook-execute.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "assertWebhookTargetAllowed(url, allowlist) throws for loopback (http://127.0.0.1, http://localhost, http://[::1]).",
+          "Throws for link-local / metadata 169.254.169.254 and the full 169.254.0.0/16 range.",
+          "Throws for RFC1918 private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and unique-local IPv6 (fc00::/7).",
+          "Throws for a non-http(s) scheme (file:, gopher:, ftp:) even if validation passed structurally.",
+          "Throws when the host is NOT in the per-workspace domain allowlist (allowlist=['hooks.example.com']; url host api.evil.com -> refused).",
+          "Allows a host that IS on the allowlist and is a public name (hooks.example.com) — returns without throwing; subdomain match policy documented (exact host OR explicit suffix match — assert the chosen rule).",
+          "executeWebhook calls assertWebhookTargetAllowed BEFORE the injected HTTP client; a refused target means the injected client is NEVER invoked (assert call count 0) and the outcome is {ok:false, error:'blocked', attempts:0}.",
+          "An empty allowlist refuses ALL hosts (deny-by-default), proving outbound HTTP is opt-in per workspace.",
+          "The DNS/IP check guards against a hostname that RESOLVES to a private IP (if resolution is in scope: inject a resolver; a name resolving to 10.x is refused) — OR document that resolution-time SSRF is handled by the runtime allowlist + a deploy-time egress policy, and assert only the literal-IP/host rules here."
+        ],
+        "criterion": "A disallowed/SSRF target is refused WITHOUT a call. No real external host is hit.",
+        "path": "packages/runner-webhook/test/webhook-ssrf-allowlist.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "Seed campaign trigger->webhook(POST hooks.example.com, allowlisted)->exit; enroll a profile. runEnrollment with an injected HTTP client returning 200.",
+          "After the tick: injected client called once; enrollment advanced past the webhook node (to exit/completed); ONE activity_log row written with source='webhook', type='webhook', outcome reflecting success (status 200, attempts 1), workspace_id == enrollment workspace, profile_id == enrolled profile.",
+          "Failure isolation: injected client returns 500 with maxRetries=1 -> client called twice; runEnrollment does NOT throw; an activity_log row records the failure (outcome='failed', detail incl. status+attempts); the enrollment advances per the documented policy (continue-on-failure: advances to node.next; OR park-as-failed: status stays + a future retry) — assert the chosen, documented behavior.",
+          "SSRF refusal in the tick: a webhook node whose url targets 169.254.169.254 (or off-allowlist) -> injected client NEVER called; activity_log records outcome='blocked'; tick does not crash; advance per policy.",
+          "DECISION/IDEMPOTENCY: the webhook HTTP call happens AFTER the row-lock tx COMMITS (mirrors enqueueSends), NOT inside the FOR UPDATE tx — the tx records the INTENT (advance + a pending webhook marker / the activity row is written post-commit with a per-(campaign,profile,node) dedupe). Assert the tx commit advances the enrollment, and the post-commit webhook is fired exactly once.",
+          "A second runEnrollment of the SAME already-advanced enrollment does NOT re-fire the webhook (the node is no longer current; the dedupe guard / advanced status short-circuits) — injected client total call count unchanged.",
+          "Tenant isolation: a webhook node referencing a secret header decrypts via @cdp/db decryptSecret; the plaintext is sent to the injected client but the stored definition/activity detail NEVER contains the plaintext secret (assert the recorded detail is redacted)."
+        ],
+        "criterion": "webhook executes in the tick: injected client called, outcome recorded in activity_log, failure isolated (no tick crash, no double-advance). Real Postgres; HTTP client mocked.",
+        "path": "services/campaign-runner/test/webhook-node-tick.integration.test.ts",
+        "tier": "integration"
+      },
+      {
+        "assertions": [
+          "Two CONCURRENT runEnrollment calls (Promise.all) on the same due webhook enrollment using withWorkspaceTx (real FOR UPDATE): exactly ONE advances; the loser is 'skipped' (status no longer active on its read inside the lock).",
+          "The injected HTTP client is invoked AT MOST ONCE across both concurrent runs (single-winner -> single webhook fire). Assert total call count == 1.",
+          "A webhook-firing tick interleaved with a send node: the per-(campaign,profile,node) outbox dedupe still gives exactly-one outbox row for the send node, AND the webhook activity_log dedupe gives exactly-one webhook row — verified by re-running the (idempotent) tick after a simulated crash-between-commit-and-webhook.",
+          "Crash-recovery: simulate commit succeeded but the post-commit webhook step did NOT run (no activity row); a re-sweep of the SAME enrollment — document the recovery: either (a) the webhook marker is checked and re-fired exactly once via a dedupe key, or (b) post-commit failure advances anyway and is logged as not-delivered (at-most-once). Assert the documented guarantee and that it never double-fires when the activity row already exists.",
+          "MAX_STEPS_PER_TICK unchanged: a graph chaining many hour_of_day_window no-op-inside nodes still terminates the tick and parks-as-failed at the guard (no infinite loop introduced)."
+        ],
+        "criterion": "Idempotency/concurrency preserved: retried/concurrent tick does not double-advance, double-send, or double-fire the webhook. Real Postgres; AWS mocked.",
+        "path": "services/campaign-runner/test/webhook-idempotency.integration.test.ts",
+        "tier": "integration"
+      }
+    ]
+  },
+  "startedAt": "2026-06-19T14:12:51.957Z",
+  "finishedAt": "2026-06-19T14:12:51.957Z",
+  "value": {
+    "e2eFlows": [],
+    "implUnits": [
+      "1. packages/shared/src/timezone.ts: add zonedComponents, isWindowOpen, nextWindowOpening (reuse tzOffsetMs/zonedInputToUtcIso). Export from packages/shared/src/index.ts. (DST-correct, behavior locked by timezone-window.test.ts.)",
+      "2. services/campaign-runner: thread the workspace tz into the tick. Read workspaces.settings->>'timezone' (default 'UTC') once per tick inside runEnrollmentInTx/Legacy (same tx client / reader), pass it to chainTick -> processNode. Implement hour_of_day_window in processNode (advance inside / stay+nextRunAt outside; resumed+inside fast-path). Make computeWaitNextRunAt tz-aware for bare-wall-clock until. (Depends on 1.)",
+      "3. New package @cdp/runner-webhook (or services/campaign-runner/src/webhook/): ssrf.ts (assertWebhookTargetAllowed, isPrivateOrReservedHost) + execute.ts (WebhookHttpClient interface, executeWebhook, renderWebhookBody). Pure + injected client. (Independent of 1/2; can be built in parallel.)",
+      "4. core.ts: buildWebhookActivityInsert + a per-(campaign,profile,node) webhook dedupe marker (either reuse activity_log with a unique key on (workspace_id, source, detail-key) OR a dedicated column; document choice). Add a SideEffect variant {kind:'webhook', node} so chainTick collects webhook intents like sends. (Depends on 3 for the outcome shape.)",
+      "5. run.ts: in chainTick, when an action node is kind='webhook', emit a 'webhook' side effect (do NOT call HTTP inside chainTick). In runEnrollmentInTx, advance + commit the tx FIRST (recording intent), then AFTER COMMIT run executeWebhook for each collected webhook side effect via the injected client and write the activity_log outcome (with the dedupe guard) — mirroring enqueueSends' post-commit pattern. Decide+document continue-vs-park-as-failed. (Depends on 2,3,4.)",
+      "6. deps.ts (campaign-runner): add the injected webhook HTTP client (real fetch-based, honoring timeoutMs via AbortController), the decryptSecret injection, and load/pass the per-workspace webhook allowlist (from workspaces.settings or a dedicated column — document where it lives; default deny). makeProdDeps wires all of it. (Depends on 3,5.)",
+      "7. dsl.ts: no new fields required (webhook fields exist). If the allowlist is stored on the node vs workspace, keep it WORKSPACE-scoped (never client-trusted per-send); confirm/extend validation only if a new field is added. (Likely no change.)",
+      "8. Migration (only if a dedicated webhook-dedupe column or an allowlist column is needed): add to packages/db/supabase/migrations + apply to BOTH cdp and cdp_e2e via a node pg script (psql unavailable). Prefer reusing settings jsonb to avoid a migration if feasible. ",
+      "9. Bump root package.json (minor — feature) and update CLAUDE.md (runner now executes hour_of_day_window tz-aware + webhook with allowlist/SSRF, post-commit webhook policy)."
+    ],
+    "mocks": [
+      "Injected HTTP client (WebhookHttpClient interface with request({method,url,headers,body,timeoutMs}) -> {status} | throws) — a fake in unit + integration tests; NEVER a real fetch/host. Production deps wire a real fetch-based client behind the same interface (mirrors dispatcher's injected SesEmailClient).",
+      "Injected clock deps.now() (already present) — set to fixed UTC instants to drive window/DST boundaries deterministically.",
+      "@aws-sdk/client-sqs SqsSender — the existing noopSqs / aws-sdk-client-mock for enqueueSends (sends still flow through outbox->Dispatcher; no real SES).",
+      "Injected decryptSecret (from @cdp/db secret-crypto) — real in integration (envelope round-trip), can be a stub in pure unit tests; assert plaintext never persisted/logged.",
+      "Optional injected DNS resolver (only if resolution-time SSRF is in scope) — resolves a test hostname to a private IP to assert refusal; otherwise document runtime egress policy.",
+      "Real Postgres (DATABASE_URL local cdp) for ALL integration tiers — NOT mocked (ordering/idempotency/isolation live in SQL)."
+    ],
+    "notes": "WEBHOOK IN-TX vs POST-COMMIT DECISION: the webhook HTTP call runs AFTER the row-lock tx COMMITS, never inside the FOR UPDATE tx — identical to how runEnrollment enqueues sends post-commit. Rationale: (a) an external HTTP call must not hold a Postgres row lock for up to timeoutMs*retries (lock-contention + connection starvation), and (b) a hung host would stall the single-winner lock. The tx records the INTENT (the guarded advance to node.next + an idempotency marker) and commits; the post-commit step calls executeWebhook and writes the activity_log outcome. IDEMPOTENCY ON RETRY: single-winner is preserved by the existing FOR UPDATE/CAS — only one tick advances the enrollment past the webhook node, so only one tick runs the post-commit webhook. The webhook is therefore AT-MOST-ONCE (a crash strictly between commit and the HTTP call yields no fire, recorded as not-delivered) — this is the correct default for a non-idempotent external side effect (vs the at-least-once email path whose Dispatcher claim dedupes). A per-(campaign,profile,node) dedupe key on the activity_log/marker prevents a re-fire if a recovery re-runs the node; a second runEnrollment of an already-advanced enrollment is a no-op because the node is no longer current. SSRF/ALLOWLIST is enforced BEFORE any client call (deny-by-default per-workspace host allowlist + literal loopback/169.254-metadata/RFC1918/IPv6-ULA refusal, http(s)-only); a blocked target returns {ok:false,error:'blocked',attempts:0} with ZERO client invocations and never throws. The allowlist is WORKSPACE-scoped config (settings jsonb or a dedicated column — never trusted from a request body, inv.2). RETRY POLICY: retry on >=500 and network/timeout errors up to maxRetries (bounded by 1+maxRetries); do NOT retry 4xx (deterministic client rejection). FAILURE ISOLATION: executeWebhook never throws; a failed/blocked webhook records an activity_log row and (documented) CONTINUES the journey to node.next (a webhook is a notification side effect, not a gate) rather than park-as-failed — choose continue-on-failure to avoid stranding enrollments on a flaky external host, with the failure visible in Activity. TZ: hour_of_day_window + wait-until read the WORKSPACE tz (workspaces.settings->>'timezone', default 'UTC') loaded inside the tick from the enrollment's workspace_id (never client/per-broadcast); nextWindowOpening uses the existing DST-correct zoned<->UTC helpers so spring-forward/fall-back land on the right UTC instant. TEST-FIRST: write timezone-window + ssrf + webhook-execute unit tests and the hour-window/webhook integration tests RED first, then implement to green; do NOT mock Postgres in the integration tier; mock only the HTTP client + AWS. Verify pnpm typecheck + the campaign-runner + shared vitest suites green, apply any migration to BOTH cdp and cdp_e2e via a node pg script, bump root version (minor), and update CLAUDE.md.",
+    "pureFunctions": [
+      "packages/shared/src/timezone.ts: nextWindowOpening(now: Date, win: {startHour:number; endHour:number; daysOfWeek?:number[]}, tz: string): Date | null — null when already inside the window; else the next opening instant (ws-tz wall-clock -> UTC via the existing zonedInputToUtcIso/tzOffsetMs, DST-correct). Handles same-day, overnight (start>end), inclusive-through-:59 end, and daysOfWeek keyed on the window-OPENING day.",
+      "packages/shared/src/timezone.ts: isWindowOpen(now, win, tz): boolean — companion (true iff nextWindowOpening returns null).",
+      "packages/shared/src/timezone.ts: zonedComponents(now, tz): {year,month,day,hour,minute,weekday} — small helper reusing tzOffsetMs/Intl to read ws-local wall-clock parts (used by nextWindowOpening).",
+      "services/campaign-runner/src/core.ts: extend processNode to accept the workspace tz and implement hour_of_day_window via isWindowOpen/nextWindowOpening (advance when inside; stay+nextRunAt when outside; resumed-and-inside fast-path like wait).",
+      "services/campaign-runner/src/core.ts: make computeWaitNextRunAt tz-aware for a bare-wall-clock `until` (interpret in ws tz via zonedInputToUtcIso; honor explicit-offset untils verbatim).",
+      "packages/runner-webhook/src/ssrf.ts: assertWebhookTargetAllowed(url: string, allowlist: readonly string[]): void — deny-by-default host allowlist + literal-IP SSRF guard (loopback, 169.254/16 metadata, RFC1918, IPv6 ULA/loopback), http(s)-only. THROWS a typed BlockedTargetError.",
+      "packages/runner-webhook/src/ssrf.ts: isPrivateOrReservedHost(host: string): boolean — the IP/host classification used by assertWebhookTargetAllowed.",
+      "packages/runner-webhook/src/execute.ts: renderWebhookBody(node, profile) — reuse customerMerge(profile) + the dispatcher's renderTemplateBody-style {{customer.*}} expansion to render node.bodyTemplate (extract the body-render helper to a shared spot or duplicate the tiny expander; reuse expandCustomerToken from @cdp/shared).",
+      "packages/runner-webhook/src/execute.ts: executeWebhook(client, node, profile, opts): Promise<WebhookOutcome> — allowlist/SSRF check FIRST, then render, then call the injected client with timeout, bounded retry on >=500/network error, return a structured {ok,status,attempts,error?} (never throws).",
+      "services/campaign-runner/src/core.ts: buildWebhookActivityInsert(workspaceId, profileId, campaignId, nodeId, outcome): SqlStatement — append-only activity_log row (source='webhook'), mirroring buildUnsubscribeActivity; redacts secret header values."
+    ],
+    "reuse": [
+      "packages/shared/src/timezone.ts: tzOffsetMs + zonedInputToUtcIso (DST-correct zoned<->UTC) — the SINGLE source of truth for all window/wait time math (extracted from the broadcast scheduler).",
+      "services/campaign-runner/src/run.ts: the one-tx FOR UPDATE tick (runEnrollmentInTx), the legacy CAS path (runEnrollmentLegacy), chainTick + advanceFor, and the AFTER-COMMIT enqueueSends pattern — the webhook post-commit call mirrors enqueueSends exactly (intent in tx, side effect after commit).",
+      "services/campaign-runner/src/core.ts: SideEffect union (add 'webhook'), buildAdvanceEnrollment/buildEnrollmentClaim (idempotent advance), buildCampaignDedupeKey/buildCampaignOutboxInsert (per-(campaign,profile,node) exactly-once), the workspaceId-required throw guards, MAX_STEPS_PER_TICK.",
+      "services/dispatcher/src/core.ts renderTemplateBody + packages/shared/src/customer.ts customerMerge/expandCustomerToken — render the webhook bodyTemplate's {{customer.*}} tags exactly like email bodies (consistent personalization, inv).",
+      "services/unsubscribe/src/core.ts buildUnsubscribeActivity — the template for buildWebhookActivityInsert (workspace-scoped INSERT INTO activity_log with profile_id subselect).",
+      "packages/db/src/secret-crypto.ts encryptSecret/decryptSecret/isEncryptedSecret — decrypt a webhook auth-header secret at call time; never store/return/log plaintext.",
+      "services/dispatcher/src/deps.ts injection style (Reader, injected ses client, runInWorkspaceTx, now) — model the WebhookHttpClient injection identically; the real client behind the same interface, mocked in tests.",
+      "services/campaign-runner/test/wait-deferral.integration.test.ts + idempotent-concurrent-sweep.integration.test.ts — copy the seed/teardown harness (unique WS/CAMP/PROF UUIDs, adminPool, buildSweepQuery, withWorkspaceTx, noopSqs) for the new hour-window + webhook integration tests.",
+      "services/local-api/src/handlers.ts timezone read (settings->>'timezone' default 'UTC', isValidTimeZone) — same read in the runner; keep 'UTC' default behavior identical."
+    ],
+    "testFiles": [
+      {
+        "assertions": [
+          "nextWindowOpening(now, {startHour,endHour}, tz): now inside a same-day window (start<end, e.g. 9..17) and now is 12:00 ws-local -> returns null (already inside).",
+          "now BEFORE a same-day window today (07:00 ws-local, window 9..17) -> returns today 09:00 ws-local converted to UTC (assert exact ISO via zonedInputToUtcIso for that date).",
+          "now AFTER a same-day window today (19:00 ws-local, window 9..17) -> returns TOMORROW 09:00 ws-local -> UTC.",
+          "OVERNIGHT window (startHour=22,endHour=6): now=23:30 ws-local -> inside -> null; now=05:30 -> inside -> null; now=12:00 -> next opening today 22:00 ws-local -> UTC.",
+          "DST SPRING-FORWARD: America/New_York, window opening hour falls on the DST gap day; assert the returned UTC instant is the offset on the CORRECT side of the transition (offset differs from the naive guess), proving zonedInputToUtcIso double-resolve is used (not a fixed UTC offset).",
+          "DST FALL-BACK: a window opening on the fall-back day resolves to a single unambiguous UTC instant (no double-fire).",
+          "daysOfWeek restriction: window allowed only on [1,3] (Mon/Wed); now is Tue inside the hour range -> NOT inside (day not allowed) -> next opening is Wed startHour ws-local -> UTC; now is Mon inside hour range -> null (inside).",
+          "daysOfWeek with overnight window spanning a day boundary: a window 22..6 on day=5 (Fri) is 'inside' at Sat 02:00 only if Fri is the allowed day (the window OPENED on Fri) — assert the day-membership is keyed on the window-opening day, not the wall-clock day.",
+          "endHour is INCLUSIVE through :59 (window 9..17 includes 17:30 ws-local -> inside; 18:00 -> outside, next opening tomorrow 09:00).",
+          "isWindowOpen(now, node, tz) is the boolean companion: returns true exactly when nextWindowOpening returns null.",
+          "tzWaitUntil/zoned 'until': a wait.until given as a bare wall-clock string is interpreted in the WORKSPACE tz via zonedInputToUtcIso (DST-correct), while an until with an explicit Z/offset is honored verbatim (regression: no double-shift)."
+        ],
+        "criterion": "hour_of_day_window parks until the next allowed window opening in the workspace tz (DST-correct); inside the window advances immediately. tz-aware wait/wait-until.",
+        "path": "packages/shared/test/timezone-window.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "processNode(hour_of_day_window, state, _, now, arrival='arrived', tz) when isWindowOpen -> disposition 'advance', nextNode=node.next, no side effects.",
+          "processNode(hour_of_day_window) when OUTSIDE the window -> disposition 'stay', nextRunAt = nextWindowOpening(now,...,tz) (a future Date), nextNode=node.next, no side effects.",
+          "RESUMED on a parked hour-window whose next_run_at has elapsed AND now is inside the window -> advance (mirrors the wait 'resumed+elapsed' fast-path).",
+          "RESUMED but the window edge moved (e.g. daysOfWeek) so now is STILL outside -> re-park with a fresh nextWindowOpening (never advances early).",
+          "processNode is given the workspace tz explicitly (signature extended) — passing tz='UTC' yields UTC-based decisions; passing 'Asia/Jerusalem' shifts the boundary, proving tz is threaded not hard-coded.",
+          "An hour-window with no daysOfWeek treats every day as allowed (parity with validation)."
+        ],
+        "criterion": "hour_of_day_window parks until the next allowed window opening; inside advances immediately (pure processNode decision, injected clock + tz).",
+        "path": "services/campaign-runner/test/hour-window-process.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "Seed workspace with settings.timezone='America/New_York'; campaign def trigger->hour_window(9..17)->send/exit; enroll a profile.",
+          "runEnrollment with injected now = 03:00 UTC (≈ before 09:00 NY): result 'parked' on the hour-window node; row.next_run_at == today 09:00 NY -> UTC (assert exact, read back via SELECT next_run_at::text).",
+          "The REAL buildSweepQuery(now) does NOT return the row while now < next_run_at, and DOES return it once now >= next_run_at (proves no app timer; the next_run_at gate is honored by SQL).",
+          "Resume tick with injected now = 14:00 NY (inside window): enrollment advances past the hour-window to the downstream node (or completes), next_run_at cleared appropriately.",
+          "Workspace tz is READ FROM workspaces.settings->>'timezone' by the runner (default 'UTC' when unset) — a second workspace with no setting parks on a UTC-based boundary; assert the two enrollments park at DIFFERENT UTC instants for the same wall-clock window, proving per-workspace tz.",
+          "Tenant isolation: the tz/settings lookup and every write bind workspace_id loaded FROM the enrollment row; a statement whose values[0] != enrollment workspace_id throws (existing runEnrollment guard still passes).",
+          "DST integration: set tz to a zone mid-spring-forward date via the injected clock; assert the parked next_run_at offset matches the post-transition offset (not a constant)."
+        ],
+        "criterion": "An enrollment parked on an hour_of_day_window resumes at the correct next-window instant in the WORKSPACE timezone (DST-correct); inside advances immediately. Real Postgres + injected clock.",
+        "path": "services/campaign-runner/test/hour-window.integration.test.ts",
+        "tier": "integration"
+      },
+      {
+        "assertions": [
+          "executeWebhook(injectedClient, node, profile, {now, decryptSecret, allowlist}) calls client.request ONCE with method=node.method, url=node.url, headers (with any secret header DECRYPTED via injected decryptSecret), and body = renderTemplateBody(node.bodyTemplate, customerMerge(profile)) — assert the merge tag {{customer.email}} / {{customer.tier}} is expanded in the sent body.",
+          "A 2xx response -> result {ok:true, status, attempts:1}; the injected client was called exactly once.",
+          "A 500 response with maxRetries=2 -> client called 3 times total (1 + 2 retries), result {ok:false, status:500, attempts:3}; retries are BOUNDED (never exceeds 1+maxRetries).",
+          "maxRetries=0 -> a non-2xx is NOT retried (called exactly once, ok:false).",
+          "A thrown/timeout error from the client is treated like a failure and retried up to the bound, then returns {ok:false, error:'timeout'|message, attempts:1+maxRetries} — never throws out of executeWebhook (failure isolation).",
+          "timeoutMs is passed to the injected client per attempt (assert the client received the timeout arg); default timeout applied when node.timeoutMs is undefined.",
+          "A 429/503 is retried; a 400/404 (client error, non-retryable policy if chosen) — document + assert the chosen policy (retry on >=500 and network error; do NOT retry 4xx) so retries don't hammer a deterministic rejection.",
+          "Returns a structured outcome object (status, attempts, ok, error?) that the caller maps to an activity_log row — NO direct DB/HTTP I/O inside executeWebhook beyond the injected client."
+        ],
+        "criterion": "webhook action calls the injected HTTP client with rendered url/method/headers/body, honors timeout + bounded retries, records outcome, isolates failure.",
+        "path": "packages/runner-webhook/test/webhook-execute.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "assertWebhookTargetAllowed(url, allowlist) throws for loopback (http://127.0.0.1, http://localhost, http://[::1]).",
+          "Throws for link-local / metadata 169.254.169.254 and the full 169.254.0.0/16 range.",
+          "Throws for RFC1918 private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and unique-local IPv6 (fc00::/7).",
+          "Throws for a non-http(s) scheme (file:, gopher:, ftp:) even if validation passed structurally.",
+          "Throws when the host is NOT in the per-workspace domain allowlist (allowlist=['hooks.example.com']; url host api.evil.com -> refused).",
+          "Allows a host that IS on the allowlist and is a public name (hooks.example.com) — returns without throwing; subdomain match policy documented (exact host OR explicit suffix match — assert the chosen rule).",
+          "executeWebhook calls assertWebhookTargetAllowed BEFORE the injected HTTP client; a refused target means the injected client is NEVER invoked (assert call count 0) and the outcome is {ok:false, error:'blocked', attempts:0}.",
+          "An empty allowlist refuses ALL hosts (deny-by-default), proving outbound HTTP is opt-in per workspace.",
+          "The DNS/IP check guards against a hostname that RESOLVES to a private IP (if resolution is in scope: inject a resolver; a name resolving to 10.x is refused) — OR document that resolution-time SSRF is handled by the runtime allowlist + a deploy-time egress policy, and assert only the literal-IP/host rules here."
+        ],
+        "criterion": "A disallowed/SSRF target is refused WITHOUT a call. No real external host is hit.",
+        "path": "packages/runner-webhook/test/webhook-ssrf-allowlist.test.ts",
+        "tier": "unit"
+      },
+      {
+        "assertions": [
+          "Seed campaign trigger->webhook(POST hooks.example.com, allowlisted)->exit; enroll a profile. runEnrollment with an injected HTTP client returning 200.",
+          "After the tick: injected client called once; enrollment advanced past the webhook node (to exit/completed); ONE activity_log row written with source='webhook', type='webhook', outcome reflecting success (status 200, attempts 1), workspace_id == enrollment workspace, profile_id == enrolled profile.",
+          "Failure isolation: injected client returns 500 with maxRetries=1 -> client called twice; runEnrollment does NOT throw; an activity_log row records the failure (outcome='failed', detail incl. status+attempts); the enrollment advances per the documented policy (continue-on-failure: advances to node.next; OR park-as-failed: status stays + a future retry) — assert the chosen, documented behavior.",
+          "SSRF refusal in the tick: a webhook node whose url targets 169.254.169.254 (or off-allowlist) -> injected client NEVER called; activity_log records outcome='blocked'; tick does not crash; advance per policy.",
+          "DECISION/IDEMPOTENCY: the webhook HTTP call happens AFTER the row-lock tx COMMITS (mirrors enqueueSends), NOT inside the FOR UPDATE tx — the tx records the INTENT (advance + a pending webhook marker / the activity row is written post-commit with a per-(campaign,profile,node) dedupe). Assert the tx commit advances the enrollment, and the post-commit webhook is fired exactly once.",
+          "A second runEnrollment of the SAME already-advanced enrollment does NOT re-fire the webhook (the node is no longer current; the dedupe guard / advanced status short-circuits) — injected client total call count unchanged.",
+          "Tenant isolation: a webhook node referencing a secret header decrypts via @cdp/db decryptSecret; the plaintext is sent to the injected client but the stored definition/activity detail NEVER contains the plaintext secret (assert the recorded detail is redacted)."
+        ],
+        "criterion": "webhook executes in the tick: injected client called, outcome recorded in activity_log, failure isolated (no tick crash, no double-advance). Real Postgres; HTTP client mocked.",
+        "path": "services/campaign-runner/test/webhook-node-tick.integration.test.ts",
+        "tier": "integration"
+      },
+      {
+        "assertions": [
+          "Two CONCURRENT runEnrollment calls (Promise.all) on the same due webhook enrollment using withWorkspaceTx (real FOR UPDATE): exactly ONE advances; the loser is 'skipped' (status no longer active on its read inside the lock).",
+          "The injected HTTP client is invoked AT MOST ONCE across both concurrent runs (single-winner -> single webhook fire). Assert total call count == 1.",
+          "A webhook-firing tick interleaved with a send node: the per-(campaign,profile,node) outbox dedupe still gives exactly-one outbox row for the send node, AND the webhook activity_log dedupe gives exactly-one webhook row — verified by re-running the (idempotent) tick after a simulated crash-between-commit-and-webhook.",
+          "Crash-recovery: simulate commit succeeded but the post-commit webhook step did NOT run (no activity row); a re-sweep of the SAME enrollment — document the recovery: either (a) the webhook marker is checked and re-fired exactly once via a dedupe key, or (b) post-commit failure advances anyway and is logged as not-delivered (at-most-once). Assert the documented guarantee and that it never double-fires when the activity row already exists.",
+          "MAX_STEPS_PER_TICK unchanged: a graph chaining many hour_of_day_window no-op-inside nodes still terminates the tick and parks-as-failed at the guard (no infinite loop introduced)."
+        ],
+        "criterion": "Idempotency/concurrency preserved: retried/concurrent tick does not double-advance, double-send, or double-fire the webhook. Real Postgres; AWS mocked.",
+        "path": "services/campaign-runner/test/webhook-idempotency.integration.test.ts",
+        "tier": "integration"
+      }
+    ]
+  }
+}

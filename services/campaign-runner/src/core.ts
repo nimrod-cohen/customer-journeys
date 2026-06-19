@@ -12,6 +12,7 @@
 //     then the Dispatcher's atomic claim sends once.
 import { buildSegmentMatch } from '@cdp/segments';
 import type { AstNode } from '@cdp/segments';
+import { isWindowOpen, nextWindowOpening, zonedInputToUtcIso } from '@cdp/shared';
 import {
   type Node,
   type WaitNode,
@@ -19,6 +20,9 @@ import {
   type ActionNode,
   type WebhookAction,
 } from './dsl.js';
+
+/** The fallback workspace timezone when workspaces.settings has none (parity with handlers). */
+export const DEFAULT_WORKSPACE_TZ = 'UTC';
 
 /** A parameterized query ready for `pool.query(text, values)` (shared shape). */
 export interface SqlStatement {
@@ -44,6 +48,19 @@ export type SideEffect =
       readonly kind: 'set_attribute';
       readonly key: string;
       readonly value: unknown;
+    }
+  | {
+      /**
+       * Fire an outbound webhook (§9B). Collected during chainTick like a send,
+       * but — like enqueueSends — EXECUTED AFTER THE TX COMMITS (an external HTTP
+       * call must never hold the FOR UPDATE enrollment lock). Carries the node so
+       * the post-commit executor has the url/method/headers/body + node id (the
+       * per-(campaign,profile,node) activity-log dedupe key).
+       */
+      readonly kind: 'webhook';
+      readonly node: WebhookAction;
+      /** The node id this webhook originates from (drives the dedupe marker). */
+      readonly nodeId: string;
     };
 
 /** The per-profile journey state the runner advances over `campaign_enrollments`. */
@@ -116,15 +133,29 @@ export function parseIso8601DurationSeconds(iso: string): number {
   );
 }
 
+/** A bare wall-clock `until` (no Z / no explicit ±HH:MM offset) — interpreted in ws tz. */
+const BARE_WALL_CLOCK = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?$/;
+
 /**
  * Compute when a wait node becomes due, from `now`:
  *   - {seconds}            → now + seconds
  *   - ISO-8601 duration    → now + parsed duration
  *   - until (date/ISO str) → that absolute instant
  * THROWS if the wait node specifies neither delay nor until.
+ *
+ * tz-AWARE `until`: a BARE wall-clock string (e.g. "2026-03-08T09:00", no Z / no
+ * explicit offset) is interpreted in the WORKSPACE timezone via zonedInputToUtcIso
+ * (DST-correct), so "9am" means 9am for the workspace. An `until` carrying an
+ * explicit Z / ±HH:MM offset (or a Date) is an absolute instant, honored verbatim
+ * (no double-shift). `tz` defaults to UTC for the legacy callers.
  */
-export function computeWaitNextRunAt(node: WaitNode, now: Date): Date {
+export function computeWaitNextRunAt(node: WaitNode, now: Date, tz: string = DEFAULT_WORKSPACE_TZ): Date {
   if (node.until !== undefined) {
+    if (typeof node.until === 'string' && BARE_WALL_CLOCK.test(node.until.trim())) {
+      // Bare wall clock → interpret in the workspace tz (DST-correct).
+      const iso = zonedInputToUtcIso(node.until.trim().replace(' ', 'T'), tz);
+      return new Date(iso);
+    }
     const at = node.until instanceof Date ? node.until : new Date(node.until);
     if (Number.isNaN(at.getTime())) {
       throw new Error('computeWaitNextRunAt: invalid until date');
@@ -197,6 +228,7 @@ export function processNode(
   matchesNow: boolean,
   now: Date,
   arrival: Arrival = 'resumed',
+  tz: string = DEFAULT_WORKSPACE_TZ,
 ): ProcessResult {
   switch (node.type) {
     case 'trigger':
@@ -207,8 +239,8 @@ export function processNode(
       if (arrival === 'resumed' && isWaitElapsed(state.next_run_at, now)) {
         return { disposition: 'advance', nextNode: node.next, sideEffects: [] };
       }
-      // First arrival at the wait this tick → compute the boundary and park.
-      const nextRunAt = computeWaitNextRunAt(node, now);
+      // First arrival at the wait this tick → compute the boundary and park (tz-aware).
+      const nextRunAt = computeWaitNextRunAt(node, now, tz);
       return { disposition: 'stay', nextNode: node.next, nextRunAt, sideEffects: [] };
     }
 
@@ -226,11 +258,28 @@ export function processNode(
       };
     }
 
-    case 'hour_of_day_window':
-      // Phase 1 ships the TYPE + structural validation only. The phase-2 runner
-      // will PARK the enrollment until the next window opening (workspace-tz,
-      // DST-correct) when outside the window; until then this advances as a no-op.
-      return { disposition: 'advance', nextNode: node.next, sideEffects: [] };
+    case 'hour_of_day_window': {
+      // tz-aware gate (§9B): inside the allowed window (WORKSPACE tz, DST-correct)
+      // → advance immediately; else PARK until the next window opening. The
+      // decision is purely "is now inside?", so a RESUMED-but-still-outside parked
+      // enrollment re-parks with a fresh opening (never advances early), and a
+      // RESUMED-and-now-inside one advances — mirroring the wait fast-path.
+      const win = {
+        startHour: node.startHour,
+        endHour: node.endHour,
+        ...(node.daysOfWeek !== undefined ? { daysOfWeek: node.daysOfWeek } : {}),
+      };
+      if (isWindowOpen(now, win, tz)) {
+        return { disposition: 'advance', nextNode: node.next, sideEffects: [] };
+      }
+      const nextRunAt = nextWindowOpening(now, win, tz);
+      // nextWindowOpening only returns null when already inside (handled above);
+      // fall back to advancing if it somehow can't compute an opening (never strand).
+      if (nextRunAt === null) {
+        return { disposition: 'advance', nextNode: node.next, sideEffects: [] };
+      }
+      return { disposition: 'stay', nextNode: node.next, nextRunAt, sideEffects: [] };
+    }
 
     case 'exit':
       return { disposition: 'complete', sideEffects: [] };
@@ -244,9 +293,14 @@ export function processNode(
  * placeholder so processNode stays node-id agnostic.
  */
 function actionSideEffect(node: ActionNode | WebhookAction): SideEffect | null {
-  // A webhook action carries no profile-mutating/send side effect here — its HTTP
-  // call is a phase-2 runner concern (injected client, allowlist + SSRF guards).
-  if (node.kind === 'webhook') return null;
+  // A webhook action emits a 'webhook' side effect collected during chainTick and
+  // EXECUTED AFTER THE TX COMMITS (the injected HTTP client + allowlist/SSRF guard
+  // never run inside the FOR UPDATE lock). nodeId is stamped by the orchestrator
+  // from the authoritative current_node (the dedupe key component).
+  if (node.kind === 'webhook') {
+    if (!node.url) return null;
+    return { kind: 'webhook', node, nodeId: '' };
+  }
   if (node.kind === 'send') {
     if (!node.template_id) return null;
     return { kind: 'send', templateId: node.template_id, nodeId: '' };
@@ -526,6 +580,57 @@ export function buildCampaignOutboxInsert(
            VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'pending')
            ON CONFLICT (dedupe_key) DO NOTHING`,
     values: [workspaceId, profileId, campaignId, templateId, dedupeKey, JSON.stringify(payload)],
+  };
+}
+
+/** The recorded outcome of a webhook attempt (mirrors @cdp/runner-webhook's WebhookOutcome). */
+export interface WebhookActivityOutcome {
+  readonly ok: boolean;
+  readonly status?: number;
+  readonly attempts: number;
+  readonly error?: string;
+}
+
+/**
+ * Append an activity_log row recording a webhook action's outcome (§9B). The row
+ * is keyed by the per-(campaign,profile,node) campaign dedupe key in `dedupe_key`;
+ * ON CONFLICT (the partial unique index, migration 0036) DO NOTHING makes the
+ * marker idempotent so a crash-recovery re-sweep never DOUBLE-FIRES the webhook
+ * outcome. workspace_id bound at $1 (tenant-isolation guard).
+ *
+ * The `detail` is a short human string (status + attempts) — it NEVER contains
+ * the request body or any header secret (the decrypted auth header is sent to the
+ * injected client at call time only, never persisted here). `outcome` is one of
+ * 'success' | 'failed' | 'blocked'.
+ */
+export function buildWebhookActivityInsert(
+  workspaceId: string,
+  profileId: string,
+  campaignId: string,
+  nodeId: string,
+  outcome: WebhookActivityOutcome | { readonly blocked: true },
+): SqlStatement {
+  if (!workspaceId) throw new Error('buildWebhookActivityInsert: workspaceId is required');
+  const dedupeKey = buildCampaignDedupeKey(campaignId, profileId, nodeId);
+  let result: 'success' | 'failed' | 'blocked';
+  let detail: string;
+  if ('blocked' in outcome) {
+    result = 'blocked';
+    detail = 'target refused (allowlist/SSRF)';
+  } else if (outcome.ok) {
+    result = 'success';
+    detail = `status ${outcome.status ?? '?'} (attempt ${outcome.attempts})`;
+  } else {
+    result = 'failed';
+    const reason = outcome.error ? `error ${outcome.error}` : `status ${outcome.status ?? '?'}`;
+    detail = `${reason} after ${outcome.attempts} attempt(s)`;
+  }
+  return {
+    text: `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail, dedupe_key)
+           VALUES ($1, $2, 'webhook', 'webhook', $3, $4, $5)
+           ON CONFLICT (workspace_id, dedupe_key) WHERE source = 'webhook' AND dedupe_key IS NOT NULL
+           DO NOTHING`,
+    values: [workspaceId, profileId, result, detail, dedupeKey],
   };
 }
 

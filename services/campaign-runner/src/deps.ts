@@ -7,7 +7,8 @@
 // workspace-scoped tx runner that asserts each statement is scoped to the
 // requested workspace before committing.
 import type { Pool, PoolClient } from 'pg';
-import { getPool } from '@cdp/db';
+import { getPool, decryptSecret, isEncryptedSecret } from '@cdp/db';
+import { fetchWebhookClient } from '@cdp/runner-webhook';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import type { SqlStatement } from './core.js';
 import type { RunDeps, Reader, TxClient } from './run.js';
@@ -119,5 +120,11 @@ export function makeProdDeps(): RunDeps {
       runStatementsInWorkspaceTx(pool, workspaceId, statements),
     now: () => new Date(),
     dispatchQueueUrl: requireEnv('DISPATCH_QUEUE_URL'),
+    // The real fetch-based webhook client (timeout via AbortController) behind the
+    // injected interface — tests inject a fake; this NEVER runs in tests. An
+    // encrypted auth-header secret is decrypted at call time only (never persisted).
+    webhookClient: fetchWebhookClient(),
+    decryptSecret,
+    isEncryptedSecret,
   };
 }

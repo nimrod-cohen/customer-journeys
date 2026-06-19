@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KVG37FHW7A1T563EGEK6V7G7",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/campaign-builder:S000004:commit-phase",
+  "status": "ok",
+  "result": {
+    "commitHash": "d749c783aea5b32715da67d62c040b97b042c177",
+    "committed": true,
+    "message": "feat(campaigns): phase 1 — workspace timezone setting + DSL hour-window/webhook nodes + cycle/orphan validation"
+  },
+  "startedAt": "2026-06-19T14:08:25.019Z",
+  "finishedAt": "2026-06-19T14:08:25.019Z",
+  "value": {
+    "commitHash": "d749c783aea5b32715da67d62c040b97b042c177",
+    "committed": true,
+    "message": "feat(campaigns): phase 1 — workspace timezone setting + DSL hour-window/webhook nodes + cycle/orphan validation"
+  }
+}

@@ -19,6 +19,8 @@
 // A legacy reader/runInWorkspaceTx path is retained for the in-memory unit tests
 // (deps without `withTx`); the real concurrency guarantee comes from `withTx`.
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
+import { isValidTimeZone, type CustomerProfile } from '@cdp/shared';
+import { executeWebhook, type WebhookHttpClient } from '@cdp/runner-webhook';
 import {
   processNode,
   buildEnrollmentClaim,
@@ -27,6 +29,8 @@ import {
   buildCampaignOutboxInsert,
   buildCampaignDedupeKey,
   buildSetAttribute,
+  buildWebhookActivityInsert,
+  DEFAULT_WORKSPACE_TZ,
   type EnrollmentState,
   type SideEffect,
   type SqlStatement,
@@ -89,6 +93,20 @@ export interface RunDeps {
   now(): Date;
   /** URL of the dispatch SQS queue (the second queue → Dispatcher, §9). */
   readonly dispatchQueueUrl: string;
+  /**
+   * The injected webhook HTTP client (§9B). Production wires a real fetch-based
+   * client (honoring timeoutMs via AbortController); tests inject a fake. Optional
+   * so the legacy in-memory unit tests (no webhook nodes) need not provide it; a
+   * webhook side effect with no client is recorded as a failure (never hits a host).
+   */
+  readonly webhookClient?: WebhookHttpClient;
+  /**
+   * Decrypt an encrypted webhook auth-header secret at CALL time (never stored /
+   * returned / logged in plaintext — @cdp/db secret-crypto envelope). Optional.
+   */
+  readonly decryptSecret?: (envelope: string) => string;
+  /** Detect an encrypted-secret envelope inside a header value (@cdp/db). Optional. */
+  readonly isEncryptedSecret?: (value: string) => boolean;
 }
 
 /** Terminal result of running one enrollment tick. */
@@ -139,6 +157,12 @@ interface TickOutcome {
   readonly writes: readonly SqlStatement[];
   /** The send side effects (for resolving outbox ids → enqueue after commit). */
   readonly sends: readonly SideEffect[];
+  /**
+   * The webhook side effects collected this tick (node + authoritative nodeId).
+   * Like sends, these are EXECUTED AFTER THE TX COMMITS (the external HTTP call
+   * must never hold the FOR UPDATE lock) — see runWebhooks.
+   */
+  readonly webhooks: readonly Extract<SideEffect, { kind: 'webhook' }>[];
   /** Number of nodes processed (reported on completion). */
   readonly steps: number;
 }
@@ -159,6 +183,7 @@ async function chainTick(
   row: EnrollmentRow,
   guardUpdatedAt: Date | string,
   now: Date,
+  tz: string,
 ): Promise<TickOutcome> {
   let state: EnrollmentState = {
     id: row.id,
@@ -172,6 +197,7 @@ async function chainTick(
   };
 
   const sends: SideEffect[] = [];
+  const webhooks: Extract<SideEffect, { kind: 'webhook' }>[] = [];
   const writes: SqlStatement[] = [];
   let arrival: Arrival = 'resumed'; // the swept node is being resumed
   let steps = 0;
@@ -179,7 +205,7 @@ async function chainTick(
 
   for (;;) {
     if (steps >= MAX_STEPS_PER_TICK) {
-      return { boundary: { kind: 'maxSteps', node: currentNodeId }, writes, sends, steps };
+      return { boundary: { kind: 'maxSteps', node: currentNodeId }, writes, sends, webhooks, steps };
     }
     steps += 1;
 
@@ -193,19 +219,20 @@ async function chainTick(
       matchesNow = matchRows.length > 0;
     }
 
-    const result: ProcessResult = processNode(node, state, matchesNow, now, arrival);
+    const result: ProcessResult = processNode(node, state, matchesNow, now, arrival, tz);
 
     if (result.disposition === 'stay') {
-      // Wait boundary: park the enrollment at THIS node until nextRunAt.
+      // Wait / hour-window boundary: park the enrollment at THIS node until nextRunAt.
       return {
         boundary: { kind: 'park', node: currentNodeId, nextRunAt: result.nextRunAt },
         writes,
         sends,
+        webhooks,
         steps,
       };
     }
 
-    // Collect side effects, stamping the authoritative node id onto sends.
+    // Collect side effects, stamping the authoritative node id onto sends/webhooks.
     for (const eff of result.sideEffects) {
       if (eff.kind === 'send') {
         sends.push({ ...eff, nodeId: currentNodeId });
@@ -218,13 +245,17 @@ async function chainTick(
             currentNodeId,
           ),
         );
+      } else if (eff.kind === 'webhook') {
+        // The HTTP call runs POST-COMMIT (runWebhooks); collect the intent here
+        // with the authoritative node id (the per-(campaign,profile,node) dedupe key).
+        webhooks.push({ ...eff, nodeId: currentNodeId });
       } else {
         writes.push(buildSetAttribute(workspaceId, row.profile_id, eff.key, eff.value));
       }
     }
 
     if (result.disposition === 'complete') {
-      return { boundary: { kind: 'complete', node: currentNodeId }, writes, sends, steps };
+      return { boundary: { kind: 'complete', node: currentNodeId }, writes, sends, webhooks, steps };
     }
 
     // advance: move to the next node and keep chaining within this tick.
@@ -306,6 +337,7 @@ async function runEnrollmentInTx(
   const committed = await withTx(async (tx): Promise<{
     result: RunEnrollmentResult;
     enqueue: { campaignId: string; profileId: string; workspaceId: string; sends: SideEffect[] } | null;
+    webhooks: { campaignId: string; profileId: string; workspaceId: string; list: readonly Extract<SideEffect, { kind: 'webhook' }>[] } | null;
   }> => {
     // 1. Lock the enrollment row for the whole tick. A concurrent run blocks here
     //    until we commit, then sees the advanced status and skips below.
@@ -316,25 +348,27 @@ async function runEnrollmentInTx(
       [enrollmentId],
     );
     const row = rows[0];
-    if (!row) return { result: { result: 'skipped', reason: 'enrollment not found' }, enqueue: null };
+    if (!row) return { result: { result: 'skipped', reason: 'enrollment not found' }, enqueue: null, webhooks: null };
     // Re-check status INSIDE the lock: a run that was blocked here now sees the
     // status the winner committed (completed/active-with-future-next_run_at).
     if (row.status !== 'active') {
       return {
         result: { result: 'skipped', reason: `not active (status=${row.status})` },
         enqueue: null,
+        webhooks: null,
       };
     }
     const workspaceId = row.workspace_id;
 
-    // 2. Load + validate the campaign definition (same tx client).
+    // 2. Load + validate the campaign definition (same tx client) and the
+    //    WORKSPACE timezone (governs all window/wait time math, never per-broadcast).
     const { rows: campRows } = await tx.query<{ definition: unknown }>(
       `SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2`,
       [workspaceId, row.campaign_id],
     );
     const def = campRows[0]?.definition;
     if (def === undefined) {
-      return { result: { result: 'skipped', reason: 'campaign not found' }, enqueue: null };
+      return { result: { result: 'skipped', reason: 'campaign not found' }, enqueue: null, webhooks: null };
     }
     let definition: CampaignDefinition;
     try {
@@ -344,14 +378,16 @@ async function runEnrollmentInTx(
       return {
         result: { result: 'skipped', reason: `invalid definition: ${(err as Error).message}` },
         enqueue: null,
+        webhooks: null,
       };
     }
+    const tz = await loadWorkspaceTz(tx, workspaceId);
 
     // 3. Chain nodes. The guard token is the current updated_at — but under the
     //    row lock the advance is unconditional in practice; we keep the guard for
     //    defense in depth (it always matches since we hold the lock).
     const guardUpdatedAt = row.updated_at;
-    const outcome = await chainTick(tx, workspaceId, definition, row, guardUpdatedAt, now);
+    const outcome = await chainTick(tx, workspaceId, definition, row, guardUpdatedAt, now, tz);
 
     // 4. Apply all writes (outbox/set_attribute) + the boundary advance.
     const writes = advanceFor(workspaceId, enrollmentId, guardUpdatedAt, outcome);
@@ -379,10 +415,34 @@ async function runEnrollmentInTx(
             workspaceId,
             sends: [...outcome.sends],
           };
-    return { result, enqueue };
+    const webhooks =
+      b.kind === 'maxSteps' || outcome.webhooks.length === 0
+        ? null
+        : {
+            campaignId: row.campaign_id,
+            profileId: row.profile_id,
+            workspaceId,
+            list: outcome.webhooks,
+          };
+    return { result, enqueue, webhooks };
   });
 
-  // 5. AFTER commit: resolve outbox ids and enqueue {outbox_id}. We use the
+  // 5. AFTER commit (mirrors enqueueSends): the external webhook HTTP call runs
+  //    here, NEVER inside the FOR UPDATE tx (a hung host must not hold the row
+  //    lock). Single-winner already advanced the enrollment exactly once, so this
+  //    fires AT-MOST-ONCE; the per-(campaign,profile,node) activity_log dedupe
+  //    short-circuits a crash-recovery re-fire. Failure is isolated (continue).
+  if (committed.webhooks) {
+    await runWebhooks(
+      deps,
+      committed.webhooks.workspaceId,
+      committed.webhooks.campaignId,
+      committed.webhooks.profileId,
+      committed.webhooks.list,
+    );
+  }
+
+  // 6. AFTER commit: resolve outbox ids and enqueue {outbox_id}. We use the
   //    (post-commit) reader so the rows are visible.
   if (committed.enqueue) {
     await enqueueSends(
@@ -443,9 +503,10 @@ async function runEnrollmentLegacy(
   }
   const guardUpdatedAt: Date | string = claimed[0]!.updated_at;
 
-  // 4. Chain through nodes in ONE tick up to a wait/exit boundary.
+  // 4. Chain through nodes in ONE tick up to a wait/exit boundary (tz-aware).
   const now = deps.now();
-  const outcome = await chainTick(deps.reader, workspaceId, definition, row, guardUpdatedAt, now);
+  const tz = await loadWorkspaceTz(deps.reader, workspaceId);
+  const outcome = await chainTick(deps.reader, workspaceId, definition, row, guardUpdatedAt, now, tz);
   const writes = advanceFor(workspaceId, enrollmentId, guardUpdatedAt, outcome);
 
   await deps.runInWorkspaceTx(workspaceId, writes);
@@ -454,9 +515,103 @@ async function runEnrollmentLegacy(
   if (b.kind === 'maxSteps') {
     return { result: 'skipped', reason: 'max steps per tick exceeded' };
   }
+  // Post-commit side effects (mirror enqueueSends): the webhook HTTP call + the
+  // outbox enqueue run AFTER the write tx, never under any lock.
+  await runWebhooks(deps, workspaceId, row.campaign_id, row.profile_id, outcome.webhooks);
   await enqueueSends(deps, workspaceId, row.campaign_id, row.profile_id, outcome.sends);
   if (b.kind === 'park') return { result: 'parked', node: b.node, nextRunAt: b.nextRunAt };
   return { result: 'completed', steps: outcome.steps };
+}
+
+/**
+ * Read the WORKSPACE timezone (workspaces.settings->>'timezone') governing all
+ * campaign window/wait time math. Defaults to UTC when unset or invalid — parity
+ * with the local-api handlers. workspace_id is the enrollment's (never assumed).
+ */
+async function loadWorkspaceTz(read: Reader, workspaceId: string): Promise<string> {
+  const { rows } = await read.query<{ tz: string | null }>(
+    `SELECT settings->>'timezone' AS tz FROM workspaces WHERE id = $1`,
+    [workspaceId],
+  );
+  const tz = rows[0]?.tz;
+  return tz && isValidTimeZone(tz) ? tz : DEFAULT_WORKSPACE_TZ;
+}
+
+/**
+ * Execute the webhook side effects collected this tick — AFTER the row-lock tx
+ * committed (the external HTTP call must never hold the FOR UPDATE lock). For each:
+ *   - load the recipient profile (post-commit reader) and run executeWebhook
+ *     (allowlist/SSRF guard FIRST → render body → injected client + bounded retry);
+ *   - record the outcome in an append-only activity_log row keyed by the
+ *     per-(campaign,profile,node) dedupe key (ON CONFLICT DO NOTHING → at-most-once,
+ *     never double-fires on a crash-recovery re-sweep).
+ * NEVER throws: a webhook is a notification side effect, not a journey gate, so a
+ * failed/blocked call is recorded and the enrollment (already advanced) continues.
+ * workspace_id is the enrollment's (bound at $1 in every statement).
+ */
+async function runWebhooks(
+  deps: RunDeps,
+  workspaceId: string,
+  campaignId: string,
+  profileId: string,
+  webhooks: readonly Extract<SideEffect, { kind: 'webhook' }>[],
+): Promise<void> {
+  if (webhooks.length === 0) return;
+
+  // The per-workspace host allowlist (deny-by-default) lives in workspaces.settings
+  // (never client-trusted, inv.2). Loaded once for the whole tick.
+  const allowlist = await loadWebhookAllowlist(deps.reader, workspaceId);
+
+  // Load the recipient profile for {{customer.*}} body rendering (email-parity).
+  const { rows: profRows } = await deps.reader.query<CustomerProfile>(
+    `SELECT id, email, external_id, email_status, created_at, attributes
+     FROM profiles WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, profileId],
+  );
+  const profile: CustomerProfile = profRows[0] ?? { id: profileId };
+
+  for (const wh of webhooks) {
+    let activity: SqlStatement;
+    if (!deps.webhookClient) {
+      // No client wired (legacy unit path) — record as failed; never hit a host.
+      activity = buildWebhookActivityInsert(workspaceId, profileId, campaignId, wh.nodeId, {
+        ok: false,
+        attempts: 0,
+        error: 'no webhook client configured',
+      });
+    } else {
+      const outcome = await executeWebhook(deps.webhookClient, wh.node, profile, {
+        allowlist,
+        ...(deps.decryptSecret ? { decryptSecret: deps.decryptSecret } : {}),
+        ...(deps.isEncryptedSecret ? { isEncryptedSecret: deps.isEncryptedSecret } : {}),
+      });
+      activity =
+        outcome.error === 'blocked' && outcome.attempts === 0
+          ? buildWebhookActivityInsert(workspaceId, profileId, campaignId, wh.nodeId, { blocked: true })
+          : buildWebhookActivityInsert(workspaceId, profileId, campaignId, wh.nodeId, outcome);
+    }
+    try {
+      await deps.runInWorkspaceTx(workspaceId, [activity]);
+    } catch {
+      /* isolate: a failed activity write must not crash the sweep / double-advance */
+    }
+  }
+}
+
+/**
+ * Load the per-workspace webhook host allowlist from workspaces.settings
+ * (`settings->'webhook_allowlist'`, an array of host strings). Deny-by-default:
+ * a missing/invalid setting yields an EMPTY allowlist (every host refused) so
+ * outbound HTTP is strictly opt-in per workspace (inv. webhook safety).
+ */
+async function loadWebhookAllowlist(read: Reader, workspaceId: string): Promise<string[]> {
+  const { rows } = await read.query<{ allowlist: unknown }>(
+    `SELECT settings->'webhook_allowlist' AS allowlist FROM workspaces WHERE id = $1`,
+    [workspaceId],
+  );
+  const raw = rows[0]?.allowlist;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((h): h is string => typeof h === 'string' && h.length > 0);
 }
 
 /**

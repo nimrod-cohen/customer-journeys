@@ -1,0 +1,88 @@
+{
+  "agent": {
+    "name": "general-purpose",
+    "outputSchema": {
+      "properties": {
+        "commitHash": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "committed"
+      ],
+      "type": "object"
+    },
+    "prompt": {
+      "context": {
+        "converged": true,
+        "phase": {
+          "criteria": [
+            "An enrollment parked on an hour_of_day_window resumes at the correct next-window instant in the WORKSPACE timezone (DST-correct); inside the window it advances immediately. Verified by unit + real-Postgres integration tests with an injected clock.",
+            "A webhook action calls the injected HTTP client with the right url/method/headers/rendered-body, honors timeout + bounded retries, records the outcome, and ISOLATES failure (no tick crash, no double-advance). A disallowed/SSRF target is refused WITHOUT a call. No real external host is hit.",
+            "Idempotency/concurrency preserved: a retried/concurrent tick does not double-advance, double-send, or double-fire the webhook (dedupe/guard verified). Integration tier uses REAL Postgres; AWS mocked."
+          ],
+          "frontend": false,
+          "id": "phase2-runner-nodes",
+          "refs": "§9B (per-enrollment state machine, next_run_at) + the new DSL nodes + the dispatcher webhook-free precedent",
+          "scope": [
+            "Make wait / wait-until / hour_of_day_window tz-aware using the WORKSPACE timezone: compute the next due instant DST-correctly (reuse/extract the zoned↔UTC helper from the broadcast scheduler into a shared spot). hour_of_day_window: if now (in ws tz) is inside the allowed window/day → advance immediately; else PARK with next_run_at = the next window opening (ws tz → UTC).",
+            "Execute the webhook action in the runner tick: call the injected HTTP client to the configured url/method/headers/body (merge-rendered) with the timeout; on a non-2xx or error, retry up to maxRetries (bounded), then either continue (record failure) or park-as-failed per a documented policy; record the outcome (status, attempt count) on the enrollment state / an activity_log row. ENFORCE the domain allowlist + SSRF guard BEFORE calling. The HTTP client is injected (mocked in tests) — never hit a real host.",
+            "Preserve the single-winner concurrency guarantee (FOR UPDATE / CAS), the per-(campaign,profile,node) outbox dedupe for sends, and MAX_STEPS_PER_TICK. The webhook call must not break the one-tx tick model (decide + document: call inside vs after the tx; keep idempotency on retry)."
+          ],
+          "title": "Runner: execute hour-of-day window + webhook (tz-aware)"
+        },
+        "score": 95
+      },
+      "instructions": [
+        "Run `git add -A`. If not on a feature branch and on the default branch, create/use a branch first.",
+        "Commit with a clear conventional message describing the phase (Runner: execute hour-of-day window + webhook (tz-aware)), gate score (95), converged=true.",
+        "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+        "Do NOT push. Return the commit hash. Return ONLY the JSON."
+      ],
+      "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
+      "role": "engineer committing completed, verified work",
+      "task": "Stage and git-commit the work for \"Runner: execute hour-of-day window + webhook (tz-aware)\"."
+    }
+  },
+  "io": {
+    "inputJsonPath": "tasks/01KVG6NE7Q0MXATE36JSZP1T7B/input.json",
+    "outputJsonPath": "tasks/01KVG6NE7Q0MXATE36JSZP1T7B/result.json"
+  },
+  "kind": "agent",
+  "labels": [
+    "commit",
+    "phase2-runner-nodes"
+  ],
+  "title": "Commit: Runner: execute hour-of-day window + webhook (tz-aware)",
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KVG6NE7Q0MXATE36JSZP1T7B",
+  "taskId": "commit-phase",
+  "invocationKey": "cdp/campaign-builder:S000008:commit-phase",
+  "stepId": "S000008",
+  "inputs": {
+    "converged": true,
+    "phase": {
+      "criteria": [
+        "An enrollment parked on an hour_of_day_window resumes at the correct next-window instant in the WORKSPACE timezone (DST-correct); inside the window it advances immediately. Verified by unit + real-Postgres integration tests with an injected clock.",
+        "A webhook action calls the injected HTTP client with the right url/method/headers/rendered-body, honors timeout + bounded retries, records the outcome, and ISOLATES failure (no tick crash, no double-advance). A disallowed/SSRF target is refused WITHOUT a call. No real external host is hit.",
+        "Idempotency/concurrency preserved: a retried/concurrent tick does not double-advance, double-send, or double-fire the webhook (dedupe/guard verified). Integration tier uses REAL Postgres; AWS mocked."
+      ],
+      "frontend": false,
+      "id": "phase2-runner-nodes",
+      "refs": "§9B (per-enrollment state machine, next_run_at) + the new DSL nodes + the dispatcher webhook-free precedent",
+      "scope": [
+        "Make wait / wait-until / hour_of_day_window tz-aware using the WORKSPACE timezone: compute the next due instant DST-correctly (reuse/extract the zoned↔UTC helper from the broadcast scheduler into a shared spot). hour_of_day_window: if now (in ws tz) is inside the allowed window/day → advance immediately; else PARK with next_run_at = the next window opening (ws tz → UTC).",
+        "Execute the webhook action in the runner tick: call the injected HTTP client to the configured url/method/headers/body (merge-rendered) with the timeout; on a non-2xx or error, retry up to maxRetries (bounded), then either continue (record failure) or park-as-failed per a documented policy; record the outcome (status, attempt count) on the enrollment state / an activity_log row. ENFORCE the domain allowlist + SSRF guard BEFORE calling. The HTTP client is injected (mocked in tests) — never hit a real host.",
+        "Preserve the single-winner concurrency guarantee (FOR UPDATE / CAS), the per-(campaign,profile,node) outbox dedupe for sends, and MAX_STEPS_PER_TICK. The webhook call must not break the one-tx tick model (decide + document: call inside vs after the tx; keep idempotency on retry)."
+      ],
+      "title": "Runner: execute hour-of-day window + webhook (tz-aware)"
+    },
+    "score": 95
+  }
+}

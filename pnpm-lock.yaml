@@ -81,6 +81,12 @@ importers:
         specifier: ^4.0.1
         version: 4.1.0
 
+  packages/runner-webhook:
+    dependencies:
+      '@cdp/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/segments:
     dependencies:
       '@cdp/db':
@@ -229,6 +235,9 @@ importers:
       '@cdp/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@cdp/runner-webhook':
+        specifier: workspace:*
+        version: link:../../packages/runner-webhook
       '@cdp/segments':
         specifier: workspace:*
         version: link:../../packages/segments
