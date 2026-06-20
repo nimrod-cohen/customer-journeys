@@ -7,7 +7,7 @@
 import type { JSX } from 'preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { ActionMenu } from '../ui/kit.js';
-import { layoutDefinition, LAYOUT, type LayoutEdge } from './layout.js';
+import { layoutDefinition, mergeAnchor, LAYOUT, type LayoutEdge } from './layout.js';
 import { orthogonalPath, verticalAnchor } from './orthogonal-path.js';
 import { buildDefinition, displayType, type CanvasModel, type CanvasEdge, type CanvasNode } from './model.js';
 import { nodeSummary, subtreeNodeIds, branchContinuation } from './mutate.js';
@@ -317,7 +317,7 @@ export function CampaignCanvas({
 
         {/* Edge insertion (+) controls, anchored on each connector's vertical run. */}
         {layout.edges.map((e) => {
-          const mid = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop);
+          const mid = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop, e.closeKnee);
           const edge = model.edges.find((me) => me.from === e.from && me.slot === e.slot && me.to === e.to);
           if (!edge) return null;
           // While placing a MOVE, hide the (+) controls inside the moving subtree
@@ -359,9 +359,12 @@ export function CampaignCanvas({
                 if (!contId) return null; // no single continuation → no merge (+)
                 const contPos = layout.positions.get(contId);
                 if (!contPos) return null;
-                // On the vertical trunk feeding C, in the gap just above its card top.
-                const x = contPos.x;
-                const y = contPos.y - 14;
+                // The arms CLOSE into the continuation high (top-knee), leaving a tall
+                // central vertical run; anchor the merge (+) in its MIDDLE so a visible
+                // line sits ABOVE it (closure corner → +) and BELOW it (+ → card).
+                const anchor = mergeAnchor(layout.edges, layout.positions, contId);
+                const x = anchor.x;
+                const y = anchor.y;
                 return (
                   <button
                     key={`merge-${cn.id}`}
@@ -472,7 +475,7 @@ export function CampaignCanvas({
 }
 
 function Connector({ edge }: { edge: LayoutEdge }): JSX.Element {
-  const d = orthogonalPath(edge.fromPoint, edge.toPoint, edge.laneX, undefined, edge.kneeTop);
+  const d = orthogonalPath(edge.fromPoint, edge.toPoint, edge.laneX, undefined, edge.kneeTop, edge.closeKnee);
   const labelPoint = edge.label ? { x: edge.laneX, y: edge.fromPoint.y + 16 } : null;
   return (
     <g>

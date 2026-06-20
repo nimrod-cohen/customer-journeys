@@ -196,6 +196,67 @@ test('the post-merge trunk is STRAIGHT below the join (no spurious knee / re-cen
   expect(trunk!.d.includes(' H ')).toBe(false);
 });
 
+test('the merge + sits on a VISIBLE vertical line: ABOVE it the arms close, BELOW it the join', async ({ page }) => {
+  await openCampaigns(page);
+  // The seeded Welcome journey is a POPULATED diamond (an arm has a send before the
+  // rejoin) — so the closing arm corners in HIGH (top knee) and a tall central run
+  // descends to the join. The merge (+) must sit in the MIDDLE of that run.
+  await page.getByTestId('campaign-item').filter({ hasText: 'Welcome journey' }).getByTestId('campaign-open').click();
+  await page.getByTestId('campaign-canvas').waitFor();
+
+  // All comparisons are in LOCAL canvas coords: path `d` coords AND the inline-styled
+  // top of the merge (+) live in the SAME (un-transformed) canvas frame, so no
+  // pan/zoom conversion is needed (we never mix in a screen boundingBox here).
+  const ds = await page.getByTestId('campaign-connectors').locator('path').evaluateAll((paths) =>
+    paths.map((p) => p.getAttribute('d') ?? ''),
+  );
+  const segs = ds.map((d) => ({ d, e: pathEndPoint(d) }));
+
+  // The convergence point: the (x,y) ≥2 connectors END at — the join card's top.
+  const endCounts = new Map<string, { x: number; y: number; n: number }>();
+  for (const { e } of segs) {
+    const k = key(e);
+    const cur = endCounts.get(k) ?? { x: e.x, y: e.y, n: 0 };
+    cur.n += 1;
+    endCounts.set(k, cur);
+  }
+  const join = [...endCounts.values()].find((p) => p.n >= 2);
+  expect(join, `no convergence point found among ${JSON.stringify(ds)}`).toBeTruthy();
+
+  // A CLOSING arm path: ends AT the join AND lands on the join column (its final V is
+  // at the join x). Its single horizontal knee (V→H) is the closure corner — read the
+  // corner y as the y at the H command after a V (the high crossing).
+  const closingD = ds.find((d) => {
+    const ep = pathEndPoint(d);
+    return key(ep) === key(join!) && d.includes(' H ');
+  });
+  expect(closingD, `no closing arm path landing on the join among ${JSON.stringify(ds)}`).toBeTruthy();
+  // Trace the path to the y at the moment it turns horizontal (the closure corner).
+  const closureCornerY = await page.evaluate((d: string) => {
+    const t = d.trim().split(/\s+/);
+    let i = 0;
+    let cy = 0;
+    const n = (): number => Number(t[i++]);
+    while (i < t.length) {
+      const cmd = t[i++];
+      if (cmd === 'M') { n(); cy = n(); }
+      else if (cmd === 'V') { cy = n(); }
+      else if (cmd === 'H') { return cy; } // the corner: y where it turns across
+      else if (cmd === 'Q') { n(); n(); n(); cy = n(); }
+    }
+    return cy;
+  }, closingD!);
+
+  // The merge (+)'s LOCAL y (its inline style top — same frame as the path coords).
+  const mergeTop = await page.getByTestId('campaign-merge-insert').first().evaluate((el) =>
+    parseFloat((el as HTMLElement).style.top),
+  );
+
+  // The visible line: closure corner ABOVE the (+), the join card top BELOW it.
+  expect(mergeTop).toBeGreaterThan(closureCornerY + 8); // a real line ABOVE the +
+  expect(mergeTop).toBeLessThan(join!.y - 8); // a real line BELOW the + (down to the join)
+});
+
 test('assemble trigger→wait→send→exit via the (+) palette, then save', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

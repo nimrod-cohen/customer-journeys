@@ -20,6 +20,7 @@
 // an arm may widen that arm's extent (subtree-width packing still applies, just
 // with a tighter base) so a SIMPLE arm stays compact.
 import { outgoingEdges, type CampaignDefinition, type DslNode } from './model.js';
+import { closeKneeLowerRun } from './orthogonal-path.js';
 
 // Re-export so layout consumers (canvas + tests) get the single graph type here.
 export type { CampaignDefinition } from './model.js';
@@ -65,6 +66,14 @@ export interface LayoutEdge {
    * leg straight below the source) and for straight/empty-arm lane routes.
    */
   readonly kneeTop?: boolean;
+  /**
+   * TRUE for a jog that CLOSES INTO a merge join (an arm's leaf → join, offset): a
+   * bottom-knee jog whose crossing sits at the MIDDLE of the drop, so BOTH legs are
+   * tall — the UPPER leg at from.x (the arm's own column, where the edge (+) sits,
+   * straight below the source) AND the LOWER leg at join.x (the central vertical the
+   * MERGE (+) anchors on, with a visible line above + below it). FALSE/absent otherwise.
+   */
+  readonly closeKnee?: boolean;
 }
 
 /**
@@ -419,6 +428,11 @@ function computeJoinDrops(def: CampaignDefinition, depth: Map<string, number>): 
   const extra = new Map<number, number>();
   let acc = 0;
   for (let d = 0; d <= maxDepth; d++) {
+    // The JOIN's OWN row (d is a join row) opens the INTO-join gap (JOIN_MERGE_DROP):
+    // the arms close HIGH and a tall central vertical runs down to the join, with the
+    // merge (+) centered on it (clear line above AND below). This stacks BEFORE the
+    // below-join gap so the join card itself drops further from its parents.
+    if (joinDepths.has(d)) acc += JOIN_MERGE_DROP;
     // The row immediately below a join (d-1 is a join row) opens the extra gap.
     if (joinDepths.has(d - 1)) acc += JOIN_EXTRA_DROP;
     extra.set(d, acc);
@@ -432,6 +446,15 @@ function computeJoinDrops(def: CampaignDefinition, depth: Map<string, number>): 
  * +/node. Kept well clear of MIN_SEGMENT; tweak alongside rowHeight to taste.
  */
 export const JOIN_EXTRA_DROP = 48;
+
+/**
+ * JOIN_MERGE_DROP — extra vertical px added to the INTO-join run (the arm-closure →
+ * join card descent), so the arms close HIGH and a tall CENTRAL vertical line runs
+ * down to the join with the merge (+) centered on it: a clear line ABOVE the (+)
+ * (closure corner → +) AND BELOW it (+ → join card). Without this the closure corner
+ * sat right at the (+) (no line above). Tweak alongside rowHeight to taste.
+ */
+export const JOIN_MERGE_DROP = 56;
 
 /**
  * EMPTY_ARM_LANE — the side-lane offset (px) used ONLY by an EMPTY condition arm
@@ -500,6 +523,12 @@ export function computeEdges(
       // EMPTY arm: it goes straight to the merge join (a shared multi-parent node),
       // OR (the fully-empty case) straight to a node directly below the If.
       const isEmptyArm = isArm && (joins.has(e.to) || toPoint.x === from.x);
+      // A populated arm's leaf node closing into the merge join via a plain `next`
+      // (offset from the join). We keep the bottom-knee jog (the (+) and any inserted
+      // node stay on the arm's own column), but route the crossing to the MIDDLE so a
+      // TALL central vertical run remains at join.x below the closure corner — the
+      // merge (+) anchors there (mergeAnchor) with a visible line above AND below it.
+      const closeKnee = !isArm && joins.has(e.to) && toPoint.x !== from.x;
       let kneeTop = false;
       if (isEmptyArm) {
         // Route out to a side lane so its (+) sits on its own column (off the other
@@ -509,9 +538,44 @@ export function computeEdges(
         // POPULATED arm — single knee at the TOP, long vertical down the child column.
         kneeTop = true;
       }
-      const base = { from: id, to: e.to, slot: e.slot, fromPoint, toPoint, laneX, kneeTop } as const;
+      const base = { from: id, to: e.to, slot: e.slot, fromPoint, toPoint, laneX, kneeTop, closeKnee } as const;
       edges.push(e.label !== undefined ? { ...base, label: e.label } : base);
     }
   }
   return edges;
+}
+
+/**
+ * mergeAnchor(edges, positions, joinId) — where the merge (+) (`campaign-merge-insert`)
+ * sits for the branch that rejoins at `joinId` (the continuation C both arms reach).
+ *
+ * The arm's leaf CLOSES into the join via a CLOSE-knee jog (its crossing at the middle
+ * of the drop), so a tall CENTRAL vertical run descends at the join's x from just below
+ * that closure corner down to the join card. We anchor the merge (+) in the MIDDLE of
+ * that run — leaving a visible vertical line ABOVE it (closure corner → +) AND BELOW it
+ * (+ → join card). Returns `{ x, y }` for the (+) plus `closureCornerY` (the y the arms
+ * corner in at, strictly above the (+)). Falls back to just-above-the-join when no
+ * close-knee edge lands on the join column (e.g. a fully-empty diamond).
+ */
+export function mergeAnchor(
+  edges: readonly LayoutEdge[],
+  positions: ReadonlyMap<string, NodePosition>,
+  joinId: string,
+): { x: number; y: number; closureCornerY: number } {
+  const join = positions.get(joinId);
+  // A closing edge: lands ON the join, a close-knee jog on the join's own column.
+  const closing = edges.find(
+    (e) =>
+      e.to === joinId &&
+      e.closeKnee === true &&
+      join !== undefined &&
+      Math.abs(e.toPoint.x - join.x) < 1e-6,
+  );
+  if (closing && join) {
+    const run = closeKneeLowerRun(closing.fromPoint, closing.toPoint);
+    return { x: join.x, y: (run.y0 + run.y1) / 2, closureCornerY: run.y0 };
+  }
+  // Fallback (no central close-knee run): just above the join card.
+  const y = (join?.y ?? 0) - 14;
+  return { x: join?.x ?? 0, y, closureCornerY: y };
 }

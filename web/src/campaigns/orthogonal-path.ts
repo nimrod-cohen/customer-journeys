@@ -67,6 +67,7 @@ export function orthogonalPath(
   laneX?: number,
   radius: number = CORNER_RADIUS,
   kneeTop = false,
+  closeKnee = false,
 ): string {
   if (!(to.y > from.y)) {
     throw new Error(`orthogonalPath: target must be below source (from.y=${from.y}, to.y=${to.y})`);
@@ -81,6 +82,14 @@ export function orthogonalPath(
   // column to the child. The (+) anchors on that column run (verticalAnchor).
   if (kneeTop && lane === to.x && to.x !== from.x) {
     return jogTopKnee(from, to, radius);
+  }
+  // A CLOSING jog into a merge join: like the classic jog, but the single crossing
+  // sits at the MIDDLE of the drop (not low), so BOTH legs are tall — the UPPER leg
+  // at from.x (where the arm (+) sits, straight below the source) AND the LOWER leg
+  // at to.x = join.x (the central vertical the merge (+) anchors on, with a visible
+  // line ABOVE it from the closure corner and BELOW it down to the join card).
+  if (closeKnee && lane === to.x && to.x !== from.x) {
+    return jog(from, to, radius, midCrossingY(from.y, to.y));
   }
   // Lane coincides with the target x (the common case: the child sits on the lane,
   // OR a same-x stub). Classic 3-run V-H-V around the mid-y (knee near the bottom).
@@ -161,11 +170,19 @@ function jogTopKnee(from: Point, to: Point, radius: number): string {
   );
 }
 
-/** A V-H-V jog from `from` to `to`, the horizontal crossing near the BOTTOM (so the
- *  UPPER vertical leg — descending straight from the source at from.x — is tall +
- *  anchorable; the (+) sits there, before the turn toward the target). */
-function jog(from: Point, to: Point, radius: number): string {
-  const crossY = jogCrossingY(from.y, to.y);
+/** The MIDDLE crossing y of a closing jog — splits the drop so BOTH the upper leg (at
+ *  from.x, the arm (+)) AND the lower leg (at to.x = join.x, the merge (+)) are tall. */
+function midCrossingY(y1: number, y2: number): number {
+  return (y1 + y2) / 2;
+}
+
+/** A V-H-V jog from `from` to `to`. By default the horizontal crossing sits near the
+ *  BOTTOM (so the UPPER vertical leg — descending straight from the source at from.x —
+ *  is tall + anchorable; the (+) sits there, before the turn toward the target). A
+ *  caller may pass an explicit `crossYOverride` (e.g. the MIDDLE for a closing jog into
+ *  a merge join, so the LOWER leg at to.x is also tall for the merge (+)). */
+function jog(from: Point, to: Point, radius: number, crossYOverride?: number): string {
+  const crossY = crossYOverride ?? jogCrossingY(from.y, to.y);
   const dx = to.x - from.x;
   const dir = dx > 0 ? 1 : -1;
   const upLeg = crossY - from.y;
@@ -213,6 +230,25 @@ function jogTail(x1: number, y1: number, x2: number, y2: number, radius: number)
 }
 
 /**
+ * closeKneeLowerRun(from, to) — the LOWER vertical leg of a CLOSING jog into a merge
+ * join (a bottom-knee jog whose crossing is at the MIDDLE of the drop), i.e. the run
+ * at `to.x` = join.x that descends from just below the (mid) closure corner down to
+ * `to.y`. Returned as `{ y0, y1 }` (y0 = top of the run, just below the closure corner
+ * = where the arms corner in; y1 = to.y = the join card top). This is the central
+ * vertical the merge (+) anchors on: anchored in its MIDDLE there is a visible line
+ * ABOVE it (closure corner → +) AND BELOW it (+ → join card). Pure; mirrors `jog` with
+ * the mid crossing.
+ */
+export function closeKneeLowerRun(from: Point, to: Point): { y0: number; y1: number } {
+  const crossY = midCrossingY(from.y, to.y);
+  const downLeg = to.y - crossY;
+  const upLeg = crossY - from.y;
+  const hLeg = Math.abs(to.x - from.x);
+  const r = Math.max(0, Math.min(CORNER_RADIUS, upLeg / 2, downLeg / 2, hLeg / 2));
+  return { y0: crossY + r, y1: to.y };
+}
+
+/**
  * verticalAnchor(from, to, laneX?) — the anchor for the (+) edge-insertion control,
  * GUARANTEED to sit on the SOURCE-SIDE UPPER VERTICAL run of the connector path
  * (never a corner/H run), straight below the source node BEFORE any horizontal turn:
@@ -225,10 +261,28 @@ function jogTail(x1: number, y1: number, x2: number, y2: number, radius: number)
  * so the buttons never stack — and an arm's (+) is HIGH (right under it), clearly
  * separated from the LOW merge (+) on the merged trunk; they never adjoin.
  */
-export function verticalAnchor(from: Point, to: Point, laneX?: number, kneeTop = false): Point {
+export function verticalAnchor(
+  from: Point,
+  to: Point,
+  laneX?: number,
+  kneeTop = false,
+  closeKnee = false,
+): Point {
   const lane = laneX ?? to.x;
   if (from.x === lane && lane === to.x) {
     return { x: from.x, y: (from.y + to.y) / 2 };
+  }
+  // CLOSING jog into a merge join (mid crossing): the arm (+) sits on the UPPER leg at
+  // `from.x` (straight below the source, before the turn) — the LOWER leg at to.x is
+  // reserved for the merge (+) (closeKneeLowerRun). Anchor at the upper leg's middle.
+  if (closeKnee && lane === to.x && to.x !== from.x) {
+    const crossY = midCrossingY(from.y, to.y);
+    const upLeg = crossY - from.y;
+    const downLeg = to.y - crossY;
+    const hLeg = Math.abs(to.x - from.x);
+    const r = Math.max(0, Math.min(CORNER_RADIUS, upLeg / 2, downLeg / 2, hLeg / 2));
+    const upperBot = crossY - r; // the upper leg spans [from.y, crossY - r]
+    return { x: from.x, y: (from.y + upperBot) / 2 };
   }
   // POPULATED arm (top knee): the LONG vertical leg runs at `to.x` (the child
   // column) from the (top-placed) crossing down to `to.y`. Anchor on the MIDDLE of

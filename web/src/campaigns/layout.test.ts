@@ -1,7 +1,7 @@
 // Unit: auto-layout (down-only tree, branch fan, diamond once) (§9B phase 5).
 // Pure — positions are computed from edges, never read from the def.
 import { describe, it, expect } from 'vitest';
-import { layoutDefinition, subtreeWidth, computeEdges, LAYOUT, BRANCH_HALF_GAP, type CampaignDefinition } from './layout.js';
+import { layoutDefinition, mergeAnchor, subtreeWidth, computeEdges, LAYOUT, BRANCH_HALF_GAP, type CampaignDefinition } from './layout.js';
 import { orthogonalPath, verticalAnchor, MIN_SEGMENT } from './orthogonal-path.js';
 
 /** Count the HORIZONTAL jogs (knees) in a path `d` — each H run is one knee. */
@@ -176,6 +176,45 @@ describe('extra vertical room below a merge join', () => {
     expect(h).not.toBeNull();
     expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
   });
+});
+
+describe('merge (+) spacing — a visible vertical line ABOVE the merge +', () => {
+  // The arms must CLOSE (corner back into the central column) at a y clearly ABOVE
+  // the merge (+); the (+) sits in the MIDDLE of the post-convergence run with a
+  // non-zero line above AND below it. (v0.41.8)
+  for (const [name, def] of [
+    ['both-populated diamond', diamond],
+    ['populated + empty arm', emptyArmDiamond],
+    ['merge-then-trunk', mergeThenTrunk],
+  ] as const) {
+    it(`${name}: closure corner is ABOVE the merge + with a real gap, + centered on the run`, () => {
+      const { positions } = layoutDefinition(def);
+      const edges = computeEdges(def, positions);
+      const join = positions.get('join')!;
+      const anchor = mergeAnchor(edges, positions, 'join');
+
+      // The merge (+) anchors on the join's central column.
+      expect(anchor.x).toBeCloseTo(join.x, 5);
+      // The arms close (corner in) at a y STRICTLY above the (+), by ≥ half MIN_SEGMENT.
+      expect(anchor.closureCornerY).toBeLessThan(anchor.y - MIN_SEGMENT / 2);
+      // The (+) sits ABOVE the join card top (a line runs from + DOWN to the card).
+      expect(anchor.y).toBeLessThan(join.y - MIN_SEGMENT / 2);
+
+      // The (+) sits on a single VERTICAL run with NON-ZERO length both above & below.
+      const closing = edges.find(
+        (e) => e.to === 'join' && e.closeKnee === true && Math.abs(e.toPoint.x - join.x) < 1e-6,
+      )!;
+      const d = orthogonalPath(closing.fromPoint, closing.toPoint, closing.laneX, undefined, closing.kneeTop, closing.closeKnee);
+      const run = verticalRuns(d).find(
+        (r) => Math.abs(r.x - anchor.x) < 1e-6 && anchor.y >= r.y0 - 1e-6 && anchor.y <= r.y1 + 1e-6,
+      );
+      expect(run, `merge + not on a vertical run of ${d}`).toBeTruthy();
+      expect(anchor.y - run!.y0).toBeGreaterThan(0); // line ABOVE the +
+      expect(run!.y1 - anchor.y).toBeGreaterThan(0); // line BELOW the +
+      // The whole convergence→join run clears the room a +-with-gaps needs.
+      expect(run!.y1 - run!.y0).toBeGreaterThanOrEqual(MIN_SEGMENT);
+    });
+  }
 });
 
 describe('layoutDefinition', () => {
