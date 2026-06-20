@@ -160,6 +160,42 @@ test('renders a seeded definition as a downward tree with axis-aligned connector
   for (const d of ds) expect(pathEndPoint(d).y).toBeGreaterThan(pathStartPoint(d).y);
 });
 
+test('the post-merge trunk is STRAIGHT below the join (no spurious knee / re-centering)', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-item').filter({ hasText: 'Welcome journey' }).getByTestId('campaign-open').click();
+  await page.getByTestId('campaign-canvas').waitFor();
+
+  // Seed: cond.onTrue→sendY→join, cond.onFalse→join, then join→exit1 (the merged
+  // trunk continuation). All path coords are in the SAME layout space (we compare
+  // paths to paths, never to screen boundingBoxes which carry pan/zoom transforms).
+  const ds = await page.getByTestId('campaign-connectors').locator('path').evaluateAll((paths) =>
+    paths.map((p) => p.getAttribute('d') ?? ''),
+  );
+  const segs = ds.map((d) => ({ d, s: pathStartPoint(d), e: pathEndPoint(d) }));
+
+  // The CONVERGENCE point: the (x,y) ≥2 connectors (the two arms) END at — the join's
+  // top-center. The join's OUTGOING trunk edge then STARTS at the same x (the join's
+  // bottom-center) and a deeper y.
+  const endCounts = new Map<string, { x: number; y: number; n: number }>();
+  for (const { e } of segs) {
+    const k = key(e);
+    const cur = endCounts.get(k) ?? { x: e.x, y: e.y, n: 0 };
+    cur.n += 1;
+    endCounts.set(k, cur);
+  }
+  const join = [...endCounts.values()].find((p) => p.n >= 2);
+  expect(join, `no convergence point (join) found among ${JSON.stringify(ds)}`).toBeTruthy();
+
+  // The trunk edge leaving the join: starts at the join's x, below the join's top.
+  const trunk = segs.find((p) => Math.abs(p.s.x - join!.x) < 1.5 && p.s.y > join!.y);
+  expect(trunk, `no join→exit trunk connector found among ${JSON.stringify(ds)}`).toBeTruthy();
+  // STRAIGHT vertical below the join — same x in and out, ZERO horizontal knee, NOT
+  // pulled back toward the board center.
+  expect(Math.abs(trunk!.s.x - trunk!.e.x)).toBeLessThan(1.5);
+  expect(Math.abs(trunk!.e.x - join!.x)).toBeLessThan(1.5);
+  expect(trunk!.d.includes(' H ')).toBe(false);
+});
+
 test('assemble trigger→wait→send→exit via the (+) palette, then save', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

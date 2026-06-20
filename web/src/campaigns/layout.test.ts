@@ -104,6 +104,80 @@ const fullyEmptyDiamond: CampaignDefinition = {
   },
 };
 
+// The USER's reported case: a branch that MERGES, then the trunk CONTINUES with a
+// single-out chain (join → webhook → exit). Every post-merge node must sit STRAIGHT
+// below the join (same x) — no spurious knee / re-centering toward the board center.
+const mergeThenTrunk: CampaignDefinition = {
+  startNode: 'trigger',
+  nodes: {
+    trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+    cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'a', onFalse: 'b' },
+    a: { type: 'action', kind: 'send', template_id: 'tplA', next: 'join' },
+    b: { type: 'action', kind: 'send', template_id: 'tplB', next: 'join' },
+    join: { type: 'action', kind: 'set_attribute', key: 'done', value: 'y', next: 'webhook' },
+    webhook: { type: 'action', kind: 'webhook', url: 'https://x', method: 'POST', next: 'exit1' },
+    exit1: { type: 'exit' },
+  },
+};
+
+describe('single-out edges are STRAIGHT verticals (no spurious knee / re-centering)', () => {
+  it('a single-out node places its child at the SAME x (straight vertical, no jog)', () => {
+    const { positions } = layoutDefinition(linear);
+    // Every linear edge is single-out → identical x already covered, re-assert per edge.
+    const edges = computeEdges(linear, positions);
+    for (const e of edges) {
+      expect(e.fromPoint.x, `edge ${e.from}->${e.to}`).toBe(e.toPoint.x);
+      expect(horizontalKnees(orthogonalPath(e.fromPoint, e.toPoint, e.laneX, undefined, e.kneeTop))).toBe(0);
+    }
+  });
+
+  it('the post-merge trunk follows the JOIN x: join → webhook → exit are all straight below the join', () => {
+    const { positions } = layoutDefinition(mergeThenTrunk);
+    const joinX = positions.get('join')!.x;
+    // The whole downstream chain shares the (re-centered) join's column.
+    expect(positions.get('webhook')!.x).toBe(joinX);
+    expect(positions.get('exit1')!.x).toBe(joinX);
+    // And the connectors are pure straight verticals (fromPoint.x === toPoint.x, no H).
+    const edges = computeEdges(mergeThenTrunk, positions);
+    for (const e of edges.filter((x) => ['join', 'webhook'].includes(x.from))) {
+      expect(e.fromPoint.x, `edge ${e.from}->${e.to} not straight`).toBe(e.toPoint.x);
+      expect(
+        horizontalKnees(orthogonalPath(e.fromPoint, e.toPoint, e.laneX, undefined, e.kneeTop)),
+        `edge ${e.from}->${e.to} has a knee`,
+      ).toBe(0);
+    }
+  });
+
+  it('the join is centered under its two arms AND its downstream chain shares its x', () => {
+    const { positions } = layoutDefinition(mergeThenTrunk);
+    const ax = positions.get('a')!.x;
+    const bx = positions.get('b')!.x;
+    const joinX = positions.get('join')!.x;
+    expect(joinX).toBeCloseTo((ax + bx) / 2, 5); // centered under the arms
+    // Downstream inherits it (no pull back to start/center).
+    expect(positions.get('webhook')!.x).toBe(joinX);
+    expect(positions.get('exit1')!.x).toBe(joinX);
+  });
+});
+
+describe('extra vertical room below a merge join', () => {
+  it('the gap below a merge join (join → next) is LARGER than the normal trunk gap', () => {
+    const { positions } = layoutDefinition(mergeThenTrunk);
+    const normalGap = positions.get('cond')!.y - positions.get('trigger')!.y; // a normal single-out drop
+    const belowJoin = positions.get('webhook')!.y - positions.get('join')!.y; // closure → next
+    expect(belowJoin).toBeGreaterThan(normalGap);
+    // Still a comfortable run for the (+) — well above MIN_SEGMENT.
+    const edges = computeEdges(mergeThenTrunk, positions);
+    const trunk = edges.find((e) => e.from === 'join' && e.to === 'webhook')!;
+    const h = anchorRunHeight(
+      orthogonalPath(trunk.fromPoint, trunk.toPoint, trunk.laneX, undefined, trunk.kneeTop),
+      verticalAnchor(trunk.fromPoint, trunk.toPoint, trunk.laneX, trunk.kneeTop),
+    );
+    expect(h).not.toBeNull();
+    expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
+  });
+});
+
 describe('layoutDefinition', () => {
   it('places the trigger at depth 0 (smallest y)', () => {
     const { positions } = layoutDefinition(linear);

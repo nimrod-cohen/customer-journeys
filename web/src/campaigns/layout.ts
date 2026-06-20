@@ -154,8 +154,20 @@ export function layoutDefinition(def: CampaignDefinition): Layout {
   assignColumns(def, def.startNode, 0, col, memo, new Set(), joins);
 
   // Re-center a diamond join under the midpoint of its parents so the connectors
-  // stay symmetric (its first-pass column may sit under only one arm).
+  // stay symmetric (its first-pass column may sit under only one arm) — AND drag the
+  // join's whole downstream chain along by the same delta, so the post-merge trunk
+  // (join → continuation → … → Exit) stays STRAIGHT below the re-centered join
+  // instead of snapping back to its first-pass (off-center) column. ISSUE A fix.
   recenterJoins(def, col);
+
+  // A single-out node's child ALWAYS inherits the parent's x — a straight vertical,
+  // zero horizontal jog. A linear chain therefore shares one column even where the
+  // first-pass packing (or a re-centered ancestor) nudged a descendant off. ISSUE A.
+  alignSingleOutChildren(def, col);
+
+  // ISSUE B — extra breathing room below a merge join: the vertical run from a
+  // closure (the join) to the next +/node is widened beyond the normal trunk gap.
+  const extraDrop = computeJoinDrops(def, depth);
 
   const positions = new Map<string, NodePosition>();
   for (const id of Object.keys(def.nodes)) {
@@ -165,7 +177,7 @@ export function layoutDefinition(def: CampaignDefinition): Layout {
       depth: d,
       col: c,
       x: LAYOUT.padX + c * LAYOUT.colWidth + LAYOUT.cardWidth / 2,
-      y: LAYOUT.padY + d * LAYOUT.rowHeight,
+      y: LAYOUT.padY + d * LAYOUT.rowHeight + (extraDrop.get(d) ?? 0),
     });
   }
 
@@ -325,9 +337,16 @@ function shiftSubtree(
   for (const e of outgoingEdges(id, node)) shiftSubtree(def, e.to, delta, col, seen, joins);
 }
 
-/** Re-center each diamond join under the midpoint of its parents' columns. */
+/**
+ * Re-center each diamond join under the midpoint of its parents' columns, AND drag
+ * the join's whole DOWNSTREAM chain by the same delta so the post-merge trunk stays
+ * STRAIGHT below the re-centered join (it must NOT keep its first-pass off-center
+ * column — that was the spurious-knee bug). The downstream shift stops at any FURTHER
+ * join (a multi-parent node), which is re-centered under ITS own parents in turn.
+ * Joins are processed shallowest-first so an outer join's shift settles before an
+ * inner one re-centers off the updated columns.
+ */
 function recenterJoins(def: CampaignDefinition, col: Map<string, number>): void {
-  // A join is a node with >1 incoming edge.
   const parents = new Map<string, string[]>();
   for (const id of Object.keys(def.nodes)) {
     const node = def.nodes[id];
@@ -338,13 +357,81 @@ function recenterJoins(def: CampaignDefinition, col: Map<string, number>): void 
       parents.set(e.to, arr);
     }
   }
-  for (const [id, ps] of parents) {
-    if (ps.length > 1) {
-      const cols = ps.map((p) => col.get(p) ?? 0);
-      col.set(id, (Math.min(...cols) + Math.max(...cols)) / 2);
-    }
+  const joins = multiParentNodes(def);
+  const depth = computeDepths(def);
+  // Shallowest join first so outer re-centering settles before inner joins read it.
+  const joinIds = [...parents.entries()]
+    .filter(([, ps]) => ps.length > 1)
+    .map(([id]) => id)
+    .sort((x, y) => (depth.get(x) ?? 0) - (depth.get(y) ?? 0));
+  for (const id of joinIds) {
+    const ps = parents.get(id)!;
+    const cols = ps.map((p) => col.get(p) ?? 0);
+    const target = (Math.min(...cols) + Math.max(...cols)) / 2;
+    const current = col.get(id) ?? 0;
+    const delta = target - current;
+    if (delta === 0) continue;
+    // Move the join, then drag its downstream chain by the same delta (single-out
+    // continuations and any non-join descendants) — stop at further joins, which are
+    // re-centered later in this loop. `joins` minus this id so we don't stop at self.
+    const stopAt = new Set(joins);
+    stopAt.delete(id);
+    shiftSubtree(def, id, delta, col, new Set(), stopAt);
   }
 }
+
+/**
+ * A node with a SINGLE outgoing edge places its child at the SAME x — a straight
+ * vertical with zero horizontal jog (ISSUE A). We sweep shallow→deep so a parent's
+ * (possibly re-centered) column propagates all the way down a linear chain. We DON'T
+ * touch a child that is a join (multi-parent) — it is centered under all its parents
+ * by recenterJoins — nor a condition's two arms (they fan to their compact columns).
+ */
+function alignSingleOutChildren(def: CampaignDefinition, col: Map<string, number>): void {
+  const depth = computeDepths(def);
+  const joins = multiParentNodes(def);
+  const ids = Object.keys(def.nodes).sort((a, b) => (depth.get(a) ?? 0) - (depth.get(b) ?? 0));
+  for (const id of ids) {
+    const node = def.nodes[id];
+    if (!node) continue;
+    const out = outgoingEdges(id, node);
+    if (out.length !== 1) continue; // only a single-out node forces a straight column
+    const child = out[0]!.to;
+    if (joins.has(child)) continue; // a join is centered under ALL its parents
+    col.set(child, col.get(id) ?? 0);
+  }
+}
+
+/**
+ * computeJoinDrops(def, depth) — ISSUE B. Returns an additive y-offset PER DEPTH so
+ * the row directly BELOW a merge join (the closure → next-node run) gets extra
+ * breathing room beyond the normal trunk gap. The offset accumulates: every depth at
+ * or below a join's row is pushed down by JOIN_EXTRA_DROP, so the closure→next run is
+ * `rowHeight − cardHeight + JOIN_EXTRA_DROP` while the rest of the trunk keeps its
+ * normal gap (and rows stay aligned across the canvas).
+ */
+function computeJoinDrops(def: CampaignDefinition, depth: Map<string, number>): Map<number, number> {
+  const joins = multiParentNodes(def);
+  // The depth of each join's row — every depth strictly GREATER gets the extra drop.
+  const joinDepths = new Set<number>();
+  for (const id of joins) joinDepths.add(depth.get(id) ?? 0);
+  const maxDepth = Math.max(0, ...[...depth.values()]);
+  const extra = new Map<number, number>();
+  let acc = 0;
+  for (let d = 0; d <= maxDepth; d++) {
+    // The row immediately below a join (d-1 is a join row) opens the extra gap.
+    if (joinDepths.has(d - 1)) acc += JOIN_EXTRA_DROP;
+    extra.set(d, acc);
+  }
+  return extra;
+}
+
+/**
+ * JOIN_EXTRA_DROP — extra vertical px added to the closure→next run below a merge
+ * join (ISSUE B), so a rejoined trunk has comfortable breathing room before the next
+ * +/node. Kept well clear of MIN_SEGMENT; tweak alongside rowHeight to taste.
+ */
+export const JOIN_EXTRA_DROP = 48;
 
 /**
  * EMPTY_ARM_LANE — the side-lane offset (px) used ONLY by an EMPTY condition arm
