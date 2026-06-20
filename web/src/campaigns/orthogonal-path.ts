@@ -83,13 +83,16 @@ export function orthogonalPath(
   if (kneeTop && lane === to.x && to.x !== from.x) {
     return jogTopKnee(from, to, radius);
   }
-  // A CLOSING jog into a merge join: like the classic jog, but the single crossing
-  // sits at the MIDDLE of the drop (not low), so BOTH legs are tall — the UPPER leg
-  // at from.x (where the arm (+) sits, straight below the source) AND the LOWER leg
-  // at to.x = join.x (the central vertical the merge (+) anchors on, with a visible
-  // line ABOVE it from the closure corner and BELOW it down to the join card).
+  // A CLOSING jog into a merge join: the single crossing sits a FIXED inset BELOW the
+  // source (near the TOP — like a top-knee), so the arm's append-(+) on the UPPER leg
+  // at from.x sits RIGHT BELOW its source node regardless of how long the closing edge
+  // is (a SHORT arm's edge spans the empty tail down to the merge depth — anchoring at
+  // the mid would drift the (+) low, next to the merge (+); a top-biased crossing keeps
+  // it HIGH). The LOWER leg at to.x = join.x is then the LONG central vertical the merge
+  // (+) anchors on (closeKneeLowerRun), with a clear line above it and below it down to
+  // the join card. (v0.41.9)
   if (closeKnee && lane === to.x && to.x !== from.x) {
-    return jog(from, to, radius, midCrossingY(from.y, to.y));
+    return jog(from, to, radius, closeKneeCrossY(from.y, to.y));
   }
   // Lane coincides with the target x (the common case: the child sits on the lane,
   // OR a same-x stub). Classic 3-run V-H-V around the mid-y (knee near the bottom).
@@ -170,10 +173,18 @@ function jogTopKnee(from: Point, to: Point, radius: number): string {
   );
 }
 
-/** The MIDDLE crossing y of a closing jog — splits the drop so BOTH the upper leg (at
- *  from.x, the arm (+)) AND the lower leg (at to.x = join.x, the merge (+)) are tall. */
-function midCrossingY(y1: number, y2: number): number {
-  return (y1 + y2) / 2;
+/**
+ * closeKneeCrossY — the y of a CLOSING jog's single horizontal crossing: a FIXED
+ * RAIL_INSET BELOW `from` (near the TOP), so the UPPER leg at from.x — where the arm's
+ * append-(+) sits — is SHORT and the (+) sits RIGHT BELOW the source node no matter how
+ * long the closing edge is (a short arm's edge spans the empty tail to the merge depth).
+ * The LOWER leg at to.x = join.x then takes the rest of the drop — the LONG central
+ * vertical the merge (+) anchors on. Clamped so the crossing never falls past the drop's
+ * midpoint for a tiny drop (keeps both legs valid). (v0.41.9)
+ */
+function closeKneeCrossY(y1: number, y2: number): number {
+  const drop = y2 - y1;
+  return y1 + Math.min(RAIL_INSET, drop / 2);
 }
 
 /** A V-H-V jog from `from` to `to`. By default the horizontal crossing sits near the
@@ -240,7 +251,7 @@ function jogTail(x1: number, y1: number, x2: number, y2: number, radius: number)
  * the mid crossing.
  */
 export function closeKneeLowerRun(from: Point, to: Point): { y0: number; y1: number } {
-  const crossY = midCrossingY(from.y, to.y);
+  const crossY = closeKneeCrossY(from.y, to.y);
   const downLeg = to.y - crossY;
   const upLeg = crossY - from.y;
   const hLeg = Math.abs(to.x - from.x);
@@ -272,11 +283,12 @@ export function verticalAnchor(
   if (from.x === lane && lane === to.x) {
     return { x: from.x, y: (from.y + to.y) / 2 };
   }
-  // CLOSING jog into a merge join (mid crossing): the arm (+) sits on the UPPER leg at
-  // `from.x` (straight below the source, before the turn) — the LOWER leg at to.x is
-  // reserved for the merge (+) (closeKneeLowerRun). Anchor at the upper leg's middle.
+  // CLOSING jog into a merge join (TOP-biased crossing): the arm (+) sits on the SHORT
+  // UPPER leg at `from.x`, straight below the source — RIGHT BELOW the source node, NOT
+  // drifted down the (possibly long) tail toward the merge. The LONG LOWER leg at to.x
+  // is reserved for the merge (+) (closeKneeLowerRun). Anchor at the upper leg's middle.
   if (closeKnee && lane === to.x && to.x !== from.x) {
-    const crossY = midCrossingY(from.y, to.y);
+    const crossY = closeKneeCrossY(from.y, to.y);
     const upLeg = crossY - from.y;
     const downLeg = to.y - crossY;
     const hLeg = Math.abs(to.x - from.x);

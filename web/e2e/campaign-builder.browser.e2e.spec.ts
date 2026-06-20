@@ -538,13 +538,18 @@ test('populated arms render as COMPACT straight columns: each arm + directly abo
 
   // Insert a SECOND node down the Yes arm (on the send→join edge): it must stay in
   // the SAME column as the Send (a straight vertical, no per-node jog).
-  // The send→join (+) is the edge insert sitting just below the Send card on its column.
+  // The send→join (+) is the edge insert sitting just below the Send card on its
+  // column. Since v0.41.9 the closing-edge + anchors HIGH (right under the card), so
+  // we match on the button's CENTER (it is translate(-50%,-50%)), not its rect top.
   const sendBottom = sendBox.y + sendBox.height;
   const belowSend = await page.getByTestId('campaign-edge-insert').evaluateAll(
     (els, ctx) =>
       els
         .map((e, i) => ({ r: (e as HTMLElement).getBoundingClientRect(), i }))
-        .filter(({ r }) => r.top > ctx.y && Math.abs(r.left + r.width / 2 - ctx.x) <= 4)
+        .filter(
+          ({ r }) =>
+            r.top + r.height / 2 > ctx.y - 1 && Math.abs(r.left + r.width / 2 - ctx.x) <= 4,
+        )
         .sort((a, b) => a.r.top - b.r.top)
         .map(({ i }) => i),
     { x: sendCx, y: sendBottom },
@@ -557,6 +562,119 @@ test('populated arms render as COMPACT straight columns: each arm + directly abo
   const setBox = (await page.getByTestId('node-set_attribute').boundingBox())!;
   const setCx = setBox.x + setBox.width / 2;
   expect(Math.abs(setCx - sendCx)).toBeLessThanOrEqual(2); // SAME column as the Send
+
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast')).toBeVisible();
+});
+
+test('UNEQUAL arms (Yes=1 / No=3): the short arm + sits right after its last node, far from the merge + (v0.41.9)', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Unequal arms');
+
+  // Insert an If → both arms initially point at the single exit.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+  await expect(page.getByTestId('campaign-edge-insert')).toHaveCount(3);
+
+  // Helper: the (+) controls below the condition card, with their CENTER x + y (the
+  // button is translate(-50%,-50%), so its center is the true anchor point).
+  const armPluses = async (): Promise<Array<{ i: number; cx: number; cy: number }>> => {
+    const cb = await conditionBottom(page);
+    return page.getByTestId('campaign-edge-insert').evaluateAll(
+      (els, by) =>
+        els
+          .map((e, i) => ({ r: (e as HTMLElement).getBoundingClientRect(), i }))
+          .filter(({ r }) => r.top + r.height / 2 > by)
+          .map(({ r, i }) => ({ i, cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2) })),
+      cb,
+    );
+  };
+
+  // YES (left) arm: ONE Send email.
+  let arms = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(arms[0]!).click();
+  await page.getByTestId('palette-send').click();
+  await expect(page.getByTestId('node-send')).toBeVisible();
+
+  // NO (right) arm: grow to THREE nodes (Wait → Webhook → Send). Each time, click the
+  // LOWEST (deepest) + on the right column and insert the next node.
+  for (const palette of ['palette-wait', 'palette-webhook', 'palette-send'] as const) {
+    const ps = await armPluses();
+    // The right column = the largest center-x; pick its LOWEST (deepest) +.
+    const maxCx = Math.max(...ps.map((p) => p.cx));
+    const rightCol = ps.filter((p) => Math.abs(p.cx - maxCx) <= 6).sort((a, b) => b.cy - a.cy);
+    await page.getByTestId('campaign-edge-insert').nth(rightCol[0]!.i).click();
+    await page.getByTestId('campaign-palette').waitFor();
+    await page.getByTestId(palette).click();
+    await expect(page.getByTestId('campaign-palette')).toHaveCount(0);
+  }
+
+  // The No arm now has Wait + Webhook + 2 Sends (Yes-send + No-send) on the canvas.
+  await expect(page.getByTestId('node-wait')).toHaveCount(1);
+  await expect(page.getByTestId('node-webhook')).toHaveCount(1);
+  await expect(page.getByTestId('node-send')).toHaveCount(2);
+  // Still ONE merge + (one branch, single rejoin).
+  await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(1);
+
+  // The YES arm's Send card — the SHORT arm's last node. Its appended + (the
+  // send→join edge) must sit RIGHT BELOW it, within a normal trunk gap — NOT drifted
+  // down the empty tail toward the merge depth. (All measurements are SCREEN px and
+  // the canvas may scale; we compare RATIOS, never raw layout constants.)
+  // The Yes Send is the LEFT-column send (smaller x). Identify both sends by x.
+  const sendBoxes = await page.getByTestId('node-send').evaluateAll((els) =>
+    els.map((e) => {
+      const r = (e as HTMLElement).getBoundingClientRect();
+      return { cx: Math.round(r.left + r.width / 2), top: Math.round(r.top), bottom: Math.round(r.top + r.height) };
+    }),
+  );
+  expect(sendBoxes.length).toBe(2);
+  const yesSend = sendBoxes.sort((a, b) => a.cx - b.cx)[0]!; // left column = Yes arm
+
+  // The + on the Yes arm's column, BELOW its Send card (compare CENTERS).
+  const ps = await armPluses();
+  const yesArmPluses = ps
+    .filter((p) => Math.abs(p.cx - yesSend.cx) <= 6 && p.cy > yesSend.bottom - 1)
+    .sort((a, b) => a.cy - b.cy);
+  const yesArmPlus = yesArmPluses[0];
+  expect(yesArmPlus, 'Yes arm append-+ not found below its Send card').toBeTruthy();
+
+  // EXACTLY ONE + on the Yes arm's column below its Send (no second + drifting down).
+  expect(yesArmPluses.length).toBe(1);
+
+  // A scale reference: the No-arm Send sits one card below where its column +
+  // appears; use the Yes Send card height as a small-distance yardstick.
+  const cardH = yesSend.bottom - yesSend.top; // screen-space card height
+
+  // It sits right after the Send — the gap to its + is SMALL (≲ half a card height),
+  // NOT drifted down the long empty tail toward the far-below merge depth.
+  const gapAfterCard = yesArmPlus!.cy - yesSend.bottom;
+  expect(gapAfterCard).toBeGreaterThan(-cardH * 0.1); // at/just below the card bottom
+  expect(gapAfterCard).toBeLessThan(cardH); // within ~a card height of the card
+
+  // The merge + and the Yes arm + are clearly SEPARATED (never adjacent). The merge +
+  // sits LOW (near the join); the Yes arm + sits HIGH (under its card). The vertical
+  // gap between them is LARGE — many card-heights (the whole empty tail + close knee).
+  const mergeY = await page.getByTestId('campaign-merge-insert').evaluate((el) => {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    return Math.round(r.top + r.height / 2);
+  });
+  expect(yesArmPlus!.cy).toBeLessThan(mergeY); // arm + is ABOVE the merge +
+  // Separated by far more than a card height — never the "two adjacent +" the user saw.
+  expect(mergeY - yesArmPlus!.cy).toBeGreaterThan(cardH * 1.5);
+
+  // Connectors stay axis-aligned + down-only + converge on the single join.
+  const ds = await page.getByTestId('campaign-connectors').locator('path').evaluateAll((paths) =>
+    paths.map((p) => p.getAttribute('d') ?? ''),
+  );
+  for (const d of ds) {
+    expect(pathIsAxisAligned(d)).toBe(true);
+    expect(pathEndPoint(d).y).toBeGreaterThan(pathStartPoint(d).y);
+  }
+  const counts = new Map<string, number>();
+  for (const d of ds) counts.set(key(pathEndPoint(d)), (counts.get(key(pathEndPoint(d))) ?? 0) + 1);
+  expect([...counts.values()].some((c) => c >= 2)).toBe(true);
 
   await page.getByTestId('save-campaign').click();
   await expect(page.getByTestId('toast')).toBeVisible();

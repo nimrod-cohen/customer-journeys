@@ -276,7 +276,7 @@ describe('orthogonalPath (top-knee populated arm)', () => {
 });
 
 describe('close-knee jog into a merge join — the central run the merge + anchors on', () => {
-  it('the LOWER leg at join.x is tall (mid crossing); the merge + sits in its MIDDLE (line above + below)', () => {
+  it('the LOWER leg at join.x is the LONG central run; the arm + sits HIGH on the short upper leg (v0.41.9)', () => {
     // A closing jog (leaf → join): from a populated arm leaf, offset, into the join.
     const from = { x: 300, y: 100 };
     const to = { x: 200, y: 100 + LAID_OUT_DROP + 56 }; // + JOIN_MERGE_DROP room
@@ -289,24 +289,38 @@ describe('close-knee jog into a merge join — the central run the merge + ancho
     expect(run.y1).toBe(to.y); // ends at the join card top
     expect(run.y0).toBeGreaterThan(from.y); // starts below the source
     expect(run.y0).toBeLessThan(run.y1);
-
-    // The merge + (the MIDDLE of the lower run) lands strictly inside it: line above
-    // (closure corner → +) AND below (+ → join card).
-    const mergeY = (run.y0 + run.y1) / 2;
+    // The lower leg is the LONG central run — it is the TALLER of the two legs (the
+    // crossing is now near the TOP, a fixed inset below source). The merge (+) anchors
+    // on it with a visible line above and below.
     const lowerRun = verticalRuns(d).find((r) => Math.abs(r.x - to.x) < 1e-6)!;
-    expect(mergeY).toBeGreaterThan(lowerRun.y0); // visible line ABOVE the +
-    expect(mergeY).toBeLessThan(lowerRun.y1); // visible line BELOW the +
+    const upperRun = verticalRuns(d).find((r) => Math.abs(r.x - from.x) < 1e-6)!;
+    expect(lowerRun.y1 - lowerRun.y0).toBeGreaterThan(upperRun.y1 - upperRun.y0);
     expect(lowerRun.y1 - lowerRun.y0).toBeGreaterThanOrEqual(MIN_SEGMENT);
 
-    // The ARM edge (+) on the SAME closing jog sits on the UPPER leg at from.x — the
-    // arm's own column, straight below its source — NOT on the central merge run.
+    // The ARM edge (+) on the SAME closing jog sits on the SHORT UPPER leg at from.x —
+    // straight below its source, HIGH — NOT on the central merge run, NOT drifted down.
     const armPlus = verticalAnchor(from, to, to.x, false, true);
     expect(armPlus.x).toBe(from.x);
-    const upperRun = verticalRuns(d).find((r) => Math.abs(r.x - from.x) < 1e-6)!;
     expect(armPlus.y).toBeGreaterThan(upperRun.y0);
     expect(armPlus.y).toBeLessThan(upperRun.y1);
-    // The arm + (high, at from.x) is clearly ABOVE the merge + (low, at to.x).
-    expect(armPlus.y).toBeLessThan(mergeY);
+    // It sits HIGH — within the normal trunk gap below the source, not down the tail.
+    expect(armPlus.y - from.y).toBeLessThan(LAID_OUT_DROP);
+  });
+
+  it('a LONG closing edge (short arm spanning the empty tail) STILL anchors the arm + right below the source', () => {
+    // Short Yes arm: its last node sits HIGH but the join (set by the long arm) is far
+    // below — a long closing edge. The arm + must stay just below the source node.
+    const from = { x: 300, y: 100 };
+    const longTail = { x: 200, y: 100 + LAID_OUT_DROP * 4 }; // join 4 rows down
+    const armPlus = verticalAnchor(from, longTail, longTail.x, false, true);
+    expect(armPlus.x).toBe(from.x);
+    // High — within one normal trunk gap of the source, NOT near the far-below join.
+    expect(armPlus.y - from.y).toBeLessThan(LAID_OUT_DROP);
+    // The merge run (lower leg) for THIS long edge is correspondingly very tall.
+    const run = closeKneeLowerRun(from, longTail);
+    expect(run.y1 - run.y0).toBeGreaterThan(LAID_OUT_DROP * 3);
+    // The arm + is far above the bottom of that run (well separated from the merge +).
+    expect(run.y1 - armPlus.y).toBeGreaterThan(MIN_SEGMENT);
   });
 });
 

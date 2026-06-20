@@ -457,6 +457,16 @@ export const JOIN_EXTRA_DROP = 48;
 export const JOIN_MERGE_DROP = 56;
 
 /**
+ * MERGE_PLUS_GAP — the vertical gap (px) the merge (+) sits ABOVE the join card, on the
+ * post-convergence central run. Anchoring at a FIXED low offset (rather than the run's
+ * MIDDLE) keeps the merge (+) in the same place whether the arms are equal or UNEQUAL
+ * (an arm's closing edge may be long or short), and keeps it clearly BELOW every arm's
+ * append-(+) — those now sit high, right under their own last node (v0.41.9). The line
+ * ABOVE it (closure corner → +) stays visible because the closure corner is high.
+ */
+export const MERGE_PLUS_GAP = 40;
+
+/**
  * EMPTY_ARM_LANE — the side-lane offset (px) used ONLY by an EMPTY condition arm
  * (one whose target is the directly-below CENTER join). Such an arm's child is at
  * the same x as the If, so without a lane both empty arms' (+)s would stack on the
@@ -563,17 +573,30 @@ export function mergeAnchor(
   joinId: string,
 ): { x: number; y: number; closureCornerY: number } {
   const join = positions.get(joinId);
-  // A closing edge: lands ON the join, a close-knee jog on the join's own column.
-  const closing = edges.find(
+  // The closing edges that land ON the join via a close-knee jog on the join's own
+  // column. With UNEQUAL arms each arm's closing edge has a DIFFERENT drop (a short arm
+  // spans the empty tail down to the merge depth), so their lower runs start at
+  // different y. We pick the SHALLOWEST closure corner (the highest run top) so the
+  // central convergence run is the TALLEST — and anchor the merge (+) LOW on it, a
+  // fixed gap above the join card, so it sits on the post-convergence run (v0.41.8)
+  // and stays clearly BELOW every arm's append-(+) (which now sit high, right under
+  // their own last node — v0.41.9), never adjacent to them.
+  const closings = edges.filter(
     (e) =>
       e.to === joinId &&
       e.closeKnee === true &&
       join !== undefined &&
       Math.abs(e.toPoint.x - join.x) < 1e-6,
   );
-  if (closing && join) {
-    const run = closeKneeLowerRun(closing.fromPoint, closing.toPoint);
-    return { x: join.x, y: (run.y0 + run.y1) / 2, closureCornerY: run.y0 };
+  if (closings.length > 0 && join) {
+    const runs = closings.map((c) => closeKneeLowerRun(c.fromPoint, c.toPoint));
+    // The tallest central run = the one whose top is highest (smallest y0).
+    const top = Math.min(...runs.map((r) => r.y0));
+    const cardTop = join.y;
+    // Anchor LOW — a fixed gap above the join card — but never above the run's top.
+    const desired = cardTop - MERGE_PLUS_GAP;
+    const y = Math.max(desired, (top + cardTop) / 2);
+    return { x: join.x, y, closureCornerY: top };
   }
   // Fallback (no central close-knee run): just above the join card.
   const y = (join?.y ?? 0) - 14;

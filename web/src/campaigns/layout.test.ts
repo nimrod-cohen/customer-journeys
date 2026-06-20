@@ -120,6 +120,93 @@ const mergeThenTrunk: CampaignDefinition = {
   },
 };
 
+// UNEQUAL ARMS (v0.41.9): the Yes arm has ONE node (sendY), the No arm has THREE
+// (waitN → hookN → sendN); both arms then MERGE on `join` and the trunk continues to a
+// final webhook. The SHORT arm's closing edge (sendY → join) spans the empty tail down
+// to the merge depth set by the LONG arm — its append-(+) must NOT drift down that tail.
+const unequalArms: CampaignDefinition = {
+  startNode: 'trigger',
+  nodes: {
+    trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+    cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'sendY', onFalse: 'waitN' },
+    sendY: { type: 'action', kind: 'send', template_id: 'tplY', next: 'join' },
+    waitN: { type: 'wait', delay: { seconds: 3600 }, next: 'hookN' },
+    hookN: { type: 'action', kind: 'webhook', url: 'https://n', method: 'POST', next: 'sendN' },
+    sendN: { type: 'action', kind: 'send', template_id: 'tplN', next: 'join' },
+    join: { type: 'action', kind: 'webhook', url: 'https://j', method: 'POST', next: 'exit1' },
+    exit1: { type: 'exit' },
+  },
+};
+
+describe('unequal-arm branch: each arm append-+ sits right after its last node, far from the merge +', () => {
+  it('the SHORT (Yes) arm + sits just below its last node — NOT drifted down the empty tail', () => {
+    const { positions } = layoutDefinition(unequalArms);
+    const edges = computeEdges(unequalArms, positions);
+    const sendY = positions.get('sendY')!;
+    const closing = edges.find((e) => e.from === 'sendY' && e.to === 'join')!;
+    expect(closing.closeKnee).toBe(true);
+    const plus = verticalAnchor(closing.fromPoint, closing.toPoint, closing.laneX, closing.kneeTop, closing.closeKnee);
+    // + is on the short arm's own column, just below the card bottom (within a normal
+    // trunk gap), NOT down near the far-below merge depth.
+    expect(plus.x).toBeCloseTo(sendY.x, 5);
+    const normalGap = LAYOUT.rowHeight - LAYOUT.cardHeight;
+    const cardBottom = sendY.y + LAYOUT.cardHeight;
+    expect(plus.y).toBeGreaterThan(cardBottom - 1e-6); // below the card
+    expect(plus.y - cardBottom).toBeLessThan(normalGap); // within one trunk gap
+  });
+
+  it('each arm has EXACTLY ONE append-+ and it is clearly separated from the merge + (≥ MIN_SEGMENT)', () => {
+    const { positions } = layoutDefinition(unequalArms);
+    const edges = computeEdges(unequalArms, positions);
+    const mergePlus = mergeAnchor(edges, positions, 'join');
+    for (const armLast of ['sendY', 'sendN'] as const) {
+      const closings = edges.filter((e) => e.from === armLast && e.to === 'join');
+      expect(closings.length, `${armLast} should have exactly one closing edge`).toBe(1);
+      const plus = verticalAnchor(closings[0]!.fromPoint, closings[0]!.toPoint, closings[0]!.laneX, closings[0]!.kneeTop, closings[0]!.closeKnee);
+      // The arm + is HIGH (above the merge +) and separated by ≥ MIN_SEGMENT.
+      expect(plus.y, `${armLast} + below merge +`).toBeLessThan(mergePlus.y);
+      expect(mergePlus.y - plus.y, `${armLast} + adjacent to merge +`).toBeGreaterThanOrEqual(MIN_SEGMENT);
+    }
+  });
+
+  it('the short arm tail between its + and the close knee is a PLAIN vertical with NO second +', () => {
+    const { positions } = layoutDefinition(unequalArms);
+    const edges = computeEdges(unequalArms, positions);
+    // Only ONE edge leaves the short arm's last node, so only ONE edge-+ exists on it.
+    const sendYEdges = edges.filter((e) => e.from === 'sendY');
+    expect(sendYEdges.length).toBe(1);
+    // Its path: a single closing jog (one knee) — the tail below the + down to the
+    // close knee is a single uninterrupted vertical run (no branch / no extra control).
+    const d = orthogonalPath(sendYEdges[0]!.fromPoint, sendYEdges[0]!.toPoint, sendYEdges[0]!.laneX, undefined, sendYEdges[0]!.kneeTop, sendYEdges[0]!.closeKnee);
+    expect(horizontalKnees(d)).toBe(1); // exactly one knee (the close knee at the bottom)
+  });
+
+  it('the merge + stays on the central post-convergence run with a line above and below (v0.41.8)', () => {
+    const { positions } = layoutDefinition(unequalArms);
+    const edges = computeEdges(unequalArms, positions);
+    const join = positions.get('join')!;
+    const anchor = mergeAnchor(edges, positions, 'join');
+    expect(anchor.x).toBeCloseTo(join.x, 5);
+    expect(anchor.closureCornerY).toBeLessThan(anchor.y); // line ABOVE
+    expect(anchor.y).toBeLessThan(join.y); // line BELOW (down to the card)
+    // It is on a vertical run of a closing edge at join.x.
+    const closing = edges.find((e) => e.to === 'join' && e.closeKnee === true && Math.abs(e.toPoint.x - join.x) < 1e-6)!;
+    const d = orthogonalPath(closing.fromPoint, closing.toPoint, closing.laneX, undefined, closing.kneeTop, closing.closeKnee);
+    const run = verticalRuns(d).find((r) => Math.abs(r.x - anchor.x) < 1e-6 && anchor.y >= r.y0 - 1e-6 && anchor.y <= r.y1 + 1e-6);
+    expect(run, `merge + not on a vertical run of ${d}`).toBeTruthy();
+  });
+
+  it('all closing edges are still down-only and axis-aligned', () => {
+    const { positions } = layoutDefinition(unequalArms);
+    const edges = computeEdges(unequalArms, positions);
+    for (const e of edges) {
+      expect(e.toPoint.y).toBeGreaterThan(e.fromPoint.y); // down-only
+      const d = orthogonalPath(e.fromPoint, e.toPoint, e.laneX, undefined, e.kneeTop, e.closeKnee);
+      expect(d).not.toMatch(/\bL\b/); // no diagonal
+    }
+  });
+});
+
 describe('single-out edges are STRAIGHT verticals (no spurious knee / re-centering)', () => {
   it('a single-out node places its child at the SAME x (straight vertical, no jog)', () => {
     const { positions } = layoutDefinition(linear);
