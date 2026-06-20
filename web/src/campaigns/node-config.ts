@@ -181,13 +181,15 @@ export function conditionGroupIsEmpty(group: RuleGroup): boolean {
  * Serialize a condition: compile the builder group to the §8 AstNode (validated
  * via @cdp validateAst — the SAME AST the compiler whitelists). Returns null when
  * the group is empty (the editor must block save). Emits { type:'condition', ast }
- * (edges onTrue/onFalse stay in the edge list).
+ * (edges onTrue/onFalse stay in the edge list). An optional `label` (the branch's
+ * human name) is included ONLY when non-blank — purely cosmetic, never routing.
  */
-export function writeConditionConfig(group: RuleGroup): DslNode | null {
+export function writeConditionConfig(group: RuleGroup, label?: string): DslNode | null {
   const ast = buildAstFromGroup(group);
   if (!ast) return null;
   validateAst(ast as unknown as SegmentsAstNode); // throws on a malformed shape (defensive; the builder emits valid §8 AST)
-  return { type: 'condition', ast };
+  const trimmed = (label ?? '').trim();
+  return trimmed ? { type: 'condition', label: trimmed, ast } : { type: 'condition', ast };
 }
 
 // ── SEND ───────────────────────────────────────────────────────────────────────

@@ -29,11 +29,22 @@
 # [x] Workspace delivery-health on the dashboard: outcomes + bounce/complaint rates (SES thresholds) +
 #     suppression-by-reason + sends-per-day sparkline. GET /dashboards/delivery-health. v0.7.0.
 
+# DONE (2026-06-20)
+# [x] Proper campaign builder (babysit run, 8 phases, test-first, branch feat/campaign-builder). v0.29.0→0.36.0:
+#     p1 workspace tz + DSL hour_of_day_window node + webhook action + cycle/orphan validation;
+#     p2 runner executes hour-window (DST, ws tz) + webhook (post-commit, SSRF/allowlist/timeout/retry, at-most-once);
+#     p3 triggers segment-entry(wired live)+event(processor-time)+manual/API enroll, re-enrollment 'once';
+#     p4 send-node email instance (clone+envelope+publish gating) + event-sourced update-profile (set_attribute, customer.*/event.*);
+#     p5 constrained downward CANVAS (auto-layout + rounded orthogonal connectors, insert/delete, no loops/orphans);
+#     p6 per-node editors (if reuses the segment RuleBuilder) + publish 400/409;
+#     p6b converging branches (arms open & rejoin a single trunk, per-arm +, explicit Exit terminates an arm);
+#     p7 campaigns LIST + separate /campaigns/:id edit page (mirrors broadcasts), design-email removed from the page,
+#        lifecycle pause/resume/archive + runner pause gate, full end-to-end journey acceptance.
+#     Final: Vitest 1272 passing + full e2e green; integration gate 97. On branch feat/campaign-builder (NOT pushed/merged).
+#     FOLLOW-UP (non-blocking): production webhook client → redirect:'manual' + re-validate (SSRF defense-in-depth);
+#     optional resolve-time DNS SSRF check. See .a5c/CAMPAIGN-BUILDER-CARRYFORWARD.txt.
+
 # REMAINING
-* Proper campaign builder with if, wait, wait until, hour of day time window, send email, call webhook widgets.
-  (NOT started — the current builder is one lean trigger->wait->send->exit graph with a single send step.
-   This is a large, design-heavy effort: per-node editing UI + new node types (wait-until, hour-of-day
-   window, webhook action) + DSL/runner support + validation. Tackle as its own focused task.)
 * put today's date in as the default in the email schedule date, and today in the from to dates filters
 
 # TBD - FUTURE , NOT TO BE DONE NOW

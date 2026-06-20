@@ -146,6 +146,15 @@ describe('IF / condition', () => {
     expect(conditionGroupIsEmpty(group)).toBe(false);
   });
 
+  it('includes a trimmed `label` only when non-blank (cosmetic branch name)', () => {
+    const group: RuleGroup = { combinator: 'and', rows: [{ kind: 'field', field: 'attributes.tier', operator: '=', value: 'vip' }], groups: [] };
+    // No name / blank → no label key.
+    expect(writeConditionConfig(group)).not.toHaveProperty('label');
+    expect(writeConditionConfig(group, '   ')).not.toHaveProperty('label');
+    // A name is trimmed and carried.
+    expect(writeConditionConfig(group, '  VIP?  ')).toMatchObject({ type: 'condition', label: 'VIP?' });
+  });
+
   it('round-trip: conditionAstToRows(ast) → re-compile is structurally equal', () => {
     const group: RuleGroup = {
       combinator: 'or',

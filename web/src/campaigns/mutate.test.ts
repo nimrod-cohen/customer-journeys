@@ -268,4 +268,16 @@ describe('nodeSummary', () => {
     expect(nodeSummary(byId('s'))).toBe('Send email');
     expect(nodeSummary(byId('x'))).toBe('Exit');
   });
+
+  it('a named condition shows its label instead of the generic "If / branch"', () => {
+    const m = parseDefinition({
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'segment_entry', next: 'c' },
+        c: { type: 'condition', label: 'VIP?', ast: {}, onTrue: 'x', onFalse: 'x' },
+        x: { type: 'exit' },
+      },
+    });
+    expect(nodeSummary(m.nodes.find((n) => n.id === 'c')!)).toBe('VIP?');
+  });
 });

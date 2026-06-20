@@ -5,11 +5,16 @@
 // control on each edge opens the insert palette; each card has an ActionMenu with
 // Delete. This component is pure UI: state (the CanvasModel) lives in the screen.
 import type { JSX } from 'preact';
+import { useState } from 'preact/hooks';
 import { ActionMenu } from '../ui/kit.js';
 import { layoutDefinition, LAYOUT, type LayoutEdge } from './layout.js';
 import { orthogonalPath, edgeMidpoint } from './orthogonal-path.js';
 import { buildDefinition, displayType, type CanvasModel, type CanvasEdge, type CanvasNode } from './model.js';
 import { nodeSummary } from './mutate.js';
+
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 1.5;
+const ZOOM_STEP = 0.1;
 
 const NODE_STYLE: Record<string, string> = {
   trigger: 'bg-brand-50 text-brand-700 ring-brand-200',
@@ -54,14 +59,67 @@ export function CampaignCanvas({
 }): JSX.Element {
   const layout = layoutDefinition(buildDefinition(model));
 
+  // View-only zoom (does NOT touch the model — connector `d` coords are unchanged;
+  // we scale the whole content container). Clamped 50%–150% in 10% steps.
+  const [scale, setScale] = useState(1);
+  const clampZoom = (z: number): number => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
+
   return (
-    <div
-      data-testid="campaign-canvas"
-      class="relative overflow-auto rounded-xl border border-stone-200 bg-stone-50/60"
-      style={{ maxHeight: '60vh' }}
-    >
-      <div class="relative" style={{ width: `${layout.width}px`, height: `${layout.height}px` }}>
-        {/* Connector layer (behind the cards). */}
+    <div class="relative">
+      {/* Zoom toolbar — floats over the top-right, outside the scroll viewport. */}
+      <div class="absolute right-2 top-2 z-20 flex items-center gap-0.5 rounded-lg border border-stone-200 bg-white/90 p-1 text-stone-600 shadow-sm backdrop-blur">
+        <button
+          type="button"
+          data-testid="canvas-zoom-out"
+          aria-label="Zoom out"
+          disabled={scale <= ZOOM_MIN}
+          onClick={() => setScale((s) => clampZoom(s - ZOOM_STEP))}
+          class="flex h-7 w-7 items-center justify-center rounded-md text-base font-bold hover:bg-stone-100 disabled:opacity-30"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          data-testid="canvas-zoom-reset"
+          aria-label="Reset zoom"
+          onClick={() => setScale(1)}
+          class="min-w-[3rem] rounded-md px-1 text-xs font-semibold tabular-nums hover:bg-stone-100"
+        >
+          <span data-testid="canvas-zoom-level">{Math.round(scale * 100)}%</span>
+        </button>
+        <button
+          type="button"
+          data-testid="canvas-zoom-in"
+          aria-label="Zoom in"
+          disabled={scale >= ZOOM_MAX}
+          onClick={() => setScale((s) => clampZoom(s + ZOOM_STEP))}
+          class="flex h-7 w-7 items-center justify-center rounded-md text-base font-bold hover:bg-stone-100 disabled:opacity-30"
+        >
+          +
+        </button>
+      </div>
+
+      <div
+        data-testid="campaign-canvas"
+        class="relative overflow-auto rounded-xl border border-stone-200 bg-stone-50/60"
+        style={{ maxHeight: '60vh' }}
+      >
+        {/* Scaled-size spacer so the scrollable area tracks the zoom level. */}
+        <div style={{ width: `${layout.width * scale}px`, height: `${layout.height * scale}px` }}>
+          <div
+            class="relative"
+            style={{
+              width: `${layout.width}px`,
+              height: `${layout.height}px`,
+              transform: `scale(${scale})`,
+              transformOrigin: 'top left',
+              // Light grid dots (stone-400 @ ~22% on a 22px grid) for spatial sense.
+              backgroundImage:
+                'radial-gradient(circle, rgb(168 162 158 / 0.22) 1px, transparent 1.5px)',
+              backgroundSize: '22px 22px',
+            }}
+          >
+            {/* Connector layer (behind the cards). */}
         <svg
           data-testid="campaign-connectors"
           class="pointer-events-none absolute inset-0"
@@ -163,6 +221,8 @@ export function CampaignCanvas({
             </div>
           );
         })}
+          </div>
+        </div>
       </div>
     </div>
   );

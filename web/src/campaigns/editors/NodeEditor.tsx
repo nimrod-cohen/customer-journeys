@@ -296,11 +296,13 @@ function HourWindowEditor(props: NodeEditorProps) {
 
 function ConditionEditor(props: NodeEditorProps) {
   const initialAst = (props.node.node as { ast?: AstNode }).ast ?? null;
+  const initialLabel = String((props.node.node as { label?: unknown }).label ?? '');
+  const [name, setName] = useState(initialLabel);
   const [group, setGroup] = useState<RuleGroup>(() => groupFromAst(initialAst));
   const empty = conditionGroupIsEmpty(group);
 
   const save = async (): Promise<void> => {
-    const node = writeConditionConfig(group);
+    const node = writeConditionConfig(group, name);
     if (!node) {
       // The editor BLOCKS save on an empty rule group (no native dialog — inline).
       return;
@@ -312,6 +314,14 @@ function ConditionEditor(props: NodeEditorProps) {
   return (
     <div class="space-y-4">
       <p class="text-sm text-stone-500">Split the journey: profiles matching these rules take the <b>Yes</b> branch, everyone else takes <b>No</b>. Same rule builder as segments.</p>
+      <Field label="Name (optional)" hint="A short label shown on the branch card, e.g. “VIP?”.">
+        <Input
+          data-testid="condition-name"
+          value={name}
+          placeholder="If / branch"
+          onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
+        />
+      </Field>
       <RuleBuilder group={group} onChange={setGroup} allowEmptyRootRules />
       {empty ? (
         <p data-testid="condition-incomplete" class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-200">

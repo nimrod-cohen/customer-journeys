@@ -304,8 +304,10 @@ export function nodeSummary(canvasNode: CanvasNode): string {
       const e = (node as { endHour?: number }).endHour ?? 0;
       return `Only ${pad(s)}:00–${pad(e)}:00`;
     }
-    case 'condition':
-      return 'If / branch';
+    case 'condition': {
+      const label = String((node as { label?: unknown }).label ?? '').trim();
+      return label || 'If / branch';
+    }
     case 'action': {
       const kind = String((node as { kind?: unknown }).kind ?? '');
       if (kind === 'send') return 'Send email';

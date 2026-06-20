@@ -54,6 +54,9 @@ export interface WaitNode {
 /** A condition (branch) node — routes via the §8 compiler (reuses AstNode). */
 export interface ConditionNode {
   readonly type: 'condition';
+  /** Optional human label for the branch (e.g. "VIP?"), shown on the canvas card.
+   *  Purely cosmetic — never affects routing or validation. */
+  readonly label?: string;
   /** The §8 rule AST evaluated against the profile's features/attributes. */
   readonly ast: AstNode;
   /** Node id taken when the AST matches. */
