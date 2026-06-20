@@ -102,7 +102,15 @@ export function CampaignCanvas({
       <div
         data-testid="campaign-canvas"
         class="relative overflow-auto rounded-xl border border-stone-200 bg-stone-50/60"
-        style={{ maxHeight: '60vh' }}
+        style={{
+          maxHeight: '60vh',
+          // Light grid dots blanket the WHOLE canvas (constant density, independent
+          // of zoom). `local` attachment tiles across the full scrollable area and
+          // scrolls with the content rather than sticking to the viewport box.
+          backgroundImage: 'radial-gradient(circle, rgb(168 162 158 / 0.22) 1px, transparent 1.5px)',
+          backgroundSize: '22px 22px',
+          backgroundAttachment: 'local',
+        }}
       >
         {/* Scaled-size spacer so the scrollable area tracks the zoom level. */}
         <div style={{ width: `${layout.width * scale}px`, height: `${layout.height * scale}px` }}>
@@ -113,10 +121,6 @@ export function CampaignCanvas({
               height: `${layout.height}px`,
               transform: `scale(${scale})`,
               transformOrigin: 'top left',
-              // Light grid dots (stone-400 @ ~22% on a 22px grid) for spatial sense.
-              backgroundImage:
-                'radial-gradient(circle, rgb(168 162 158 / 0.22) 1px, transparent 1.5px)',
-              backgroundSize: '22px 22px',
             }}
           >
             {/* Connector layer (behind the cards). */}
