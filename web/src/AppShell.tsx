@@ -215,7 +215,11 @@ export function AppShell(): JSX.Element {
 
       <DialogHost />
       <ToastHost />
-      <main data-testid="app-body" class="flex-1 overflow-x-hidden px-8 py-8">
+      {/* min-w-0: a flex child's default min-width:auto would let `main` grow past
+          the viewport to fit wide content (e.g. the campaigns list row) instead of
+          shrinking — causing page-level horizontal overflow. min-w-0 lets it shrink
+          to the flex track so overflow-x-hidden + inner max-w-6xl/truncation apply. */}
+      <main data-testid="app-body" class="min-w-0 flex-1 overflow-x-hidden px-8 py-8">
         {/* Key by route AND active workspace so switching company/workspace
             remounts the screen and re-fetches its (now re-scoped) data, even when
             the route is unchanged (e.g. switching while already on Dashboards). */}
