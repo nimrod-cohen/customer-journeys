@@ -5,12 +5,18 @@
 // control on each edge opens the insert palette; each card has an ActionMenu with
 // Delete. This component is pure UI: state (the CanvasModel) lives in the screen.
 import type { JSX } from 'preact';
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import { ActionMenu } from '../ui/kit.js';
 import { layoutDefinition, LAYOUT, type LayoutEdge } from './layout.js';
 import { orthogonalPath, edgeMidpoint } from './orthogonal-path.js';
 import { buildDefinition, displayType, type CanvasModel, type CanvasEdge, type CanvasNode } from './model.js';
-import { nodeSummary } from './mutate.js';
+import { nodeSummary, subtreeNodeIds } from './mutate.js';
+
+/** An in-progress placement (Move / Duplicate): pick a destination + to splice at. */
+export interface Placement {
+  readonly op: 'move' | 'duplicate';
+  readonly rootId: string;
+}
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 1.5;
@@ -48,6 +54,10 @@ export function CampaignCanvas({
   onDelete,
   onOpen,
   publishErrors,
+  placement,
+  onStartPlacement,
+  onPickTarget,
+  onCancelPlacement,
 }: {
   model: CanvasModel;
   onInsert: (edge: CanvasEdge) => void;
@@ -56,8 +66,41 @@ export function CampaignCanvas({
   onOpen: (node: CanvasNode) => void;
   /** Per-node publish-gate reasons (node id → message), surfaced on the card. */
   publishErrors?: Readonly<Record<string, string>>;
+  /** When set, the canvas is in placement mode: the (+) controls pick a destination. */
+  placement?: Placement | null;
+  /** Start a Move / Duplicate placement for a node (from its ActionMenu). */
+  onStartPlacement?: (op: 'move' | 'duplicate', node: CanvasNode) => void;
+  /** A (+) was clicked while placing — splice the moved/duplicated branch here. */
+  onPickTarget?: (edge: CanvasEdge) => void;
+  /** Cancel the in-progress placement (banner button / Escape). */
+  onCancelPlacement?: () => void;
 }): JSX.Element {
   const layout = layoutDefinition(buildDefinition(model));
+
+  // While moving a branch, the (+) controls INSIDE the moving subtree are invalid
+  // destinations (would self-insert / cycle) — compute the member set to skip them.
+  const movingIds =
+    placement?.op === 'move' ? subtreeNodeIds(model, placement.rootId) : null;
+  const isInvalidTarget = (edge: CanvasEdge): boolean =>
+    movingIds !== null && (movingIds.has(edge.from) || movingIds.has(edge.to));
+
+  // Escape cancels an in-progress placement (parity with closing the palette).
+  // Registered in the CAPTURE phase on `document` so it fires regardless of which
+  // element holds focus (the just-closed ActionMenu, a (+), the body, …).
+  const placing = placement != null;
+  useEffect(() => {
+    if (!placing) return undefined;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onCancelPlacement?.();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [placing, onCancelPlacement]);
+
+  // The node whose ActionMenu is currently open — its card is raised above sibling
+  // cards (each card is its own z-10 stacking context, so a later sibling would
+  // otherwise paint over the open dropdown and intercept its clicks).
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   // View-only zoom (does NOT touch the model — connector `d` coords are unchanged;
   // we scale the whole content container). Clamped 50%–150% in 10% steps.
@@ -66,6 +109,28 @@ export function CampaignCanvas({
 
   return (
     <div class="relative">
+      {/* Placement banner — sticky guidance while picking a destination (+). */}
+      {placement ? (
+        <div
+          data-testid="placement-banner"
+          class="sticky top-0 z-30 mb-2 flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-800 shadow-sm"
+        >
+          <span>
+            {placement.op === 'move'
+              ? 'Select where to move the branch — pick a ＋.'
+              : 'Select where to place the copy — pick a ＋.'}
+          </span>
+          <button
+            type="button"
+            data-testid="placement-cancel"
+            onClick={() => onCancelPlacement?.()}
+            class="btn-ghost btn-sm shrink-0"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
+
       {/* Zoom toolbar — floats over the top-right, outside the scroll viewport. */}
       <div class="absolute right-2 top-2 z-20 flex items-center gap-0.5 rounded-lg border border-stone-200 bg-white/90 p-1 text-stone-600 shadow-sm backdrop-blur">
         <button
@@ -140,19 +205,26 @@ export function CampaignCanvas({
           const mid = edgeMidpoint(e.fromPoint, e.toPoint);
           const edge = model.edges.find((me) => me.from === e.from && me.slot === e.slot && me.to === e.to);
           if (!edge) return null;
+          // While placing a MOVE, hide the (+) controls inside the moving subtree
+          // (invalid destinations — would self-insert / cycle).
+          if (placement && isInvalidTarget(edge)) return null;
           return (
             <button
               key={`ins-${e.from}-${e.slot}-${e.to}`}
               type="button"
-              data-testid="campaign-edge-insert"
-              aria-label="Insert a step on this edge"
-              onClick={() => onInsert(edge)}
+              data-testid={placing ? 'placement-target' : 'campaign-edge-insert'}
+              aria-label={placing ? 'Place the branch here' : 'Insert a step on this edge'}
+              onClick={() => (placing ? onPickTarget?.(edge) : onInsert(edge))}
               // z-10 (same as cards, rendered BEFORE them) so a card's open
               // ActionMenu dropdown — which lives inside the card's z-10 stacking
               // context and can extend DOWN past the card — paints OVER these (+)
               // controls instead of being intercepted by them. The (+) sit in the
               // inter-row gap, so no card ever covers a (+) where it must be clicked.
-              class="absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-stone-300 bg-white text-sm font-bold text-stone-500 shadow-sm transition-colors hover:border-brand-400 hover:text-brand-600"
+              class={`absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-sm font-bold shadow-sm transition-colors ${
+                placing
+                  ? 'animate-pulse border-brand-500 bg-brand-500 text-white ring-2 ring-brand-200 hover:bg-brand-600'
+                  : 'border-stone-300 bg-white text-stone-500 hover:border-brand-400 hover:text-brand-600'
+              }`}
               style={{ left: `${mid.x}px`, top: `${mid.y}px` }}
             >
               +
@@ -167,14 +239,18 @@ export function CampaignCanvas({
           const isTrigger = cn.node.type === 'trigger';
           const isExit = cn.node.type === 'exit';
           const publishErr = publishErrors?.[cn.id];
+          // Raise the card whose menu is open ABOVE sibling cards so its dropdown
+          // (which can extend down past the card) paints over — and stays clickable
+          // over — the next card, instead of being intercepted by it.
+          const raised = openMenuId === cn.id;
           return (
             <div
               key={cn.id}
               data-testid={`node-${dt}`}
               data-node-id={cn.id}
-              class={`absolute z-10 rounded-xl border bg-white shadow-card ring-1 ring-inset ${
-                publishErr ? 'ring-rose-300' : 'ring-stone-200'
-              }`}
+              class={`absolute rounded-xl border bg-white shadow-card ring-1 ring-inset ${
+                raised ? 'z-20' : 'z-10'
+              } ${publishErr ? 'ring-rose-300' : 'ring-stone-200'}`}
               style={{
                 left: `${pos.x - LAYOUT.cardWidth / 2}px`,
                 top: `${pos.y}px`,
@@ -203,10 +279,27 @@ export function CampaignCanvas({
                   <ActionMenu
                     data-testid={`node-actions-${cn.id}`}
                     label="Step actions"
+                    onOpenChange={(o) => setOpenMenuId(o ? cn.id : (prev) => (prev === cn.id ? null : prev))}
                     items={[
                       ...(isExit
                         ? []
                         : [{ label: 'Edit step', 'data-testid': 'node-edit', onSelect: () => onOpen(cn) }]),
+                      // Move / Duplicate the node + its branch — non-trigger, non-exit
+                      // only (an exit is a leaf; the trigger has no menu at all).
+                      ...(isExit
+                        ? []
+                        : [
+                            {
+                              label: 'Move to…',
+                              'data-testid': 'node-move',
+                              onSelect: () => onStartPlacement?.('move', cn),
+                            },
+                            {
+                              label: 'Duplicate…',
+                              'data-testid': 'node-duplicate',
+                              onSelect: () => onStartPlacement?.('duplicate', cn),
+                            },
+                          ]),
                       {
                         label: 'Delete step',
                         danger: true,

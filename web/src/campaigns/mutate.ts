@@ -279,6 +279,212 @@ function hasReachableExit(def: CampaignDefinition): boolean {
   return false;
 }
 
+// --- MOVE / DUPLICATE a node + its branch (the EXCLUSIVE SUBTREE) ------------
+//
+// The EXCLUSIVE SUBTREE of a root R is R plus every node reachable ONLY through
+// R: `S = fromR \ reachableWithoutR` (always includes R). The subtree's
+// CONTINUATION C is the boundary target — the node(s) that are edge-targets of
+// some node in S but are NOT themselves in S. For a well-formed branch C is a
+// SINGLE node (the rejoin/join) or EMPTY (a terminal branch that ends only in
+// exits). 2+ distinct external boundary targets ⇒ the branch is not cleanly
+// movable as a unit (throws). Both ops are PURE + re-checked by the server's
+// validateCampaignDefinition on save; locally we re-run hasReachableExit, the
+// dangling-edge guard, AND a hasCycle DFS (down-only must hold) before returning.
+
+/** The exclusive-subtree result for a root: the member set `S` and its boundary. */
+interface Subtree {
+  /** R + every node reachable only through R (always includes R). */
+  ids: Set<string>;
+  /** The single boundary continuation, or undefined for a terminal branch. */
+  continuation: string | undefined;
+}
+
+/** BFS the set of nodes reachable from `start`, optionally treating `skip` as absent. */
+function reachableFrom(def: CampaignDefinition, start: string, skip?: string): Set<string> {
+  const seen = new Set<string>();
+  const queue = [start];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    if (cur === skip || seen.has(cur)) continue;
+    seen.add(cur);
+    const node = def.nodes[cur];
+    if (node) for (const e of outgoingEdges(cur, node)) queue.push(e.to);
+  }
+  return seen;
+}
+
+/**
+ * The exclusive subtree S of `rootId` + its single boundary continuation C.
+ * `S = fromR \ reachableWithoutR` (BFS from root) and is intersected against
+ * `fromR` so it never includes a node reached from start that merely sits below.
+ * The boundary is every distinct edge-target of a node in S that is NOT in S; a
+ * well-formed branch has 0 (terminal) or 1 (rejoin) — 2+ throws (not movable).
+ */
+function exclusiveSubtree(def: CampaignDefinition, rootId: string): Subtree {
+  const fromR = reachableFrom(def, rootId);
+  const withoutR = reachableFrom(def, def.startNode, rootId);
+  const ids = new Set<string>();
+  for (const id of fromR) if (!withoutR.has(id)) ids.add(id);
+  ids.add(rootId); // R is always in its own subtree
+
+  const boundary = new Set<string>();
+  for (const id of ids) {
+    const node = def.nodes[id];
+    if (!node) continue;
+    for (const e of outgoingEdges(id, node)) if (!ids.has(e.to)) boundary.add(e.to);
+  }
+  if (boundary.size > 1) {
+    throw new MutationError("This branch can't be moved as a unit.");
+  }
+  return { ids, continuation: [...boundary][0] };
+}
+
+/** The set of node ids in the exclusive subtree of `rootId` (UI: hide invalid +s). */
+export function subtreeNodeIds(model: CanvasModel, rootId: string): Set<string> {
+  return exclusiveSubtree(buildDefinition(model), rootId).ids;
+}
+
+/** Does the definition contain a cycle? (down-only must hold — a DFS back-edge fails.) */
+function hasCycle(def: CampaignDefinition): boolean {
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const color = new Map<string, number>();
+  const visit = (id: string): boolean => {
+    color.set(id, GRAY);
+    const node = def.nodes[id];
+    if (node) {
+      for (const e of outgoingEdges(id, node)) {
+        const c = color.get(e.to) ?? WHITE;
+        if (c === GRAY) return true; // back-edge
+        if (c === WHITE && def.nodes[e.to] && visit(e.to)) return true;
+      }
+    }
+    color.set(id, BLACK);
+    return false;
+  };
+  for (const id of Object.keys(def.nodes)) {
+    if ((color.get(id) ?? WHITE) === WHITE && visit(id)) return true;
+  }
+  return false;
+}
+
+/** Local structural guards (mirror deleteNode + add no-cycle); throw on failure. */
+function assertWellFormed(def: CampaignDefinition, message: string): void {
+  if (!hasReachableExit(def)) throw new MutationError(message);
+  for (const [, node] of Object.entries(def.nodes)) {
+    for (const e of outgoingEdges('_', node)) {
+      if (!Object.prototype.hasOwnProperty.call(def.nodes, e.to)) throw new MutationError(message);
+    }
+  }
+  if (hasCycle(def)) throw new MutationError(message);
+}
+
+/**
+ * moveSubtree(model, rootId, destEdge) — relocate the node `rootId` together with
+ * its EXCLUSIVE SUBTREE S to the destination edge A→B, splicing it in as
+ * A→rootId→…→B and closing the gap it left (R's parents re-link to the
+ * continuation C). Pure; re-validated locally + server-side.
+ */
+export function moveSubtree(model: CanvasModel, rootId: string, destEdge: CanvasEdge): CanvasModel {
+  if (rootId === model.start) throw new MutationError("The trigger can't be moved.");
+  const def = buildDefinition(model);
+  const { ids: S, continuation: C } = exclusiveSubtree(def, rootId);
+
+  // No-op: already sitting on this destination.
+  if (destEdge.to === rootId) return model;
+  // The destination must be OUTSIDE the moving branch (else a cycle / self-insert).
+  if (S.has(destEdge.from) || S.has(destEdge.to)) {
+    throw new MutationError("Choose a spot outside the branch you're moving.");
+  }
+
+  const nodes: Record<string, DslNode> = {};
+  for (const [nid, node] of Object.entries(def.nodes)) {
+    if (S.has(nid)) {
+      // Members of S keep their internal edges; only BOUNDARY edges (→ C) get
+      // re-pointed to B (the new continuation below the moved branch).
+      nodes[nid] = repointParents(node, C ?? '\0none', destEdge.to);
+    } else {
+      // DETACH: R's old parents re-link to C (drop if C undefined → validate catches
+      // an orphan). REATTACH: A's slot that targeted B now targets rootId.
+      let next = repointParents(node, rootId, C);
+      if (nid === destEdge.from) next = repointSlot(next, destEdge.slot, rootId);
+      nodes[nid] = next;
+    }
+  }
+
+  const nextDef = { startNode: def.startNode, nodes };
+  assertWellFormed(nextDef, 'That move would break the journey.');
+  return parseDefinition(nextDef);
+}
+
+/**
+ * duplicateSubtree(model, rootId, destEdge) — CLONE the node `rootId` and its
+ * exclusive subtree S with FRESH ids and splice the copy onto the destination
+ * edge A→B (A→cloneRoot→…→B). The originals are untouched; fresh ids can't cycle
+ * with originals. Pure; re-validated locally + server-side.
+ */
+export function duplicateSubtree(model: CanvasModel, rootId: string, destEdge: CanvasEdge): CanvasModel {
+  if (rootId === model.start) throw new MutationError("The trigger can't be duplicated.");
+  const def = buildDefinition(model);
+  const { ids: S, continuation: C } = exclusiveSubtree(def, rootId);
+
+  // Build an old→new id map, minting a fresh id per cloned node (collision-checked
+  // against the originals AND the ids already minted).
+  const existing = new Set<string>(Object.keys(def.nodes));
+  const idMap = new Map<string, string>();
+  for (const oldId of S) {
+    const node = def.nodes[oldId]!;
+    const type = paletteTypeOf(node);
+    const fresh = freshNodeId(type, existing);
+    existing.add(fresh);
+    idMap.set(oldId, fresh);
+  }
+
+  const nodes: Record<string, DslNode> = { ...def.nodes };
+  for (const oldId of S) {
+    const cloneId = idMap.get(oldId)!;
+    const node = def.nodes[oldId]!;
+    // Copy the node; remap INTERNAL edges (target in S → its clone), and clone
+    // BOUNDARY edges (→ C) to point at B (the destination continuation).
+    let clone: DslNode = { ...node };
+    for (const slot of ['next', 'onTrue', 'onFalse'] as const) {
+      const target = (node as Record<string, unknown>)[slot];
+      if (typeof target !== 'string' || target.length === 0) continue;
+      if (S.has(target)) clone = { ...clone, [slot]: idMap.get(target)! };
+      else if (target === C) clone = { ...clone, [slot]: destEdge.to };
+    }
+    nodes[cloneId] = clone;
+  }
+
+  // Splice: A's slot that targeted B now targets the clone-root. Originals untouched.
+  nodes[destEdge.from] = repointSlot(nodes[destEdge.from]!, destEdge.slot, idMap.get(rootId)!);
+
+  const nextDef = { startNode: def.startNode, nodes };
+  assertWellFormed(nextDef, 'That copy would break the journey.');
+  return parseDefinition(nextDef);
+}
+
+/** Map a DSL node back to the PaletteType freshNodeId expects (for clone ids). */
+function paletteTypeOf(node: DslNode): PaletteType {
+  switch (node.type) {
+    case 'wait':
+      return typeof (node as { until?: unknown }).until === 'string' ? 'wait_until' : 'wait';
+    case 'hour_of_day_window':
+      return 'hour_of_day_window';
+    case 'condition':
+      return 'condition';
+    case 'action': {
+      const kind = (node as { kind?: unknown }).kind;
+      if (kind === 'send' || kind === 'set_attribute' || kind === 'webhook') return kind;
+      return 'send';
+    }
+    case 'exit':
+    default:
+      return 'exit';
+  }
+}
+
 /** A short human label for a node card (the canvas summary line). */
 export function nodeSummary(canvasNode: CanvasNode): string {
   const node = canvasNode.node;

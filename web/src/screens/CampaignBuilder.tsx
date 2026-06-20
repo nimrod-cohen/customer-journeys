@@ -23,7 +23,7 @@ import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor, Dra
 import type { ActionMenuItem } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.js';
 import { showToast } from '../ui/toast.js';
-import { CampaignCanvas } from '../campaigns/CampaignCanvas.js';
+import { CampaignCanvas, type Placement } from '../campaigns/CampaignCanvas.js';
 import {
   parseDefinition,
   buildDefinition,
@@ -35,7 +35,7 @@ import {
   type PaletteType,
 } from '../campaigns/model.js';
 import { applyNodeConfig } from '../campaigns/node-config.js';
-import { insertOnEdge, deleteNode, MutationError } from '../campaigns/mutate.js';
+import { insertOnEdge, deleteNode, moveSubtree, duplicateSubtree, MutationError } from '../campaigns/mutate.js';
 import { NodeEditorBody, nodeEditorTestId, nodeEditorTitle } from '../campaigns/editors/NodeEditor.js';
 
 /** Enrollment-status buckets surfaced per campaign on the list. */
@@ -248,6 +248,8 @@ export function CampaignDetail({ id }: { id?: string }) {
   const [segments, setSegments] = useState<SegmentLite[]>([]);
   const [paletteEdge, setPaletteEdge] = useState<CanvasEdge | null>(null);
   const [openNode, setOpenNode] = useState<CanvasNode | null>(null);
+  // An in-progress Move / Duplicate placement (pick a destination + to splice at).
+  const [placement, setPlacement] = useState<Placement | null>(null);
   const [error, setError] = useState('');
   // Publish-gate feedback: a top-level reason + a per-node-id error for the card.
   const [publishReason, setPublishReason] = useState('');
@@ -314,6 +316,42 @@ export function CampaignDetail({ id }: { id?: string }) {
       setError('');
     } catch (e) {
       const msg = e instanceof MutationError || e instanceof Error ? e.message : String(e);
+      showToast(msg, { tone: 'error' });
+    }
+  };
+
+  // Start a Move / Duplicate placement: the canvas then asks the user to pick a
+  // destination (+). (No server call yet — the splice happens on pick.)
+  const startPlacement = (op: 'move' | 'duplicate', node: CanvasNode): void => {
+    setPlacement({ op, rootId: node.id });
+  };
+  const cancelPlacement = (): void => setPlacement(null);
+
+  // The user picked a destination edge while placing: apply the move/duplicate,
+  // persist (server re-validates), and clear placement. A MutationError (the LOCAL
+  // guards) or a server rejection surfaces as a toast and keeps the prior model.
+  const pickTarget = async (edge: CanvasEdge): Promise<void> => {
+    if (!placement) return;
+    const { op, rootId } = placement;
+    let next: CanvasModel;
+    try {
+      next = op === 'move' ? moveSubtree(model, rootId, edge) : duplicateSubtree(model, rootId, edge);
+    } catch (e) {
+      const msg = e instanceof MutationError || e instanceof Error ? e.message : String(e);
+      showToast(msg, { tone: 'error' });
+      return; // stay in placement so the user can pick another spot
+    }
+    setModel(next);
+    setPlacement(null);
+    clearPublish();
+    try {
+      await persist(next);
+      await reloadList();
+      showToast(op === 'move' ? 'Branch moved.' : 'Branch duplicated.', { tone: 'success' });
+    } catch (err) {
+      // The server rejected the new graph (e.g. an orphaned sibling): revert + toast.
+      const msg = (err as { error?: string })?.error ?? String(err);
+      setModel(model);
       showToast(msg, { tone: 'error' });
     }
   };
@@ -455,6 +493,10 @@ export function CampaignDetail({ id }: { id?: string }) {
           onDelete={remove}
           onOpen={(node) => void openEditor(node)}
           publishErrors={publishErrors}
+          placement={placement}
+          onStartPlacement={startPlacement}
+          onPickTarget={(edge) => void pickTarget(edge)}
+          onCancelPlacement={cancelPlacement}
         />
 
         <div class="mt-4 flex flex-wrap items-center gap-3">

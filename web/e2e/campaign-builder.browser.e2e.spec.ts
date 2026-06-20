@@ -408,6 +408,101 @@ test('delete a node re-links the graph and stays valid', async ({ page }) => {
   await expect(page.getByTestId('campaign-list')).toContainText('Deletable');
 });
 
+test('MOVE a node to a chosen + relocates it (placement mode), source closes up', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Move me');
+
+  // Build a diamond with a movable single node on the Yes arm:
+  //   trigger → cond(onTrue → wait → exit_1, onFalse → exit_1).
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+  const arms = await armInsertIndices(page, await conditionBottom(page));
+  expect(arms.length).toBe(2);
+  await page.getByTestId('campaign-edge-insert').nth(arms[0]!).click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toBeVisible();
+
+  // Open the wait's ⋮ → "Move to…" → the placement banner appears.
+  const waitCard = page.getByTestId('node-wait');
+  await waitCard.getByLabel('Step actions').click();
+  await waitCard.getByTestId('node-move').click();
+  await expect(page.getByTestId('placement-banner')).toBeVisible();
+
+  // Pick the FIRST placement target (the trunk trigger→cond edge — outside the
+  // moving subtree). The wait relocates above the condition; the Yes arm closes up.
+  await page.getByTestId('placement-target').first().click();
+  await expect(page.getByTestId('placement-banner')).toHaveCount(0);
+  await expect(page.getByTestId('toast')).toContainText(/moved/i);
+
+  // The wait now sits ABOVE the condition (down-only: its card top is above cond's).
+  const waitTop = (await page.getByTestId('node-wait').boundingBox())!.y;
+  const condTop = (await page.getByTestId('node-condition').boundingBox())!.y;
+  expect(waitTop).toBeLessThan(condTop);
+
+  // Persisted: reopen and the wait still precedes the condition.
+  await page.getByTestId('campaigns-back').click();
+  await page.getByTestId('campaign-item').filter({ hasText: 'Move me' }).getByTestId('campaign-open').click();
+  await page.getByTestId('campaign-canvas').waitFor();
+  await expect(page.getByTestId('node-wait')).toBeVisible();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+});
+
+test('placement mode cancels via the banner button and via Escape', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toBeVisible();
+
+  const waitCard = page.getByTestId('node-wait');
+  // Cancel via the banner button.
+  await waitCard.getByLabel('Step actions').click();
+  await waitCard.getByTestId('node-move').click();
+  await expect(page.getByTestId('placement-banner')).toBeVisible();
+  await page.getByTestId('placement-cancel').click();
+  await expect(page.getByTestId('placement-banner')).toHaveCount(0);
+
+  // Cancel via Escape.
+  await waitCard.getByLabel('Step actions').click();
+  await waitCard.getByTestId('node-move').click();
+  await expect(page.getByTestId('placement-banner')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('placement-banner')).toHaveCount(0);
+});
+
+test('DUPLICATE a node to a chosen + adds a second card; the original stays', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Dupe me');
+
+  // Diamond with a wait on the Yes arm: trigger → cond(onTrue → wait → exit_1, onFalse → exit_1).
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+  const arms = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(arms[0]!).click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toHaveCount(1);
+
+  // ⋮ → "Duplicate…" → pick a destination target. A second wait appears.
+  const waitCard = page.getByTestId('node-wait');
+  await waitCard.getByLabel('Step actions').click();
+  await waitCard.getByTestId('node-duplicate').click();
+  await expect(page.getByTestId('placement-banner')).toContainText(/copy/i);
+  // Place the copy on the LAST target (the onFalse arm, outside the wait's subtree).
+  await page.getByTestId('placement-target').last().click();
+  await expect(page.getByTestId('placement-banner')).toHaveCount(0);
+  await expect(page.getByTestId('toast')).toContainText(/duplicated/i);
+
+  // Two wait cards now exist; the original is still present.
+  await expect(page.getByTestId('node-wait')).toHaveCount(2);
+
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast').first()).toBeVisible();
+});
+
 test('deleting the last exit is refused with a styled toast (no native dialog)', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click(); // trigger → exit_1 (the only exit)

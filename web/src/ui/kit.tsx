@@ -103,14 +103,21 @@ export function ActionMenu({
   items,
   label = 'Actions',
   'data-testid': testId,
+  onOpenChange,
 }: {
   items: ActionMenuItem[];
   label?: string;
   'data-testid'?: string;
+  /** Notified when the dropdown opens/closes (e.g. to raise the host's z-index). */
+  onOpenChange?: (open: boolean) => void;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [open, onOpenChange]);
 
   useEffect(() => {
     if (!open) return;

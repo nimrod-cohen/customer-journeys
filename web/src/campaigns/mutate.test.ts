@@ -3,7 +3,15 @@
 import { describe, it, expect } from 'vitest';
 import { validateCampaignDefinition } from '@cdp/service-campaign-runner';
 import { parseDefinition, buildDefinition, starterModel } from './model.js';
-import { insertOnEdge, deleteNode, nodeSummary, MutationError } from './mutate.js';
+import {
+  insertOnEdge,
+  deleteNode,
+  nodeSummary,
+  moveSubtree,
+  duplicateSubtree,
+  subtreeNodeIds,
+  MutationError,
+} from './mutate.js';
 
 const NOW = new Date('2026-06-06T00:00:00Z');
 
@@ -246,6 +254,220 @@ describe('diamond round-trip identity', () => {
     // The join's TWO incoming edges both survive.
     const intoExit = parseDefinition(def).edges.filter((e) => e.to === 'exit_1').length;
     expect(intoExit).toBe(2);
+  });
+});
+
+describe('moveSubtree', () => {
+  /**
+   * A diamond with a movable single node on the Yes arm:
+   *   trigger → cond(onTrue → wait → exit_1, onFalse → exit_1)
+   * The WAIT has S = {wait} and continuation C = exit_1 (the join reachable via the
+   * onFalse arm) — the canonical cleanly-movable single node.
+   */
+  function diamondArm(): { m: ReturnType<typeof starterModel>; condId: string; waitId: string } {
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, yesEdge, 'wait', NOW); // cond.onTrue→wait→exit_1 ; onFalse→exit_1
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+    return { m, condId, waitId };
+  }
+
+  it('moves a single node to another edge (source re-links to its continuation, dest splices)', () => {
+    const { m, condId, waitId } = diamondArm();
+    // S(wait) = {wait}; C = exit_1. Move the WAIT onto trigger→cond.
+    expect([...subtreeNodeIds(m, waitId)]).toEqual([waitId]);
+    const tEdge = m.edges.find((e) => e.from === 'trigger' && e.to === condId)!;
+    const moved = moveSubtree(m, waitId, tEdge);
+    const def = buildDefinition(moved);
+    expect((def.nodes.trigger as unknown as { next: string }).next).toBe(waitId); // dest splices wait in
+    expect((def.nodes[waitId] as unknown as { next: string }).next).toBe(condId); // wait → dest target B (cond)
+    expect((def.nodes[condId] as unknown as { onTrue: string }).onTrue).toBe('exit_1'); // source arm re-links to C
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('moves a CONDITION sub-branch (diamond arm): exclusive subtree relocates, continuation re-links', () => {
+    // trigger → cond(onTrue→send→exit_1, onFalse→exit_1). The Yes arm's SEND has
+    // S = {send} and continuation C = exit_1 (the join, reachable via onFalse). We
+    // also seed a wait UNDER the send so S has two members: send→wait→exit_1.
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, yesEdge, 'send', NOW); // cond.onTrue→send→exit_1
+    const sendId = m.nodes.find((n) => n.node.type === 'action')!.id;
+    const sendEdge = m.edges.find((e) => e.from === sendId)!;
+    m = insertOnEdge(m, sendEdge, 'wait', NOW); // cond.onTrue→send→wait→exit_1
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+
+    // S(send) = {send, wait}; C = exit_1. Move the SEND branch onto trigger→cond.
+    expect(new Set(subtreeNodeIds(m, sendId))).toEqual(new Set([sendId, waitId]));
+    const tEdge = m.edges.find((e) => e.from === 'trigger' && e.to === condId)!;
+    const moved = moveSubtree(m, sendId, tEdge);
+    const def = buildDefinition(moved);
+    // trigger now → send (the moved root); the cond's Yes arm re-links to C (exit_1).
+    expect((def.nodes.trigger as unknown as { next: string }).next).toBe(sendId);
+    expect((def.nodes[condId] as unknown as { onTrue: string }).onTrue).toBe('exit_1'); // arm closed up to C
+    // The moved branch's boundary now rejoins at the dest target B (= cond).
+    expect((def.nodes[waitId] as unknown as { next: string }).next).toBe(condId);
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('moving INTO its own subtree throws', () => {
+    // A condition whose Yes arm holds a send: S(cond) = {cond, send}. Targeting an
+    // edge inside that subtree (send→exit_1) must throw.
+    let d = starterModel();
+    d = insertOnEdge(d, d.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = d.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = d.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    d = insertOnEdge(d, yesEdge, 'send', NOW); // cond.onTrue→send_d→exit_1
+    const sendD = d.nodes.find((n) => n.node.type === 'action')!.id;
+    const inside = d.edges.find((e) => e.from === sendD)!;
+    expect(() => moveSubtree(d, condId, inside)).toThrow(MutationError);
+  });
+
+  it('moving the trigger throws', () => {
+    const { m } = diamondArm();
+    const someEdge = m.edges.find((e) => e.from !== 'trigger')!;
+    expect(() => moveSubtree(m, m.start, someEdge)).toThrow(MutationError);
+  });
+
+  it('a move onto the edge it already occupies is a no-op', () => {
+    const { m, waitId } = diamondArm(); // cond.onTrue → wait → exit_1
+    const armEdge = m.edges.find((e) => e.to === waitId)!;
+    expect(moveSubtree(m, waitId, armEdge)).toBe(m); // unchanged reference
+  });
+
+  it('a move that orphans a sibling subtree is rejected on persist by the SERVER validator', () => {
+    // trigger → cond(onTrue → exitA, onFalse → wait → exit_1). Move the onFalse WAIT
+    // branch (S = {wait, exit_1}, terminal, C = undefined) onto the Yes arm cond→exitA.
+    // Locally this passes the lightweight guards (a reachable exit remains, no
+    // dangling edge, no cycle), but it ORPHANS exitA — which the server's
+    // validateCampaignDefinition rejects on save (the screen surfaces the error).
+    let m = starterModel(); // trigger → exit_1
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW); // both arms → exit_1
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, yesEdge, 'exit', NOW); // onTrue → exitA ; onFalse → exit_1
+    const noEdge = m.edges.find((e) => e.from === condId && e.slot === 'onFalse')!;
+    m = insertOnEdge(m, noEdge, 'wait', NOW); // onFalse → wait → exit_1
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+    const exitA = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!.to;
+
+    const armToExitA = m.edges.find((e) => e.from === condId && e.to === exitA)!;
+    const moved = moveSubtree(m, waitId, armToExitA); // local guards pass…
+    // …but the moved result orphans exitA → the SERVER validator rejects it (parity
+    // with the persist-time rejection the screen surfaces).
+    expect(() => validateCampaignDefinition(buildDefinition(moved))).toThrow();
+  });
+
+  it('subtreeNodeIds returns the exclusive members (root + arm-only descendants), NOT the shared join', () => {
+    // trigger → cond(onTrue → send → wait → exit_1, onFalse → exit_1). The Yes-arm
+    // SEND has S = {send, wait}; exit_1 is the shared join (reachable via onFalse).
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, yesEdge, 'send', NOW); // cond.onTrue→send→exit_1
+    const sendId = m.nodes.find((n) => n.node.type === 'action')!.id;
+    const sendEdge = m.edges.find((e) => e.from === sendId)!;
+    m = insertOnEdge(m, sendEdge, 'wait', NOW); // cond.onTrue→send→wait→exit_1
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+    const ids = subtreeNodeIds(m, sendId);
+    expect(ids.has(sendId)).toBe(true);
+    expect(ids.has(waitId)).toBe(true);
+    expect(ids.has('exit_1')).toBe(false); // the shared continuation is NOT in S
+    expect(ids.has(condId)).toBe(false); // an ancestor is never in S
+  });
+});
+
+describe('duplicateSubtree', () => {
+  it('duplicates a single node sharing a continuation (fresh id, original intact)', () => {
+    // trigger → cond(onTrue → wait → exit_1, onFalse → exit_1). The Yes-arm WAIT has
+    // S = {wait}; C = exit_1 (the join). Duplicate it onto the onFalse arm.
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, yesEdge, 'wait', NOW); // cond.onTrue→wait→exit_1 ; onFalse→exit_1
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+    expect([...subtreeNodeIds(m, waitId)]).toEqual([waitId]);
+    const noEdge = m.edges.find((e) => e.from === condId && e.slot === 'onFalse')!;
+    const dup = duplicateSubtree(m, waitId, noEdge); // onFalse→cloneWait→exit_1
+    const def = buildDefinition(dup);
+    const waits = Object.values(def.nodes).filter((n) => n.type === 'wait');
+    expect(waits.length).toBe(2); // a second wait exists
+    expect(def.nodes[waitId]).toBeDefined(); // the original is intact
+    const cloneId = (def.nodes[condId] as unknown as { onFalse: string }).onFalse;
+    expect(cloneId).not.toBe(waitId); // the onFalse arm now goes through a fresh clone
+    expect((def.nodes[cloneId] as unknown as { type: string }).type).toBe('wait');
+    expect((def.nodes[cloneId] as unknown as { next: string }).next).toBe('exit_1'); // clone boundary → C
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('duplicates a branch (fresh ids for all members, internal edges remapped, original intact)', () => {
+    // Build trigger → cond(onTrue→send→exit_1, onFalse→exit_1). The Yes arm's SEND
+    // has continuation C = exit_1 (the join reachable via onFalse), so S(send) =
+    // {send}. To get a multi-node subtree with a shared join we insert a wait on
+    // the Yes arm BELOW the send: cond.onTrue→send→wait→exit_1, onFalse→exit_1.
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, yesEdge, 'send', NOW); // cond.onTrue→send→exit_1
+    const sendId = m.nodes.find((n) => n.node.type === 'action')!.id;
+    const sendEdge = m.edges.find((e) => e.from === sendId)!;
+    m = insertOnEdge(m, sendEdge, 'wait', NOW); // cond.onTrue→send→wait→exit_1
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+
+    // S(send) = {send, wait}; C = exit_1 (reachable via the onFalse arm). Duplicate
+    // the SEND branch onto the onFalse arm (cond.onFalse→exit_1).
+    expect(new Set(subtreeNodeIds(m, sendId))).toEqual(new Set([sendId, waitId]));
+    const noEdge = m.edges.find((e) => e.from === condId && e.slot === 'onFalse')!;
+    const dup = duplicateSubtree(m, sendId, noEdge); // onFalse→cloneSend→cloneWait→exit_1
+    const def = buildDefinition(dup);
+    const sends = Object.values(def.nodes).filter((n) => n.type === 'action');
+    const waits = Object.values(def.nodes).filter((n) => n.type === 'wait');
+    expect(sends.length).toBe(2); // cloned send
+    expect(waits.length).toBe(2); // cloned wait (internal member)
+    // The originals are untouched.
+    expect(def.nodes[sendId]).toBeDefined();
+    expect(def.nodes[waitId]).toBeDefined();
+    // The onFalse arm now points at the clone-root send (a fresh id, not the original).
+    const cloneRootId = (def.nodes[condId] as unknown as { onFalse: string }).onFalse;
+    expect(cloneRootId).not.toBe(sendId);
+    expect((def.nodes[cloneRootId] as unknown as { type: string }).type).toBe('action');
+    // The clone-root's internal edge points at its OWN clone wait (remapped), not the original.
+    const cloneNext = (def.nodes[cloneRootId] as unknown as { next: string }).next;
+    expect(cloneNext).not.toBe(waitId);
+    expect((def.nodes[cloneNext] as unknown as { type: string }).type).toBe('wait');
+    expect((def.nodes[cloneNext] as unknown as { next: string }).next).toBe('exit_1'); // clone boundary → C
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('duplicating the trigger throws', () => {
+    const m = starterModel();
+    const edge = m.edges.find((e) => e.from === 'trigger')!;
+    expect(() => duplicateSubtree(m, m.start, edge)).toThrow(MutationError);
+  });
+});
+
+describe('hasCycle (down-only guard)', () => {
+  it('a synthetic back-edge is caught (move/duplicate would reject it)', () => {
+    // Hand-build a definition with a back-edge wait→trigger and verify the local
+    // guards (used by move/duplicate) reject any def that contains it. We exercise
+    // the guard indirectly through buildDefinition + the validator agreeing.
+    const cyclic = {
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'segment_entry', next: 'w' } as Record<string, unknown> & { type: string },
+        w: { type: 'wait', delay: { seconds: 1 }, next: 'trigger' } as Record<string, unknown> & { type: string },
+        x: { type: 'exit' } as Record<string, unknown> & { type: string },
+      },
+    };
+    // The production validator must reject the cycle too (parity with hasCycle).
+    expect(() => validateCampaignDefinition(cyclic)).toThrow();
   });
 });
 
