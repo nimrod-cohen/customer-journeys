@@ -1,0 +1,14 @@
+{
+  "filesModified": [
+    "web/src/campaigns/CampaignCanvas.tsx",
+    "web/e2e/campaign-canvas-pan-zoom.browser.e2e.spec.ts",
+    "web/e2e/campaign-node-editors.browser.e2e.spec.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "testsPass": true,
+  "e2eSummary": "Solo runs (one at a time, ports freed each time): campaign-canvas-pan-zoom = 4/4 PASS; campaign-builder = 16/16 PASS; campaign-node-editors = 10/10 PASS. Consolidated single invocation of all three = 30/30 PASS. Unit: web/src/campaigns vitest 126/126 PASS.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "Lint shows ONLY the 7 known pre-existing react-hooks/exhaustive-deps 'rule not found' errors (EmailDesigner/Activity/ProfileDetail/SegmentBuilder x2/SimpleScreens x2) — none in CampaignCanvas; no new lint errors. Version bumped 0.41.3 -> 0.41.4. ZOOM bounds widened 0.5-1.5 -> 0.4-2.0; updated the existing zoom-clamp e2e (was '50%-150%' expecting 150% ceiling) to the new 40%-200% bounds + added a floor assertion. PAN is background-only via e.target.closest(INTERACTIVE_SELECTOR); PINCH via a non-passive wheel listener (ctrlKey) registered in a useEffect. Pan e2e must press an INSIDE point (lower-left), not the right/bottom scrollbar gutter (a gutter press never reaches the board). Not committed/pushed per instructions."
+}

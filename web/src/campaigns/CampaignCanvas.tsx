@@ -18,9 +18,15 @@ export interface Placement {
   readonly rootId: string;
 }
 
-const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 1.5;
+const ZOOM_MIN = 0.4;
+const ZOOM_MAX = 2.0;
 const ZOOM_STEP = 0.1;
+
+// Elements that must keep their own click/drag behavior — a pointerdown on (or
+// inside) any of these must NOT start a background pan. The board background is
+// "anything that doesn't match this selector".
+const INTERACTIVE_SELECTOR =
+  '[data-node-id], button, a, input, select, textarea, [role="menu"], [data-testid="placement-banner"], [data-testid="campaign-edge-insert"], [data-testid="campaign-merge-insert"]';
 
 const NODE_STYLE: Record<string, string> = {
   trigger: 'bg-brand-50 text-brand-700 ring-brand-200',
@@ -114,9 +120,99 @@ export function CampaignCanvas({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   // View-only zoom (does NOT touch the model — connector `d` coords are unchanged;
-  // we scale the whole content container). Clamped 50%–150% in 10% steps.
+  // we scale the whole content container). Clamped ZOOM_MIN..ZOOM_MAX; the toolbar
+  // steps in 10% increments, a trackpad pinch (ctrl+wheel) scales continuously.
   const [scale, setScale] = useState(1);
   const clampZoom = (z: number): number => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
+
+  // The scroll viewport (the `campaign-canvas` overflow-auto box). We drive its
+  // scrollLeft/scrollTop directly for drag-to-pan, and attach a NON-PASSIVE wheel
+  // listener to it for pinch-zoom (Preact's onWheel is passive → can't preventDefault).
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+
+  // Drag-to-pan state. A pan begins ONLY when the pointerdown lands on the board
+  // BACKGROUND (not a card / + / menu / banner — see INTERACTIVE_SELECTOR), so node
+  // cards, the (+) controls, the ⋮ menu, the zoom toolbar and the banner all keep
+  // working as ordinary clicks. We stash the start client coords + the container's
+  // scroll offset, then translate cursor delta into a scroll offset on pointermove.
+  const panRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    startScrollLeft: number;
+    startScrollTop: number;
+    pointerId: number;
+  } | null>(null);
+  const [panning, setPanning] = useState(false);
+
+  const onPointerDown = (e: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
+    // Only the primary (left) button / a touch contact pans.
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    // Background only — a press inside an interactive element is left alone.
+    if (target.closest(INTERACTIVE_SELECTOR)) return;
+    const container = viewportRef.current;
+    if (!container) return;
+    panRef.current = {
+      active: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      startScrollLeft: container.scrollLeft,
+      startScrollTop: container.scrollTop,
+      pointerId: e.pointerId,
+    };
+    setPanning(true);
+    container.setPointerCapture?.(e.pointerId);
+  };
+
+  const onPointerMove = (e: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
+    const pan = panRef.current;
+    const container = viewportRef.current;
+    if (!pan?.active || !container) return;
+    container.scrollLeft = pan.startScrollLeft - (e.clientX - pan.startX);
+    container.scrollTop = pan.startScrollTop - (e.clientY - pan.startY);
+  };
+
+  const endPan = (e: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
+    const pan = panRef.current;
+    if (!pan?.active) return;
+    panRef.current = null;
+    setPanning(false);
+    viewportRef.current?.releasePointerCapture?.(e.pointerId);
+  };
+
+  // Pinch-to-zoom (trackpad): a pinch arrives as `wheel` with ctrlKey === true.
+  // We MUST preventDefault to stop the browser's own page zoom, but Preact/React
+  // attach onWheel passively (preventDefault is a no-op there) — so register a
+  // native NON-PASSIVE listener on the viewport. A plain (non-ctrl) wheel is left
+  // untouched so native two-finger scroll/pan still works. We keep the point under
+  // the cursor stable by adjusting scrollLeft/Top around the new scale.
+  useEffect(() => {
+    const container = viewportRef.current;
+    if (!container) return undefined;
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return; // ordinary scroll/pan — don't intercept
+      e.preventDefault();
+      setScale((prev) => {
+        const next = clampZoom(prev * (1 - e.deltaY * 0.01));
+        if (next === prev) return prev;
+        // Anchor the cursor point: the content offset under the cursor should map
+        // to the same content coordinate after the scale change.
+        const rect = container.getBoundingClientRect();
+        const cx = e.clientX - rect.left + container.scrollLeft;
+        const cy = e.clientY - rect.top + container.scrollTop;
+        const ratio = next / prev;
+        // Defer scroll fixup to after the re-render applies the new spacer size.
+        requestAnimationFrame(() => {
+          container.scrollLeft = cx * ratio - (e.clientX - rect.left);
+          container.scrollTop = cy * ratio - (e.clientY - rect.top);
+        });
+        return next;
+      });
+    };
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
+  }, []);
 
   return (
     <div class="relative">
@@ -176,8 +272,16 @@ export function CampaignCanvas({
       </div>
 
       <div
+        ref={viewportRef}
         data-testid="campaign-canvas"
-        class="relative overflow-auto rounded-xl border border-stone-200 bg-stone-50/60"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endPan}
+        onPointerCancel={endPan}
+        onPointerLeave={endPan}
+        class={`relative overflow-auto rounded-xl border border-stone-200 bg-stone-50/60 ${
+          panning ? 'cursor-grabbing select-none' : 'cursor-grab'
+        }`}
         style={{
           maxHeight: '60vh',
           // Light grid dots blanket the WHOLE canvas (constant density, independent

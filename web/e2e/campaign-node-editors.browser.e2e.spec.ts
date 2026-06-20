@@ -110,7 +110,7 @@ test('IF editor: embeds the SAME rule builder; an empty group blocks save inline
   await expect(reopened.getByTestId('rule-field').first()).toHaveValue('attributes.tier');
 });
 
-test('the workflow map zooms in and out (view-only, 50%–150%)', async ({ page }) => {
+test('the workflow map zooms in and out (view-only, 40%–200%)', async ({ page }) => {
   await openCampaigns(page);
   await openSeeded(page);
 
@@ -130,12 +130,19 @@ test('the workflow map zooms in and out (view-only, 50%–150%)', async ({ page 
   await page.getByTestId('canvas-zoom-reset').click();
   await expect(page.getByTestId('canvas-zoom-level')).toHaveText('100%');
 
-  // Zoom is clamped at the 150% ceiling — climb only while the control is enabled
+  // Zoom is clamped at the 200% ceiling — climb only while the control is enabled
   // (it disables on arrival, so we never click a disabled button).
   const zoomIn = page.getByTestId('canvas-zoom-in');
-  for (let i = 0; i < 6 && (await zoomIn.isEnabled()); i++) await zoomIn.click();
-  await expect(page.getByTestId('canvas-zoom-level')).toHaveText('150%');
+  for (let i = 0; i < 12 && (await zoomIn.isEnabled()); i++) await zoomIn.click();
+  await expect(page.getByTestId('canvas-zoom-level')).toHaveText('200%');
   await expect(zoomIn).toBeDisabled();
+
+  // …and clamped at the 40% floor on the way down.
+  await page.getByTestId('canvas-zoom-reset').click();
+  const zoomOut = page.getByTestId('canvas-zoom-out');
+  for (let i = 0; i < 12 && (await zoomOut.isEnabled()); i++) await zoomOut.click();
+  await expect(page.getByTestId('canvas-zoom-level')).toHaveText('40%');
+  await expect(zoomOut).toBeDisabled();
 });
 
 test('WEBHOOK editor: write-only secret is never echoed; a non-http url blocks save', async ({ page }) => {
