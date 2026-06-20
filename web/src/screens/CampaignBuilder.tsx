@@ -171,10 +171,11 @@ export function CampaignsList() {
                   </Badge>
                 </span>
 
-                {/* Enrollment counts summary */}
+                {/* Enrollment counts summary — min-w-0 + wrap so the auto grid
+                    track can shrink at narrow widths (graceful degrade, no clip). */}
                 <span
                   data-testid="campaign-counts"
-                  class="flex items-center gap-4 text-center text-sm tabular-nums"
+                  class="flex min-w-0 flex-wrap items-center justify-end gap-x-4 gap-y-1 text-center text-sm tabular-nums"
                   title={`${total} enrolled`}
                 >
                   <span class="flex flex-col" data-testid="campaign-count-active">
