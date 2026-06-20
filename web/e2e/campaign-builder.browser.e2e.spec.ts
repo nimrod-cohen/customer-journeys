@@ -384,6 +384,87 @@ test('per-arm + with an empty passthrough: one arm gets a send, both rejoin the 
   await expect(page.getByTestId('toast')).toBeVisible();
 });
 
+test('populated arms render as COMPACT straight columns: each arm + directly above its child, a 2nd node stays in the same column', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Compact columns');
+
+  // Insert an If → both arms initially point at the single exit.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+  await expect(page.getByTestId('campaign-edge-insert')).toHaveCount(3);
+
+  // Populate the LEFT (Yes) arm with a Send email.
+  let arms = await armInsertIndices(page, await conditionBottom(page));
+  expect(arms.length).toBe(2);
+  await page.getByTestId('campaign-edge-insert').nth(arms[0]!).click();
+  await page.getByTestId('palette-send').click();
+  await expect(page.getByTestId('node-send')).toBeVisible();
+  await expect(page.getByTestId('campaign-palette')).toHaveCount(0); // palette closed
+
+  // Populate the RIGHT (No) arm with a Wait. The empty No-arm + routes out to its
+  // own side lane (off the Send card), so it stays clickable.
+  arms = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(arms[arms.length - 1]!).click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toBeVisible();
+  await expect(page.getByTestId('campaign-palette')).toHaveCount(0); // palette closed
+
+  // The two arm CARDS (Send + Wait) sit at a COMPACT horizontal distance — their
+  // center-to-center x-gap is modest (a small gap between two ~200px cards), NOT
+  // spread to the canvas edges. BRANCH_HALF_GAP=140 ⇒ ~280px center-to-center.
+  const sendBox = (await page.getByTestId('node-send').boundingBox())!;
+  const waitBox = (await page.getByTestId('node-wait').boundingBox())!;
+  const sendCx = sendBox.x + sendBox.width / 2;
+  const waitCx = waitBox.x + waitBox.width / 2;
+  const cardGap = Math.abs(sendCx - waitCx);
+  expect(cardGap).toBeGreaterThan(sendBox.width); // not overlapping
+  expect(cardGap).toBeLessThan(sendBox.width * 2); // COMPACT — well under "edge-spread"
+
+  // Each arm's + sits DIRECTLY ABOVE its child (same column x). The arm inserts are
+  // the (+) controls below the condition; match each to the nearer child by x.
+  const condBottom = await conditionBottom(page);
+  const armPlusXs = await page.getByTestId('campaign-edge-insert').evaluateAll(
+    (els, by) =>
+      els
+        .map((e) => (e as HTMLElement).getBoundingClientRect())
+        .filter((r) => r.top > by)
+        .map((r) => Math.round(r.left + r.width / 2)),
+    condBottom,
+  );
+  // One arm + aligns (≈) with the Send column, the other with the Wait column.
+  const nearSend = armPlusXs.some((x) => Math.abs(x - sendCx) <= 2);
+  const nearWait = armPlusXs.some((x) => Math.abs(x - waitCx) <= 2);
+  expect(nearSend).toBe(true);
+  expect(nearWait).toBe(true);
+
+  // Insert a SECOND node down the Yes arm (on the send→join edge): it must stay in
+  // the SAME column as the Send (a straight vertical, no per-node jog).
+  // The send→join (+) is the edge insert sitting just below the Send card on its column.
+  const sendBottom = sendBox.y + sendBox.height;
+  const belowSend = await page.getByTestId('campaign-edge-insert').evaluateAll(
+    (els, ctx) =>
+      els
+        .map((e, i) => ({ r: (e as HTMLElement).getBoundingClientRect(), i }))
+        .filter(({ r }) => r.top > ctx.y && Math.abs(r.left + r.width / 2 - ctx.x) <= 4)
+        .sort((a, b) => a.r.top - b.r.top)
+        .map(({ i }) => i),
+    { x: sendCx, y: sendBottom },
+  );
+  expect(belowSend.length).toBeGreaterThan(0);
+  await page.getByTestId('campaign-edge-insert').nth(belowSend[0]!).click();
+  await page.getByTestId('palette-update-profile').click();
+  await expect(page.getByTestId('node-set_attribute')).toBeVisible();
+
+  const setBox = (await page.getByTestId('node-set_attribute').boundingBox())!;
+  const setCx = setBox.x + setBox.width / 2;
+  expect(Math.abs(setCx - sendCx)).toBeLessThanOrEqual(2); // SAME column as the Send
+
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast')).toBeVisible();
+});
+
 test('an Exit on an arm terminates only that arm (the other still rejoins)', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

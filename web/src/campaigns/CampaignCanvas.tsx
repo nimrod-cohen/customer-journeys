@@ -317,7 +317,7 @@ export function CampaignCanvas({
 
         {/* Edge insertion (+) controls, anchored on each connector's vertical run. */}
         {layout.edges.map((e) => {
-          const mid = verticalAnchor(e.fromPoint, e.toPoint, e.laneX);
+          const mid = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop);
           const edge = model.edges.find((me) => me.from === e.from && me.slot === e.slot && me.to === e.to);
           if (!edge) return null;
           // While placing a MOVE, hide the (+) controls inside the moving subtree
@@ -472,7 +472,7 @@ export function CampaignCanvas({
 }
 
 function Connector({ edge }: { edge: LayoutEdge }): JSX.Element {
-  const d = orthogonalPath(edge.fromPoint, edge.toPoint, edge.laneX);
+  const d = orthogonalPath(edge.fromPoint, edge.toPoint, edge.laneX, undefined, edge.kneeTop);
   const labelPoint = edge.label ? { x: edge.laneX, y: edge.fromPoint.y + 16 } : null;
   return (
     <g>

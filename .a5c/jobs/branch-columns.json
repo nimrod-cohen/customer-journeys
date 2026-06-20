@@ -1,0 +1,24 @@
+{
+  "filesModified": [
+    "web/src/campaigns/layout.ts",
+    "web/src/campaigns/orthogonal-path.ts",
+    "web/src/campaigns/CampaignCanvas.tsx",
+    "web/src/campaigns/layout.test.ts",
+    "web/src/campaigns/orthogonal-path.test.ts",
+    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "CLAUDE.md",
+    "package.json"
+  ],
+  "constantsChosen": {
+    "BRANCH_HALF_GAP": "140px (center-to-center 280px between the two arm columns; 80px gap between two 200px cards; HALF_GAP_COLS = 140/colWidth = 140/240)",
+    "EMPTY_ARM_LANE": "28px (side-lane offset used ONLY by an empty/passthrough arm so its + sits on its own side column, never over the other arm's card; successor to the removed ARM_LANE)",
+    "RAIL_INSET": "22px (unchanged; topKneeCrossY = from.y + RAIL_INSET puts the single knee near the TOP for a populated arm)",
+    "MIN_SEGMENT": "64px (unchanged; the long lower leg of a top-knee arm ~76px clears it)",
+    "LAYOUT.rowHeight": "184 (unchanged; drop = 112px)"
+  },
+  "testsPass": true,
+  "e2eSummary": "campaign-builder 17/17 (incl. new 'populated arms render as COMPACT straight columns'); campaign-node-editors + campaign-list-detail + campaign-list-no-overflow + campaign-canvas-pan-zoom 21/21; campaign-lifecycle + campaign-publish-gate + campaign-versioning + campaign-journey-smoke 7/7. All run SOLO, ports freed + pkill before each.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "Single-knee compact-column branch layout. assignColumns places a condition's two arms at center +/- BRANCH_HALF_GAP (widened only by a nested subtree's half-width via shiftSubtree; shared diamond joins skipped and re-centered by recenterJoins). computeEdges: a POPULATED arm gets laneX = child column x AND kneeTop=true (single TOP knee, the + and child share the column); an EMPTY arm (edge straight to the multi-parent merge join, or to a node directly below the If) keeps a +/- EMPTY_ARM_LANE side lane so its + never overlaps the sibling card. orthogonalPath/verticalAnchor gained a kneeTop mode (jogTopKnee + topKneeCrossY): short stub down from If center, ONE knee across to the child column near the top, LONG vertical straight down the column; the + anchors mid the long lower leg at to.x. ARM_LANE removed. Lint = the 7 known pre-existing react-hooks 'rule not found' errors only (no new). Version bumped 0.41.5 -> 0.41.6. Not committed/pushed (orchestrator commits)."
+}

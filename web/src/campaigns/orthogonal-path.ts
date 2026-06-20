@@ -66,6 +66,7 @@ export function orthogonalPath(
   to: Point,
   laneX?: number,
   radius: number = CORNER_RADIUS,
+  kneeTop = false,
 ): string {
   if (!(to.y > from.y)) {
     throw new Error(`orthogonalPath: target must be below source (from.y=${from.y}, to.y=${to.y})`);
@@ -75,8 +76,14 @@ export function orthogonalPath(
   if (from.x === lane && lane === to.x) {
     return `M ${num(from.x)} ${num(from.y)} V ${num(to.y)}`;
   }
+  // POPULATED condition arm: a single knee at the TOP — short stub down from the
+  // source center, across to the child column, then the LONG vertical DOWN the
+  // column to the child. The (+) anchors on that column run (verticalAnchor).
+  if (kneeTop && lane === to.x && to.x !== from.x) {
+    return jogTopKnee(from, to, radius);
+  }
   // Lane coincides with the target x (the common case: the child sits on the lane,
-  // OR a same-x stub). Classic 3-run V-H-V around the mid-y.
+  // OR a same-x stub). Classic 3-run V-H-V around the mid-y (knee near the bottom).
   if (lane === to.x) {
     return jog(from, to, radius);
   }
@@ -116,6 +123,42 @@ function laneRailYs(y1: number, y2: number): { yTop: number; yBot: number } {
   const drop = y2 - y1;
   const inset = Math.min(RAIL_INSET, drop / 3);
   return { yTop: y1 + inset, yBot: y2 - inset };
+}
+
+/**
+ * topKneeCrossY — the y of a TOP-knee jog's single horizontal crossing: a FIXED
+ * RAIL_INSET BELOW `from` (near the TOP, clamped so it never falls past the drop's
+ * midpoint for a tiny drop). The LONG vertical leg then runs at `to.x` from this
+ * crossing down to `to.y` — the child column — which is where the (+) anchors.
+ */
+function topKneeCrossY(y1: number, y2: number): number {
+  const drop = y2 - y1;
+  return y1 + Math.min(RAIL_INSET, drop / 2);
+}
+
+/** A V-H-V jog with the horizontal crossing near the TOP (a short stub down from the
+ *  source center, across to the target column, then the LONG vertical DOWN that
+ *  column to the target). Used for a populated condition arm — the (+) sits on the
+ *  long lower leg at to.x, directly above the child (the arm's column). */
+function jogTopKnee(from: Point, to: Point, radius: number): string {
+  const crossY = topKneeCrossY(from.y, to.y);
+  const dx = to.x - from.x;
+  const dir = dx > 0 ? 1 : -1;
+  const upLeg = crossY - from.y;
+  const downLeg = to.y - crossY;
+  const hLeg = Math.abs(dx);
+  const r = Math.max(0, Math.min(radius, upLeg / 2, downLeg / 2, hLeg / 2));
+  if (r === 0) {
+    return `M ${num(from.x)} ${num(from.y)} V ${num(crossY)} H ${num(to.x)} V ${num(to.y)}`;
+  }
+  return (
+    `M ${num(from.x)} ${num(from.y)} ` +
+    `V ${num(crossY - r)} ` +
+    `Q ${num(from.x)} ${num(crossY)} ${num(from.x + dir * r)} ${num(crossY)} ` +
+    `H ${num(to.x - dir * r)} ` +
+    `Q ${num(to.x)} ${num(crossY)} ${num(to.x)} ${num(crossY + r)} ` +
+    `V ${num(to.y)}`
+  );
 }
 
 /** A V-H-V jog from `from` to `to`, the horizontal crossing near the BOTTOM (so the
@@ -182,10 +225,22 @@ function jogTail(x1: number, y1: number, x2: number, y2: number, radius: number)
  * so the buttons never stack — and an arm's (+) is HIGH (right under it), clearly
  * separated from the LOW merge (+) on the merged trunk; they never adjoin.
  */
-export function verticalAnchor(from: Point, to: Point, laneX?: number): Point {
+export function verticalAnchor(from: Point, to: Point, laneX?: number, kneeTop = false): Point {
   const lane = laneX ?? to.x;
   if (from.x === lane && lane === to.x) {
     return { x: from.x, y: (from.y + to.y) / 2 };
+  }
+  // POPULATED arm (top knee): the LONG vertical leg runs at `to.x` (the child
+  // column) from the (top-placed) crossing down to `to.y`. Anchor on the MIDDLE of
+  // that long lower run, so the (+) is on the child's column, directly above it.
+  if (kneeTop && lane === to.x && to.x !== from.x) {
+    const crossY = topKneeCrossY(from.y, to.y);
+    const downLeg = to.y - crossY;
+    const upLeg = crossY - from.y;
+    const hLeg = Math.abs(to.x - from.x);
+    const r = Math.max(0, Math.min(CORNER_RADIUS, upLeg / 2, downLeg / 2, hLeg / 2));
+    const lowerTop = crossY + r; // the long leg spans [crossY + r, to.y]
+    return { x: to.x, y: (lowerTop + to.y) / 2 };
   }
   if (lane === to.x || lane === from.x) {
     // A jog: the UPPER vertical leg runs at `from.x`, from `from.y` down to the

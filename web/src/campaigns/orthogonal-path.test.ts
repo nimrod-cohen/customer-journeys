@@ -237,16 +237,41 @@ describe('verticalAnchor', () => {
     assertOnVerticalRun(orthogonalPath(source, join, rightLane), no);
   });
 
-  it('two converging FANNED arms (distinct target x) also get distinct anchors via per-slot side lanes', () => {
-    // Fanned arms now route down a per-slot side lane just off the source column
-    // (left for onTrue, right for onFalse) so each arm's source-side upper (+) is at
-    // a DISTINCT x — straight below the condition, before the turn out to the child.
+  it('two POPULATED arms (top knee) anchor on their CHILD columns — distinct x, ABOVE the child', () => {
+    // A populated arm routes down its child's column (laneX === to.x) with kneeTop:
+    // a short stub down from the If center, ONE knee across, then the long vertical
+    // DOWN the child column — so the (+) anchors on that column, directly above the
+    // child, at a DISTINCT x per arm (the two children sit in distinct columns).
     const source = { x: 300, y: 100 };
-    const yesMid = verticalAnchor(source, { x: 120, y: 300 }, 272);
-    const noMid = verticalAnchor(source, { x: 480, y: 300 }, 328);
+    const yesMid = verticalAnchor(source, { x: 120, y: 300 }, 120, true);
+    const noMid = verticalAnchor(source, { x: 480, y: 300 }, 480, true);
     expect(yesMid.x).not.toBe(noMid.x);
-    expect(yesMid.x).toBe(272); // on the LEFT lane, not the source center
-    expect(noMid.x).toBe(328); // on the RIGHT lane
+    expect(yesMid.x).toBe(120); // on the LEFT child column (not the source center)
+    expect(noMid.x).toBe(480); // on the RIGHT child column
+  });
+});
+
+describe('orthogonalPath (top-knee populated arm)', () => {
+  it('a top-knee arm has its single knee near the TOP and the long V on the child column', () => {
+    const from = { x: 300, y: 100 };
+    const to = { x: 120, y: 100 + LAID_OUT_DROP };
+    const d = orthogonalPath(from, to, 120, undefined, true);
+    assertAxisAligned(d);
+    expect(d).not.toMatch(/\bL\b/);
+    // Exactly one horizontal run (one knee).
+    expect(d.trim().split(/\s+/).filter((t) => t === 'H').length).toBe(1);
+    // The (+) anchor sits on the long lower leg at the CHILD x (to.x).
+    const a = verticalAnchor(from, to, 120, true);
+    expect(a.x).toBe(to.x);
+    assertOnVerticalRun(d, a);
+    const h = anchorRunHeight(d, a);
+    expect(h).not.toBeNull();
+    expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
+    // The long leg (anchor run) is LONGER than the short upper stub.
+    const runs = verticalRuns(d);
+    const childRun = runs.find((r) => Math.abs(r.x - to.x) < 1e-6)!;
+    const stub = runs.find((r) => Math.abs(r.x - from.x) < 1e-6)!;
+    expect(childRun.y1 - childRun.y0).toBeGreaterThan(stub.y1 - stub.y0);
   });
 });
 

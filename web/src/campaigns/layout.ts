@@ -9,6 +9,16 @@
 //     disjoint; a condition's onTrue/onFalse arms thus fan to the sides.
 // Because depth only ever increases along an edge, no connector is upward/back.
 // Pure + deterministic — same def in → identical positions out.
+//
+// BRANCH LAYOUT (single-knee compact columns — the user's spec). A condition's
+// two arms are STRAIGHT VERTICAL COLUMNS placed at center ± BRANCH_HALF_GAP — a
+// COMPACT distance (the two ~200px cards sit close with a modest gap, NOT spread
+// to the canvas edges). The arm's insert-(+) AND all of its stacked nodes share
+// that ONE column x, so the connector has exactly ONE knee at the top (the split
+// out from the If's center to the column) and ONE knee at the bottom (the column
+// back in to the centered join) — nothing jogs in between. A NESTED branch inside
+// an arm may widen that arm's extent (subtree-width packing still applies, just
+// with a tighter base) so a SIMPLE arm stays compact.
 import { outgoingEdges, type CampaignDefinition, type DslNode } from './model.js';
 
 // Re-export so layout consumers (canvas + tests) get the single graph type here.
@@ -36,16 +46,25 @@ export interface LayoutEdge {
   /** Pixel anchor on the target card's top-center. */
   readonly toPoint: { x: number; y: number };
   /**
-   * The x of the dedicated VERTICAL lane this connector runs down (for a condition
-   * arm). EVERY condition arm gets a per-slot side lane just off the source column
-   * (onTrue → left of from.x, onFalse → right of from.x) so the arm's source-side
-   * UPPER vertical run — where the (+) anchors, straight below the condition — is at
-   * a DISTINCT x per arm and the two (+)s never stack. (A fanned arm then turns from
-   * that lane out to its child column LOW, near the target; an empty arm turns to the
-   * directly-below join.) For a plain `next` edge laneX === toPoint.x (a straight V or
-   * a single source-side-long jog).
+   * The x of the dedicated VERTICAL lane this connector runs down. For a POPULATED
+   * condition arm the lane IS the child's column (laneX === toPoint.x) — so the arm
+   * is a SINGLE jog: down a short stub from the If's center, across to the column,
+   * then straight DOWN the column to the child (one knee at the top). The arm's (+)
+   * and the child share that column x — there is NO second jog between them. For an
+   * EMPTY arm (the child is the directly-below CENTER join) the lane is a side lane
+   * at from.x ± BRANCH_HALF_GAP so the two empty arms' (+)s sit on DISTINCT columns
+   * yet still converge on the central join. A plain `next` edge uses laneX ===
+   * toPoint.x (a straight V, or a single jog when the child is offset).
    */
   readonly laneX: number;
+  /**
+   * TRUE for a populated condition arm: the single knee is at the TOP (a short stub
+   * down from the If's center, across to the child column, then the LONG vertical
+   * straight DOWN that column to the child) — so the arm's (+) and the child share
+   * the column. FALSE/absent for a plain `next` jog (knee at the bottom, the long
+   * leg straight below the source) and for straight/empty-arm lane routes.
+   */
+  readonly kneeTop?: boolean;
 }
 
 /**
@@ -128,7 +147,11 @@ export function layoutDefinition(def: CampaignDefinition): Layout {
   // (diamond) keeps its FIRST assignment (counted once).
   const col = new Map<string, number>();
   const memo = new Map<string, number>();
-  assignColumns(def, def.startNode, 0, col, memo, new Set());
+  // Nodes reached by >1 edge (diamond joins) are NOT shifted by arm bands — they're
+  // re-centered under their parents at the end (recenterJoins), so leaving them put
+  // keeps each arm's shift exclusive to its own column.
+  const joins = multiParentNodes(def);
+  assignColumns(def, def.startNode, 0, col, memo, new Set(), joins);
 
   // Re-center a diamond join under the midpoint of its parents so the connectors
   // stay symmetric (its first-pass column may sit under only one arm).
@@ -191,7 +214,25 @@ function computeDepths(def: CampaignDefinition): Map<string, number> {
   return depth;
 }
 
-/** Recursive subtree-width column packing; returns the next free left column. */
+/**
+ * BRANCH_HALF_GAP — half the center-to-center distance (px) between a condition's
+ * two arm columns. Picked COMPACT: 140px ⇒ the two columns sit 280px apart, so two
+ * 200px cards have an 80px gap between them (close together, NOT spread to the
+ * canvas edges). The branch column offset is this in COLUMN units (HALF_GAP_COLS),
+ * and a nested branch inside an arm can only WIDEN past it (never narrower), so a
+ * simple arm stays at exactly ±BRANCH_HALF_GAP.
+ */
+export const BRANCH_HALF_GAP = 140;
+
+/** The branch half-gap expressed in column units (col → x is c·colWidth). */
+const HALF_GAP_COLS = BRANCH_HALF_GAP / LAYOUT.colWidth;
+
+/**
+ * Recursive column packing; returns the next free left column. A CONDITION places
+ * its two arms as COMPACT side columns at center ± HALF_GAP_COLS (the user's spec),
+ * widening that offset only as much as a NESTED branch inside an arm demands (so a
+ * simple arm stays compact). Every other node centers over its children as before.
+ */
 function assignColumns(
   def: CampaignDefinition,
   id: string,
@@ -199,6 +240,7 @@ function assignColumns(
   col: Map<string, number>,
   memo: Map<string, number>,
   placed: Set<string>,
+  joins: Set<string>,
 ): number {
   if (placed.has(id)) return left; // diamond — already placed via another path
   placed.add(id);
@@ -208,11 +250,39 @@ function assignColumns(
     col.set(id, left);
     return left + 1;
   }
+
+  // A CONDITION with exactly its two (un-placed) arms → compact symmetric columns.
+  // We lay each arm's subtree out in its own band, then SHIFT the whole arm band so
+  // its ROOT sits at center ± offset, where offset = max(HALF_GAP_COLS, half the
+  // arm's own subtree width) — i.e. a nested branch widens the gap, a leaf keeps it
+  // tight. The condition itself centers between the two arm roots.
+  if (node?.type === 'condition' && children.length === 2) {
+    const widths = children.map((c) => subtreeWidth(def, c, memo, new Set()));
+    // Half-gap in cols, widened so neither arm's half-subtree overlaps the center.
+    const offset = Math.max(HALF_GAP_COLS, widths[0]! / 2, widths[1]! / 2);
+    const center = left + offset; // place center far enough right for the left arm
+    const armRootTargets = [center - offset, center + offset];
+    let cursor = center - offset; // left band starts here
+    for (let i = 0; i < children.length; i++) {
+      const c = children[i]!;
+      const before = cursor;
+      cursor = assignColumns(def, c, cursor, col, memo, placed, joins);
+      const placedAt = col.get(c) ?? before;
+      // Shift this arm's whole subtree so its ROOT lands on the target column (a
+      // shared join is skipped — recenterJoins repositions it under both parents).
+      const delta = armRootTargets[i]! - placedAt;
+      if (delta !== 0) shiftSubtree(def, c, delta, col, new Set(), joins);
+      cursor = Math.max(cursor, placedAt + delta + 1);
+    }
+    col.set(id, center);
+    return cursor;
+  }
+
   let cursor = left;
   const childCenters: number[] = [];
   for (const c of children) {
     const before = cursor;
-    cursor = assignColumns(def, c, cursor, col, memo, placed);
+    cursor = assignColumns(def, c, cursor, col, memo, placed, joins);
     // The child's own center column (it may itself have packed its subtree).
     childCenters.push(col.get(c) ?? before);
   }
@@ -221,6 +291,38 @@ function assignColumns(
   const hi = Math.max(...childCenters);
   col.set(id, (lo + hi) / 2);
   return cursor;
+}
+
+/** Nodes reached by more than one edge (diamond joins). */
+function multiParentNodes(def: CampaignDefinition): Set<string> {
+  const indeg = new Map<string, number>();
+  for (const id of Object.keys(def.nodes)) {
+    const node = def.nodes[id];
+    if (!node) continue;
+    for (const e of outgoingEdges(id, node)) indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1);
+  }
+  const joins = new Set<string>();
+  for (const [id, n] of indeg) if (n > 1) joins.add(id);
+  return joins;
+}
+
+/** Shift every node in the subtree rooted at `id` by `delta` columns, STOPPING at a
+ *  shared join (a multi-parent node) — it belongs to no single arm and is recentered
+ *  later. Diamond-safe via `seen`. */
+function shiftSubtree(
+  def: CampaignDefinition,
+  id: string,
+  delta: number,
+  col: Map<string, number>,
+  seen: Set<string>,
+  joins: Set<string>,
+): void {
+  if (seen.has(id) || joins.has(id)) return;
+  seen.add(id);
+  if (col.has(id)) col.set(id, col.get(id)! + delta);
+  const node = def.nodes[id];
+  if (!node) return;
+  for (const e of outgoingEdges(id, node)) shiftSubtree(def, e.to, delta, col, seen, joins);
 }
 
 /** Re-center each diamond join under the midpoint of its parents' columns. */
@@ -244,35 +346,48 @@ function recenterJoins(def: CampaignDefinition, col: Map<string, number>): void 
   }
 }
 
-/** Horizontal lane offset (px) for sibling arms that converge on the SAME join. */
-export const ARM_LANE = 28;
+/**
+ * EMPTY_ARM_LANE — the side-lane offset (px) used ONLY by an EMPTY condition arm
+ * (one whose target is the directly-below CENTER join). Such an arm's child is at
+ * the same x as the If, so without a lane both empty arms' (+)s would stack on the
+ * center column. We route each out to ±EMPTY_ARM_LANE so the two (+)s sit on
+ * DISTINCT columns yet still converge on the central join. A POPULATED arm needs no
+ * such lane — its child is already in its own ±BRANCH_HALF_GAP column.
+ */
+export const EMPTY_ARM_LANE = 28;
 
 /**
  * computeEdges(def, positions) — one LayoutEdge per next/onTrue/onFalse, with the
  * source bottom-center + target top-center pixel anchors AND a vertical LANE x.
  * ASSERTS every edge is down-only (toPoint.y > fromPoint.y).
  *
- * LANE ASSIGNMENT (source-side-long rework). A condition's arm runs DOWN a dedicated
- * per-slot side lane just off the source column, so its (+) anchors HIGH on that
- * source-side vertical run (straight below the condition, before any turn) and the
- * two arms' (+)s sit on DISTINCT lanes — they never stack, and they're clearly above
- * the LOW merge (+) on the merged trunk:
- *   • onTrue  → a LEFT lane  (source.x − ARM_LANE).
- *   • onFalse → a RIGHT lane (source.x + ARM_LANE).
- * This applies whether the arm is FANNED (child at a distinct column — the lane turns
- * out to toPoint.x LOW, near the target) or EMPTY (child is the directly-below join —
- * the lane turns back in to the join). The toPoint stays the real child/join, so the
- * arms still CONVERGE on one node when they share a join.
- * A plain `next` edge uses laneX = toPoint.x (straight V or a single source-side-long
- * jog). The fromPoint stays at the card-bottom CENTER for every edge (the split
- * happens below via the lanes), so the connector remains axis-aligned (V/H/V…) and
- * down-only.
+ * LANE ASSIGNMENT (single-knee compact-column rework — the user's spec):
+ *   • A POPULATED condition arm (child sits in its own ±BRANCH_HALF_GAP column, a
+ *     DISTINCT x from the If) → laneX = toPoint.x. The connector is then a SINGLE
+ *     jog: a short stub down from the If's center, ONE knee across to the column,
+ *     then straight DOWN the column to the child. The arm's (+) anchors on that
+ *     column vertical (verticalAnchor at from.x → actually at the child's x, since
+ *     the upper leg of a jog with lane===to.x is at from.x; see verticalAnchor) —
+ *     the (+) and the child share the column, NO second jog between them.
+ *   • An EMPTY arm (child is the directly-below center join, toPoint.x === from.x)
+ *     → laneX = from.x ± EMPTY_ARM_LANE so the two empty arms' (+)s sit on DISTINCT
+ *     side columns yet still converge on the central join.
+ *   • A plain `next` edge → laneX = toPoint.x (straight V or a single jog).
+ * The fromPoint stays at the card-bottom CENTER, so the connector is axis-aligned
+ * (V/H/V…) and down-only — ONE knee at the top, the merged trunk's join gives ONE
+ * knee at the bottom.
  */
 export function computeEdges(
   def: CampaignDefinition,
   positions: ReadonlyMap<string, NodePosition>,
 ): LayoutEdge[] {
   const edges: LayoutEdge[] = [];
+  // A condition arm that points STRAIGHT at the branch's merge join (a multi-parent
+  // node) is an EMPTY/passthrough arm — route it out to a side lane so its (+) sits
+  // on its own side column (never over the OTHER arm's card) yet still converges on
+  // the central join. A POPULATED arm (its target is its own column node) gets a
+  // single top knee down its child column.
+  const joins = multiParentNodes(def);
   for (const id of Object.keys(def.nodes)) {
     const node: DslNode | undefined = def.nodes[id];
     if (!node) continue;
@@ -289,20 +404,26 @@ export function computeEdges(
           `computeEdges: edge ${id} -> ${e.to} is not downward (from.y=${fromPoint.y}, to.y=${toPoint.y})`,
         );
       }
-      // Lane: EVERY condition arm gets a per-slot side lane just off the source
-      // column (onTrue left, onFalse right) so its source-side UPPER vertical run —
-      // where the (+) anchors, straight below the condition — is at a DISTINCT x per
-      // arm (the two (+)s never stack). The arm then turns out to its real child/join
-      // LOW, near the target. A plain `next` edge routes down the target's column.
+      // Lane: a populated arm routes down its CHILD column (laneX = toPoint.x → a
+      // single top jog, the (+) and child share the column). An EMPTY arm (child at
+      // the same x as the If — the directly-below center join) routes out to a side
+      // lane so the two empty (+)s don't stack. A plain `next` follows the target x.
       let laneX = toPoint.x;
-      if (e.slot === 'onTrue' || e.slot === 'onFalse') {
-        laneX = from.x + (e.slot === 'onTrue' ? -ARM_LANE : ARM_LANE);
+      const isArm = e.slot === 'onTrue' || e.slot === 'onFalse';
+      // EMPTY arm: it goes straight to the merge join (a shared multi-parent node),
+      // OR (the fully-empty case) straight to a node directly below the If.
+      const isEmptyArm = isArm && (joins.has(e.to) || toPoint.x === from.x);
+      let kneeTop = false;
+      if (isEmptyArm) {
+        // Route out to a side lane so its (+) sits on its own column (off the other
+        // arm's card) and the two empty (+)s never stack — still converges on the join.
+        laneX = from.x + (e.slot === 'onTrue' ? -EMPTY_ARM_LANE : EMPTY_ARM_LANE);
+      } else if (isArm) {
+        // POPULATED arm — single knee at the TOP, long vertical down the child column.
+        kneeTop = true;
       }
-      edges.push(
-        e.label !== undefined
-          ? { from: id, to: e.to, slot: e.slot, label: e.label, fromPoint, toPoint, laneX }
-          : { from: id, to: e.to, slot: e.slot, fromPoint, toPoint, laneX },
-      );
+      const base = { from: id, to: e.to, slot: e.slot, fromPoint, toPoint, laneX, kneeTop } as const;
+      edges.push(e.label !== undefined ? { ...base, label: e.label } : base);
     }
   }
   return edges;

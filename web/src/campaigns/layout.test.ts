@@ -1,8 +1,13 @@
 // Unit: auto-layout (down-only tree, branch fan, diamond once) (§9B phase 5).
 // Pure — positions are computed from edges, never read from the def.
 import { describe, it, expect } from 'vitest';
-import { layoutDefinition, subtreeWidth, computeEdges, LAYOUT, type CampaignDefinition } from './layout.js';
+import { layoutDefinition, subtreeWidth, computeEdges, LAYOUT, BRANCH_HALF_GAP, type CampaignDefinition } from './layout.js';
 import { orthogonalPath, verticalAnchor, MIN_SEGMENT } from './orthogonal-path.js';
+
+/** Count the HORIZONTAL jogs (knees) in a path `d` — each H run is one knee. */
+function horizontalKnees(d: string): number {
+  return d.trim().split(/\s+/).filter((t) => t === 'H').length;
+}
 
 /** Collect the VERTICAL runs of an SVG path `d` as {x, y0, y1} (y0<y1). */
 function verticalRuns(d: string): Array<{ x: number; y0: number; y1: number }> {
@@ -238,8 +243,8 @@ describe('min vertical-segment floor (every (+) has room)', () => {
       const { positions } = layoutDefinition(def);
       const edges = computeEdges(def, positions);
       for (const e of edges) {
-        const d = orthogonalPath(e.fromPoint, e.toPoint, e.laneX);
-        const a = verticalAnchor(e.fromPoint, e.toPoint, e.laneX);
+        const d = orthogonalPath(e.fromPoint, e.toPoint, e.laneX, undefined, e.kneeTop);
+        const a = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop);
         const h = anchorRunHeight(d, a);
         expect(h, `edge ${e.from}->${e.to} (${e.slot}) anchor not on a run; d=${d}`).not.toBeNull();
         expect(
@@ -257,10 +262,10 @@ describe('min vertical-segment floor (every (+) has room)', () => {
       const cond = Object.entries(def.nodes).find(([, n]) => n.type === 'condition')![0];
       const arms = edges.filter((e) => e.from === cond);
       expect(arms.length).toBe(2);
-      const anchors = arms.map((e) => verticalAnchor(e.fromPoint, e.toPoint, e.laneX));
+      const anchors = arms.map((e) => verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop));
       expect(anchors[0]!.x).not.toBe(anchors[1]!.x); // distinct lanes — no stacking
       for (const e of arms) {
-        const h = anchorRunHeight(orthogonalPath(e.fromPoint, e.toPoint, e.laneX), verticalAnchor(e.fromPoint, e.toPoint, e.laneX));
+        const h = anchorRunHeight(orthogonalPath(e.fromPoint, e.toPoint, e.laneX, undefined, e.kneeTop), verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop));
         expect(h).not.toBeNull();
         expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
       }
@@ -278,7 +283,7 @@ describe('min vertical-segment floor (every (+) has room)', () => {
     const arms = edges.filter((e) => e.from === 'cond');
     expect(arms.length).toBe(2);
     for (const e of arms) {
-      const a = verticalAnchor(e.fromPoint, e.toPoint, e.laneX);
+      const a = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop);
       // The arm (+) is HIGH — straight below the condition, far above the merge (+).
       expect(a.y).toBeLessThan(mergeInsertY - 40);
     }
@@ -290,8 +295,8 @@ describe('min vertical-segment floor (every (+) has room)', () => {
     const edges = computeEdges(diamond, positions);
     const trunk = edges.find((e) => e.from === 'join' && e.to === 'exit1')!;
     const h = anchorRunHeight(
-      orthogonalPath(trunk.fromPoint, trunk.toPoint, trunk.laneX),
-      verticalAnchor(trunk.fromPoint, trunk.toPoint, trunk.laneX),
+      orthogonalPath(trunk.fromPoint, trunk.toPoint, trunk.laneX, undefined, trunk.kneeTop),
+      verticalAnchor(trunk.fromPoint, trunk.toPoint, trunk.laneX, trunk.kneeTop),
     );
     expect(h).not.toBeNull();
     expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
@@ -319,17 +324,61 @@ describe('computeEdges (lane routing)', () => {
     expect(yes.laneX).toBeLessThan(no.laneX); // Yes left of No
   });
 
-  it('a fanned arm uses a per-slot SIDE lane just off the source column (so its (+) anchors straight below the condition, distinct per arm)', () => {
+  it('a POPULATED arm routes down its CHILD column (laneX === child x, single TOP knee) — the (+) and child share the column', () => {
     const { positions } = layoutDefinition(branch);
     const edges = computeEdges(branch, positions);
-    const cond = positions.get('cond')!;
     const yes = edges.find((e) => e.from === 'cond' && e.slot === 'onTrue')!;
     const no = edges.find((e) => e.from === 'cond' && e.slot === 'onFalse')!;
-    // The lane sits just off the source column (left for onTrue, right for onFalse),
-    // NOT on the child column — so the source-side upper run is distinct per arm.
-    expect(yes.laneX).toBeLessThan(cond.x); // onTrue → left of source
-    expect(no.laneX).toBeGreaterThan(cond.x); // onFalse → right of source
-    expect(yes.laneX).not.toBe(no.laneX);
+    // The lane IS the child's column (no separate side-lane) — so the single knee is
+    // at the TOP and the (+) anchors straight ABOVE the child on that same column x.
+    expect(yes.laneX).toBe(positions.get('sendY')!.x);
+    expect(no.laneX).toBe(positions.get('sendN')!.x);
+    expect(yes.kneeTop).toBe(true);
+    expect(no.kneeTop).toBe(true);
+    // The (+) anchor x equals the child's column x (NOT a separate lane).
+    const yesA = verticalAnchor(yes.fromPoint, yes.toPoint, yes.laneX, yes.kneeTop);
+    const noA = verticalAnchor(no.fromPoint, no.toPoint, no.laneX, no.kneeTop);
+    expect(yesA.x).toBe(positions.get('sendY')!.x);
+    expect(noA.x).toBe(positions.get('sendN')!.x);
+    expect(yesA.x).not.toBe(noA.x);
+    // Exactly ONE horizontal knee at the top of each arm connector.
+    expect(horizontalKnees(orthogonalPath(yes.fromPoint, yes.toPoint, yes.laneX, undefined, yes.kneeTop))).toBe(1);
+    expect(horizontalKnees(orthogonalPath(no.fromPoint, no.toPoint, no.laneX, undefined, no.kneeTop))).toBe(1);
+  });
+
+  it('the two arm columns sit at center ± BRANCH_HALF_GAP (compact, not edge-spread)', () => {
+    const { positions } = layoutDefinition(branch);
+    const cond = positions.get('cond')!;
+    const yesX = positions.get('sendY')!.x;
+    const noX = positions.get('sendN')!.x;
+    const left = Math.min(yesX, noX);
+    const right = Math.max(yesX, noX);
+    expect(cond.x).toBeCloseTo((left + right) / 2, 5); // condition centered between
+    expect(right - left).toBeCloseTo(2 * BRANCH_HALF_GAP, 5); // compact center-to-center
+    // The gap between the two ~cardWidth cards is modest (positive but small).
+    const cardGap = right - left - LAYOUT.cardWidth;
+    expect(cardGap).toBeGreaterThan(0);
+    expect(cardGap).toBeLessThan(LAYOUT.cardWidth); // not flung to the edges
+  });
+
+  it('all nodes stacked down ONE arm share the SAME column x (a straight vertical, no per-node jog)', () => {
+    // cond.onTrue → a → a2 → join: the arm has TWO stacked nodes; both share one x.
+    const stacked: CampaignDefinition = {
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+        cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'a', onFalse: 'join' },
+        a: { type: 'action', kind: 'send', template_id: 't', next: 'a2' },
+        a2: { type: 'wait', delay: { seconds: 86400 }, next: 'join' },
+        join: { type: 'exit' },
+      },
+    };
+    const { positions } = layoutDefinition(stacked);
+    expect(positions.get('a')!.x).toBe(positions.get('a2')!.x); // same straight column
+    // The a → a2 edge is a single straight vertical (no horizontal knee).
+    const edges = computeEdges(stacked, positions);
+    const inner = edges.find((e) => e.from === 'a' && e.to === 'a2')!;
+    expect(horizontalKnees(orthogonalPath(inner.fromPoint, inner.toPoint, inner.laneX, undefined, inner.kneeTop))).toBe(0);
   });
 
   it('emits one down-only edge per next/onTrue/onFalse', () => {
