@@ -239,6 +239,93 @@ test('insert an If → a CONVERGING diamond: both arms rejoin a single exit', as
   await expect(page.getByTestId('toast')).toBeVisible();
 });
 
+test('empty If renders as a rectangle: each arm + on its OWN lane (distinct x) + a merge +', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Empty diamond');
+
+  // Insert an If on trigger→exit_1 → both arms point straight at exit_1 (empty).
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+
+  // The two ARM (+)s (below the condition card) sit on DISTINCT lanes — their x's
+  // must differ (no stacking), one left + one right.
+  const condBottom = await conditionBottom(page);
+  const armBoxes = await page.getByTestId('campaign-edge-insert').evaluateAll((els, by) => {
+    return els
+      .map((e) => (e as HTMLElement).getBoundingClientRect())
+      .filter((r) => r.top > by)
+      .map((r) => ({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top) }));
+  }, condBottom);
+  expect(armBoxes.length).toBe(2);
+  expect(armBoxes[0]!.x).not.toBe(armBoxes[1]!.x); // distinct lanes
+
+  // Exactly ONE merge (+) below the branch (the after-the-branch control on the trunk).
+  await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(1);
+  // Its x differs from BOTH arm lanes (it sits on the central merged trunk).
+  const mergeX = await page.getByTestId('campaign-merge-insert').evaluate((el) => {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    return Math.round(r.left + r.width / 2);
+  });
+  expect(mergeX).not.toBe(armBoxes[0]!.x);
+  expect(mergeX).not.toBe(armBoxes[1]!.x);
+
+  // Connectors stay axis-aligned + the arms still converge on the single join.
+  const ds = await page.getByTestId('campaign-connectors').locator('path').evaluateAll((paths) =>
+    paths.map((p) => p.getAttribute('d') ?? ''),
+  );
+  for (const d of ds) expect(pathIsAxisAligned(d)).toBe(true);
+  const counts = new Map<string, number>();
+  for (const d of ds) counts.set(key(pathEndPoint(d)), (counts.get(key(pathEndPoint(d))) ?? 0) + 1);
+  expect([...counts.values()].some((c) => c >= 2)).toBe(true);
+});
+
+test('insert a step AFTER the branch via the merge +: it lands BETWEEN the join and the exit', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('After branch');
+
+  // An empty If → both arms rejoin exit_1.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+  await expect(page.getByTestId('node-exit')).toHaveCount(1);
+
+  // Click the merge (+) → palette opens (after-branch mode) → add a wait.
+  await page.getByTestId('campaign-merge-insert').click();
+  await page.getByTestId('campaign-palette').waitFor();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toBeVisible();
+
+  // The wait sits BETWEEN the condition and the (still single) exit (down-only).
+  const condTop = (await page.getByTestId('node-condition').boundingBox())!.y;
+  const waitTop = (await page.getByTestId('node-wait').boundingBox())!.y;
+  const exitTop = (await page.getByTestId('node-exit').boundingBox())!.y;
+  expect(waitTop).toBeGreaterThan(condTop); // below the branch
+  expect(exitTop).toBeGreaterThan(waitTop); // above the exit
+  await expect(page.getByTestId('node-exit')).toHaveCount(1);
+
+  // Both arms now flow THROUGH the wait before the exit: exactly TWO connectors
+  // converge on the wait's top (one per arm), and the wait→exit trunk is single.
+  const ds = await page.getByTestId('campaign-connectors').locator('path').evaluateAll((paths) =>
+    paths.map((p) => p.getAttribute('d') ?? ''),
+  );
+  for (const d of ds) expect(pathIsAxisAligned(d)).toBe(true);
+  const counts = new Map<string, number>();
+  for (const d of ds) counts.set(key(pathEndPoint(d)), (counts.get(key(pathEndPoint(d))) ?? 0) + 1);
+  expect([...counts.values()].some((c) => c >= 2)).toBe(true);
+
+  // Persists through a save + reload.
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast')).toBeVisible();
+  await page.getByTestId('campaigns-back').click();
+  await page.getByTestId('campaign-item').filter({ hasText: 'After branch' }).getByTestId('campaign-open').click();
+  await page.getByTestId('campaign-canvas').waitFor();
+  await expect(page.getByTestId('node-wait')).toBeVisible();
+  await expect(page.getByTestId('node-exit')).toHaveCount(1);
+});
+
 test('per-arm + with an empty passthrough: one arm gets a send, both rejoin the trunk', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

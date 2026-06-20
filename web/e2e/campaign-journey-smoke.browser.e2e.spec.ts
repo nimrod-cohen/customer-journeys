@@ -7,7 +7,7 @@
 // (services/local-api/test/campaign-journey-live-enroll.integration.test.ts) —
 // here we only prove the journey BUILDS + PUBLISHES. Real Postgres (cdp_e2e).
 import { test, expect } from '@playwright/test';
-import { loginAs } from './helpers.js';
+import { loginAs, publishCampaign } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
 /** Insert a node on the FIRST (+) control, picking it from the palette. */
@@ -51,10 +51,13 @@ test('build the full-node journey in the browser and publish it to active', asyn
   await page.getByTestId('palette-webhook').click();
   await expect(page.getByTestId('node-webhook')).toBeVisible();
 
-  // Configure the update-profile node (literal welcomed=y).
+  // Configure the update-profile node (literal welcomed=y) via the multi-value
+  // assignment rows (the editor uses assignment-key/assignment-literal per row).
   await page.getByTestId('node-set_attribute').getByTestId(/node-open-/).first().click();
   let drawer = page.getByTestId('node-editor-set_attribute');
-  await drawer.getByTestId('update-key').fill('welcomed');
+  const row0 = drawer.getByTestId('assignment-row').first();
+  await row0.getByTestId('assignment-key').fill('welcomed');
+  await row0.getByTestId('assignment-literal').fill('y');
   await drawer.getByTestId('node-save').click();
   await expect(drawer).toBeHidden();
 
@@ -76,9 +79,9 @@ test('build the full-node journey in the browser and publish it to active', asyn
   await page.getByTestId('save-campaign').click();
   await expect(page.getByTestId('toast')).toBeVisible();
 
-  // Publish → status flips to active (the seeded workspace has a verified domain
-  // and the attached template is sendable).
-  await page.getByTestId('campaign-publish').click();
+  // Publish a version → status flips to active (the seeded workspace has a verified
+  // domain and the attached template is sendable).
+  await publishCampaign(page, 'Smoke v1');
   await expect(page.getByTestId('campaign-status')).toContainText('active');
 
   // Back on the list, the row shows active + a (zero) enrollment-counts cell.

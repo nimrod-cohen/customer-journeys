@@ -5,6 +5,8 @@ import { validateCampaignDefinition } from '@cdp/service-campaign-runner';
 import { parseDefinition, buildDefinition, starterModel } from './model.js';
 import {
   insertOnEdge,
+  insertAfterBranch,
+  branchContinuation,
   deleteNode,
   nodeSummary,
   moveSubtree,
@@ -123,6 +125,84 @@ describe('insertOnEdge', () => {
       m = insertOnEdge(m, edge, type, NOW);
       expect(() => validate(m)).not.toThrow();
     }
+  });
+});
+
+describe('insertAfterBranch', () => {
+  it('inserts N between BOTH arms and the continuation: both arms → N → C', () => {
+    // trigger → cond(both arms → exit_1). Insert a wait AFTER the branch, before exit_1.
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    expect(branchContinuation(m, condId)).toBe('exit_1');
+
+    m = insertAfterBranch(m, condId, 'wait', NOW);
+    const def = buildDefinition(m);
+    const cond = def.nodes[condId] as unknown as { onTrue: string; onFalse: string };
+    // BOTH arms now feed the new node N (not exit_1 directly).
+    expect(cond.onTrue).toBe(cond.onFalse);
+    const nId = cond.onTrue;
+    expect(nId).not.toBe('exit_1');
+    expect(def.nodes[nId]!.type).toBe('wait');
+    // N → C (the continuation).
+    expect((def.nodes[nId] as unknown as { next: string }).next).toBe('exit_1');
+    // exit_1 now has exactly ONE incoming edge (from N) — the merge moved down.
+    expect(m.edges.filter((e) => e.to === 'exit_1').length).toBe(1);
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('a POPULATED-arm diamond: only the boundary edges feeding C re-point to N', () => {
+    // trigger → cond(onTrue → send → exit_1, onFalse → exit_1). S(cond)={cond,send};
+    // boundary edges into C(exit_1) are send→exit_1 AND cond.onFalse→exit_1.
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, yesEdge, 'send', NOW);
+    const sendId = m.nodes.find((n) => n.node.type === 'action')!.id;
+
+    m = insertAfterBranch(m, condId, 'wait', NOW);
+    const def = buildDefinition(m);
+    const cond = def.nodes[condId] as unknown as { onTrue: string; onFalse: string };
+    const nId = cond.onFalse; // the empty arm now goes through N
+    expect(def.nodes[nId]!.type).toBe('wait');
+    expect((def.nodes[nId] as unknown as { next: string }).next).toBe('exit_1'); // N → C
+    // The populated arm: send now points at N (its boundary edge re-pointed).
+    expect((def.nodes[sendId] as unknown as { next: string }).next).toBe(nId);
+    // C(exit_1) has exactly one incoming edge (from N).
+    expect(m.edges.filter((e) => e.to === 'exit_1').length).toBe(1);
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('rejects when the branch has NO single continuation (terminal arms)', () => {
+    // trigger → cond(onTrue → exitA, onFalse → exitB): both arms END in their OWN
+    // exit — no single shared continuation → branchContinuation undefined → throws.
+    const m = parseDefinition({
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+        cond: { type: 'condition', ast: {}, onTrue: 'exitA', onFalse: 'exitB' },
+        exitA: { type: 'exit' },
+        exitB: { type: 'exit' },
+      },
+    });
+    expect(branchContinuation(m, 'cond')).toBeUndefined();
+    expect(() => insertAfterBranch(m, 'cond', 'wait', NOW)).toThrow(MutationError);
+  });
+
+  it('refuses a condition N (a merge step must be a single linear step)', () => {
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    expect(() => insertAfterBranch(m, condId, 'condition', NOW)).toThrow(MutationError);
+  });
+
+  it('refuses on a non-condition node', () => {
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'wait', NOW);
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+    expect(() => insertAfterBranch(m, waitId, 'wait', NOW)).toThrow(MutationError);
+    expect(branchContinuation(m, waitId)).toBeUndefined();
   });
 });
 

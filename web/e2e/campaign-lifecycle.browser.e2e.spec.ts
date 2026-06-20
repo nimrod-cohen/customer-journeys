@@ -6,7 +6,7 @@
 // services/local-api/test/campaign-lifecycle.integration.test.ts (the e2e seed has
 // no accounting user). Real Postgres (cdp_e2e).
 import { test, expect } from '@playwright/test';
-import { loginAs } from './helpers.js';
+import { loginAs, publishCampaign } from './helpers.js';
 import { DEV_MKT, DEV_OWNER, WS_A2 } from './seed.js';
 
 /** Build a minimal trigger→send→exit campaign on the detail page, attaching the
@@ -37,8 +37,8 @@ test('publish → pause → resume → archive via the row ActionMenu', async ({
   await loginAs(page, DEV_MKT);
   await buildSendableCampaign(page, 'Lifecycle journey');
 
-  // Publish → active.
-  await page.getByTestId('campaign-publish').click();
+  // Publish a version (Save-version modal, forward) → active.
+  await publishCampaign(page, 'Lifecycle v1');
   await expect(page.getByTestId('campaign-status')).toContainText('active');
 
   // Back to the list — the row shows status active.

@@ -50,6 +50,16 @@ const emptyArmDiamond: CampaignDefinition = {
   },
 };
 
+// A FULLY empty diamond: both arms point straight at the directly-below join.
+const fullyEmptyDiamond: CampaignDefinition = {
+  startNode: 'trigger',
+  nodes: {
+    trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+    cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'join', onFalse: 'join' },
+    join: { type: 'exit' },
+  },
+};
+
 describe('layoutDefinition', () => {
   it('places the trigger at depth 0 (smallest y)', () => {
     const { positions } = layoutDefinition(linear);
@@ -176,7 +186,27 @@ describe('subtreeWidth', () => {
   });
 });
 
-describe('computeEdges', () => {
+describe('computeEdges (lane routing)', () => {
+  it('a FULLY empty diamond gives its two arms DISTINCT lane x (no stacked +s)', () => {
+    const { positions } = layoutDefinition(fullyEmptyDiamond);
+    const edges = computeEdges(fullyEmptyDiamond, positions);
+    const yes = edges.find((e) => e.from === 'cond' && e.slot === 'onTrue')!;
+    const no = edges.find((e) => e.from === 'cond' && e.slot === 'onFalse')!;
+    // The join sits directly below the condition (same column) — so each arm needs
+    // its OWN side lane; the two lane x's must differ (onTrue left, onFalse right).
+    expect(yes.toPoint.x).toBe(no.toPoint.x); // still CONVERGE on the same join
+    expect(yes.laneX).not.toBe(no.laneX); // but route down distinct vertical lanes
+    expect(yes.laneX).toBeLessThan(no.laneX); // Yes left of No
+  });
+
+  it('a fanned arm uses the child column as its lane (laneX === toPoint.x)', () => {
+    const { positions } = layoutDefinition(branch);
+    const edges = computeEdges(branch, positions);
+    for (const e of edges.filter((x) => x.from === 'cond')) {
+      expect(e.laneX).toBe(e.toPoint.x);
+    }
+  });
+
   it('emits one down-only edge per next/onTrue/onFalse', () => {
     const { positions } = layoutDefinition(branch);
     const edges = computeEdges(branch, positions);

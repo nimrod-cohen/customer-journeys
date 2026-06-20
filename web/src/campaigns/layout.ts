@@ -35,6 +35,14 @@ export interface LayoutEdge {
   readonly fromPoint: { x: number; y: number };
   /** Pixel anchor on the target card's top-center. */
   readonly toPoint: { x: number; y: number };
+  /**
+   * The x of the dedicated VERTICAL lane this connector runs down (for a condition
+   * arm). For a fanned arm it equals the child's x (toPoint.x); for an EMPTY arm
+   * that goes straight to a directly-below join the two arms get DISTINCT lane x
+   * (onTrue → left, onFalse → right) so their (+) anchors never stack. For a plain
+   * `next` edge it equals toPoint.x (the route is a straight V or a single jog).
+   */
+  readonly laneX: number;
 }
 
 /** Layout geometry constants (px). Exported for the canvas to size its viewport. */
@@ -218,22 +226,25 @@ function recenterJoins(def: CampaignDefinition, col: Map<string, number>): void 
 }
 
 /** Horizontal lane offset (px) for sibling arms that converge on the SAME join. */
-const ARM_LANE = 28;
+export const ARM_LANE = 28;
 
 /**
  * computeEdges(def, positions) — one LayoutEdge per next/onTrue/onFalse, with the
- * source bottom-center and target top-center pixel anchors. ASSERTS every edge is
- * down-only (toPoint.y > fromPoint.y) — a valid def can never produce an up-edge.
+ * source bottom-center + target top-center pixel anchors AND a vertical LANE x.
+ * ASSERTS every edge is down-only (toPoint.y > fromPoint.y).
  *
- * A CONVERGING DIAMOND with an EMPTY arm produces TWO edges with the SAME source
- * AND the SAME target (e.g. a condition whose onTrue and onFalse both point at the
- * join). Their connectors and (+) anchors would stack EXACTLY on top of each other
- * (the lower button intercepts the upper one's clicks). So when two+ edges from one
- * source share a target, we lane-offset only their SOURCE x (left/right of the card
- * bottom) — keeping the SAME join toPoint so the arms still CONVERGE on one node,
- * while giving each arm a distinct connector + a distinct (+) anchor. The offset
- * stays within the source card so each connector remains axis-aligned (V/H/V) and
- * down-only.
+ * LANE ASSIGNMENT (the converging-diamond rework). A condition's arm runs DOWN a
+ * dedicated vertical lane so its (+) anchors on a real vertical run:
+ *   • FANNED arm (child fanned to a distinct column, toPoint.x ≠ source.x):
+ *     laneX = toPoint.x — the connector's lower vertical leg IS the lane.
+ *   • EMPTY arm straight to a directly-below join (toPoint.x === source.x): the two
+ *     arms would otherwise share one column and stack. Give onTrue a LEFT lane and
+ *     onFalse a RIGHT lane (source.x ∓ ARM_LANE) — a clean rectangle whose two arm
+ *     (+)s sit on DISTINCT vertical lanes. The toPoint stays the shared join, so the
+ *     arms still CONVERGE on one node.
+ * A plain `next` edge uses laneX = toPoint.x (straight V or a single jog). The
+ * fromPoint stays at the card-bottom CENTER for every edge (the split happens below
+ * via the lanes), so the connector remains axis-aligned (V/H/V…) and down-only.
  */
 export function computeEdges(
   def: CampaignDefinition,
@@ -246,34 +257,26 @@ export function computeEdges(
     const from = positions.get(id);
     if (!from) continue;
     const out = outgoingEdges(id, node);
-    // Group this source's edges by target so colliding siblings (same from+to) can
-    // be lane-offset apart. Order is preserved (onTrue before onFalse).
-    const byTarget = new Map<string, number>();
-    for (const e of out) byTarget.set(e.to, (byTarget.get(e.to) ?? 0) + 1);
-    const laneIndex = new Map<string, number>();
     for (const e of out) {
       const to = positions.get(e.to);
       if (!to) continue;
-      const collisions = byTarget.get(e.to) ?? 1;
-      let fromX = from.x;
-      if (collisions > 1) {
-        // Spread the colliding siblings symmetrically around the card-bottom center.
-        const i = laneIndex.get(e.to) ?? 0;
-        laneIndex.set(e.to, i + 1);
-        const offset = (i - (collisions - 1) / 2) * ARM_LANE;
-        fromX = from.x + offset;
-      }
-      const fromPoint = { x: fromX, y: from.y + LAYOUT.cardHeight };
+      const fromPoint = { x: from.x, y: from.y + LAYOUT.cardHeight };
       const toPoint = { x: to.x, y: to.y };
       if (!(toPoint.y > fromPoint.y)) {
         throw new Error(
           `computeEdges: edge ${id} -> ${e.to} is not downward (from.y=${fromPoint.y}, to.y=${toPoint.y})`,
         );
       }
+      // Lane: a same-column arm (empty arm → directly-below join) gets a side lane
+      // so the two arms separate; everything else routes down the target's column.
+      let laneX = toPoint.x;
+      if ((e.slot === 'onTrue' || e.slot === 'onFalse') && toPoint.x === from.x) {
+        laneX = from.x + (e.slot === 'onTrue' ? -ARM_LANE : ARM_LANE);
+      }
       edges.push(
         e.label !== undefined
-          ? { from: id, to: e.to, slot: e.slot, label: e.label, fromPoint, toPoint }
-          : { from: id, to: e.to, slot: e.slot, fromPoint, toPoint },
+          ? { from: id, to: e.to, slot: e.slot, label: e.label, fromPoint, toPoint, laneX }
+          : { from: id, to: e.to, slot: e.slot, fromPoint, toPoint, laneX },
       );
     }
   }

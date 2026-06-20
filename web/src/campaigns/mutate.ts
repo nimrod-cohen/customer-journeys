@@ -344,6 +344,144 @@ export function subtreeNodeIds(model: CanvasModel, rootId: string): Set<string> 
   return exclusiveSubtree(buildDefinition(model), rootId).ids;
 }
 
+/**
+ * conditionMerge(def, conditionId) — the single MERGE/continuation C a condition's
+ * arms rejoin, plus the in-branch member set S whose boundary edges feed C. C is the
+ * shallowest node reachable from EVERY arm (the nearest common descendant — the
+ * structural join); S = nodes reachable from the condition that cannot be reached
+ * without passing the condition's branch, i.e. `reachableFrom(cond) \ reachableFrom(C)`
+ * (so C itself is excluded). Returns undefined C when the arms share no common
+ * descendant (terminal arms / no single rejoin). The boundary edges to re-point are
+ * exactly the edges from a node in S that target C.
+ */
+function conditionMerge(
+  def: CampaignDefinition,
+  conditionId: string,
+): { S: Set<string>; C: string | undefined } {
+  const cond = def.nodes[conditionId] as { onTrue?: string; onFalse?: string };
+  const arms = [cond.onTrue, cond.onFalse].filter((a): a is string => typeof a === 'string' && a.length > 0);
+  if (arms.length < 2) return { S: new Set([conditionId]), C: undefined };
+
+  // Common descendants of ALL arms (inclusive of each arm target).
+  const reachSets = arms.map((a) => reachableFrom(def, a));
+  let common = new Set(reachSets[0]);
+  for (const r of reachSets.slice(1)) common = new Set([...common].filter((id) => r.has(id)));
+  if (common.size === 0) return { S: new Set([conditionId]), C: undefined };
+
+  // C = the shallowest common node (nearest the condition) by longest-path depth.
+  const depth = computeDepthsLocal(def);
+  let C: string | undefined;
+  let best = Infinity;
+  for (const id of common) {
+    const d = depth.get(id) ?? Infinity;
+    if (d < best) {
+      best = d;
+      C = id;
+    }
+  }
+  if (!C) return { S: new Set([conditionId]), C: undefined };
+
+  // S = everything reachable from the condition that is NOT reachable from C and is
+  // not C itself (the strictly-in-branch nodes whose boundary edges feed C).
+  const fromCond = reachableFrom(def, conditionId);
+  const belowC = reachableFrom(def, C);
+  const S = new Set<string>();
+  for (const id of fromCond) if (!belowC.has(id)) S.add(id);
+  S.add(conditionId);
+  return { S, C };
+}
+
+/** Longest-path depth (local copy — layout.ts owns the canvas one). */
+function computeDepthsLocal(def: CampaignDefinition): Map<string, number> {
+  const depth = new Map<string, number>();
+  depth.set(def.startNode, 0);
+  const ids = Object.keys(def.nodes);
+  let changed = true;
+  let guard = ids.length + 1;
+  while (changed && guard-- > 0) {
+    changed = false;
+    for (const id of ids) {
+      const d = depth.get(id);
+      if (d === undefined) continue;
+      const node = def.nodes[id];
+      if (!node) continue;
+      for (const e of outgoingEdges(id, node)) {
+        if ((depth.get(e.to) ?? -1) < d + 1) {
+          depth.set(e.to, d + 1);
+          changed = true;
+        }
+      }
+    }
+  }
+  return depth;
+}
+
+/**
+ * The single CONTINUATION C below a condition's branch (the node both arms rejoin),
+ * or undefined when the branch is terminal / has no single shared continuation. Pure;
+ * the canvas uses it to decide whether to offer the after-the-branch merge (+).
+ */
+export function branchContinuation(model: CanvasModel, conditionId: string): string | undefined {
+  const def = buildDefinition(model);
+  const node = def.nodes[conditionId];
+  if (!node || node.type !== 'condition') return undefined;
+  return conditionMerge(def, conditionId).C;
+}
+
+/**
+ * insertAfterBranch(model, conditionId, type, now?) — insert a NEW node N AFTER a
+ * condition's branch, BEFORE its continuation C: every boundary edge feeding C from
+ * inside the condition's exclusive subtree S re-points to N, and N → C. Both arms
+ * thereby flow THROUGH N before reaching C (N becomes the new merge point).
+ *
+ * Reuses the exclusive-subtree boundary (S + the single continuation C) computed for
+ * move/duplicate. When the arms don't share a SINGLE continuation (terminal branch,
+ * or 2+ distinct boundary targets) the merge can't be expressed as one N → C splice,
+ * so it THROWS a MutationError (the canvas omits the merge (+) for that condition —
+ * it never reaches this). A condition N is rejected (it would create a nested
+ * branch, not a linear merge step). The result is a valid down-only graph
+ * (re-validated locally + server-side).
+ */
+export function insertAfterBranch(
+  model: CanvasModel,
+  conditionId: string,
+  type: PaletteType,
+  now: Date = new Date(),
+): CanvasModel {
+  const def = buildDefinition(model);
+  const cond = def.nodes[conditionId];
+  if (!cond || cond.type !== 'condition') {
+    throw new MutationError('Add a step after a branch only on an If.');
+  }
+  const { S, C } = conditionMerge(def, conditionId);
+  if (!C) {
+    throw new MutationError('This branch has no single rejoin point to add a step after.');
+  }
+
+  const existing = new Set(model.nodes.map((n) => n.id));
+  const newId = freshNodeId(type, existing);
+  const fresh = defaultNodeConfig(type, now);
+
+  const nodes: Record<string, DslNode> = {};
+  for (const [nid, node] of Object.entries(def.nodes)) {
+    // Re-point every BOUNDARY edge (a node IN S whose slot targets C) to N.
+    nodes[nid] = S.has(nid) ? repointParents(node, C, newId) : { ...node };
+  }
+  // N sits between the branch and C. A condition can't be a linear merge step.
+  if (type === 'condition') {
+    throw new MutationError('Add the If on an arm — a branch step after the merge must be a single step.');
+  } else if (type === 'exit') {
+    // An exit after the merge would orphan C (nothing reaches it) → refuse.
+    throw new MutationError('An Exit here would strand the steps below the branch.');
+  } else {
+    nodes[newId] = { ...fresh, next: C };
+  }
+
+  const nextDef = { startNode: def.startNode, nodes };
+  assertWellFormed(nextDef, 'That step would break the journey.');
+  return parseDefinition(nextDef);
+}
+
 /** Does the definition contain a cycle? (down-only must hold — a DFS back-edge fails.) */
 function hasCycle(def: CampaignDefinition): boolean {
   const WHITE = 0;

@@ -1,14 +1,12 @@
 // Unit: rounded orthogonal connector paths — diagonal-free by construction (§9B
-// phase 5). Tokenizes the emitted `d` and asserts every drawn run changes only x
-// OR only y. Pure.
+// phase 5) + LANE routing (the converging-diamond rework). Tokenizes the emitted
+// `d` and asserts every drawn run changes only x OR only y, and that the (+) anchor
+// always lands ON a vertical run of the path. Pure.
 import { describe, it, expect } from 'vitest';
-import { orthogonalPath, edgeMidpoint, CORNER_RADIUS } from './orthogonal-path.js';
+import { orthogonalPath, verticalAnchor, edgeMidpoint, CORNER_RADIUS, type Point } from './orthogonal-path.js';
 
 /** Tokenize a path's `d` into commands; assert each run moves on one axis only. */
 function assertAxisAligned(d: string): void {
-  // Track the current pen position; for each command verify it changes only x or
-  // only y (a Q corner is a single right-angle turn whose control + endpoint we
-  // verify don't move both axes at the SAME step beyond the turn itself).
   const tokens = d.trim().split(/\s+/);
   let i = 0;
   let cx = 0;
@@ -20,16 +18,10 @@ function assertAxisAligned(d: string): void {
       cx = readNum();
       cy = readNum();
     } else if (cmd === 'V') {
-      const ny = readNum();
-      cy = ny; // pure vertical
+      cy = readNum();
     } else if (cmd === 'H') {
-      const nx = readNum();
-      cx = nx; // pure horizontal
+      cx = readNum();
     } else if (cmd === 'Q') {
-      // control point + endpoint: a 90° rounded corner. Endpoint moves diagonally
-      // by exactly the radius on BOTH axes (the rounding of the turn), which is
-      // expected and bounded; assert the control point shares an axis with the
-      // PRE-corner position (so the entry into the corner is axis-aligned).
       const cpx = readNum();
       const cpy = readNum();
       const ex = readNum();
@@ -42,6 +34,43 @@ function assertAxisAligned(d: string): void {
       throw new Error(`unexpected command "${cmd}" in orthogonal path: ${d}`);
     }
   }
+}
+
+/** Collect the VERTICAL runs of a path as {x, y0, y1} (y0<y1), tracing the pen. */
+function verticalRuns(d: string): Array<{ x: number; y0: number; y1: number }> {
+  const tokens = d.trim().split(/\s+/);
+  let i = 0;
+  let cx = 0;
+  let cy = 0;
+  const n = (): number => Number(tokens[i++]);
+  const runs: Array<{ x: number; y0: number; y1: number }> = [];
+  while (i < tokens.length) {
+    const cmd = tokens[i++];
+    if (cmd === 'M') {
+      cx = n();
+      cy = n();
+    } else if (cmd === 'V') {
+      const ny = n();
+      runs.push({ x: cx, y0: Math.min(cy, ny), y1: Math.max(cy, ny) });
+      cy = ny;
+    } else if (cmd === 'H') {
+      cx = n();
+    } else if (cmd === 'Q') {
+      n();
+      n();
+      cx = n();
+      cy = n();
+    }
+  }
+  return runs;
+}
+
+/** Assert `p` sits ON some vertical run of `d` (its x equals that run's x, its y
+ *  within [y0,y1]) — the (+) anchor contract. */
+function assertOnVerticalRun(d: string, p: Point): void {
+  const runs = verticalRuns(d);
+  const hit = runs.some((r) => Math.abs(r.x - p.x) < 1e-6 && p.y >= r.y0 - 1e-6 && p.y <= r.y1 + 1e-6);
+  expect(hit, `anchor ${JSON.stringify(p)} not on a vertical run of ${d}; runs=${JSON.stringify(runs)}`).toBe(true);
 }
 
 describe('orthogonalPath', () => {
@@ -59,11 +88,8 @@ describe('orthogonalPath', () => {
   });
 
   it('clamps the corner radius to half the shorter leg (no overshoot)', () => {
-    // A tiny drop with a big x-offset → the vertical leg is the shorter; radius
-    // must clamp well below the default so the corner fits.
-    const d = orthogonalPath({ x: 0, y: 0 }, { x: 1000, y: 8 }, CORNER_RADIUS);
+    const d = orthogonalPath({ x: 0, y: 0 }, { x: 1000, y: 8 }, undefined, CORNER_RADIUS);
     assertAxisAligned(d);
-    // With a 4px half-drop, r clamps to <= 2; the path must still be valid.
     expect(d).toMatch(/^M /);
   });
 
@@ -73,8 +99,6 @@ describe('orthogonalPath', () => {
   });
 
   it('two arms (left + right of the join) CONVERGE onto one join top-center point', () => {
-    // The join sits at x=300; one arm leaves from the LEFT (x=120), the other from
-    // the RIGHT (x=480). Both connectors must END at the identical join point.
     const join = { x: 300, y: 400 };
     const left = orthogonalPath({ x: 120, y: 200 }, join);
     const right = orthogonalPath({ x: 480, y: 200 }, join);
@@ -82,8 +106,6 @@ describe('orthogonalPath', () => {
     expect(right).not.toMatch(/\bL\b/);
     assertAxisAligned(left);
     assertAxisAligned(right);
-    // The final point of each path is the join (a V command to the join's y, after
-    // an H run to the join's x — so the pen ends at exactly the join).
     const endOf = (d: string): { x: number; y: number } => {
       const t = d.trim().split(/\s+/);
       let x = 0;
@@ -102,27 +124,78 @@ describe('orthogonalPath', () => {
     expect(endOf(left)).toEqual(join);
     expect(endOf(right)).toEqual(join);
   });
+
+  it('LANE route (laneX distinct from both x): a clean rectangle with a real lane V', () => {
+    // Source above, join straight below at the SAME x — but route DOWN a left lane.
+    const from = { x: 300, y: 100 };
+    const to = { x: 300, y: 400 };
+    const laneX = 272; // a distinct left lane
+    const d = orthogonalPath(from, to, laneX);
+    assertAxisAligned(d);
+    expect(d).not.toMatch(/\bL\b/);
+    // The path must contain a vertical run AT the lane x (the middle-third lane).
+    const runs = verticalRuns(d);
+    expect(runs.some((r) => Math.abs(r.x - laneX) < 1e-6 && r.y1 > r.y0)).toBe(true);
+    // It still lands exactly on the join.
+    const last = runs[runs.length - 1]!;
+    expect(last.y1).toBe(400);
+  });
+
+  it('lane route collapses to the classic jog when laneX === to.x', () => {
+    const from = { x: 300, y: 100 };
+    const to = { x: 120, y: 400 };
+    const withLane = orthogonalPath(from, to, 120);
+    const plain = orthogonalPath(from, to);
+    expect(withLane).toBe(plain);
+  });
 });
 
-describe('edgeMidpoint', () => {
-  it('sits at the horizontal+vertical midpoint (on the connector’s H run)', () => {
-    // x is the midpoint of source/target so two arms from the SAME source (a
-    // condition fanning sideways) get DISTINCT (+) anchors instead of stacking.
-    const mid = edgeMidpoint({ x: 100, y: 50 }, { x: 340, y: 250 });
-    expect(mid).toEqual({ x: 220, y: 150 });
+describe('verticalAnchor', () => {
+  it('straight-down edge: the vertical midpoint', () => {
+    expect(verticalAnchor({ x: 100, y: 50 }, { x: 100, y: 250 })).toEqual({ x: 100, y: 150 });
   });
 
-  it('stays directly below the source for a straight-down edge (same x)', () => {
-    const mid = edgeMidpoint({ x: 100, y: 50 }, { x: 100, y: 250 });
-    expect(mid).toEqual({ x: 100, y: 150 });
+  it('a jog edge: the anchor sits on the LOWER vertical leg (at to.x), on the path', () => {
+    const from = { x: 100, y: 50 };
+    const to = { x: 340, y: 250 };
+    const a = verticalAnchor(from, to);
+    expect(a.x).toBe(to.x);
+    assertOnVerticalRun(orthogonalPath(from, to), a);
   });
 
-  it('the two converging arm + anchors are DISTINCT (do not stack/overlap)', () => {
-    // A condition at x=300 fans onTrue to x=120 and onFalse to x=480; the (+) on
-    // each arm edge gets a distinct x so the buttons never stack.
+  it('a full LANE route: the anchor sits on the lane vertical (at laneX), on the path', () => {
+    const from = { x: 300, y: 100 };
+    const to = { x: 300, y: 400 };
+    const laneX = 272;
+    const a = verticalAnchor(from, to, laneX);
+    expect(a.x).toBe(laneX);
+    assertOnVerticalRun(orthogonalPath(from, to, laneX), a);
+  });
+
+  it('two converging EMPTY arms get DISTINCT lane anchors (no stacking) — each on its lane V', () => {
+    // A condition at x=300 with a join straight below at x=300; the two empty arms
+    // route down a LEFT lane and a RIGHT lane. Their (+) anchors must differ in x.
     const source = { x: 300, y: 100 };
-    const yesMid = edgeMidpoint(source, { x: 120, y: 300 });
-    const noMid = edgeMidpoint(source, { x: 480, y: 300 });
+    const join = { x: 300, y: 400 };
+    const leftLane = 272;
+    const rightLane = 328;
+    const yes = verticalAnchor(source, join, leftLane);
+    const no = verticalAnchor(source, join, rightLane);
+    expect(yes.x).not.toBe(no.x);
+    assertOnVerticalRun(orthogonalPath(source, join, leftLane), yes);
+    assertOnVerticalRun(orthogonalPath(source, join, rightLane), no);
+  });
+
+  it('two converging FANNED arms (distinct target x) also get distinct anchors', () => {
+    const source = { x: 300, y: 100 };
+    const yesMid = verticalAnchor(source, { x: 120, y: 300 });
+    const noMid = verticalAnchor(source, { x: 480, y: 300 });
     expect(yesMid.x).not.toBe(noMid.x);
+  });
+});
+
+describe('edgeMidpoint (legacy alias → verticalAnchor)', () => {
+  it('stays directly below the source for a straight-down edge (same x)', () => {
+    expect(edgeMidpoint({ x: 100, y: 50 }, { x: 100, y: 250 })).toEqual({ x: 100, y: 150 });
   });
 });

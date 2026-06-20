@@ -11,3 +11,16 @@ export async function loginAs(page: Page, user: DevUser): Promise<void> {
   // The AppShell renders the nav once the session token is set.
   await page.getByTestId('app-nav').waitFor();
 }
+
+/**
+ * Publish the campaign currently open in the builder via the Save-version modal
+ * (the campaign builder now edits a DRAFT and publishes append-only VERSIONS).
+ * Opens the modal, names the version, and confirms a FORWARD publish (the default).
+ * Caller asserts the resulting status.
+ */
+export async function publishCampaign(page: Page, versionName = 'v1'): Promise<void> {
+  await page.getByTestId('publish-version').click();
+  await page.getByTestId('publish-modal').waitFor();
+  await page.getByTestId('version-name').fill(versionName);
+  await page.getByTestId('publish-confirm').click();
+}

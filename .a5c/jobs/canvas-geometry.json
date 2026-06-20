@@ -1,0 +1,34 @@
+{
+  "filesCreated": [],
+  "filesModified": [
+    "web/src/campaigns/orthogonal-path.ts",
+    "web/src/campaigns/orthogonal-path.test.ts",
+    "web/src/campaigns/layout.ts",
+    "web/src/campaigns/layout.test.ts",
+    "web/src/campaigns/mutate.ts",
+    "web/src/campaigns/mutate.test.ts",
+    "web/src/campaigns/CampaignCanvas.tsx",
+    "web/src/screens/CampaignBuilder.tsx",
+    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "CLAUDE.md",
+    "package.json"
+  ],
+  "versionBump": "0.40.0 -> 0.41.0 (minor)",
+  "testsPass": true,
+  "testSummary": "Web unit: 173 passed, 4 skipped (campaigns: orthogonal-path 13, layout 15, mutate 35, + model/node-config/versioning all green). Full repo `pnpm test`: 43 tasks successful (integration tests skipped where DB-gated, standard local behavior).",
+  "e2eSummary": "SOLO, one-at-a-time, ports freed between runs. campaign-builder: 16/16 pass (incl. new empty-diamond rectangle + after-branch merge insert + the Escape test green + existing axis-aligned/down-only/convergence). campaign-node-editors + campaign-publish-gate + campaign-versioning: 14/14 pass. broadcast-and-campaign: 12/12 pass. No regressions.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "commandsRun": [
+    "pnpm --filter @cdp/web exec vitest run src/campaigns/{orthogonal-path,layout,mutate}.test.ts",
+    "pnpm --filter @cdp/web exec vitest run (full web)",
+    "pnpm --filter @cdp/web exec tsc -b",
+    "pnpm typecheck (43/43)",
+    "pnpm lint (7 known pre-existing react-hooks 'rule not found' errors only; none added)",
+    "pnpm test (43/43)",
+    "playwright campaign-builder (16/16) SOLO",
+    "playwright campaign-node-editors+publish-gate+versioning (14/14) SOLO",
+    "playwright broadcast-and-campaign (12/12) SOLO"
+  ],
+  "notes": "ISSUE 2 (+ on vertical): arms route down a dedicated vertical lane (laneX on LayoutEdge); verticalAnchor() returns a point guaranteed on a vertical run (lower-V midpoint for jogs, lane-middle-third for full lane routes). ISSUE 3 (empty diamond rectangle): empty arms to a directly-below join get distinct side lanes (onTrue left/onFalse right, source.x ± ARM_LANE=28) so the two arm (+)s sit at distinct x; merge (+) on the trunk. ISSUE 1 (insert after branch): insertAfterBranch() re-points every boundary edge feeding the single continuation C to a fresh N, N.next=C; merge node found via conditionMerge() = shallowest common descendant of all arms (NOT exclusiveSubtree.continuation, which breaks for the basic both-arms->C diamond because C is reachable only through the cond); omitted (throws) when no single C. campaign-merge-insert (+) rendered at C top-center on the trunk; condition/exit disabled in after-branch palette. ESCAPE root cause: placement Escape effect deps [placing,onCancelPlacement] left the capture keydown listener un-re-registered the 2nd time placement started after a prior cancel (diagnosed: placingReg stayed 1, escSeen=NONE on 2nd attempt). Fix: ONE lifetime-stable empty-deps capture listener reading latest placing+cancel from refs. VISUAL TUNING FLAG: empty-diamond merge (+) sits at the convergence point (C top) where the central trunk is short; lane width (ARM_LANE=28) + rail fractions (1/3, 2/3) are reasonable defaults but may want an eyeball pass for spacing/aesthetics."
+}

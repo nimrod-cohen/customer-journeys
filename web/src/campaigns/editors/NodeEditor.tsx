@@ -65,7 +65,7 @@ export interface NodeEditorProps {
   readonly triggerSegmentId: string | null;
   /** Persist a node config patch into the model (applyNodeConfig + PUT). */
   readonly onSaveNode: (patch: DslNode) => Promise<void>;
-  /** Persist the campaign-row trigger_segment_id (PUT /campaigns/:id). */
+  /** Persist the trigger_segment_id into the DRAFT (PUT /campaigns/:id/draft). */
   readonly onSaveTriggerSegment: (segmentId: string | null) => Promise<void>;
   /**
    * Re-fetch the campaign into the builder's model (GET /campaigns/:id). The SEND

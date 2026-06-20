@@ -5,12 +5,12 @@
 // control on each edge opens the insert palette; each card has an ActionMenu with
 // Delete. This component is pure UI: state (the CanvasModel) lives in the screen.
 import type { JSX } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { ActionMenu } from '../ui/kit.js';
 import { layoutDefinition, LAYOUT, type LayoutEdge } from './layout.js';
-import { orthogonalPath, edgeMidpoint } from './orthogonal-path.js';
+import { orthogonalPath, verticalAnchor } from './orthogonal-path.js';
 import { buildDefinition, displayType, type CanvasModel, type CanvasEdge, type CanvasNode } from './model.js';
-import { nodeSummary, subtreeNodeIds } from './mutate.js';
+import { nodeSummary, subtreeNodeIds, branchContinuation } from './mutate.js';
 
 /** An in-progress placement (Move / Duplicate): pick a destination + to splice at. */
 export interface Placement {
@@ -51,6 +51,7 @@ const TYPE_LABEL: Record<string, string> = {
 export function CampaignCanvas({
   model,
   onInsert,
+  onInsertAfterBranch,
   onDelete,
   onOpen,
   publishErrors,
@@ -61,6 +62,8 @@ export function CampaignCanvas({
 }: {
   model: CanvasModel;
   onInsert: (edge: CanvasEdge) => void;
+  /** Insert a step AFTER a condition's branch (the merge (+) below the join). */
+  onInsertAfterBranch?: (conditionId: string) => void;
   onDelete: (node: CanvasNode) => void | Promise<void>;
   /** Open a node's config editor (card click / "Edit step"). */
   onOpen: (node: CanvasNode) => void;
@@ -87,15 +90,23 @@ export function CampaignCanvas({
   // Escape cancels an in-progress placement (parity with closing the palette).
   // Registered in the CAPTURE phase on `document` so it fires regardless of which
   // element holds focus (the just-closed ActionMenu, a (+), the body, …).
+  // A single, lifetime-stable capture-phase Escape listener that reads the LATEST
+  // placing flag + cancel callback from refs. Registering once (empty deps) avoids
+  // the dep-churn fragility where a toggled `placing`/recreated `onCancelPlacement`
+  // could leave the listener un-re-registered after a prior cancel (the regression
+  // that made Escape stop dismissing the placement banner the second time).
   const placing = placement != null;
+  const placingRef = useRef(placing);
+  placingRef.current = placing;
+  const cancelRef = useRef(onCancelPlacement);
+  cancelRef.current = onCancelPlacement;
   useEffect(() => {
-    if (!placing) return undefined;
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onCancelPlacement?.();
+      if (e.key === 'Escape' && placingRef.current) cancelRef.current?.();
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [placing, onCancelPlacement]);
+  }, []);
 
   // The node whose ActionMenu is currently open — its card is raised above sibling
   // cards (each card is its own z-10 stacking context, so a later sibling would
@@ -202,7 +213,7 @@ export function CampaignCanvas({
 
         {/* Edge insertion (+) controls, anchored on each connector's vertical run. */}
         {layout.edges.map((e) => {
-          const mid = edgeMidpoint(e.fromPoint, e.toPoint);
+          const mid = verticalAnchor(e.fromPoint, e.toPoint, e.laneX);
           const edge = model.edges.find((me) => me.from === e.from && me.slot === e.slot && me.to === e.to);
           if (!edge) return null;
           // While placing a MOVE, hide the (+) controls inside the moving subtree
@@ -231,6 +242,37 @@ export function CampaignCanvas({
             </button>
           );
         })}
+
+        {/* Merge (+) controls — one per condition that has a single rejoin (C).
+            Anchored on the MERGED VERTICAL TRUNK just above the continuation card,
+            it inserts a step AFTER the branch (both arms flow through it before C).
+            Hidden during placement (a different interaction). */}
+        {!placing
+          ? model.nodes
+              .filter((cn) => cn.node.type === 'condition')
+              .map((cn) => {
+                const contId = branchContinuation(model, cn.id);
+                if (!contId) return null; // no single continuation → no merge (+)
+                const contPos = layout.positions.get(contId);
+                if (!contPos) return null;
+                // On the vertical trunk feeding C, in the gap just above its card top.
+                const x = contPos.x;
+                const y = contPos.y - 14;
+                return (
+                  <button
+                    key={`merge-${cn.id}`}
+                    type="button"
+                    data-testid="campaign-merge-insert"
+                    aria-label="Insert a step after the branch"
+                    onClick={() => onInsertAfterBranch?.(cn.id)}
+                    class="absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-violet-300 bg-white text-sm font-bold text-violet-500 shadow-sm transition-colors hover:border-violet-500 hover:text-violet-700"
+                    style={{ left: `${x}px`, top: `${y}px` }}
+                  >
+                    +
+                  </button>
+                );
+              })
+          : null}
 
         {/* Node cards. */}
         {model.nodes.map((cn) => {
@@ -326,8 +368,8 @@ export function CampaignCanvas({
 }
 
 function Connector({ edge }: { edge: LayoutEdge }): JSX.Element {
-  const d = orthogonalPath(edge.fromPoint, edge.toPoint);
-  const labelPoint = edge.label ? { x: edge.toPoint.x, y: (edge.fromPoint.y + edge.toPoint.y) / 2 } : null;
+  const d = orthogonalPath(edge.fromPoint, edge.toPoint, edge.laneX);
+  const labelPoint = edge.label ? { x: edge.laneX, y: edge.fromPoint.y + 16 } : null;
   return (
     <g>
       <path d={d} fill="none" stroke="#cbd5e1" stroke-width={2} />

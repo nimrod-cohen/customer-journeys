@@ -1,0 +1,37 @@
+{
+  "filesCreated": [
+    "packages/db/supabase/migrations/0037_campaign_versions.sql",
+    "services/local-api/test/campaign-versioning.integration.test.ts"
+  ],
+  "filesModified": [
+    "services/local-api/src/handlers.ts",
+    "services/local-api/src/routes.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "migrationsApplied": [
+    "0037_campaign_versions.sql -> cdp (verified via information_schema)",
+    "0037_campaign_versions.sql -> cdp_e2e (verified via information_schema)"
+  ],
+  "versionBump": "0.39.0 -> 0.40.0 (minor)",
+  "testsPass": true,
+  "testSummary": "local-api: 50 files / 230 tests PASS (incl. new campaign-versioning.integration.test.ts 16 tests). campaign-runner: 36 files / 207 tests PASS (runner UNCHANGED, still reads live definition). Full `pnpm test`: 43 packages PASS. All run against REAL Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp); no Postgres mocking in the integration tier.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "commandsRun": [
+    "node pg apply 0037 to cdp + cdp_e2e",
+    "pnpm typecheck (cold: 43 successful, 0 cached)",
+    "DATABASE_URL=...cdp pnpm --filter @cdp/service-local-api exec vitest run (230 pass)",
+    "DATABASE_URL=...cdp pnpm --filter @cdp/service-campaign-runner exec vitest run (207 pass)",
+    "DATABASE_URL=...cdp pnpm test (43 packages pass)",
+    "pnpm lint (only the 7 known pre-existing @cdp/web react-hooks 'rule not found' errors; NO new backend lint errors)"
+  ],
+  "notes": "Test-first. Migration 0037 adds campaign_versions (workspace-scoped + tenant_isolation RLS + workspace_id-leading index, UNIQUE(campaign_id,version), campaign_id FK ON DELETE CASCADE) and campaigns.{draft_definition, draft_trigger_segment_id, active_version_id}. The runner is UNCHANGED: it keeps reading campaigns.definition + campaigns.trigger_segment_id (the LIVE values). The publish-gate envelope/verified-domain logic was extracted from activateCampaign into a shared runCampaignPublishGate() reused by BOTH activate and publish (no behavior change to activate; campaign-publish-gate + campaign-activate-gate tests still green). activateCampaign remains an in-place re-activate of LIVE; publish is the draft->live flow. Backfill runs enrollSegmentSnapshot on the SAME tx client AFTER setting status='active' so loadStartNode (which requires status='active') sees it. getCampaign uses an explicit LEFT JOIN with c.workspace_id binding (not scopedQuery, which can't disambiguate workspace_id across a join). All five endpoints workspace-scoped: cross-workspace campaign/version ids 404, workspace_id never from body. hasDraft on GET is true only when a draft exists AND differs from live.",
+  "apiContract": {
+    "draft": "PUT /campaigns/:id/draft (manage_content). Request body: { definition: <CampaignDSL>, trigger_segment_id?: uuid|null }. Writes ONLY the draft working copy (draft_definition + draft_trigger_segment_id); never live/status. Invalid graph -> 400 { error } (no write). Foreign/missing id -> 404. trigger_segment_id outside workspace -> 400. Success -> 200 { updated: 1 }.",
+    "getCampaign": "GET /campaigns/:id (manage_content) -> 200 { campaign: { id, name, status, definition (THE DRAFT TO EDIT = draft_definition ?? live), liveDefinition (active def the runner reads), hasDraft (bool: draft present AND differs from live), activeVersion ({version:int,name:string}|null), trigger_segment_id (draft trigger ?? live trigger), trigger_on, keep_while_in_segment }, timezone }. Foreign id -> 404.",
+    "publish": "POST /campaigns/:id/publish (manage_content). Request body: { name: string (required), scope: 'forward'|'backfill' }. Publishes the draft (?? live). Gate failures (BEFORE any mutation): invalid def -> 400 { error }; incomplete send node -> 409 { error, node, missing:'sender'|'to'|'subject' }; no verified domain -> 409 { error, missing:'verified_domain' }. Success -> 200 { version: int, name: string, enrolled: int }. enrolled>0 only when scope='backfill' AND trigger is segment_entry with a segment (count of current segment members backfilled, ON CONFLICT idempotent); 0 for forward / event / manual. On success: live = published draft, active_version_id set, status='active', draft cleared. name required -> else 400. Foreign id -> 404.",
+    "versions": "GET /campaigns/:id/versions (manage_content) -> 200 { versions: [{ id: uuid, version: int, name: string, created_at: iso, created_by: uuid|null, is_active: bool (== campaigns.active_version_id) }] } newest-first (version DESC). Foreign id -> 404.",
+    "revert": "POST /campaigns/:id/revert (manage_content). Request body: { version_id: uuid }. Loads that version INTO the draft (draft_definition + draft_trigger_segment_id = the version's); LIVE untouched (append-only). Success -> 200 { definition: <CampaignDSL>, trigger_segment_id: uuid|null } (the loaded draft). version_id missing -> 400. version not in this campaign+workspace -> 404."
+  }
+}

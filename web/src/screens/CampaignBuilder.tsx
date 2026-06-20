@@ -17,6 +17,7 @@
 // send node's "Design email" lands here (the editor's setEditorReturn targets
 // /campaigns/:id). Server-calling buttons RETURN the promise; no native dialogs.
 import { useEffect, useState } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
@@ -34,8 +35,16 @@ import {
   type CanvasNode,
   type PaletteType,
 } from '../campaigns/model.js';
+import { backfillAllowed, draftDiffersFrom, type PublishScope } from '../campaigns/versioning.js';
 import { applyNodeConfig } from '../campaigns/node-config.js';
-import { insertOnEdge, deleteNode, moveSubtree, duplicateSubtree, MutationError } from '../campaigns/mutate.js';
+import {
+  insertOnEdge,
+  insertAfterBranch,
+  deleteNode,
+  moveSubtree,
+  duplicateSubtree,
+  MutationError,
+} from '../campaigns/mutate.js';
 import { NodeEditorBody, nodeEditorTestId, nodeEditorTitle } from '../campaigns/editors/NodeEditor.js';
 
 /** Enrollment-status buckets surfaced per campaign on the list. */
@@ -56,6 +65,23 @@ interface CampaignListItem {
 interface SegmentLite {
   id: string;
   name: string;
+}
+
+/** One published version in the History tab. */
+interface CampaignVersion {
+  id: string;
+  version: number;
+  name: string;
+  created_at: string;
+  created_by: string | null;
+  is_active: boolean;
+}
+
+/** Format a version's created_at for the History list (locale, fail-soft). */
+function whenLabel(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  return new Date(t).toLocaleString();
 }
 
 /** Lifecycle statuses that hide a campaign from the default (non-archived) list. */
@@ -247,6 +273,9 @@ export function CampaignDetail({ id }: { id?: string }) {
   const [triggerSegmentId, setTriggerSegmentId] = useState<string | null>(null);
   const [segments, setSegments] = useState<SegmentLite[]>([]);
   const [paletteEdge, setPaletteEdge] = useState<CanvasEdge | null>(null);
+  // When set, the palette is opened to insert a step AFTER this condition's branch
+  // (the merge (+)); the chosen type splices in BEFORE the continuation.
+  const [mergeConditionId, setMergeConditionId] = useState<string | null>(null);
   const [openNode, setOpenNode] = useState<CanvasNode | null>(null);
   // An in-progress Move / Duplicate placement (pick a destination + to splice at).
   const [placement, setPlacement] = useState<Placement | null>(null);
@@ -254,6 +283,14 @@ export function CampaignDetail({ id }: { id?: string }) {
   // Publish-gate feedback: a top-level reason + a per-node-id error for the card.
   const [publishReason, setPublishReason] = useState('');
   const [publishErrors, setPublishErrors] = useState<Record<string, string>>({});
+  // VERSIONING. The builder edits the DRAFT; live is the last published definition.
+  // `live*` snapshot what was published (for the unsaved-draft diff); a fresh new
+  // campaign has no live baseline (so any edit reads as an unsaved draft).
+  const [tab, setTab] = useState<'builder' | 'history'>('builder');
+  const [liveDefinition, setLiveDefinition] = useState<CampaignDefinition | null>(null);
+  const [liveTriggerSegmentId, setLiveTriggerSegmentId] = useState<string | null>(null);
+  const [versions, setVersions] = useState<CampaignVersion[] | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
 
   // (The list of campaigns is loaded only so save/reload can keep it fresh for the
   // contextual flows; the LIST page owns the user-facing table.)
@@ -273,11 +310,21 @@ export function CampaignDetail({ id }: { id?: string }) {
     setPublishErrors({});
   };
 
-  // Load an existing campaign — GET /campaigns/:id round-trips the DSL → canvas
-  // (and the workspace timezone + trigger_segment_id for the editors).
+  // Load an existing campaign — GET /campaigns/:id round-trips the DSL → canvas.
+  // `definition` is the DRAFT to edit (draft ?? live); `liveDefinition` is the last
+  // published one (the diff baseline for the unsaved-draft indicator). Also carries
+  // the workspace timezone + trigger_segment_id (draft trigger) for the editors.
   const openById = async (cid: string): Promise<void> => {
     const res = await api.get<{
-      campaign: { id: string; name: string; status: string; definition: CampaignDefinition; trigger_segment_id: string | null };
+      campaign: {
+        id: string;
+        name: string;
+        status: string;
+        definition: CampaignDefinition;
+        liveDefinition: CampaignDefinition;
+        hasDraft: boolean;
+        trigger_segment_id: string | null;
+      };
       timezone: string;
     }>(`/campaigns/${cid}`);
     setEditingId(res.campaign.id);
@@ -285,13 +332,36 @@ export function CampaignDetail({ id }: { id?: string }) {
     setStatus(res.campaign.status);
     setModel(parseDefinition(res.campaign.definition));
     setTriggerSegmentId(res.campaign.trigger_segment_id ?? null);
+    setLiveDefinition(res.campaign.liveDefinition);
+    // The server resolves trigger_segment_id to the DRAFT trigger when a draft
+    // exists; the LIVE trigger equals it only when there's no unsaved draft. We use
+    // the live trigger as the diff baseline — when no draft, draft == live.
+    setLiveTriggerSegmentId(res.campaign.hasDraft ? null : (res.campaign.trigger_segment_id ?? null));
     setTimeZone(res.timezone || 'UTC');
     clearPublish();
     setError('');
   };
 
-  // Insert a node on the chosen edge (from the palette).
+  // Refresh ONLY the version history (History tab). Workspace-scoped server-side.
+  const reloadVersions = async (cid: string): Promise<void> => {
+    const r = await api.get<{ versions: CampaignVersion[] }>(`/campaigns/${cid}/versions`);
+    setVersions(r.versions);
+  };
+
+  // Insert a node — either on the chosen edge, or AFTER a condition's branch (the
+  // merge (+)). Both flows go through the same palette + toast-on-refusal handling.
   const insert = (type: PaletteType): void => {
+    if (mergeConditionId) {
+      const condId = mergeConditionId;
+      try {
+        setModel((m) => insertAfterBranch(m, condId, type));
+        setError('');
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : String(e), { tone: 'error' });
+      }
+      setMergeConditionId(null);
+      return;
+    }
     if (!paletteEdge) return;
     try {
       setModel((m) => insertOnEdge(m, paletteEdge, type));
@@ -300,6 +370,12 @@ export function CampaignDetail({ id }: { id?: string }) {
       showToast(e instanceof Error ? e.message : String(e), { tone: 'error' });
     }
     setPaletteEdge(null);
+  };
+
+  // Open the palette to insert AFTER a condition's branch (the merge (+)).
+  const startMergeInsert = (conditionId: string): void => {
+    setPaletteEdge(null);
+    setMergeConditionId(conditionId);
   };
 
   // Delete a node (confirmed via the styled dialog — never window.confirm).
@@ -356,30 +432,47 @@ export function CampaignDetail({ id }: { id?: string }) {
     }
   };
 
-  // Persist the current model to the server (POST new / PUT existing), returning the
-  // campaign id. The server validates the definition; an invalid graph throws (the
-  // caller surfaces it). Used by Save AND before a node-config PUT/Publish so the
-  // gate always sees the latest copy.
-  const persist = async (overrideModel?: CanvasModel): Promise<string> => {
+  // Persist the current model — to the DRAFT, never the live definition (live is
+  // untouched until Publish). A BRAND-NEW campaign has no row yet, so the first
+  // persist CREATES it via POST /campaigns (a fresh campaign's live == draft, so
+  // there is no draft to split). Once a row exists, EVERY edit (node save / insert /
+  // delete / move / duplicate / trigger-segment) writes the DRAFT via
+  // PUT /campaigns/:id/draft — including its draft trigger segment. The server
+  // validates the graph; an invalid graph throws (the caller surfaces it). Returns
+  // the campaign id.
+  const persist = async (overrideModel?: CanvasModel, overrideTriggerSeg?: string | null): Promise<string> => {
     const definition = buildDefinition(overrideModel ?? model);
+    const triggerSeg = overrideTriggerSeg !== undefined ? overrideTriggerSeg : triggerSegmentId;
     if (editingId) {
-      await api.put(`/campaigns/${editingId}`, { body: { name: name || 'Untitled campaign', definition } });
+      await api.put(`/campaigns/${editingId}/draft`, {
+        body: { definition, ...(triggerSeg !== null ? { trigger_segment_id: triggerSeg } : {}) },
+      });
       return editingId;
     }
+    // First persist of a NEW campaign: create the row (definition is its initial
+    // live + draft). Subsequent edits go to the draft via the branch above.
     const r = await api.post<{ campaign: { id: string } }>('/campaigns', {
-      body: { name: name || 'Untitled campaign', definition },
+      body: {
+        name: name || 'Untitled campaign',
+        definition,
+        ...(triggerSeg !== null ? { trigger_segment_id: triggerSeg } : {}),
+      },
     });
     setEditingId(r.campaign.id);
+    // A freshly-created campaign's live == its definition (no unsaved draft yet).
+    setLiveDefinition(definition);
+    setLiveTriggerSegmentId(triggerSeg ?? null);
     return r.campaign.id;
   };
 
-  // Save: persist the definition; surface an invalid graph inline + via toast.
+  // Save: persist the definition to the DRAFT; surface an invalid graph inline +
+  // via toast. (Publishing is a separate, explicit action.)
   const save = async (): Promise<void> => {
     setError('');
     try {
       await persist();
       await reloadList();
-      showToast('Campaign saved', { tone: 'success' });
+      showToast('Draft saved', { tone: 'success' });
     } catch (err) {
       const msg = (err as { error?: string })?.error ?? String(err);
       setError(msg);
@@ -423,33 +516,45 @@ export function CampaignDetail({ id }: { id?: string }) {
     setOpenNode(node);
   };
 
+  // The trigger segment is part of the DRAFT — persist it (with the current model)
+  // through the draft writer so live is untouched until publish.
   const saveTriggerSegment = async (segmentId: string | null): Promise<void> => {
-    if (!editingId) await persist();
-    const cid = editingId ?? (await persist());
-    await api.put(`/campaigns/${cid}`, { body: { trigger_segment_id: segmentId } });
     setTriggerSegmentId(segmentId);
+    await persist(undefined, segmentId);
   };
 
-  // PUBLISH (Draft → Active). Persist first so the gate sees the latest definition,
-  // then POST /activate. A 409 carries {error, node?, missing?} → render inline
-  // against the offending node; a 400 is a structural reason; 200 flips to active.
-  const publish = async (): Promise<void> => {
+  // PUBLISH the draft as a new VERSION (Draft → Live). Persist the draft first so
+  // the gate sees the latest copy, then POST /publish {name, scope}. The gate runs
+  // BEFORE any mutation: a 400 is a structural reason; a 409 carries {error, node?,
+  // missing?} → render inline against the offending node. On success the draft is
+  // promoted to live + cleared, status flips to active, and we reload.
+  const publish = async (versionName: string, scope: PublishScope): Promise<void> => {
     clearPublish();
     setError('');
     let cid: string;
     try {
       cid = await persist();
-      await reloadList();
     } catch (err) {
       const msg = (err as { error?: string })?.error ?? String(err);
       setPublishReason(msg);
       return;
     }
     try {
-      await api.post(`/campaigns/${cid}/activate`, { body: {} });
-      setStatus('active');
+      const res = await api.post<{ version: number; name: string; enrolled: number }>(
+        `/campaigns/${cid}/publish`,
+        { body: { name: versionName, scope } },
+      );
+      setPublishOpen(false);
+      // Reload the campaign so the draft is cleared (hasDraft → false) and live ==
+      // the just-published definition; refresh the list + (if open) history.
+      await openById(cid);
       await reloadList();
-      showToast('Campaign published', { tone: 'success' });
+      if (tab === 'history') await reloadVersions(cid);
+      const msg =
+        scope === 'backfill' && res.enrolled > 0
+          ? `Published v${res.version} · enrolled ${res.enrolled} existing profile${res.enrolled === 1 ? '' : 's'}`
+          : `Published v${res.version}`;
+      showToast(msg, { tone: 'success' });
     } catch (err) {
       const body = err as { error?: string; node?: string; missing?: string };
       const msg = body?.error ?? 'Could not publish this campaign.';
@@ -457,6 +562,64 @@ export function CampaignDetail({ id }: { id?: string }) {
       if (body?.node) setPublishErrors({ [body.node]: msg });
     }
   };
+
+  // Lifecycle (pause/resume) from the EDIT header — mirrors the list-row actions.
+  // RETURNS its promise so the kit Button spins + locks until the response.
+  const lifecycle = async (action: 'pause' | 'resume'): Promise<void> => {
+    if (!editingId) return;
+    try {
+      await api.post(`/campaigns/${editingId}/${action}`, { body: {} });
+      setStatus(action === 'pause' ? 'paused' : 'active');
+      await reloadList();
+      showToast(action === 'pause' ? 'Campaign paused.' : 'Campaign resumed.', { tone: 'success' });
+    } catch (err) {
+      showToast((err as { error?: string })?.error ?? `Could not ${action} the campaign.`, { tone: 'error' });
+    }
+  };
+
+  // Revert a prior version INTO the draft (live untouched). Confirmed via the styled
+  // dialog (never window.confirm). On success load the returned draft into the
+  // builder model + switch back to the Builder tab.
+  const revert = async (v: CampaignVersion): Promise<void> => {
+    if (!editingId) return;
+    const ok = await askConfirm({
+      title: `Revert to v${v.version}?`,
+      message: `“${v.name}” will be loaded into the draft. Your live campaign keeps running until you Save to publish.`,
+      confirmLabel: 'Load into draft',
+    });
+    if (!ok) return;
+    try {
+      const res = await api.post<{ definition: CampaignDefinition; trigger_segment_id: string | null }>(
+        `/campaigns/${editingId}/revert`,
+        { body: { version_id: v.id } },
+      );
+      setModel(parseDefinition(res.definition));
+      setTriggerSegmentId(res.trigger_segment_id ?? null);
+      clearPublish();
+      setError('');
+      setTab('builder');
+      showToast(`Loaded v${v.version} into the draft — Save to publish.`, { tone: 'success' });
+    } catch (err) {
+      showToast((err as { error?: string })?.error ?? 'Could not revert to that version.', { tone: 'error' });
+    }
+  };
+
+  // Open the History tab — lazily fetch the version list.
+  const openHistory = (): void => {
+    setTab('history');
+    if (editingId) void reloadVersions(editingId);
+  };
+
+  // Open the Save-version modal (clears any stale publish reason first).
+  const openPublish = (): void => {
+    clearPublish();
+    setPublishOpen(true);
+  };
+
+  // The unsaved-draft indicator: a fresh new campaign (no live baseline) reads dirty
+  // once it has been created; otherwise compare the local model to the published one.
+  const isDirty = draftDiffersFrom(buildDefinition(model), liveDefinition, triggerSegmentId, liveTriggerSegmentId);
+  const canBackfill = backfillAllowed(buildDefinition(model), triggerSegmentId);
 
   return (
     <section data-testid="campaign-builder">
@@ -467,88 +630,154 @@ export function CampaignDetail({ id }: { id?: string }) {
       <PageHeader
         title={editingId ? 'Edit campaign' : 'New campaign'}
         subtitle="Design a multi-step journey: it flows downward, branches fan sideways."
+        actions={
+          editingId ? (
+            <div class="flex items-center gap-2">
+              {status === 'active' ? (
+                <Button data-testid="campaign-pause" variant="secondary" size="sm" onClick={() => lifecycle('pause')}>
+                  Pause
+                </Button>
+              ) : null}
+              {status === 'paused' ? (
+                <Button data-testid="campaign-resume" variant="secondary" size="sm" onClick={() => lifecycle('resume')}>
+                  Resume
+                </Button>
+              ) : null}
+            </div>
+          ) : undefined
+        }
       />
 
-      <Card class="p-5">
-        <div class="flex flex-wrap items-end justify-between gap-3">
-          <Field label="Campaign name" class="max-w-sm flex-1">
-            <Input
-              data-testid="campaign-name"
-              placeholder="Welcome series"
-              value={name}
-              onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
-            />
-          </Field>
-          {editingId ? (
-            <Badge data-testid="campaign-status" tone={toneFor(status)}>
-              {status}
-            </Badge>
-          ) : null}
+      {/* Builder / History tabs — the canvas is the default. */}
+      {editingId ? (
+        <div role="tablist" class="mb-4 flex gap-1 border-b border-stone-200">
+          {(
+            [
+              { key: 'builder', label: 'Builder', testId: 'campaign-tab-builder', onSelect: () => setTab('builder') },
+              { key: 'history', label: 'History', testId: 'campaign-tab-history', onSelect: openHistory },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              data-testid={t.testId}
+              aria-selected={tab === t.key}
+              onClick={t.onSelect}
+              class={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                tab === t.key
+                  ? 'border-brand-600 text-brand-700'
+                  : 'border-transparent text-stone-500 hover:text-stone-700'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
+      ) : null}
 
-        <span class="label mt-5">Workflow</span>
-        <CampaignCanvas
-          model={model}
-          onInsert={(edge) => setPaletteEdge(edge)}
-          onDelete={remove}
-          onOpen={(node) => void openEditor(node)}
-          publishErrors={publishErrors}
-          placement={placement}
-          onStartPlacement={startPlacement}
-          onPickTarget={(edge) => void pickTarget(edge)}
-          onCancelPlacement={cancelPlacement}
-        />
+      {tab === 'builder' ? (
+        <Card class="p-5">
+          <div class="flex flex-wrap items-end justify-between gap-3">
+            <Field label="Campaign name" class="max-w-sm flex-1">
+              <Input
+                data-testid="campaign-name"
+                placeholder="Welcome series"
+                value={name}
+                onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
+              />
+            </Field>
+            <div class="flex items-center gap-2">
+              {isDirty ? (
+                <Badge data-testid="draft-indicator" tone="warn">
+                  Unsaved draft — not yet published
+                </Badge>
+              ) : null}
+              {editingId ? (
+                <Badge data-testid="campaign-status" tone={toneFor(status)}>
+                  {status}
+                </Badge>
+              ) : null}
+            </div>
+          </div>
 
-        <div class="mt-4 flex flex-wrap items-center gap-3">
-          <Button data-testid="save-campaign" onClick={save}>
-            {editingId ? 'Save changes' : 'Save campaign'}
-          </Button>
-          {editingId ? (
-            <Button data-testid="campaign-publish" variant="secondary" onClick={publish}>
-              Publish
+          <span class="label mt-5">Workflow</span>
+          <CampaignCanvas
+            model={model}
+            onInsert={(edge) => setPaletteEdge(edge)}
+            onInsertAfterBranch={startMergeInsert}
+            onDelete={remove}
+            onOpen={(node) => void openEditor(node)}
+            publishErrors={publishErrors}
+            placement={placement}
+            onStartPlacement={startPlacement}
+            onPickTarget={(edge) => void pickTarget(edge)}
+            onCancelPlacement={cancelPlacement}
+          />
+
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <Button data-testid="save-campaign" variant="secondary" onClick={save}>
+              Save draft
             </Button>
+            <Button data-testid="publish-version" onClick={openPublish}>
+              Save &amp; publish
+            </Button>
+          </div>
+          {publishReason ? (
+            <p
+              data-testid="publish-reason"
+              class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200"
+            >
+              {publishReason}
+            </p>
           ) : null}
-          {editingId ? <span class="text-xs text-stone-400">Editing an existing campaign</span> : null}
-        </div>
-        {publishReason ? (
-          <p
-            data-testid="publish-reason"
-            class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200"
-          >
-            {publishReason}
-          </p>
-        ) : null}
-        {error ? (
-          <p
-            data-testid="campaign-error"
-            class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-inset ring-rose-200"
-          >
-            {error}
-          </p>
-        ) : null}
-      </Card>
+          {error ? (
+            <p
+              data-testid="campaign-error"
+              class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-inset ring-rose-200"
+            >
+              {error}
+            </p>
+          ) : null}
+        </Card>
+      ) : (
+        <CampaignHistory versions={versions} onRevert={revert} />
+      )}
 
       {/* The insert palette (a side drawer). Opens from a (+) edge control. */}
       <Drawer
-        open={paletteEdge !== null}
-        onClose={() => setPaletteEdge(null)}
-        title="Insert a step"
-        subtitle="Pick a node type to add on this edge."
+        open={paletteEdge !== null || mergeConditionId !== null}
+        onClose={() => {
+          setPaletteEdge(null);
+          setMergeConditionId(null);
+        }}
+        title={mergeConditionId ? 'Insert a step after the branch' : 'Insert a step'}
+        subtitle={
+          mergeConditionId
+            ? 'Both arms will flow through this step before continuing.'
+            : 'Pick a node type to add on this edge.'
+        }
         testId="campaign-palette"
       >
         <div class="grid grid-cols-1 gap-2">
-          {PALETTE.map((p) => (
-            <button
-              key={p.type}
-              type="button"
-              data-testid={p.testId}
-              onClick={() => insert(p.type)}
-              class="flex flex-col items-start rounded-xl border border-stone-200 bg-white px-4 py-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/40"
-            >
-              <span class="text-sm font-semibold text-ink-900">{p.label}</span>
-              <span class="text-xs text-stone-400">{p.hint}</span>
-            </button>
-          ))}
+          {PALETTE.map((p) => {
+            // After-the-branch merge inserts a single LINEAR step (it becomes the
+            // new merge point) — a nested If or a terminal Exit can't be a merge step.
+            const disabled = mergeConditionId !== null && (p.type === 'condition' || p.type === 'exit');
+            return (
+              <button
+                key={p.type}
+                type="button"
+                data-testid={p.testId}
+                disabled={disabled}
+                onClick={() => insert(p.type)}
+                class="flex flex-col items-start rounded-xl border border-stone-200 bg-white px-4 py-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-stone-200 disabled:hover:bg-white"
+              >
+                <span class="text-sm font-semibold text-ink-900">{p.label}</span>
+                <span class="text-xs text-stone-400">{p.hint}</span>
+              </button>
+            );
+          })}
         </div>
       </Drawer>
 
@@ -576,8 +805,195 @@ export function CampaignDetail({ id }: { id?: string }) {
           />
         ) : null}
       </Drawer>
+      {/* Save-version modal: a required name + forward/backfill scope. */}
+      {publishOpen ? (
+        <PublishVersionModal
+          defaultName={name || 'Untitled campaign'}
+          canBackfill={canBackfill}
+          reason={publishReason}
+          onPublish={publish}
+          onClose={() => setPublishOpen(false)}
+        />
+      ) : null}
+
       {/* campaigns is loaded for freshness only; reference it so lint stays clean. */}
       <span hidden>{campaigns.length}</span>
     </section>
+  );
+}
+
+// --- The Save-version modal (styled, NOT a native dialog) --------------------
+
+function PublishVersionModal({
+  defaultName,
+  canBackfill,
+  reason,
+  onPublish,
+  onClose,
+}: {
+  defaultName: string;
+  canBackfill: boolean;
+  reason: string;
+  onPublish: (name: string, scope: PublishScope) => Promise<void>;
+  onClose: () => void;
+}): ReturnType<typeof createPortal> {
+  const [versionName, setVersionName] = useState(defaultName);
+  // Backfill is only offered for a segment_entry trigger with a segment; otherwise
+  // forward-only. Default forward.
+  const [scope, setScope] = useState<PublishScope>('forward');
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const trimmed = versionName.trim();
+  const confirm = (): Promise<void> => onPublish(trimmed, canBackfill ? scope : 'forward');
+
+  return createPortal(
+    <div
+      class="fixed inset-0 z-[200] flex items-center justify-center bg-black/45 p-6"
+      onClick={onClose}
+    >
+      <div
+        data-testid="publish-modal"
+        class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 class="text-base font-bold text-ink-950">Save &amp; publish a version</h3>
+        <p class="mt-1 text-sm text-stone-500">
+          Name this version, then publish it. The live campaign updates immediately.
+        </p>
+
+        <Field label="Version name" class="mt-4">
+          <Input
+            data-testid="version-name"
+            placeholder="e.g. Spring refresh"
+            value={versionName}
+            onInput={(e: Event) => setVersionName((e.target as HTMLInputElement).value)}
+          />
+        </Field>
+
+        <div class="mt-4" data-testid="publish-scope">
+          <span class="label">Who to enroll</span>
+          {canBackfill ? (
+            <div class="mt-1 space-y-2">
+              <label class="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="publish-scope"
+                  data-testid="publish-scope-forward"
+                  checked={scope === 'forward'}
+                  onChange={() => setScope('forward')}
+                  class="mt-0.5"
+                />
+                <span>
+                  <span class="font-medium text-ink-900">New entrants only</span>
+                  <span class="block text-xs text-stone-500">Enroll people as they enter the segment from now on.</span>
+                </span>
+              </label>
+              <label class="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="publish-scope"
+                  data-testid="publish-scope-backfill"
+                  checked={scope === 'backfill'}
+                  onChange={() => setScope('backfill')}
+                  class="mt-0.5"
+                />
+                <span>
+                  <span class="font-medium text-ink-900">Backfill existing members</span>
+                  <span class="block text-xs text-stone-500">Also enroll everyone currently in the segment.</span>
+                </span>
+              </label>
+            </div>
+          ) : (
+            <p data-testid="publish-scope-hint" class="mt-1 text-xs text-stone-500">
+              New entrants only. Backfill is available when the trigger is a segment with a segment selected.
+            </p>
+          )}
+        </div>
+
+        {reason ? (
+          <p
+            data-testid="publish-modal-reason"
+            class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200"
+          >
+            {reason}
+          </p>
+        ) : null}
+
+        <div class="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            data-testid="publish-cancel"
+            class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <Button data-testid="publish-confirm" disabled={!trimmed} onClick={confirm}>
+            Publish
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// --- The History tab (published versions, newest-first) ----------------------
+
+function CampaignHistory({
+  versions,
+  onRevert,
+}: {
+  versions: CampaignVersion[] | null;
+  onRevert: (v: CampaignVersion) => Promise<void>;
+}): ReturnType<typeof Card> {
+  return (
+    <Card class="p-5" data-testid="campaign-history">
+      <h3 class="text-sm font-semibold text-ink-900">Published versions</h3>
+      <p class="mt-1 text-sm text-stone-500">
+        Each publish is saved here. Revert loads a version into the draft — your live campaign keeps running until you Save to
+        publish.
+      </p>
+      {versions === null ? (
+        <p class="mt-4 text-sm text-stone-500">Loading…</p>
+      ) : versions.length === 0 ? (
+        <div class="mt-4">
+          <EmptyState>No published versions yet — Save &amp; publish to create one.</EmptyState>
+        </div>
+      ) : (
+        <ul class="mt-4 space-y-2">
+          {versions.map((v) => (
+            <li
+              key={v.id}
+              data-testid="version-row"
+              class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3"
+            >
+              <span class="font-semibold tabular-nums text-ink-900">v{v.version}</span>
+              <span class="min-w-0">
+                <span class="block truncate font-medium text-ink-900">{v.name}</span>
+                <span class="block text-xs text-stone-400">{whenLabel(v.created_at)}</span>
+              </span>
+              <span class="flex items-center gap-2">
+                {v.is_active ? (
+                  <Badge data-testid="version-active" tone="success">
+                    Active
+                  </Badge>
+                ) : null}
+                <Button data-testid="version-revert" variant="secondary" size="sm" onClick={() => onRevert(v)}>
+                  Revert
+                </Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

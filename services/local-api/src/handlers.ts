@@ -1909,12 +1909,30 @@ export const archiveCampaign: Handler = makeLifecycleHandler('archive');
  */
 export const getCampaign: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  const q = scopedQuery(
-    ctx.workspaceId,
-    'SELECT id, name, status, definition, trigger_segment_id, trigger_on, keep_while_in_segment FROM campaigns WHERE id = $1',
-    [id],
+  // A JOIN makes `workspace_id` ambiguous for scopedQuery's injected predicate, so
+  // bind the workspace scope explicitly on the campaign (c.workspace_id at $1).
+  const { rows } = await pool.query<{
+    id: string;
+    name: string;
+    status: string;
+    definition: CampaignDefinition;
+    draft_definition: CampaignDefinition | null;
+    trigger_segment_id: string | null;
+    draft_trigger_segment_id: string | null;
+    trigger_on: string | null;
+    keep_while_in_segment: string | null;
+    active_version_id: string | null;
+    active_version: number | null;
+    active_version_name: string | null;
+  }>(
+    `SELECT c.id, c.name, c.status, c.definition, c.draft_definition, c.trigger_segment_id,
+            c.draft_trigger_segment_id, c.trigger_on, c.keep_while_in_segment, c.active_version_id,
+            av.version AS active_version, av.name AS active_version_name
+     FROM campaigns c
+     LEFT JOIN campaign_versions av ON av.id = c.active_version_id AND av.workspace_id = c.workspace_id
+     WHERE c.workspace_id = $1 AND c.id = $2`,
+    [ctx.workspaceId, id],
   );
-  const { rows } = await pool.query(q.text, q.values);
   if (rows.length === 0) return ok({ error: 'campaign not found' }, 404);
   // The workspace timezone (§9B clock) is needed by the wait-until / hour-window
   // editors, which run under manage_content (GET /workspace/settings is gated on
@@ -1925,7 +1943,34 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
   );
   const settings = tzRow.rows[0]?.settings ?? {};
   const timezone = typeof settings.timezone === 'string' && settings.timezone ? settings.timezone : 'UTC';
-  return ok({ campaign: rows[0], timezone });
+
+  // The builder edits the DRAFT (the in-progress working copy); when there's no
+  // unsaved draft the draft IS the live definition. hasDraft is true only when a
+  // draft exists AND differs from live (a no-op draft surfaces as "no draft").
+  const r = rows[0]!;
+  const hasDraft =
+    r.draft_definition !== null &&
+    JSON.stringify(r.draft_definition) !== JSON.stringify(r.definition);
+  const definition = r.draft_definition ?? r.definition;
+  const triggerSegmentId = r.draft_definition !== null ? r.draft_trigger_segment_id : r.trigger_segment_id;
+  const activeVersion =
+    r.active_version_id !== null && r.active_version !== null
+      ? { version: r.active_version, name: r.active_version_name }
+      : null;
+
+  const campaign = {
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    definition, // the draft to EDIT (draft ?? live)
+    liveDefinition: r.definition, // the active definition the runner reads
+    hasDraft,
+    activeVersion,
+    trigger_segment_id: triggerSegmentId, // draft trigger ?? live trigger
+    trigger_on: r.trigger_on,
+    keep_while_in_segment: r.keep_while_in_segment,
+  };
+  return ok({ campaign, timezone });
 };
 
 /**
@@ -2055,13 +2100,20 @@ export const attachCampaignSendTemplate: Handler = async (ctx, pool, req) => {
   const templateId = typeof b.template_id === 'string' ? b.template_id.trim() : '';
   if (!templateId) return ok({ error: 'template_id required' }, 400);
 
-  // The campaign must belong to the token's workspace (else 404 — inv.2).
-  const campRows = await pool.query<{ definition: CampaignDefinition }>(
-    'SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2',
+  // The campaign must belong to the token's workspace (else 404 — inv.2). Attach is
+  // a DRAFT-TIME edit: it operates on the working-copy draft when one exists (the
+  // builder persists a draft before opening a send node's editor), else on the live
+  // definition (backward-compatible for never-drafted campaigns). Writing the
+  // repointed node back into the DRAFT keeps the attached template in the copy the
+  // publish gate reads (draft ?? live) — a stale template-less draft used to shadow
+  // a live-only write and silently drop the attachment.
+  const campRows = await pool.query<{ definition: CampaignDefinition; draft_definition: CampaignDefinition | null }>(
+    'SELECT definition, draft_definition FROM campaigns WHERE workspace_id = $1 AND id = $2',
     [ctx.workspaceId, id],
   );
   if (!campRows.rows[0]) return ok({ error: 'not found' }, 404);
-  const def = campRows.rows[0].definition;
+  const onDraft = campRows.rows[0].draft_definition !== null;
+  const def = campRows.rows[0].draft_definition ?? campRows.rows[0].definition;
   const node = def.nodes?.[nodeId] as { type?: string; kind?: string } | undefined;
   if (!node || node.type !== 'action' || node.kind !== 'send') {
     return ok({ error: 'not found' }, 404);
@@ -2087,7 +2139,9 @@ export const attachCampaignSendTemplate: Handler = async (ctx, pool, req) => {
   };
   const uq = scopedQuery(
     ctx.workspaceId,
-    'UPDATE campaigns SET definition = $1::jsonb WHERE id = $2',
+    onDraft
+      ? 'UPDATE campaigns SET draft_definition = $1::jsonb WHERE id = $2'
+      : 'UPDATE campaigns SET definition = $1::jsonb WHERE id = $2',
     [JSON.stringify(nextDef), id],
   );
   await pool.query(uq.text, uq.values);
@@ -2095,25 +2149,23 @@ export const attachCampaignSendTemplate: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * POST /campaigns/:id/activate — PUBLISH a campaign (status → 'active') with
- * SEND-NODE gating (§9B/§10). Mirrors sendBroadcast's ORDERED per-send-node 409s
- * (sender_id → to_address → subject), naming the offending node, THEN the
- * verified-domain gate. A campaign with no send node activates ungated. Everything
- * is scoped to the token's workspace (the campaign + every referenced copy resolve
- * inside ctx.workspaceId, NEVER the body — inv.2).
+ * The shared PUBLISH GATE (§9B/§10) over a campaign DEFINITION: validate the graph
+ * (typed 400), then mirror sendBroadcast's ORDERED per-send-node 409s (sender_id →
+ * to_address → subject) naming the offending node, THEN the verified-domain gate.
+ * A campaign with no send node is ungated. Returns a HandlerResponse to short-
+ * circuit on the FIRST failure, or null when the definition is publishable.
+ * Workspace-scoped: each referenced copy must resolve inside ctx.workspaceId
+ * (a foreign copy never satisfies the gate — inv.2). Reused by BOTH activate and
+ * publish so the two flows gate identically.
  */
-export const activateCampaign: Handler = async (ctx, pool, req) => {
-  const id = req.params.id!;
-  const campRows = await pool.query<{ definition: CampaignDefinition }>(
-    'SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2',
-    [ctx.workspaceId, id],
-  );
-  if (!campRows.rows[0]) return ok({ error: 'not found' }, 404);
-  const def = campRows.rows[0].definition;
-
-  // The stored definition must be structurally valid (and the trigger complete —
-  // an event trigger missing eventType is rejected here) BEFORE the envelope gate.
-  // A malformed stored graph is a TYPED 400 (never a 500), status stays 'draft'.
+async function runCampaignPublishGate(
+  workspaceId: string,
+  pool: Pool,
+  def: CampaignDefinition,
+): Promise<HandlerResponse | null> {
+  // The stored/draft definition must be structurally valid (and the trigger
+  // complete — an event trigger missing eventType is rejected here) BEFORE the
+  // envelope gate. A malformed graph is a TYPED 400 (never a 500).
   const invalid = validateDefinitionOr400(def);
   if (invalid) return invalid;
 
@@ -2128,7 +2180,7 @@ export const activateCampaign: Handler = async (ctx, pool, req) => {
   const envelopes: Record<string, { sender_id: string | null; to_address: string | null; subject: string | null }> = {};
   if (sendTemplateIds.length > 0) {
     const eq = scopedQuery(
-      ctx.workspaceId,
+      workspaceId,
       'SELECT id, sender_id, to_address, subject FROM email_templates WHERE id = ANY($1::uuid[])',
       [sendTemplateIds],
     );
@@ -2152,7 +2204,7 @@ export const activateCampaign: Handler = async (ctx, pool, req) => {
   // Verified-domain gate runs AFTER the per-node envelope checks (sendBroadcast
   // parity). Only required when the campaign actually sends.
   if (sendTemplateIds.length > 0) {
-    const vq = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM sending_domains WHERE verified = true');
+    const vq = scopedQuery(workspaceId, 'SELECT 1 FROM sending_domains WHERE verified = true');
     const verified = await pool.query(vq.text, vq.values);
     if (!verified.rowCount) {
       return ok(
@@ -2161,10 +2213,225 @@ export const activateCampaign: Handler = async (ctx, pool, req) => {
       );
     }
   }
+  return null;
+}
+
+/**
+ * POST /campaigns/:id/activate — re-activate a campaign IN PLACE (status →
+ * 'active') with the shared SEND-NODE gate (§9B/§10), gating the campaign's
+ * current LIVE definition. Publishing (POST /campaigns/:id/publish) is the
+ * draft→live flow; this remains a no-change re-activate (e.g. a paused campaign
+ * whose live definition is already complete). Everything is scoped to the token's
+ * workspace (the campaign + every referenced copy resolve inside ctx.workspaceId,
+ * NEVER the body — inv.2).
+ */
+export const activateCampaign: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const campRows = await pool.query<{ definition: CampaignDefinition }>(
+    'SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2',
+    [ctx.workspaceId, id],
+  );
+  if (!campRows.rows[0]) return ok({ error: 'not found' }, 404);
+
+  const gate = await runCampaignPublishGate(ctx.workspaceId, pool, campRows.rows[0].definition);
+  if (gate) return gate;
 
   const uq = scopedQuery(ctx.workspaceId, "UPDATE campaigns SET status = 'active' WHERE id = $1", [id]);
   const { rowCount } = await pool.query(uq.text, uq.values);
   return ok({ activated: rowCount ?? 0, status: 'active' });
+};
+
+/**
+ * PUT /campaigns/:id/draft — the builder's AUTOSAVE target. Writes ONLY the
+ * working-copy draft (draft_definition + draft_trigger_segment_id); it NEVER
+ * touches the live definition / trigger_segment_id / status the runner reads.
+ * Validates the draft graph (typed 400, no write). Workspace-scoped (the campaign
+ * must resolve inside ctx.workspaceId — a foreign id 404s; trigger_segment_id, if
+ * supplied, must resolve inside the workspace too — inv.2).
+ */
+export const saveCampaignDraft: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const invalid = validateDefinitionOr400(b.definition); // a malformed draft is a TYPED 400
+  if (invalid) return invalid;
+
+  // A supplied draft trigger segment MUST resolve in the workspace (inv.2). Absent
+  // → clear the draft trigger (the draft is a complete working copy of the trigger).
+  const resolved = await resolveTriggerSegmentId(pool, ctx.workspaceId, b.trigger_segment_id);
+  if (resolved === REJECT) return ok({ error: 'trigger_segment_id not found in this workspace' }, 400);
+
+  const q = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE campaigns SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2 WHERE id = $3`,
+    [JSON.stringify(b.definition), resolved, id],
+  );
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404); // foreign / missing id (inv.2)
+  return ok({ updated: rowCount });
+};
+
+/**
+ * POST /campaigns/:id/publish — promote the DRAFT to LIVE as an append-only
+ * version snapshot (§9B builder). In ONE workspace-scoped tx: (a) take the draft
+ * (draft_definition ?? definition) + draft trigger; (b) run the shared publish
+ * gate on it (ordered per-node 409 / invalid-def 400); (c) compute the next
+ * version number; INSERT a campaign_versions snapshot (created_by=ctx.userId);
+ * (d) set campaigns.definition/trigger_segment_id = the published values,
+ * active_version_id = the new version, status = 'active', and CLEAR the draft;
+ * (e) if scope==='backfill' AND the published trigger is segment_entry with a
+ * trigger_segment_id, enroll the CURRENT segment members (reuse
+ * enrollSegmentSnapshot, ON CONFLICT 'once', workspace-scoped) on the SAME client
+ * so the freshly-set status='active' is visible. Returns { version, name, enrolled }.
+ * Workspace-scoped: the campaign must resolve inside ctx.workspaceId (inv.2).
+ */
+export const publishCampaign: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  if (!name) return ok({ error: 'name required' }, 400);
+  const scope = b.scope === 'backfill' ? 'backfill' : 'forward';
+
+  // Read the campaign + its draft (scoped → a foreign id 404s, inv.2).
+  const sel = scopedQuery(
+    ctx.workspaceId,
+    `SELECT definition, draft_definition, trigger_segment_id, draft_trigger_segment_id
+     FROM campaigns WHERE id = $1`,
+    [id],
+  );
+  const { rows } = await pool.query<{
+    definition: CampaignDefinition;
+    draft_definition: CampaignDefinition | null;
+    trigger_segment_id: string | null;
+    draft_trigger_segment_id: string | null;
+  }>(sel.text, sel.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+
+  // The DRAFT is the source of truth to publish (falls back to live when there is
+  // no unsaved draft → an idempotent re-publish of the current live definition).
+  const hasDraft = rows[0].draft_definition !== null;
+  const def = hasDraft ? (rows[0].draft_definition as CampaignDefinition) : rows[0].definition;
+  const triggerSegmentId = hasDraft ? rows[0].draft_trigger_segment_id : rows[0].trigger_segment_id;
+
+  // Gate BEFORE mutating anything (a failed gate leaves the draft + status intact).
+  const gate = await runCampaignPublishGate(ctx.workspaceId, pool, def);
+  if (gate) return gate;
+
+  // Whether this publish backfills: scope=backfill AND a segment_entry trigger with
+  // a segment. Forward / event / manual triggers never backfill.
+  const startNode = (def.nodes ?? {})[def.startNode] as { type?: string; kind?: string } | undefined;
+  const isSegmentEntry = startNode?.type === 'trigger' && startNode.kind === 'segment_entry';
+  const shouldBackfill = scope === 'backfill' && isSegmentEntry && !!triggerSegmentId;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // (c) next version number for THIS campaign (workspace-scoped).
+    const verSel = await client.query<{ next: number }>(
+      'SELECT COALESCE(MAX(version), 0) + 1 AS next FROM campaign_versions WHERE workspace_id = $1 AND campaign_id = $2',
+      [ctx.workspaceId, id],
+    );
+    const version = verSel.rows[0]!.next;
+    const ins = await client.query<{ id: string }>(
+      `INSERT INTO campaign_versions (workspace_id, campaign_id, version, name, definition, trigger_segment_id, created_by)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING id`,
+      [ctx.workspaceId, id, version, name, JSON.stringify(def), triggerSegmentId, ctx.userId ?? null],
+    );
+    const versionId = ins.rows[0]!.id;
+
+    // (d) promote draft→live, point active_version_id, activate, CLEAR the draft.
+    await client.query(
+      `UPDATE campaigns SET
+         definition = $1::jsonb,
+         trigger_segment_id = $2,
+         active_version_id = $3,
+         status = 'active',
+         draft_definition = NULL,
+         draft_trigger_segment_id = NULL
+       WHERE workspace_id = $4 AND id = $5`,
+      [JSON.stringify(def), triggerSegmentId, versionId, ctx.workspaceId, id],
+    );
+
+    // (e) backfill on the SAME client so the just-set status='active' is visible to
+    // enrollSegmentSnapshot's loadStartNode (which requires status='active').
+    let enrolled = 0;
+    if (shouldBackfill) {
+      const res = await enrollSegmentSnapshot(enrollDepsOnClient(client), {
+        workspaceId: ctx.workspaceId,
+        campaignId: id,
+        segmentId: triggerSegmentId,
+      });
+      enrolled = res.enrolled;
+    }
+
+    await client.query('COMMIT');
+    return ok({ version, name, enrolled });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * GET /campaigns/:id/versions — the campaign's append-only published-version
+ * history, newest first, with is_active (== campaigns.active_version_id).
+ * Workspace-scoped: a foreign campaign id 404s (inv.2).
+ */
+export const listCampaignVersions: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const cSel = scopedQuery(ctx.workspaceId, 'SELECT active_version_id FROM campaigns WHERE id = $1', [id]);
+  const camp = await pool.query<{ active_version_id: string | null }>(cSel.text, cSel.values);
+  if (!camp.rows[0]) return ok({ error: 'not found' }, 404);
+  const activeId = camp.rows[0].active_version_id;
+
+  // ORDER BY is appended AFTER scopedQuery builds the WHERE (scopedQuery wraps the
+  // fragment's WHERE in parens, so an inline ORDER BY would land inside them).
+  const q = scopedQuery(
+    ctx.workspaceId,
+    `SELECT id, version, name, created_at, created_by
+     FROM campaign_versions WHERE campaign_id = $1`,
+    [id],
+  );
+  const { rows } = await pool.query<{ id: string; version: number; name: string; created_at: string; created_by: string | null }>(
+    `${q.text} ORDER BY version DESC`,
+    q.values,
+  );
+  const versions = rows.map((r) => ({ ...r, is_active: r.id === activeId }));
+  return ok({ versions });
+};
+
+/**
+ * POST /campaigns/:id/revert — load a prior version's snapshot INTO the draft
+ * (append-only history: revert NEVER destroys; the user then Saves/publishes to
+ * make it live). Sets draft_definition + draft_trigger_segment_id from the version;
+ * the LIVE definition is UNTOUCHED. The version must belong to THIS campaign in the
+ * token's workspace (else 404 — inv.2; workspace_id never from the body). Returns
+ * the loaded draft.
+ */
+export const revertCampaign: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const versionId = typeof b.version_id === 'string' ? b.version_id.trim() : '';
+  if (!versionId) return ok({ error: 'version_id required' }, 400);
+
+  // The version must belong to THIS campaign AND this workspace (inv.2).
+  const vSel = scopedQuery(
+    ctx.workspaceId,
+    'SELECT definition, trigger_segment_id FROM campaign_versions WHERE id = $1 AND campaign_id = $2',
+    [versionId, id],
+  );
+  const v = await pool.query<{ definition: CampaignDefinition; trigger_segment_id: string | null }>(vSel.text, vSel.values);
+  if (!v.rows[0]) return ok({ error: 'not found' }, 404);
+
+  const upd = scopedQuery(
+    ctx.workspaceId,
+    'UPDATE campaigns SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2 WHERE id = $3',
+    [JSON.stringify(v.rows[0].definition), v.rows[0].trigger_segment_id, id],
+  );
+  const { rowCount } = await pool.query(upd.text, upd.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404); // foreign campaign id (inv.2)
+  return ok({ definition: v.rows[0].definition, trigger_segment_id: v.rows[0].trigger_segment_id });
 };
 
 /**
@@ -3554,8 +3821,12 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /broadcasts/:id/send': sendBroadcast,
   'GET /campaigns': listCampaigns,
   'GET /campaigns/:id': getCampaign,
+  'GET /campaigns/:id/versions': listCampaignVersions,
   'POST /campaigns': createCampaign,
   'PUT /campaigns/:id': updateCampaign,
+  'PUT /campaigns/:id/draft': saveCampaignDraft,
+  'POST /campaigns/:id/publish': publishCampaign,
+  'POST /campaigns/:id/revert': revertCampaign,
   'POST /campaigns/:id/activate': activateCampaign,
   'POST /campaigns/:id/pause': pauseCampaign,
   'POST /campaigns/:id/resume': resumeCampaign,

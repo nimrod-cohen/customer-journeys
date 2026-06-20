@@ -6,7 +6,7 @@
 // badge stays 'draft'; a complete journey flips to 'active'. The seed has a verified
 // sending domain + a named sender (LOCAL_SES_FORCE_MOCK).
 import { test, expect, type Page } from '@playwright/test';
-import { loginAs } from './helpers.js';
+import { loginAs, publishCampaign } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
 async function openCampaigns(page: Page): Promise<void> {
@@ -24,7 +24,8 @@ test('a complete seeded journey publishes to active', async ({ page }) => {
   await page.getByTestId('campaign-item').filter({ hasText: 'Welcome journey' }).getByTestId('campaign-open').click();
   await page.getByTestId('campaign-canvas').waitFor();
 
-  await page.getByTestId('campaign-publish').click();
+  // Publish via the Save-version modal (name + forward scope) → status flips to active.
+  await publishCampaign(page, 'Welcome v1');
   await expect(page.getByTestId('campaign-status')).toContainText('active');
 });
 
@@ -47,11 +48,18 @@ test('a send step with no From blocks publish inline (sender reason + node error
   await page.getByTestId('editor-back').click();
   await page.getByTestId('campaign-canvas').waitFor();
 
-  // Publish → blocked on the missing From, named against the send node.
-  await page.getByTestId('campaign-publish').click();
+  // Publish via the modal → blocked on the missing From, named against the send
+  // node. The gate reason renders inline (publish-reason) AND on the offending card
+  // (node-publish-error); the modal stays open (only success closes it).
+  await page.getByTestId('publish-version').click();
+  await page.getByTestId('publish-modal').waitFor();
+  await page.getByTestId('version-name').fill('Gate v1');
+  await page.getByTestId('publish-confirm').click();
   await expect(page.getByTestId('publish-reason')).toContainText(/from|who the email is from/i);
   await expect(page.getByTestId('node-publish-error')).toBeVisible();
   await expect(page.getByTestId('campaign-status')).toContainText('draft');
+  // Dismiss the modal to fix the send node.
+  await page.getByTestId('publish-cancel').click();
 
   // Fix it: the blank-design flow was abandoned without saving, so the send node
   // has no copy yet — reopening it shows the template PICKER (not an instance, like
@@ -63,6 +71,6 @@ test('a send step with no From blocks publish inline (sender reason + node error
   await drawer.getByTestId('send-attach-template').click();
   await expect(drawer).toBeHidden();
 
-  await page.getByTestId('campaign-publish').click();
+  await publishCampaign(page, 'Gate v1');
   await expect(page.getByTestId('campaign-status')).toContainText('active');
 });
