@@ -680,6 +680,151 @@ test('UNEQUAL arms (Yes=1 / No=3): the short arm + sits right after its last nod
   await expect(page.getByTestId('toast')).toBeVisible();
 });
 
+test('RULES 1+2 (Yes=1 / No=3): arms close at the SAME y; every + has line above AND below it', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Two rules');
+
+  // Build the Yes=1 / No=3 graph: an If, ONE Send on the Yes (left) arm, and
+  // Wait → Webhook → Send on the No (right) arm — both rejoin the single exit.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+
+  const armPluses = async (): Promise<Array<{ i: number; cx: number; cy: number }>> => {
+    const cb = await conditionBottom(page);
+    return page.getByTestId('campaign-edge-insert').evaluateAll(
+      (els, by) =>
+        els
+          .map((e, i) => ({ r: (e as HTMLElement).getBoundingClientRect(), i }))
+          .filter(({ r }) => r.top + r.height / 2 > by)
+          .map(({ r, i }) => ({ i, cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2) })),
+      cb,
+    );
+  };
+
+  let arms = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(arms[0]!).click();
+  await page.getByTestId('palette-send').click();
+  await expect(page.getByTestId('node-send')).toBeVisible();
+  for (const palette of ['palette-wait', 'palette-webhook', 'palette-send'] as const) {
+    const ps = await armPluses();
+    const maxCx = Math.max(...ps.map((p) => p.cx));
+    const rightCol = ps.filter((p) => Math.abs(p.cx - maxCx) <= 6).sort((a, b) => b.cy - a.cy);
+    await page.getByTestId('campaign-edge-insert').nth(rightCol[0]!.i).click();
+    await page.getByTestId('campaign-palette').waitFor();
+    await page.getByTestId(palette).click();
+    await expect(page.getByTestId('campaign-palette')).toHaveCount(0);
+  }
+  await expect(page.getByTestId('node-send')).toHaveCount(2);
+  await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(1);
+
+  // The two CLOSING arm paths (those that END at the join with a horizontal knee).
+  // RULE 2: both knee back (turn horizontal) at the SAME y — the longer arm's end.
+  const ds = await page.getByTestId('campaign-connectors').locator('path').evaluateAll((paths) =>
+    paths.map((p) => p.getAttribute('d') ?? ''),
+  );
+  const endCounts = new Map<string, { x: number; y: number; n: number }>();
+  for (const d of ds) {
+    const e = pathEndPoint(d);
+    const k = key(e);
+    const cur = endCounts.get(k) ?? { x: e.x, y: e.y, n: 0 };
+    cur.n += 1;
+    endCounts.set(k, cur);
+  }
+  const join = [...endCounts.values()].find((p) => p.n >= 2)!;
+  expect(join, 'no convergence join found').toBeTruthy();
+  // The closure-corner y of a path that lands on the join column with a knee.
+  const cornerY = (d: string): number | null => {
+    const t = d.trim().split(/\s+/);
+    let i = 0;
+    let cy = 0;
+    const n = (): number => Number(t[i++]);
+    while (i < t.length) {
+      const cmd = t[i++];
+      if (cmd === 'M') { n(); cy = n(); }
+      else if (cmd === 'V') { cy = n(); }
+      else if (cmd === 'H') { return cy; }
+      else if (cmd === 'Q') { n(); n(); n(); cy = n(); }
+    }
+    return null;
+  };
+  const closing = ds.filter((d) => key(pathEndPoint(d)) === key(join) && d.includes(' H '));
+  expect(closing.length, 'expected two closing arm paths').toBe(2);
+  const corners = closing.map(cornerY).filter((y): y is number => y !== null);
+  expect(corners.length).toBe(2);
+  // RULE 2: both arms close at the SAME y (within a couple px of layout rounding).
+  expect(Math.abs(corners[0]! - corners[1]!)).toBeLessThan(2);
+
+  // RULE 1: every + (edge-insert + merge-insert) has CONNECTOR PIXELS above AND below
+  // it at its x — never a bare + or a corner +. We read each +'s center, then check the
+  // SVG connector layer for path coverage just above and just below it on its column.
+  const PAD = 12; // screen px probed above/below (≤ PLUS_PAD at scale 1)
+  const pluses = await page
+    .getByTestId('campaign-edge-insert')
+    .evaluateAll((els) =>
+      els.map((e) => {
+        const r = (e as HTMLElement).getBoundingClientRect();
+        return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+      }),
+    );
+  const merges = await page
+    .getByTestId('campaign-merge-insert')
+    .evaluateAll((els) =>
+      els.map((e) => {
+        const r = (e as HTMLElement).getBoundingClientRect();
+        return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+      }),
+    );
+  const all = [...pluses, ...merges];
+  expect(all.length).toBeGreaterThan(0);
+  // For each +, find a connector path whose vertical run at the +'s x spans both
+  // [cy - PAD] and [cy + PAD] — i.e. a real line above AND below the +. We do this in
+  // the page so SVG path geometry + the +'s screen coords share one frame (after the
+  // canvas transform, both the path and the + are scaled identically).
+  for (const p of all) {
+    const ok = await page.getByTestId('campaign-connectors').evaluate(
+      (svg, ctx) => {
+        const paths = Array.from(svg.querySelectorAll('path')) as SVGPathElement[];
+        // Convert the +'s screen point into the SVG's local coordinate via getScreenCTM.
+        const ctm = (svg as SVGSVGElement).getScreenCTM();
+        if (!ctm) return false;
+        const inv = ctm.inverse();
+        const toLocal = (sx: number, sy: number): { x: number; y: number } => {
+          const pt = (svg as SVGSVGElement).createSVGPoint();
+          pt.x = sx;
+          pt.y = sy;
+          const lp = pt.matrixTransform(inv);
+          return { x: lp.x, y: lp.y };
+        };
+        const at = toLocal(ctx.cx, ctx.cy);
+        const above = toLocal(ctx.cx, ctx.cy - ctx.pad);
+        const below = toLocal(ctx.cx, ctx.cy + ctx.pad);
+        // A path "covers" a probe point if the point is within 3 local px of the path
+        // outline (the stroke). isPointInStroke needs a width; approximate via stroke.
+        const covers = (path: SVGPathElement, q: { x: number; y: number }): boolean => {
+          const pt = (svg as SVGSVGElement).createSVGPoint();
+          pt.x = q.x;
+          pt.y = q.y;
+          // Widen tolerance: check a small cross of offsets.
+          for (const [dx, dy] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2]]) {
+            pt.x = q.x + dx;
+            pt.y = q.y + dy;
+            if (path.isPointInStroke(pt)) return true;
+          }
+          return false;
+        };
+        return paths.some((path) => covers(path, above) && covers(path, at) && covers(path, below));
+      },
+      { cx: p.cx, cy: p.cy, pad: PAD },
+    );
+    expect(ok, `+ at screen (${Math.round(p.cx)},${Math.round(p.cy)}) lacks a line above AND below`).toBe(true);
+  }
+
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast')).toBeVisible();
+});
+
 test('an Exit on an arm terminates only that arm (the other still rejoins)', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

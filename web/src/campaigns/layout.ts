@@ -20,10 +20,13 @@
 // an arm may widen that arm's extent (subtree-width packing still applies, just
 // with a tighter base) so a SIMPLE arm stays compact.
 import { outgoingEdges, type CampaignDefinition, type DslNode } from './model.js';
-import { closeKneeLowerRun } from './orthogonal-path.js';
+import { closeKneeLowerRun, PLUS_PAD as PLUS_PAD_PX } from './orthogonal-path.js';
 
 // Re-export so layout consumers (canvas + tests) get the single graph type here.
 export type { CampaignDefinition } from './model.js';
+
+/** RULE 1 pad (re-exported from orthogonal-path so layout consumers/tests get it here). */
+export const PLUS_PAD = PLUS_PAD_PX;
 
 /** A computed node position (grid units in col/row; px in x/y). */
 export interface NodePosition {
@@ -74,6 +77,14 @@ export interface LayoutEdge {
    * MERGE (+) anchors on, with a visible line above + below it). FALSE/absent otherwise.
    */
   readonly closeKnee?: boolean;
+  /**
+   * RULE 2 (v0.42.0) — the SHARED y at which a CLOSING jog into a merge join knees back
+   * to the center. The layout sets it from the join (just below the LONGER arm's last
+   * node), so BOTH arms of a condition close at the SAME y: the shorter arm's column
+   * extends straight DOWN to it (a plain vertical), and both knee back together at the
+   * longer arm's end, converging on the join below. Present only on close-knee edges.
+   */
+  readonly crossY?: number;
 }
 
 /**
@@ -457,14 +468,23 @@ export const JOIN_EXTRA_DROP = 48;
 export const JOIN_MERGE_DROP = 56;
 
 /**
- * MERGE_PLUS_GAP — the vertical gap (px) the merge (+) sits ABOVE the join card, on the
- * post-convergence central run. Anchoring at a FIXED low offset (rather than the run's
- * MIDDLE) keeps the merge (+) in the same place whether the arms are equal or UNEQUAL
- * (an arm's closing edge may be long or short), and keeps it clearly BELOW every arm's
- * append-(+) — those now sit high, right under their own last node (v0.41.9). The line
- * ABOVE it (closure corner → +) stays visible because the closure corner is high.
+ * MERGE_PLUS_GAP — DEPRECATED (v0.42.0). The merge (+) is now CENTERED on the central
+ * post-convergence run (mergeAnchor), so it has ≥ PLUS_PAD line above + below (RULE 1)
+ * and both arms close at a SHARED y (RULE 2, MERGE_LOWER_RUN). Retained as an exported
+ * constant for compatibility; no longer used to anchor the merge (+).
  */
 export const MERGE_PLUS_GAP = 40;
+
+/**
+ * MERGE_LOWER_RUN — RULE 2 (v0.42.0): the height (px) of the CENTRAL vertical run from
+ * the SHARED closure knee down to the join card. Both arms knee back at the SAME y =
+ * `join.y − MERGE_LOWER_RUN`, just below the LONGER arm's last node (the join sits one
+ * full row below it, so this y lands in the gap between them). The merge (+) anchors on
+ * this run with ≥ PLUS_PAD line above + below (RULE 1), so MERGE_LOWER_RUN ≥ MIN_SEGMENT.
+ * The longer arm's last-node-bottom → this y is the UPPER leg of its closing jog, also
+ * sized ≥ MIN_SEGMENT by rowHeight + JOIN_MERGE_DROP.
+ */
+export const MERGE_LOWER_RUN = 96;
 
 /**
  * EMPTY_ARM_LANE — the side-lane offset (px) used ONLY by an EMPTY condition arm
@@ -548,8 +568,14 @@ export function computeEdges(
         // POPULATED arm — single knee at the TOP, long vertical down the child column.
         kneeTop = true;
       }
+      // RULE 2 — a closing jog into a merge join knees back at a SHARED y, computed from
+      // the JOIN (a fixed MERGE_LOWER_RUN above the join card). Because the join sits one
+      // full row below the LONGER arm's last node, this y lands just below that node —
+      // so BOTH arms close at the SAME y (the shorter arm extends straight down to it).
+      const crossY = closeKnee ? toPoint.y - MERGE_LOWER_RUN : undefined;
       const base = { from: id, to: e.to, slot: e.slot, fromPoint, toPoint, laneX, kneeTop, closeKnee } as const;
-      edges.push(e.label !== undefined ? { ...base, label: e.label } : base);
+      const withCross = crossY !== undefined ? { ...base, crossY } : base;
+      edges.push(e.label !== undefined ? { ...withCross, label: e.label } : withCross);
     }
   }
   return edges;
@@ -589,16 +615,33 @@ export function mergeAnchor(
       Math.abs(e.toPoint.x - join.x) < 1e-6,
   );
   if (closings.length > 0 && join) {
-    const runs = closings.map((c) => closeKneeLowerRun(c.fromPoint, c.toPoint));
-    // The tallest central run = the one whose top is highest (smallest y0).
+    const runs = closings.map((c) => closeKneeLowerRun(c.fromPoint, c.toPoint, c.crossY));
+    // With RULE 2 all arms share the same crossY, so the runs coincide; the top is the
+    // shared closure corner. (Math.min is robust if a run differs, e.g. a clamp.)
     const top = Math.min(...runs.map((r) => r.y0));
     const cardTop = join.y;
-    // Anchor LOW — a fixed gap above the join card — but never above the run's top.
-    const desired = cardTop - MERGE_PLUS_GAP;
-    const y = Math.max(desired, (top + cardTop) / 2);
+    // Center the merge (+) on the central run so it has ≥ PLUS_PAD line ABOVE and BELOW
+    // (RULE 1). The run [top, cardTop] is ≥ MERGE_LOWER_RUN ≥ MIN_SEGMENT, so its
+    // midpoint satisfies the pad on both sides.
+    const y = (top + cardTop) / 2;
     return { x: join.x, y, closureCornerY: top };
   }
   // Fallback (no central close-knee run): just above the join card.
   const y = (join?.y ?? 0) - 14;
   return { x: join?.x ?? 0, y, closureCornerY: y };
+}
+
+/**
+ * branchClosureY(edge) — RULE 2 (v0.42.0): the y at which a CLOSING jog (an arm leaf →
+ * merge join) knees back to the center. With the shared per-join crossY both arms of a
+ * condition return the SAME value, so this is the single line on which BOTH arms close,
+ * just below the LONGER arm's last node. Falls back to the raw close-knee crossing when
+ * an edge carries no crossY (defensive — close-knee edges always do).
+ */
+export function branchClosureY(edge: LayoutEdge): number {
+  if (edge.crossY !== undefined) {
+    return Math.max(edge.fromPoint.y + 1, Math.min(edge.crossY, edge.toPoint.y - 1));
+  }
+  const drop = edge.toPoint.y - edge.fromPoint.y;
+  return edge.fromPoint.y + Math.min(22, drop / 2);
 }
