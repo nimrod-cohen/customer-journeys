@@ -27,8 +27,25 @@ export interface ExpressionValueSpec {
   readonly expression: string;
 }
 
+/**
+ * A SANDBOXED JS value spec — a snippet of JavaScript evaluated NODE-SIDE ONLY
+ * (services/campaign-runner/src/js-value.ts, via node:vm in an empty context with
+ * NO host globals). `code` may contain {{customer.*}}/{{event.*}} placeholders that
+ * are interpolated as SAFE QUOTED literals BEFORE evaluation; `customer`/`event`
+ * objects are also in scope inside the sandbox.
+ *
+ * IMPORTANT: this module (@cdp/shared) is ISOMORPHIC (used by the web SPA) and so it
+ * MUST NOT import node:vm or evaluate 'js'. resolveValueSpec below only handles
+ * literal/expression; the runner resolves a 'js' spec with evaluateJsValue. The web
+ * only needs this TYPE (for the editor's value-mode form), never the evaluator.
+ */
+export interface JsValueSpec {
+  readonly kind: 'js';
+  readonly code: string;
+}
+
 /** The explicit value spec union (a legacy bare scalar is ALSO an accepted value). */
-export type ValueSpec = LiteralValueSpec | ExpressionValueSpec;
+export type ValueSpec = LiteralValueSpec | ExpressionValueSpec | JsValueSpec;
 
 /** The context a value expression resolves against: the profile + the trigger event. */
 export interface ValueResolveContext {
@@ -46,6 +63,20 @@ export function isExpressionSpec(v: unknown): v is ExpressionValueSpec {
 /** True iff `v` is an explicit literal spec object. */
 export function isLiteralSpec(v: unknown): v is LiteralValueSpec {
   return typeof v === 'object' && v !== null && (v as { kind?: unknown }).kind === 'literal';
+}
+
+/**
+ * True iff `v` is a SANDBOXED JS value spec ({ kind:'js', code:<string> }). The
+ * runner gates on this to route a value through the NODE-ONLY evaluateJsValue; the
+ * shared resolver below intentionally does NOT execute it (isomorphic-safe).
+ */
+export function isJsSpec(v: unknown): v is JsValueSpec {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    (v as { kind?: unknown }).kind === 'js' &&
+    typeof (v as { code?: unknown }).code === 'string'
+  );
 }
 
 /** True iff `v` is a SPEC OBJECT (has a `kind`) — i.e. NOT a legacy bare scalar. */

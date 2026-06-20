@@ -280,4 +280,55 @@ describe('nodeSummary', () => {
     });
     expect(nodeSummary(m.nodes.find((n) => n.id === 'c')!)).toBe('VIP?');
   });
+
+  it('a named trigger shows its label instead of the generic kind text', () => {
+    const m = parseDefinition({
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'segment_entry', label: 'New VIPs', next: 'x' },
+        x: { type: 'exit' },
+      },
+    });
+    expect(nodeSummary(m.nodes.find((n) => n.id === 'trigger')!)).toBe('New VIPs');
+  });
+
+  it('set_attribute summary: 1 assignment → "Set <key>", N → "Set N attributes"', () => {
+    const one = parseDefinition({
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'a' },
+        a: { type: 'action', kind: 'set_attribute', assignments: [{ key: 'tier', value: { kind: 'literal', value: 'gold' } }], next: 'x' },
+        x: { type: 'exit' },
+      },
+    });
+    expect(nodeSummary(one.nodes.find((n) => n.id === 'a')!)).toBe('Set tier');
+
+    const many = parseDefinition({
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'a' },
+        a: {
+          type: 'action', kind: 'set_attribute',
+          assignments: [
+            { key: 'tier', value: { kind: 'literal', value: 'gold' } },
+            { key: 'stage', value: { kind: 'literal', value: 'won' } },
+          ],
+          next: 'x',
+        },
+        x: { type: 'exit' },
+      },
+    });
+    expect(nodeSummary(many.nodes.find((n) => n.id === 'a')!)).toBe('Set 2 attributes');
+
+    // Legacy single key/value still summarizes (back-compat).
+    const legacy = parseDefinition({
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'a' },
+        a: { type: 'action', kind: 'set_attribute', key: 'plan', value: 'pro', next: 'x' },
+        x: { type: 'exit' },
+      },
+    });
+    expect(nodeSummary(legacy.nodes.find((n) => n.id === 'a')!)).toBe('Set plan');
+  });
 });

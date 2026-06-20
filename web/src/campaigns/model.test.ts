@@ -147,8 +147,12 @@ describe('defaultNodeConfig stubs', () => {
     expect((node as { template_id?: string }).template_id ?? '').not.toBe('placeholder');
     expect('template_id' in (node as object)).toBe(false);
   });
-  it('set_attribute → a key', () => {
-    expect(defaultNodeConfig('set_attribute', now)).toMatchObject({ type: 'action', kind: 'set_attribute', key: 'stage' });
+  it('set_attribute → an assignments list seeded with a "stage" literal row', () => {
+    expect(defaultNodeConfig('set_attribute', now)).toMatchObject({
+      type: 'action',
+      kind: 'set_attribute',
+      assignments: [{ key: 'stage', value: { kind: 'literal', value: '' } }],
+    });
   });
   it('webhook → an https url + method', () => {
     expect(defaultNodeConfig('webhook', now)).toMatchObject({ type: 'action', kind: 'webhook', url: 'https://example.com', method: 'POST' });

@@ -19,7 +19,8 @@
 // A legacy reader/runInWorkspaceTx path is retained for the in-memory unit tests
 // (deps without `withTx`); the real concurrency guarantee comes from `withTx`.
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
-import { isValidTimeZone, resolveValueSpec, type CustomerProfile } from '@cdp/shared';
+import { isValidTimeZone, isJsSpec, resolveValueSpec, type CustomerProfile } from '@cdp/shared';
+import { evaluateJsValue } from './js-value.js';
 import { executeWebhook, type WebhookHttpClient } from '@cdp/runner-webhook';
 import {
   processNode,
@@ -264,15 +265,23 @@ async function chainTick(
         // with the authoritative node id (the per-(campaign,profile,node) dedupe key).
         webhooks.push({ ...eff, nodeId: currentNodeId });
       } else {
-        // Resolve the value spec (literal | expression | legacy bare scalar) against
-        // the recipient profile + the IMMUTABLE persisted trigger event. Read-only
-        // string substitution (never SQL — invariant 6 untouched); a retry re-resolves
-        // identically (the source never changes → idempotent jsonb_set).
-        const resolved = resolveValueSpec(eff.value, {
+        // Resolve EACH assignment's value spec (literal | expression | js | legacy
+        // bare scalar) against the recipient profile + the IMMUTABLE persisted trigger
+        // event. A 'js' spec is evaluated NODE-side in a sandbox (evaluateJsValue);
+        // everything else is read-only string substitution (never SQL — invariant 6
+        // untouched). A retry re-resolves identically (the source never changes →
+        // idempotent nested jsonb_set).
+        const valueCtx = {
           profile: resolveCtx.profile,
           ...(resolveCtx.event !== undefined ? { event: resolveCtx.event } : {}),
-        });
-        writes.push(buildSetAttribute(workspaceId, row.profile_id, eff.key, resolved));
+        };
+        const resolved = eff.assignments.map((a) => ({
+          key: a.key,
+          value: isJsSpec(a.value)
+            ? evaluateJsValue(a.value.code, valueCtx)
+            : resolveValueSpec(a.value, valueCtx),
+        }));
+        writes.push(buildSetAttribute(workspaceId, row.profile_id, resolved));
       }
     }
 

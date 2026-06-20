@@ -28,7 +28,7 @@ describe('buildCampaignOutboxInsert', () => {
 
 describe('buildSetAttribute', () => {
   it('updates profiles.attributes via jsonb_set, ws at $1', () => {
-    const q = buildSetAttribute('ws', 'p1', 'vip', true);
+    const q = buildSetAttribute('ws', 'p1', [{ key: 'vip', value: true }]);
     expect(q.values[0]).toBe('ws');
     expect(q.values[1]).toBe('p1');
     expect(q.values[2]).toBe('{vip}');

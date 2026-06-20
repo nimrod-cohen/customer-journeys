@@ -54,10 +54,13 @@ export type SideEffect =
       readonly nodeId: string;
     }
   | {
-      /** Set a profile attribute (a workspace-scoped UPDATE). */
+      /**
+       * Set one or MORE profile attributes in ONE workspace-scoped UPDATE. The
+       * orchestrator resolves each assignment's value spec (literal | expression |
+       * js) per-value, then calls buildSetAttribute with the resolved pairs.
+       */
       readonly kind: 'set_attribute';
-      readonly key: string;
-      readonly value: unknown;
+      readonly assignments: ReadonlyArray<{ readonly key: string; readonly value: unknown }>;
     }
   | {
       /**
@@ -316,8 +319,22 @@ function actionSideEffect(node: ActionNode | WebhookAction): SideEffect | null {
     return { kind: 'send', templateId: node.template_id, nodeId: '' };
   }
   if (node.kind === 'set_attribute') {
-    if (!node.key) return null;
-    return { kind: 'set_attribute', key: node.key, value: node.value };
+    // Normalize to a LIST of keyed assignments. An `assignments` array (Feature B)
+    // supersedes the single key/value; the single form normalizes to a 1-element
+    // list (back-compat). Blank-key rows are dropped. null when NO keyed assignment.
+    const assignments: Array<{ key: string; value: unknown }> = [];
+    const list = (node as { assignments?: ReadonlyArray<{ key?: unknown; value?: unknown }> }).assignments;
+    if (Array.isArray(list) && list.length > 0) {
+      for (const a of list) {
+        if (a && typeof a.key === 'string' && a.key.length > 0) {
+          assignments.push({ key: a.key, value: a.value });
+        }
+      }
+    } else if (node.key) {
+      assignments.push({ key: node.key, value: node.value });
+    }
+    if (assignments.length === 0) return null;
+    return { kind: 'set_attribute', assignments };
   }
   return null;
 }
@@ -852,20 +869,43 @@ export function buildWebhookActivityInsert(
   };
 }
 
-/** Set a profile attribute (the set_attribute action). workspace_id bound at $1. */
+/**
+ * Set one or MORE profile attributes (the set_attribute action) in ONE
+ * parameterized UPDATE via NESTED jsonb_set:
+ *   attributes = jsonb_set(jsonb_set(coalesce(attributes,'{}'), $3, $4::jsonb, true),
+ *                          $5, $6::jsonb, true) …
+ * workspace_id is bound at $1, profile id at $2, and EACH assignment contributes a
+ * (path, value) pair of BOUND params (inv.6 — every value is a ::jsonb param, NEVER
+ * interpolated into the SQL text). Applying the same assignments again is idempotent
+ * (jsonb_set overwrites the same path with the same value). The assignments must
+ * carry a non-empty key (the caller drops blank-key rows); THROWS if empty.
+ */
 export function buildSetAttribute(
   workspaceId: string,
   profileId: string,
-  key: string,
-  value: unknown,
+  assignments: ReadonlyArray<{ readonly key: string; readonly value: unknown }>,
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildSetAttribute: workspaceId is required');
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    throw new Error('buildSetAttribute: at least one assignment is required');
+  }
+  const values: unknown[] = [workspaceId, profileId];
+  // Build nested jsonb_set from the inside out, binding a path + value param per pair.
+  let expr = `coalesce(attributes, '{}'::jsonb)`;
+  let p = 3;
+  for (const a of assignments) {
+    const pathParam = `$${p}::text[]`;
+    const valParam = `$${p + 1}::jsonb`;
+    expr = `jsonb_set(${expr}, ${pathParam}, ${valParam}, true)`;
+    values.push(`{${a.key}}`, JSON.stringify(a.value ?? null));
+    p += 2;
+  }
   return {
     text: `UPDATE profiles
-           SET attributes = jsonb_set(coalesce(attributes, '{}'::jsonb), $3::text[], $4::jsonb, true),
+           SET attributes = ${expr},
                updated_at = now()
            WHERE workspace_id = $1 AND id = $2`,
-    values: [workspaceId, profileId, `{${key}}`, JSON.stringify(value ?? null)],
+    values,
   };
 }
 

@@ -33,6 +33,8 @@ import {
   conditionGroupIsEmpty,
   readSetAttributeValue,
   writeSetAttributeConfig,
+  setAttributeFormHasKey,
+  emptyAssignmentRow,
   readWebhookConfig,
   writeWebhookConfig,
   webhookSecretHeaders,
@@ -40,6 +42,8 @@ import {
   type TriggerKind,
   type HourWindowForm,
   type ValueMode,
+  type AssignmentRow,
+  type SetAttributeForm,
   type WebhookForm,
   type WebhookHeaderRow,
 } from '../node-config.js';
@@ -81,6 +85,7 @@ const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function TriggerEditor(props: NodeEditorProps) {
   const initial = readTriggerConfig(props.node.node);
   const [kind, setKind] = useState<TriggerKind>(initial.kind);
+  const [name, setName] = useState(initial.label ?? '');
   const [eventType, setEventType] = useState(initial.eventType ?? '');
   // The optional event payload filter reuses the rule builder → an AstNode.
   const [filterGroup, setFilterGroup] = useState<RuleGroup>(() => groupFromAst(initial.filter ?? null));
@@ -92,7 +97,14 @@ function TriggerEditor(props: NodeEditorProps) {
       return;
     }
     const filterAst = kind === 'event' ? buildFilter(filterGroup) : null;
-    await props.onSaveNode(writeTriggerConfig({ kind, ...(eventType.trim() ? { eventType } : {}), ...(filterAst ? { filter: filterAst } : {}) }));
+    await props.onSaveNode(
+      writeTriggerConfig({
+        kind,
+        ...(name.trim() ? { label: name } : {}),
+        ...(eventType.trim() ? { eventType } : {}),
+        ...(filterAst ? { filter: filterAst } : {}),
+      }),
+    );
     // The segment_entry trigger's segment is a CAMPAIGN-ROW field — saved separately.
     if (kind === 'segment_entry') await props.onSaveTriggerSegment(segmentId || null);
     props.onDone();
@@ -100,6 +112,14 @@ function TriggerEditor(props: NodeEditorProps) {
 
   return (
     <div class="space-y-4">
+      <Field label="Name (optional)" hint="A short label shown on the trigger card, e.g. “New VIPs”.">
+        <Input
+          data-testid="trigger-name"
+          value={name}
+          placeholder="Trigger"
+          onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
+        />
+      </Field>
       <Field label="Enrollment trigger" hint="How a profile enters this journey.">
         <Select data-testid="trigger-kind" value={kind} onChange={(e: Event) => setKind((e.target as HTMLSelectElement).value as TriggerKind)}>
           <option value="segment_entry">When a profile enters a segment</option>
@@ -454,50 +474,157 @@ function SendEditor(props: NodeEditorProps) {
 
 // ── UPDATE-PROFILE (set_attribute) ───────────────────────────────────────────────
 
+/** Common merge tokens offered by the per-row placeholder inserter (expression + js). */
+const PLACEHOLDER_TOKENS: { label: string; token: string }[] = [
+  { label: 'customer.email', token: '{{customer.email}}' },
+  { label: 'customer.external_id', token: '{{customer.external_id}}' },
+  { label: 'customer.first_name', token: '{{customer.first_name}}' },
+  { label: 'customer.last_name', token: '{{customer.last_name}}' },
+  { label: 'customer.tier', token: '{{customer.tier}}' },
+  { label: 'event.type', token: '{{event.type}}' },
+  { label: 'event.amount', token: '{{event.amount}}' },
+  { label: 'event.sku', token: '{{event.sku}}' },
+];
+
 function UpdateProfileEditor(props: NodeEditorProps) {
   const init = readSetAttributeValue(props.node.node);
-  const [key, setKey] = useState(init.key);
-  const [mode, setMode] = useState<ValueMode>(init.mode);
-  const [literal, setLiteral] = useState(init.literal);
-  const [expression, setExpression] = useState(init.expression);
+  const [rows, setRows] = useState<AssignmentRow[]>([...init.rows]);
 
-  const keyEmpty = !key.trim();
+  const form: SetAttributeForm = { rows };
+  const hasKey = setAttributeFormHasKey(form);
+
+  const setRow = (i: number, patch: Partial<AssignmentRow>): void =>
+    setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const addRow = (): void => setRows((rs) => [...rs, emptyAssignmentRow()]);
+  const removeRow = (i: number): void => setRows((rs) => (rs.length <= 1 ? rs : rs.filter((_, idx) => idx !== i)));
+  // Insert a token at the end of the row's active value field (expression | js).
+  const insertToken = (i: number, token: string): void => {
+    setRows((rs) =>
+      rs.map((r, idx) => {
+        if (idx !== i || !token) return r;
+        if (r.mode === 'expression') return { ...r, expression: `${r.expression}${token}` };
+        if (r.mode === 'js') return { ...r, js: `${r.js}${token}` };
+        return r;
+      }),
+    );
+  };
 
   const save = async (): Promise<void> => {
-    if (keyEmpty) return; // blocked inline
-    await props.onSaveNode(writeSetAttributeConfig({ key, mode, literal, expression }));
+    if (!hasKey) return; // blocked inline (no native dialog)
+    await props.onSaveNode(writeSetAttributeConfig(form));
     props.onDone();
   };
 
   return (
     <div class="space-y-4">
-      <Field label="Attribute key" hint="The profile attribute to set (e.g. stage, tier).">
-        <Input data-testid="update-key" placeholder="stage" value={key} onInput={(e: Event) => setKey((e.target as HTMLInputElement).value)} />
-      </Field>
-      <Field label="Value">
-        <Select data-testid="value-mode" value={mode} onChange={(e: Event) => setMode((e.target as HTMLSelectElement).value as ValueMode)}>
-          <option value="literal">A fixed value</option>
-          <option value="expression">An expression / token</option>
-        </Select>
-      </Field>
-      {mode === 'literal' ? (
-        <Field label="Fixed value">
-          <Input data-testid="update-literal" placeholder="engaged" value={literal} onInput={(e: Event) => setLiteral((e.target as HTMLInputElement).value)} />
-        </Field>
-      ) : (
-        <Field label="Expression" hint="Use {{customer.*}} for profile fields or {{event.*}} — event.* pulls from the trigger event.">
-          <Input data-testid="update-expression" class="font-mono text-xs" placeholder="{{event.sku}}" value={expression} onInput={(e: Event) => setExpression((e.target as HTMLInputElement).value)} />
-        </Field>
-      )}
-      {keyEmpty ? (
-        <p data-testid="update-incomplete" class="text-sm text-amber-600">Enter an attribute key before saving.</p>
+      <p class="text-sm text-stone-500">Set one or more profile attributes. Each value can be a fixed value, an expression with {'{{customer.*}}'} / {'{{event.*}}'} tokens, or a small sandboxed JavaScript snippet.</p>
+      <div data-testid="assignment-rows" class="space-y-3">
+        {rows.map((r, i) => (
+          <div key={i} data-testid="assignment-row" class="rounded-xl border border-stone-200 p-3 space-y-2">
+            <div class="flex items-center gap-2">
+              <Input
+                data-testid="assignment-key"
+                class="flex-1"
+                placeholder="attribute key (e.g. stage)"
+                value={r.key}
+                onInput={(e: Event) => setRow(i, { key: (e.target as HTMLInputElement).value })}
+              />
+              <Select
+                data-testid="assignment-value-mode"
+                class="w-44"
+                value={r.mode}
+                onChange={(e: Event) => setRow(i, { mode: (e.target as HTMLSelectElement).value as ValueMode })}
+              >
+                <option value="literal">A fixed value</option>
+                <option value="expression">An expression / token</option>
+                <option value="js">A JS function</option>
+              </Select>
+              <Button
+                data-testid="assignment-remove"
+                variant="ghost"
+                size="sm"
+                aria-label="Remove assignment"
+                disabled={rows.length <= 1}
+                onClick={() => removeRow(i)}
+              >
+                ✕
+              </Button>
+            </div>
+
+            {r.mode === 'literal' ? (
+              <Input
+                data-testid="assignment-literal"
+                placeholder="engaged"
+                value={r.literal}
+                onInput={(e: Event) => setRow(i, { literal: (e.target as HTMLInputElement).value })}
+              />
+            ) : r.mode === 'expression' ? (
+              <>
+                <Input
+                  data-testid="assignment-expression"
+                  class="font-mono text-xs"
+                  placeholder="{{event.sku}}"
+                  value={r.expression}
+                  onInput={(e: Event) => setRow(i, { expression: (e.target as HTMLInputElement).value })}
+                />
+                <PlaceholderInsert rowIndex={i} onInsert={insertToken} />
+              </>
+            ) : (
+              <>
+                <Textarea
+                  data-testid="assignment-js"
+                  class="font-mono text-xs"
+                  rows={3}
+                  placeholder={'return customer.first_name.toUpperCase()'}
+                  value={r.js}
+                  onInput={(e: Event) => setRow(i, { js: (e.target as HTMLTextAreaElement).value })}
+                />
+                <PlaceholderInsert rowIndex={i} onInsert={insertToken} />
+                <p class="text-xs text-stone-400">
+                  <code>customer</code> and <code>event</code> are in scope; {'{{…}}'} placeholders expand (as quoted literals) before the snippet runs. Return the value to set.
+                </p>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <Button data-testid="assignment-add" variant="ghost" size="sm" onClick={addRow}>
+        + Add attribute
+      </Button>
+
+      {!hasKey ? (
+        <p data-testid="update-incomplete" class="text-sm text-amber-600">Enter at least one attribute key before saving.</p>
       ) : null}
       <div class="flex justify-end">
-        <Button data-testid="node-save" disabled={keyEmpty} onClick={save}>
+        <Button data-testid="node-save" disabled={!hasKey} onClick={save}>
           Save update
         </Button>
       </div>
     </div>
+  );
+}
+
+/** A small token-inserter Select for expression / js value fields (resets after pick). */
+function PlaceholderInsert(props: { rowIndex: number; onInsert: (i: number, token: string) => void }) {
+  return (
+    <Select
+      data-testid="placeholder-insert"
+      class="w-full text-xs"
+      value=""
+      onChange={(e: Event) => {
+        const sel = e.target as HTMLSelectElement;
+        props.onInsert(props.rowIndex, sel.value);
+        sel.value = '';
+      }}
+    >
+      <option value="">Insert a placeholder…</option>
+      {PLACEHOLDER_TOKENS.map((t) => (
+        <option key={t.token} value={t.token}>
+          {t.token}
+        </option>
+      ))}
+    </Select>
   );
 }
 

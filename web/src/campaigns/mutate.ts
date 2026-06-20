@@ -284,6 +284,9 @@ export function nodeSummary(canvasNode: CanvasNode): string {
   const node = canvasNode.node;
   switch (node.type) {
     case 'trigger': {
+      // A non-blank cosmetic label wins (like a condition's label, Feature A).
+      const label = String((node as { label?: unknown }).label ?? '').trim();
+      if (label) return label;
       const kind = String((node as { kind?: unknown }).kind ?? 'segment_entry');
       const map: Record<string, string> = {
         segment_entry: 'On segment entry',
@@ -312,6 +315,13 @@ export function nodeSummary(canvasNode: CanvasNode): string {
       const kind = String((node as { kind?: unknown }).kind ?? '');
       if (kind === 'send') return 'Send email';
       if (kind === 'set_attribute') {
+        // Prefer the assignments LIST (Feature B): 1 → "Set <key>", N → "Set N attributes".
+        const list = (node as { assignments?: ReadonlyArray<{ key?: unknown }> }).assignments;
+        if (Array.isArray(list)) {
+          const keyed = list.filter((a) => typeof a?.key === 'string' && (a.key as string).trim().length > 0);
+          if (keyed.length === 1) return `Set ${(keyed[0]!.key as string).trim()}`;
+          if (keyed.length > 1) return `Set ${keyed.length} attributes`;
+        }
         const key = String((node as { key?: unknown }).key ?? '');
         return key ? `Set ${key}` : 'Update profile';
       }

@@ -53,7 +53,7 @@ describe('processNode', () => {
   it('action set_attribute emits a set_attribute side effect', () => {
     const node: Node = { type: 'action', kind: 'set_attribute', key: 'vip', value: true, next: 'x' };
     const r = processNode(node, state(), false, NOW);
-    expect(r.sideEffects).toEqual([{ kind: 'set_attribute', key: 'vip', value: true }]);
+    expect(r.sideEffects).toEqual([{ kind: 'set_attribute', assignments: [{ key: 'vip', value: true }] }]);
   });
 
   it('wait on first arrival parks (stay) with a computed next_run_at', () => {

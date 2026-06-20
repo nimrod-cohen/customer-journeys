@@ -37,7 +37,7 @@ describe('per-node serialize → parse round-trip', () => {
     model = applyNodeConfig(model, 'w', writeWaitConfig(2 * 86400));
     const condGroup = { combinator: 'and' as const, rows: [{ kind: 'field' as const, field: 'attributes.tier', operator: '=' as const, value: 'vip' }], groups: [] };
     model = applyNodeConfig(model, 'c', writeConditionConfig(condGroup)!);
-    model = applyNodeConfig(model, 'u', writeSetAttributeConfig({ key: 'stage', mode: 'literal', literal: 'won', expression: '' }));
+    model = applyNodeConfig(model, 'u', writeSetAttributeConfig({ rows: [{ key: 'stage', mode: 'literal', literal: 'won', expression: '', js: '' }] }));
 
     const def = buildDefinition(model);
     expect(() => validateCampaignDefinition(def)).not.toThrow();
@@ -56,7 +56,7 @@ describe('per-node serialize → parse round-trip', () => {
       wait: writeWaitConfig(3600),
       waitUntil: writeWaitUntilConfig('2030-01-01T08:00', TZ),
       hour: writeHourWindowConfig({ startHour: 8, endHour: 20, daysOfWeek: [1, 2, 3, 4, 5] }),
-      setAttr: writeSetAttributeConfig({ key: 'k', mode: 'expression', literal: '', expression: '{{customer.tier}}' }),
+      setAttr: writeSetAttributeConfig({ rows: [{ key: 'k', mode: 'expression', literal: '', expression: '{{customer.tier}}', js: '' }] }),
       webhook: writeWebhookConfig({ url: 'https://h.example.com', method: 'PUT', headers: [{ name: 'X-A', value: '1' }], bodyTemplate: '{}', timeoutMs: '3000', maxRetries: '1', secret: '', secretHeader: '', hasSecret: false }).node!,
     };
     for (const [id, node] of Object.entries(samples)) {

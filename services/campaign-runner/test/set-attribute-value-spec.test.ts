@@ -87,15 +87,17 @@ describe('processNode — set_attribute emits the VALUE SPEC, not a pre-resolved
     };
     const res = processNode(node, state, false, new Date());
     expect(res.disposition).toBe('advance');
-    const eff = res.sideEffects[0];
-    expect(eff).toMatchObject({ kind: 'set_attribute', key: 'last_amount' });
-    // The spec is carried verbatim — NOT resolved to a value at this point.
-    expect((eff as { value: unknown }).value).toEqual({ kind: 'expression', expression: '{{event.amount}}' });
+    const eff = res.sideEffects[0] as { kind: string; assignments: Array<{ key: string; value: unknown }> };
+    expect(eff.kind).toBe('set_attribute');
+    expect(eff.assignments[0]!.key).toBe('last_amount');
+    // The spec is carried verbatim (in the 1-element assignments list) — NOT resolved here.
+    expect(eff.assignments[0]!.value).toEqual({ kind: 'expression', expression: '{{event.amount}}' });
   });
 
-  it('carries a bare scalar value through unchanged', () => {
+  it('carries a bare scalar value through unchanged (as a 1-element assignment)', () => {
     const node: Node = { type: 'action', kind: 'set_attribute', key: 'tier', value: 'gold', next: 'x' };
     const res = processNode(node, state, false, new Date());
-    expect((res.sideEffects[0] as { value: unknown }).value).toBe('gold');
+    const eff = res.sideEffects[0] as { assignments: Array<{ key: string; value: unknown }> };
+    expect(eff.assignments).toEqual([{ key: 'tier', value: 'gold' }]);
   });
 });

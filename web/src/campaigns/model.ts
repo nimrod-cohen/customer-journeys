@@ -210,7 +210,12 @@ export function defaultNodeConfig(type: PaletteType, now: Date = new Date()): Ds
     case 'send':
       return { type: 'action', kind: 'send', next: '' };
     case 'set_attribute':
-      return { type: 'action', kind: 'set_attribute', key: 'stage', value: '', next: '' };
+      return {
+        type: 'action',
+        kind: 'set_attribute',
+        assignments: [{ key: 'stage', value: { kind: 'literal', value: '' } }],
+        next: '',
+      };
     case 'webhook':
       return { type: 'action', kind: 'webhook', url: 'https://example.com', method: 'POST', next: '' };
     case 'exit':

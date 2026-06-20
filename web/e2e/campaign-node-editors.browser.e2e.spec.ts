@@ -166,7 +166,7 @@ test('WEBHOOK editor: write-only secret is never echoed; a non-http url blocks s
   await expect(page.getByTestId('node-editor-webhook').getByTestId('webhook-secret')).toHaveValue('');
 });
 
-test('UPDATE-PROFILE editor: literal↔expression value mode round-trips', async ({ page }) => {
+test('UPDATE-PROFILE editor: a LIST of assignments (a literal + a JS value w/ placeholder) round-trips', async ({ page }) => {
   await openCampaigns(page);
   await openSeeded(page);
 
@@ -175,16 +175,59 @@ test('UPDATE-PROFILE editor: literal↔expression value mode round-trips', async
   await page.getByTestId('node-set_attribute').getByTestId(/node-open-/).first().click();
   const drawer = page.getByTestId('node-editor-set_attribute');
 
-  await drawer.getByTestId('update-key').fill('last_sku');
-  await drawer.getByTestId('value-mode').selectOption('expression');
-  await expect(drawer.getByTestId('update-expression')).toBeVisible();
-  await drawer.getByTestId('update-expression').fill('{{event.sku}}');
+  // Row 0: a fixed (literal) value. Scope by the row CONTAINER (mode-specific value
+  // testids only render for rows in that mode, so their global index != row index).
+  const row0 = drawer.getByTestId('assignment-row').nth(0);
+  await row0.getByTestId('assignment-key').fill('stage');
+  await row0.getByTestId('assignment-value-mode').selectOption('literal');
+  await row0.getByTestId('assignment-literal').fill('won');
+
+  // Add a SECOND row: a JS value that uses a {{customer.*}} placeholder.
+  await drawer.getByTestId('assignment-add').click();
+  const row1 = drawer.getByTestId('assignment-row').nth(1);
+  await row1.getByTestId('assignment-key').fill('greeting');
+  await row1.getByTestId('assignment-value-mode').selectOption('js');
+  await expect(row1.getByTestId('assignment-js')).toBeVisible();
+  await row1.getByTestId('assignment-js').fill('return "Hi " + ');
+  // Insert a placeholder token via the per-row inserter (appends to the JS field).
+  await row1.getByTestId('placeholder-insert').selectOption('{{customer.first_name}}');
+  await expect(row1.getByTestId('assignment-js')).toHaveValue('return "Hi " + {{customer.first_name}}');
+
   await drawer.getByTestId('node-save').click();
   await expect(drawer).toBeHidden();
 
+  // The card shows the multi-assignment summary.
+  await expect(page.getByTestId('node-set_attribute').filter({ hasText: 'Set 2 attributes' }).first()).toBeVisible();
+
+  // Reopen → both rows round-trip with the right modes + values.
   await page.getByTestId('node-set_attribute').getByTestId(/node-open-/).first().click();
-  await expect(page.getByTestId('node-editor-set_attribute').getByTestId('update-key')).toHaveValue('last_sku');
-  await expect(page.getByTestId('node-editor-set_attribute').getByTestId('update-expression')).toHaveValue('{{event.sku}}');
+  const reopened = page.getByTestId('node-editor-set_attribute');
+  const r0 = reopened.getByTestId('assignment-row').nth(0);
+  const r1 = reopened.getByTestId('assignment-row').nth(1);
+  await expect(r0.getByTestId('assignment-key')).toHaveValue('stage');
+  await expect(r0.getByTestId('assignment-literal')).toHaveValue('won');
+  await expect(r1.getByTestId('assignment-key')).toHaveValue('greeting');
+  await expect(r1.getByTestId('assignment-value-mode')).toHaveValue('js');
+  await expect(r1.getByTestId('assignment-js')).toHaveValue('return "Hi " + {{customer.first_name}}');
+});
+
+test('TRIGGER editor: a cosmetic name persists and shows on the trigger card', async ({ page }) => {
+  await openCampaigns(page);
+  await openSeeded(page);
+
+  await page.getByTestId('node-trigger').getByTestId(/node-open-/).first().click();
+  const drawer = page.getByTestId('node-editor-trigger');
+  await expect(drawer.getByTestId('trigger-name')).toBeVisible();
+  await drawer.getByTestId('trigger-name').fill('New VIPs');
+  await drawer.getByTestId('node-save').click();
+  await expect(drawer).toBeHidden();
+
+  // The trigger card now shows the chosen name instead of the kind text.
+  await expect(page.getByTestId('node-trigger').filter({ hasText: 'New VIPs' }).first()).toBeVisible();
+
+  // Reopen → the name round-trips.
+  await page.getByTestId('node-trigger').getByTestId(/node-open-/).first().click();
+  await expect(page.getByTestId('node-editor-trigger').getByTestId('trigger-name')).toHaveValue('New VIPs');
 });
 
 test('SEND editor: attach a template (kind=copy) then Design email sets the campaign return', async ({ page }) => {

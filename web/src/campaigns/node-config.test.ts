@@ -15,6 +15,7 @@ import {
 import {
   applyNodeConfig,
   writeTriggerConfig,
+  readTriggerConfig,
   writeWaitConfig,
   readWaitSeconds,
   writeWaitUntilConfig,
@@ -171,26 +172,74 @@ describe('IF / condition', () => {
   });
 });
 
-describe('UPDATE-PROFILE (set_attribute value spec)', () => {
-  it('literal mode → {kind:literal,value}; expression mode → {kind:expression,expression}; both validate', () => {
-    const lit = writeSetAttributeConfig({ key: 'stage', mode: 'literal', literal: 'lead', expression: '' });
-    expect(lit).toMatchObject({ type: 'action', kind: 'set_attribute', key: 'stage', value: { kind: 'literal', value: 'lead' } });
-    const expr = writeSetAttributeConfig({ key: 'last_sku', mode: 'expression', literal: '', expression: '{{event.sku}}' });
-    expect(expr).toMatchObject({ value: { kind: 'expression', expression: '{{event.sku}}' } });
-    for (const node of [lit, expr]) {
-      const def: CampaignDefinition = {
-        startNode: 't',
-        nodes: { t: { type: 'trigger', kind: 'manual', next: 'a' }, a: { ...node, next: 'x' }, x: { type: 'exit' } },
-      };
-      expect(() => validateCampaignDefinition(def)).not.toThrow();
-    }
+describe('UPDATE-PROFILE (set_attribute value spec) — LIST of assignments', () => {
+  it('writes an assignments[] LIST; literal/expression/js modes; validates through the runner', () => {
+    const node = writeSetAttributeConfig({
+      rows: [
+        { key: 'stage', mode: 'literal', literal: 'lead', expression: '', js: '' },
+        { key: 'last_sku', mode: 'expression', literal: '', expression: '{{event.sku}}', js: '' },
+        { key: 'greeting', mode: 'js', literal: '', expression: '', js: 'return customer.first_name.toUpperCase()' },
+      ],
+    });
+    expect(node).toMatchObject({
+      type: 'action',
+      kind: 'set_attribute',
+      assignments: [
+        { key: 'stage', value: { kind: 'literal', value: 'lead' } },
+        { key: 'last_sku', value: { kind: 'expression', expression: '{{event.sku}}' } },
+        { key: 'greeting', value: { kind: 'js', code: 'return customer.first_name.toUpperCase()' } },
+      ],
+    });
+    const def: CampaignDefinition = {
+      startNode: 't',
+      nodes: { t: { type: 'trigger', kind: 'manual', next: 'a' }, a: { ...node, next: 'x' }, x: { type: 'exit' } },
+    };
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
   });
 
-  it('reads an explicit spec back to the right mode and a legacy scalar as a literal', () => {
-    expect(readSetAttributeValue({ type: 'action', kind: 'set_attribute', key: 'k', value: { kind: 'expression', expression: '{{customer.tier}}' } }))
-      .toMatchObject({ key: 'k', mode: 'expression', expression: '{{customer.tier}}' });
-    expect(readSetAttributeValue({ type: 'action', kind: 'set_attribute', key: 'k', value: 'vip' }))
-      .toMatchObject({ key: 'k', mode: 'literal', literal: 'vip' });
+  it('drops empty-key rows; an all-empty list is structurally rejected by the runner', () => {
+    const node = writeSetAttributeConfig({
+      rows: [
+        { key: '', mode: 'literal', literal: 'x', expression: '', js: '' },
+        { key: 'tier', mode: 'literal', literal: 'gold', expression: '', js: '' },
+      ],
+    });
+    expect((node as unknown as { assignments: unknown[] }).assignments).toHaveLength(1);
+    const def: CampaignDefinition = {
+      startNode: 't',
+      nodes: { t: { type: 'trigger', kind: 'manual', next: 'a' }, a: { ...node, next: 'x' }, x: { type: 'exit' } },
+    };
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('reads assignments[] back to rows with the right mode (literal/expression/js)', () => {
+    const form = readSetAttributeValue({
+      type: 'action',
+      kind: 'set_attribute',
+      assignments: [
+        { key: 'a', value: { kind: 'literal', value: 'gold' } },
+        { key: 'b', value: { kind: 'expression', expression: '{{customer.tier}}' } },
+        { key: 'c', value: { kind: 'js', code: 'return 1' } },
+      ],
+    });
+    expect(form.rows).toEqual([
+      { key: 'a', mode: 'literal', literal: 'gold', expression: '', js: '' },
+      { key: 'b', mode: 'expression', literal: '', expression: '{{customer.tier}}', js: '' },
+      { key: 'c', mode: 'js', literal: '', expression: '', js: 'return 1' },
+    ]);
+  });
+
+  it('reads a LEGACY single key/value back into a 1-row list (back-compat)', () => {
+    expect(readSetAttributeValue({ type: 'action', kind: 'set_attribute', key: 'k', value: { kind: 'expression', expression: '{{customer.tier}}' } }).rows)
+      .toEqual([{ key: 'k', mode: 'expression', literal: '', expression: '{{customer.tier}}', js: '' }]);
+    expect(readSetAttributeValue({ type: 'action', kind: 'set_attribute', key: 'k', value: 'vip' }).rows)
+      .toEqual([{ key: 'k', mode: 'literal', literal: 'vip', expression: '', js: '' }]);
+  });
+
+  it('an empty node reads as a single blank row (the editor starts with one)', () => {
+    expect(readSetAttributeValue({ type: 'action', kind: 'set_attribute' }).rows).toEqual([
+      { key: '', mode: 'literal', literal: '', expression: '', js: '' },
+    ]);
   });
 });
 
@@ -250,6 +299,16 @@ describe('TRIGGER', () => {
     const node = { ...writeTriggerConfig({ kind: 'event', eventType: 'lead', filter: filter as never }), next: 'x' };
     const def: CampaignDefinition = { startNode: 't', nodes: { t: node as never, x: { type: 'exit' } } };
     expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('carries an optional trimmed non-blank `label` (cosmetic) and reads it back', () => {
+    expect(writeTriggerConfig({ kind: 'manual' })).not.toHaveProperty('label');
+    expect(writeTriggerConfig({ kind: 'manual', label: '   ' })).not.toHaveProperty('label');
+    expect(writeTriggerConfig({ kind: 'manual', label: '  New VIPs  ' })).toMatchObject({ type: 'trigger', kind: 'manual', label: 'New VIPs' });
+    expect(writeTriggerConfig({ kind: 'event', eventType: 'purchase', label: 'Bought' })).toMatchObject({ kind: 'event', eventType: 'purchase', label: 'Bought' });
+    // read back
+    expect(readTriggerConfig({ type: 'trigger', kind: 'manual', label: 'New VIPs' }).label).toBe('New VIPs');
+    expect(readTriggerConfig({ type: 'trigger', kind: 'manual' }).label).toBeUndefined();
   });
 });
 

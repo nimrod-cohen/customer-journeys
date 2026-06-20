@@ -10,6 +10,7 @@ import { validateAst, type AstNode as SegmentsAstNode } from '@cdp/segments';
 import {
   isExpressionSpec,
   isLiteralSpec,
+  isJsSpec,
   zonedInputToUtcIso,
   utcIsoToZonedInput,
   type ValueSpec,
@@ -55,34 +56,41 @@ export interface TriggerForm {
   readonly eventType?: string;
   /** kind='event' (optional): a payload-only filter AstNode. */
   readonly filter?: AstNode;
+  /** An OPTIONAL cosmetic name shown on the trigger card (like a condition's label). */
+  readonly label?: string;
 }
 
 /** Read a trigger node into its editable form (segment id lives on the campaign row). */
 export function readTriggerConfig(node: DslNode): TriggerForm {
-  const n = node as { kind?: string; eventType?: string; filter?: AstNode };
+  const n = node as { kind?: string; eventType?: string; filter?: AstNode; label?: unknown };
   const kind: TriggerKind =
     n.kind === 'event' || n.kind === 'manual' || n.kind === 'segment_entry' ? n.kind : 'segment_entry';
-  const form: TriggerForm = { kind };
+  const label = typeof n.label === 'string' && n.label.trim() ? n.label.trim() : undefined;
+  const base: TriggerForm = { kind, ...(label ? { label } : {}) };
   return kind === 'event'
-    ? { ...form, ...(n.eventType ? { eventType: n.eventType } : {}), ...(n.filter ? { filter: n.filter } : {}) }
-    : form;
+    ? { ...base, ...(n.eventType ? { eventType: n.eventType } : {}), ...(n.filter ? { filter: n.filter } : {}) }
+    : base;
 }
 
 /**
  * Serialize a trigger form to a node patch. The segment id for kind='segment_entry'
  * is a CAMPAIGN-ROW field (campaigns.trigger_segment_id) and is NEVER written into
- * the node. kind='event' carries eventType (+ optional payload filter).
+ * the node. kind='event' carries eventType (+ optional payload filter). A trimmed
+ * non-blank `label` (cosmetic — never routing/validation) is carried for any kind.
  */
 export function writeTriggerConfig(form: TriggerForm): DslNode {
+  const label = (form.label ?? '').trim();
+  const labelPart = label ? { label } : {};
   if (form.kind === 'event') {
     return {
       type: 'trigger',
       kind: 'event',
       eventType: (form.eventType ?? '').trim(),
       ...(form.filter ? { filter: form.filter } : {}),
+      ...labelPart,
     };
   }
-  return { type: 'trigger', kind: form.kind };
+  return { type: 'trigger', kind: form.kind, ...labelPart };
 }
 
 // ── WAIT (relative duration) ───────────────────────────────────────────────────
@@ -209,46 +217,86 @@ export function sendNodeTemplateId(node: DslNode): string | null {
 
 // ── UPDATE-PROFILE (set_attribute) ──────────────────────────────────────────────
 
-export type ValueMode = 'literal' | 'expression';
+export type ValueMode = 'literal' | 'expression' | 'js';
 
-export interface SetAttributeForm {
+/** One key/value assignment row in the update-profile editor (Feature B). */
+export interface AssignmentRow {
   readonly key: string;
   readonly mode: ValueMode;
   /** literal mode: the verbatim value (string form in the editor). */
   readonly literal: string;
   /** expression mode: the {{customer.*}}/{{event.*}} token string. */
   readonly expression: string;
+  /** js mode: a sandboxed JS snippet (evaluated NODE-side; customer/event in scope). */
+  readonly js: string;
 }
 
-/**
- * Read a set_attribute node into its editable form. An explicit ValueSpec maps to
- * its mode; a LEGACY bare scalar (back-compat) reads as a literal; absent → empty
- * literal.
- */
-export function readSetAttributeValue(node: DslNode): SetAttributeForm {
-  const n = node as { key?: string; value?: unknown };
-  const key = typeof n.key === 'string' ? n.key : '';
-  const v = n.value;
+/** The update-profile editor form: a LIST of assignment rows. */
+export interface SetAttributeForm {
+  readonly rows: readonly AssignmentRow[];
+}
+
+/** A blank assignment row (the editor starts with one). */
+export function emptyAssignmentRow(): AssignmentRow {
+  return { key: '', mode: 'literal', literal: '', expression: '', js: '' };
+}
+
+/** Read ONE value spec (or legacy bare scalar) into an assignment row's mode fields. */
+function readValueIntoRow(key: string, v: unknown): AssignmentRow {
   if (isExpressionSpec(v)) {
-    return { key, mode: 'expression', literal: '', expression: v.expression };
+    return { key, mode: 'expression', literal: '', expression: v.expression, js: '' };
+  }
+  if (isJsSpec(v)) {
+    return { key, mode: 'js', literal: '', expression: '', js: v.code };
   }
   if (isLiteralSpec(v)) {
-    return { key, mode: 'literal', literal: scalarToString(v.value), expression: '' };
+    return { key, mode: 'literal', literal: scalarToString(v.value), expression: '', js: '' };
   }
   // Legacy bare scalar (or absent) → literal.
-  return { key, mode: 'literal', literal: v === undefined || v === null ? '' : scalarToString(v), expression: '' };
+  return { key, mode: 'literal', literal: v === undefined || v === null ? '' : scalarToString(v), expression: '', js: '' };
 }
 
 /**
- * Serialize a set_attribute: an explicit ValueSpec — { kind:'literal', value } or
- * { kind:'expression', expression } — matching the phase-4 runner contract.
+ * Read a set_attribute node into its editable form (a LIST of rows). An
+ * `assignments` array (Feature B) maps each entry to a row; a LEGACY single
+ * key/value reads into a 1-row list (back-compat); an empty node reads as one blank
+ * row (the editor always shows at least one).
+ */
+export function readSetAttributeValue(node: DslNode): SetAttributeForm {
+  const n = node as { key?: string; value?: unknown; assignments?: ReadonlyArray<{ key?: unknown; value?: unknown }> };
+  const list = n.assignments;
+  if (Array.isArray(list) && list.length > 0) {
+    return { rows: list.map((a) => readValueIntoRow(typeof a.key === 'string' ? a.key : '', a.value)) };
+  }
+  if (typeof n.key === 'string' && n.key.length > 0) {
+    return { rows: [readValueIntoRow(n.key, n.value)] };
+  }
+  return { rows: [emptyAssignmentRow()] };
+}
+
+/** Serialize one assignment row's value to its ValueSpec by mode. */
+function rowValueSpec(row: AssignmentRow): ValueSpec {
+  if (row.mode === 'expression') return { kind: 'expression', expression: row.expression.trim() };
+  if (row.mode === 'js') return { kind: 'js', code: row.js };
+  return { kind: 'literal', value: row.literal };
+}
+
+/**
+ * Serialize a set_attribute to an `assignments` LIST (Feature B). Rows with a blank
+ * key are DROPPED. Each surviving row's value is a ValueSpec by mode (literal |
+ * expression | js). The single key/value form is superseded by this list — the
+ * editor always emits the list, the runner accepts both.
  */
 export function writeSetAttributeConfig(form: SetAttributeForm): DslNode {
-  const value: ValueSpec =
-    form.mode === 'expression'
-      ? { kind: 'expression', expression: form.expression.trim() }
-      : { kind: 'literal', value: form.literal };
-  return { type: 'action', kind: 'set_attribute', key: form.key.trim(), value };
+  const assignments = form.rows
+    .filter((r) => r.key.trim().length > 0)
+    .map((r) => ({ key: r.key.trim(), value: rowValueSpec(r) }));
+  return { type: 'action', kind: 'set_attribute', assignments };
+}
+
+/** Whether the form has at least one assignment with a non-empty key (the save gate). */
+export function setAttributeFormHasKey(form: SetAttributeForm): boolean {
+  return form.rows.some((r) => r.key.trim().length > 0);
 }
 
 function scalarToString(v: unknown): string {

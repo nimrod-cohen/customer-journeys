@@ -8,7 +8,7 @@
 // types. condition `ast` is the §8 AstNode reused verbatim (branch conditions
 // compile through @cdp/segments).
 import { validateAst, type AstNode } from '@cdp/segments';
-import { isExpressionSpec, isLiteralSpec, type ValueSpec } from '@cdp/shared';
+import { isExpressionSpec, isLiteralSpec, isJsSpec, type ValueSpec } from '@cdp/shared';
 
 // Re-export the value spec so consumers importing from the runner's DSL get it.
 export type { ValueSpec } from '@cdp/shared';
@@ -26,6 +26,9 @@ export interface TriggerNode {
   readonly type: 'trigger';
   /** segment_entry uses campaigns.trigger_segment_id; others live in definition. */
   readonly kind: 'segment_entry' | 'event' | 'manual';
+  /** Optional human label for the trigger card (e.g. "New VIPs"), shown on the canvas.
+   *  Purely cosmetic — like a condition's label, it NEVER affects routing or validation. */
+  readonly label?: string;
   /** For kind='event' (REQUIRED): the event type that enrolls the profile. */
   readonly eventType?: string;
   /** For kind='event' (OPTIONAL): a payload-only filter (payload.* namespace),
@@ -105,17 +108,24 @@ export interface ActionNode {
   /** For kind='send': the email template to enqueue through the Dispatcher.
    * The envelope (subject / From / To) lives ON that template, not here. */
   readonly template_id?: string;
-  /** For kind='set_attribute': the profile attribute key to set. */
+  /** For kind='set_attribute' (SINGLE assignment, back-compat): the attribute key. */
   readonly key?: string;
   /**
-   * For kind='set_attribute': the value to set. EITHER an explicit value spec
-   * ({@link ValueSpec}: a `literal` written verbatim, or an `expression` of
-   * {{customer.*}}/{{event.*}} tokens resolved at runner execution against the
-   * profile + the trigger event persisted on enrollment.state) OR — for
-   * back-compat — a LEGACY BARE SCALAR (the original static value), treated as an
-   * implicit literal. Resolution is read-only string substitution (never SQL).
+   * For kind='set_attribute' (SINGLE assignment, back-compat): the value to set.
+   * EITHER an explicit value spec ({@link ValueSpec}: a `literal` written verbatim,
+   * an `expression` of {{customer.*}}/{{event.*}} tokens resolved at runner
+   * execution, or a sandboxed `js` snippet evaluated NODE-side) OR — for back-compat
+   * — a LEGACY BARE SCALAR (the original static value), treated as an implicit
+   * literal. Resolution is read-only string substitution (never SQL).
    */
   readonly value?: ValueSpec | unknown;
+  /**
+   * For kind='set_attribute' (MULTIPLE assignments): a LIST of key/value pairs set
+   * in ONE parameterized UPDATE (nested jsonb_set). When present and non-empty this
+   * supersedes the single `key`/`value`. Each value is a {@link ValueSpec} (literal
+   * | expression | js) or a legacy bare scalar, resolved per-value at runner time.
+   */
+  readonly assignments?: ReadonlyArray<{ readonly key: string; readonly value: unknown }>;
   /** The node id to advance to after the action. */
   readonly next: string;
 }
@@ -328,10 +338,7 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
         throw new Error(`validateCampaignDefinition: send action "${id}" template_id must be a non-empty string`);
       }
       if (kind === 'set_attribute') {
-        if (typeof act.key !== 'string' || !act.key) {
-          throw new Error(`validateCampaignDefinition: set_attribute action "${id}" needs a key`);
-        }
-        validateSetAttributeValue(id, act.value);
+        validateSetAttributeNode(id, act);
       }
       requireEdge(act.next, 'next');
       return;
@@ -346,6 +353,40 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
 }
 
 /**
+ * Validate a set_attribute action's keyed assignments (pure, §9B update-profile). A
+ * set_attribute is valid when it has EITHER a non-empty single `key` OR an
+ * `assignments` array with ≥1 entry having a non-empty `key` (reject when neither).
+ * Each present assignment's value spec is structurally validated. The list
+ * supersedes the single key/value at runner time but the single form is still valid
+ * (back-compat).
+ */
+function validateSetAttributeNode(id: string, act: ActionNode): void {
+  const hasSingleKey = typeof act.key === 'string' && act.key.length > 0;
+  const list = act.assignments;
+  let hasListKey = false;
+  if (list !== undefined) {
+    if (!Array.isArray(list)) {
+      throw new Error(`validateCampaignDefinition: set_attribute action "${id}" assignments must be an array`);
+    }
+    for (const a of list) {
+      if (typeof a !== 'object' || a === null) {
+        throw new Error(`validateCampaignDefinition: set_attribute action "${id}" assignment must be an object`);
+      }
+      const entry = a as { key?: unknown; value?: unknown };
+      if (typeof entry.key === 'string' && entry.key.length > 0) {
+        hasListKey = true;
+        validateSetAttributeValue(id, entry.value);
+      }
+      // an entry with a blank key is dropped at runner time (and contributes no key)
+    }
+  }
+  if (!hasSingleKey && !hasListKey) {
+    throw new Error(`validateCampaignDefinition: set_attribute action "${id}" needs a key`);
+  }
+  if (hasSingleKey) validateSetAttributeValue(id, act.value);
+}
+
+/**
  * Validate a set_attribute action's VALUE spec (pure, §9B update-profile). The
  * value is OPTIONAL (absent → an implicit null literal). It may be:
  *   - a LEGACY BARE SCALAR (string/number/boolean/null) — the original static value,
@@ -353,7 +394,9 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
  *   - an explicit { kind:'literal', value } — the `value` field MUST be present
  *     (distinguishes from a bare scalar that merely happens to be an object);
  *   - an explicit { kind:'expression', expression } — `expression` MUST be a
- *     non-empty string.
+ *     non-empty string;
+ *   - an explicit { kind:'js', code } — `code` MUST be a string (NO eval at
+ *     validate time; the runner evaluates it NODE-side in a sandbox).
  * Any other spec-object shape (an unknown `kind`, or an object without a `kind`)
  * is rejected. Resolution itself is read-only string substitution at runner time
  * (never SQL); this only checks the STRUCTURE.
@@ -374,6 +417,16 @@ function validateSetAttributeValue(id: string, value: unknown): void {
       if (!('value' in value)) {
         throw new Error(
           `validateCampaignDefinition: set_attribute "${id}" literal value spec needs a value field`,
+        );
+      }
+      return;
+    }
+    if ((value as { kind?: unknown }).kind === 'js') {
+      // A js spec is valid IFF code is a string (no eval at validate time; the
+      // runner evaluates it NODE-side in a sandbox that can never reach the host).
+      if (!isJsSpec(value)) {
+        throw new Error(
+          `validateCampaignDefinition: set_attribute "${id}" js value spec needs a string code`,
         );
       }
       return;

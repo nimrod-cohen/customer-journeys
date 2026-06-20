@@ -7,6 +7,21 @@ import { describe, it, expect } from 'vitest';
 import { validateCampaignDefinition } from '../src/dsl.js';
 
 describe('validateCampaignDefinition — trigger definition for all three kinds', () => {
+  it('ACCEPTS an optional cosmetic trigger `label` (never affects routing/validation)', () => {
+    for (const kind of ['segment_entry', 'manual'] as const) {
+      const def = {
+        startNode: 't',
+        nodes: { t: { type: 'trigger', kind, label: 'New VIPs', next: 'x' }, x: { type: 'exit' } },
+      };
+      expect(() => validateCampaignDefinition(def)).not.toThrow();
+    }
+    const ev = {
+      startNode: 't',
+      nodes: { t: { type: 'trigger', kind: 'event', eventType: 'purchase', label: 'Bought something', next: 'x' }, x: { type: 'exit' } },
+    };
+    expect(() => validateCampaignDefinition(ev)).not.toThrow();
+  });
+
   it('ACCEPTS an event trigger with eventType and no filter', () => {
     const def = {
       startNode: 't',
