@@ -37,10 +37,13 @@ export interface LayoutEdge {
   readonly toPoint: { x: number; y: number };
   /**
    * The x of the dedicated VERTICAL lane this connector runs down (for a condition
-   * arm). For a fanned arm it equals the child's x (toPoint.x); for an EMPTY arm
-   * that goes straight to a directly-below join the two arms get DISTINCT lane x
-   * (onTrue → left, onFalse → right) so their (+) anchors never stack. For a plain
-   * `next` edge it equals toPoint.x (the route is a straight V or a single jog).
+   * arm). EVERY condition arm gets a per-slot side lane just off the source column
+   * (onTrue → left of from.x, onFalse → right of from.x) so the arm's source-side
+   * UPPER vertical run — where the (+) anchors, straight below the condition — is at
+   * a DISTINCT x per arm and the two (+)s never stack. (A fanned arm then turns from
+   * that lane out to its child column LOW, near the target; an empty arm turns to the
+   * directly-below join.) For a plain `next` edge laneX === toPoint.x (a straight V or
+   * a single source-side-long jog).
    */
   readonly laneX: number;
 }
@@ -249,18 +252,21 @@ export const ARM_LANE = 28;
  * source bottom-center + target top-center pixel anchors AND a vertical LANE x.
  * ASSERTS every edge is down-only (toPoint.y > fromPoint.y).
  *
- * LANE ASSIGNMENT (the converging-diamond rework). A condition's arm runs DOWN a
- * dedicated vertical lane so its (+) anchors on a real vertical run:
- *   • FANNED arm (child fanned to a distinct column, toPoint.x ≠ source.x):
- *     laneX = toPoint.x — the connector's lower vertical leg IS the lane.
- *   • EMPTY arm straight to a directly-below join (toPoint.x === source.x): the two
- *     arms would otherwise share one column and stack. Give onTrue a LEFT lane and
- *     onFalse a RIGHT lane (source.x ∓ ARM_LANE) — a clean rectangle whose two arm
- *     (+)s sit on DISTINCT vertical lanes. The toPoint stays the shared join, so the
- *     arms still CONVERGE on one node.
- * A plain `next` edge uses laneX = toPoint.x (straight V or a single jog). The
- * fromPoint stays at the card-bottom CENTER for every edge (the split happens below
- * via the lanes), so the connector remains axis-aligned (V/H/V…) and down-only.
+ * LANE ASSIGNMENT (source-side-long rework). A condition's arm runs DOWN a dedicated
+ * per-slot side lane just off the source column, so its (+) anchors HIGH on that
+ * source-side vertical run (straight below the condition, before any turn) and the
+ * two arms' (+)s sit on DISTINCT lanes — they never stack, and they're clearly above
+ * the LOW merge (+) on the merged trunk:
+ *   • onTrue  → a LEFT lane  (source.x − ARM_LANE).
+ *   • onFalse → a RIGHT lane (source.x + ARM_LANE).
+ * This applies whether the arm is FANNED (child at a distinct column — the lane turns
+ * out to toPoint.x LOW, near the target) or EMPTY (child is the directly-below join —
+ * the lane turns back in to the join). The toPoint stays the real child/join, so the
+ * arms still CONVERGE on one node when they share a join.
+ * A plain `next` edge uses laneX = toPoint.x (straight V or a single source-side-long
+ * jog). The fromPoint stays at the card-bottom CENTER for every edge (the split
+ * happens below via the lanes), so the connector remains axis-aligned (V/H/V…) and
+ * down-only.
  */
 export function computeEdges(
   def: CampaignDefinition,
@@ -283,10 +289,13 @@ export function computeEdges(
           `computeEdges: edge ${id} -> ${e.to} is not downward (from.y=${fromPoint.y}, to.y=${toPoint.y})`,
         );
       }
-      // Lane: a same-column arm (empty arm → directly-below join) gets a side lane
-      // so the two arms separate; everything else routes down the target's column.
+      // Lane: EVERY condition arm gets a per-slot side lane just off the source
+      // column (onTrue left, onFalse right) so its source-side UPPER vertical run —
+      // where the (+) anchors, straight below the condition — is at a DISTINCT x per
+      // arm (the two (+)s never stack). The arm then turns out to its real child/join
+      // LOW, near the target. A plain `next` edge routes down the target's column.
       let laneX = toPoint.x;
-      if ((e.slot === 'onTrue' || e.slot === 'onFalse') && toPoint.x === from.x) {
+      if (e.slot === 'onTrue' || e.slot === 'onFalse') {
         laneX = from.x + (e.slot === 'onTrue' ? -ARM_LANE : ARM_LANE);
       }
       edges.push(

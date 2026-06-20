@@ -267,6 +267,23 @@ describe('min vertical-segment floor (every (+) has room)', () => {
     }
   });
 
+  it("an arm's (+) sits HIGH (well above) the merge (+) on the merged trunk — they never adjoin", () => {
+    // diamond: cond → a → join, cond → b → join, join → exit1. The merge (+) sits on
+    // the trunk just above the join (contPos.y − 14, per CampaignCanvas). Every arm's
+    // (+) must be well above (smaller y) that merge (+), with a clear gap.
+    const { positions } = layoutDefinition(diamond);
+    const edges = computeEdges(diamond, positions);
+    const joinPos = positions.get('join')!;
+    const mergeInsertY = joinPos.y - 14; // the merge (+) anchor y in CampaignCanvas
+    const arms = edges.filter((e) => e.from === 'cond');
+    expect(arms.length).toBe(2);
+    for (const e of arms) {
+      const a = verticalAnchor(e.fromPoint, e.toPoint, e.laneX);
+      // The arm (+) is HIGH — straight below the condition, far above the merge (+).
+      expect(a.y).toBeLessThan(mergeInsertY - 40);
+    }
+  });
+
   it('the merged trunk after a branch (join → continuation) is a vertical run ≥ MIN_SEGMENT', () => {
     // diamond: join → exit1 is the merged trunk continuation edge.
     const { positions } = layoutDefinition(diamond);
@@ -302,12 +319,17 @@ describe('computeEdges (lane routing)', () => {
     expect(yes.laneX).toBeLessThan(no.laneX); // Yes left of No
   });
 
-  it('a fanned arm uses the child column as its lane (laneX === toPoint.x)', () => {
+  it('a fanned arm uses a per-slot SIDE lane just off the source column (so its (+) anchors straight below the condition, distinct per arm)', () => {
     const { positions } = layoutDefinition(branch);
     const edges = computeEdges(branch, positions);
-    for (const e of edges.filter((x) => x.from === 'cond')) {
-      expect(e.laneX).toBe(e.toPoint.x);
-    }
+    const cond = positions.get('cond')!;
+    const yes = edges.find((e) => e.from === 'cond' && e.slot === 'onTrue')!;
+    const no = edges.find((e) => e.from === 'cond' && e.slot === 'onFalse')!;
+    // The lane sits just off the source column (left for onTrue, right for onFalse),
+    // NOT on the child column — so the source-side upper run is distinct per arm.
+    expect(yes.laneX).toBeLessThan(cond.x); // onTrue → left of source
+    expect(no.laneX).toBeGreaterThan(cond.x); // onFalse → right of source
+    expect(yes.laneX).not.toBe(no.laneX);
   });
 
   it('emits one down-only edge per next/onTrue/onFalse', () => {

@@ -264,12 +264,17 @@ test('empty If renders as a rectangle: each arm + on its OWN lane (distinct x) +
   // Exactly ONE merge (+) below the branch (the after-the-branch control on the trunk).
   await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(1);
   // Its x differs from BOTH arm lanes (it sits on the central merged trunk).
-  const mergeX = await page.getByTestId('campaign-merge-insert').evaluate((el) => {
+  const merge = await page.getByTestId('campaign-merge-insert').evaluate((el) => {
     const r = (el as HTMLElement).getBoundingClientRect();
-    return Math.round(r.left + r.width / 2);
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top) };
   });
-  expect(mergeX).not.toBe(armBoxes[0]!.x);
-  expect(mergeX).not.toBe(armBoxes[1]!.x);
+  expect(merge.x).not.toBe(armBoxes[0]!.x);
+  expect(merge.x).not.toBe(armBoxes[1]!.x);
+  // Each arm (+) sits ABOVE the merge (+) — straight below the condition, before the
+  // turn — with a CLEAR vertical gap (never adjoining the low merge (+)).
+  for (const arm of armBoxes) {
+    expect(arm.y).toBeLessThan(merge.y - 24);
+  }
 
   // Connectors stay axis-aligned + the arms still converge on the single join.
   const ds = await page.getByTestId('campaign-connectors').locator('path').evaluateAll((paths) =>
@@ -357,6 +362,23 @@ test('per-arm + with an empty passthrough: one arm gets a send, both rejoin the 
     counts.set(k, (counts.get(k) ?? 0) + 1);
   }
   expect([...counts.values()].some((c) => c >= 2)).toBe(true);
+
+  // USER FIX: the arm edge (+)s — the cond→send arm and the send→join arm — sit on
+  // the source-side UPPER vertical run (straight below their source node, before the
+  // turn toward the join), so they are clearly ABOVE the low merge (+) with a real
+  // gap. None of them adjoins the merge (+).
+  const condBottom = await conditionBottom(page);
+  const armEdgeYs = await page.getByTestId('campaign-edge-insert').evaluateAll((els, by) => {
+    return els
+      .map((e) => (e as HTMLElement).getBoundingClientRect())
+      .filter((r) => r.top > by)
+      .map((r) => Math.round(r.top));
+  }, condBottom);
+  const mergeY = await page.getByTestId('campaign-merge-insert').evaluate((el) =>
+    Math.round((el as HTMLElement).getBoundingClientRect().top),
+  );
+  expect(armEdgeYs.length).toBeGreaterThan(0);
+  for (const y of armEdgeYs) expect(y).toBeLessThan(mergeY - 24);
 
   await page.getByTestId('save-campaign').click();
   await expect(page.getByTestId('toast')).toBeVisible();

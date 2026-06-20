@@ -35,11 +35,14 @@ export const MIN_SEGMENT = 64;
 
 /**
  * RAIL_INSET — the FIXED vertical distance (px) a horizontal crossing sits in from
- * the drop's ends. A lane route's two rails sit RAIL_INSET below `from` and above
- * `to`, so the middle lane V = drop − 2·RAIL_INSET; a jog's single crossing sits
- * RAIL_INSET below `from`, so its lower V leg = drop − RAIL_INSET − r. Choosing a
- * FIXED inset (not a fraction of the drop) keeps the anchorable run tall regardless
- * of the row height — pushing the corners to the ends instead of the middle.
+ * the drop's ends. The routing is now SOURCE-SIDE-LONG: the vertical run that
+ * descends straight from the source (at `from.x`, or the lane x just below it) is
+ * the tall anchorable run, and the horizontal turn toward the target happens LOW.
+ * So a jog's single crossing sits RAIL_INSET ABOVE `to` (near the bottom), making
+ * the UPPER leg = drop − RAIL_INSET − r long; a lane route's two rails still sit
+ * RAIL_INSET in from the drop's ends so the lane V = drop − 2·RAIL_INSET is tall.
+ * Choosing a FIXED inset (not a fraction of the drop) keeps the anchorable run tall
+ * regardless of row height — pushing the turn to the bottom, the (+) to the top.
  */
 const RAIL_INSET = 22;
 
@@ -94,15 +97,17 @@ export function orthogonalPath(
 }
 
 /**
- * The y of a JOG's single horizontal crossing. We place it a FIXED RAIL_INSET below
- * `from` (clamped so it never crosses below the drop's midpoint when the drop is
- * tiny), so the LOWER vertical leg — the anchorable run the (+) sits on — is long
- * (drop − RAIL_INSET − r) rather than half the drop. Pushing the corner to the top
- * keeps the lower V ≥ MIN_SEGMENT for the laid-out gap.
+ * The y of a JOG's single horizontal crossing. We place it a FIXED RAIL_INSET ABOVE
+ * `to` (near the BOTTOM, clamped so it never rises above the drop's midpoint when the
+ * drop is tiny), so the UPPER vertical leg — the run descending straight from the
+ * source at `from.x`, which the (+) sits on — is long (drop − RAIL_INSET − r) rather
+ * than half the drop. Pushing the corner to the BOTTOM keeps the UPPER source-side V
+ * ≥ MIN_SEGMENT for the laid-out gap and puts the (+) straight below the source node,
+ * before the turn toward the target.
  */
 function jogCrossingY(y1: number, y2: number): number {
   const drop = y2 - y1;
-  return y1 + Math.min(RAIL_INSET, drop / 2);
+  return y2 - Math.min(RAIL_INSET, drop / 2);
 }
 
 /** The two lane rails (top/bottom), each a FIXED RAIL_INSET in from the drop's ends
@@ -113,8 +118,9 @@ function laneRailYs(y1: number, y2: number): { yTop: number; yBot: number } {
   return { yTop: y1 + inset, yBot: y2 - inset };
 }
 
-/** A V-H-V jog from `from` to `to`, the horizontal crossing near the TOP (so the
- *  lower vertical leg is tall + anchorable). */
+/** A V-H-V jog from `from` to `to`, the horizontal crossing near the BOTTOM (so the
+ *  UPPER vertical leg — descending straight from the source at from.x — is tall +
+ *  anchorable; the (+) sits there, before the turn toward the target). */
 function jog(from: Point, to: Point, radius: number): string {
   const crossY = jogCrossingY(from.y, to.y);
   const dx = to.x - from.x;
@@ -165,12 +171,16 @@ function jogTail(x1: number, y1: number, x2: number, y2: number, radius: number)
 
 /**
  * verticalAnchor(from, to, laneX?) — the anchor for the (+) edge-insertion control,
- * GUARANTEED to sit on a VERTICAL run of the connector path (never a corner/H run):
- *   - straight edge (single V): the vertical midpoint.
- *   - jog (lane === to.x): the LOWER vertical leg at to.x (below the H run).
- *   - full lane route: the MIDDLE-third lane vertical at laneX.
+ * GUARANTEED to sit on the SOURCE-SIDE UPPER VERTICAL run of the connector path
+ * (never a corner/H run), straight below the source node BEFORE any horizontal turn:
+ *   - straight edge (single V): the vertical midpoint (already straight below source).
+ *   - jog (lane === to.x | from.x): the UPPER vertical leg at `from.x`, above the
+ *     (bottom-placed) H run — the (+) sits right under the source node.
+ *   - full lane route: the UPPER portion of the lane vertical at laneX (the column
+ *     straight below the source, per-arm), high in the run rather than centered.
  * Two arms leaving the SAME source therefore get DISTINCT anchors (distinct lane x),
- * so the buttons never stack (a stacked lower button is un-clickable).
+ * so the buttons never stack — and an arm's (+) is HIGH (right under it), clearly
+ * separated from the LOW merge (+) on the merged trunk; they never adjoin.
  */
 export function verticalAnchor(from: Point, to: Point, laneX?: number): Point {
   const lane = laneX ?? to.x;
@@ -178,22 +188,25 @@ export function verticalAnchor(from: Point, to: Point, laneX?: number): Point {
     return { x: from.x, y: (from.y + to.y) / 2 };
   }
   if (lane === to.x || lane === from.x) {
-    // A jog: the final vertical leg runs at `to.x`, from the (top-placed) crossing
-    // down to `to.y` — anchor at the MIDDLE of that tall lower V run.
+    // A jog: the UPPER vertical leg runs at `from.x`, from `from.y` down to the
+    // (bottom-placed) crossing — anchor at the MIDDLE of that tall upper V run, so
+    // the (+) is straight below the source node, before the turn toward the target.
     const crossY = jogCrossingY(from.y, to.y);
     const upLeg = crossY - from.y;
     const downLeg = to.y - crossY;
     const hLeg = Math.abs(to.x - from.x);
     const r = Math.max(0, Math.min(CORNER_RADIUS, upLeg / 2, downLeg / 2, hLeg / 2));
-    // The lower vertical leg spans [crossY + r, to.y]; anchor at ITS midpoint so the
+    // The upper vertical leg spans [from.y, crossY - r]; anchor at ITS midpoint so the
     // point is strictly inside the run. When lane===from.x (no jog horizontal) the
     // single vertical still spans this y, so the anchor is on it either way.
-    const lowerTop = crossY + r;
-    return { x: to.x, y: (lowerTop + to.y) / 2 };
+    const upperBot = crossY - r;
+    return { x: from.x, y: (from.y + upperBot) / 2 };
   }
-  // Full lane route: anchor on the MIDDLE of the (fixed-inset) lane vertical at laneX.
+  // Full lane route: anchor on the UPPER portion of the (fixed-inset) lane vertical at
+  // laneX — high in the run (the column straight below the source) so the arm's (+)
+  // sits up near its source node, well above the low merge (+) on the merged trunk.
   const { yTop, yBot } = laneRailYs(from.y, to.y);
-  return { x: lane, y: (yTop + yBot) / 2 };
+  return { x: lane, y: yTop + (yBot - yTop) / 3 };
 }
 
 /**

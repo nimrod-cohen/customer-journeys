@@ -173,11 +173,13 @@ describe('orthogonalPath', () => {
       expect(h).not.toBeNull();
       expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
     }
-    // 2) a jog (fanned arm — distinct target column): the LOWER V leg is the anchor run.
+    // 2) a jog (fanned arm — distinct target column): the UPPER V leg (at from.x) is
+    //    the anchor run, straight below the source before the turn.
     {
       const from = { x: 300, y: y0 };
       const to = { x: 120, y: y1 };
       const a = verticalAnchor(from, to);
+      expect(a.x).toBe(from.x); // straight below the SOURCE, not on the lower leg
       const h = anchorRunHeight(orthogonalPath(from, to), a);
       expect(h).not.toBeNull();
       expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
@@ -200,20 +202,24 @@ describe('verticalAnchor', () => {
     expect(verticalAnchor({ x: 100, y: 50 }, { x: 100, y: 250 })).toEqual({ x: 100, y: 150 });
   });
 
-  it('a jog edge: the anchor sits on the LOWER vertical leg (at to.x), on the path', () => {
+  it('a jog edge: the anchor sits on the UPPER source-side leg (at from.x), straight below the source, on the path', () => {
     const from = { x: 100, y: 50 };
     const to = { x: 340, y: 250 };
     const a = verticalAnchor(from, to);
-    expect(a.x).toBe(to.x);
+    expect(a.x).toBe(from.x); // the column straight below the SOURCE, before the turn
+    // UPPER portion: closer to the source than the target.
+    expect(a.y).toBeLessThan((from.y + to.y) / 2);
     assertOnVerticalRun(orthogonalPath(from, to), a);
   });
 
-  it('a full LANE route: the anchor sits on the lane vertical (at laneX), on the path', () => {
+  it('a full LANE route: the anchor sits HIGH on the lane vertical (at laneX), on the path', () => {
     const from = { x: 300, y: 100 };
     const to = { x: 300, y: 400 };
     const laneX = 272;
     const a = verticalAnchor(from, to, laneX);
     expect(a.x).toBe(laneX);
+    // UPPER portion of the lane run — closer to the source than the target.
+    expect(a.y).toBeLessThan((from.y + to.y) / 2);
     assertOnVerticalRun(orthogonalPath(from, to, laneX), a);
   });
 
@@ -231,11 +237,16 @@ describe('verticalAnchor', () => {
     assertOnVerticalRun(orthogonalPath(source, join, rightLane), no);
   });
 
-  it('two converging FANNED arms (distinct target x) also get distinct anchors', () => {
+  it('two converging FANNED arms (distinct target x) also get distinct anchors via per-slot side lanes', () => {
+    // Fanned arms now route down a per-slot side lane just off the source column
+    // (left for onTrue, right for onFalse) so each arm's source-side upper (+) is at
+    // a DISTINCT x — straight below the condition, before the turn out to the child.
     const source = { x: 300, y: 100 };
-    const yesMid = verticalAnchor(source, { x: 120, y: 300 });
-    const noMid = verticalAnchor(source, { x: 480, y: 300 });
+    const yesMid = verticalAnchor(source, { x: 120, y: 300 }, 272);
+    const noMid = verticalAnchor(source, { x: 480, y: 300 }, 328);
     expect(yesMid.x).not.toBe(noMid.x);
+    expect(yesMid.x).toBe(272); // on the LEFT lane, not the source center
+    expect(noMid.x).toBe(328); // on the RIGHT lane
   });
 });
 
