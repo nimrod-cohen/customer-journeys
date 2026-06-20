@@ -45,10 +45,26 @@ export interface LayoutEdge {
   readonly laneX: number;
 }
 
-/** Layout geometry constants (px). Exported for the canvas to size its viewport. */
+/**
+ * Layout geometry constants (px). Exported for the canvas to size its viewport.
+ *
+ * VERTICAL SPACING (min-segment floor): `rowHeight − cardHeight` is the DROP between
+ * a card's bottom and the next card's top — the space every connector's vertical run
+ * is carved from. It is kept comfortably above `MIN_SEGMENT` (orthogonal-path.ts) so
+ * each edge's anchorable V run (the trunk V, a branch arm lane, the merged trunk)
+ * clears the floor with room for its (+) and an inserted node. With rowHeight 184 /
+ * cardHeight 72 the drop is 112px; the rail-inset routing keeps even the worst run
+ * (the lane middle V = drop − 2·RAIL_INSET = 68px, the jog lower leg ≈ 76px) ≥ 64px.
+ * EASY TO TWEAK: bump rowHeight (drop) and MIN_SEGMENT in tandem to taste.
+ *
+ * BRANCH/MERGE reservation: a condition's arm children + its diamond join sit one
+ * full row (the 112px drop) below the If, so each arm gets its own TALL vertical lane
+ * and the merged trunk after the join (join → continuation/Exit) is a full-row drop
+ * too — both ≥ MIN_SEGMENT, so the per-arm (+)s and the merge (+) are never crammed.
+ */
 export const LAYOUT = {
   colWidth: 240,
-  rowHeight: 140,
+  rowHeight: 184,
   cardWidth: 200,
   cardHeight: 72,
   padX: 80,

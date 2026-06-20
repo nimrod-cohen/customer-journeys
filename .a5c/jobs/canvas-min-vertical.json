@@ -1,0 +1,31 @@
+{
+  "status": "done",
+  "filesModified": [
+    "web/src/campaigns/orthogonal-path.ts",
+    "web/src/campaigns/layout.ts",
+    "web/src/campaigns/orthogonal-path.test.ts",
+    "web/src/campaigns/layout.test.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "constantsChosen": {
+    "MIN_SEGMENT": 64,
+    "RAIL_INSET": 22,
+    "rowHeight": "140 -> 184 (drop = rowHeight - cardHeight = 112px)",
+    "cardHeight": 72,
+    "CORNER_RADIUS": "14 (unchanged)",
+    "branchExtraGap": "no separate constant; condition arms + diamond join sit one full row (112px drop) below the If, and the merged trunk after the join is a full-row drop too"
+  },
+  "verticalGuarantees": {
+    "straightTrunkV": "drop = 112px >= 64",
+    "jogLowerLeg": "drop - RAIL_INSET - r ~= 112 - 22 - 14 = 76px >= 64 (crossing pushed near top)",
+    "laneMiddleV": "drop - 2*RAIL_INSET = 112 - 44 = 68px >= 64",
+    "mergedTrunk": "join->continuation is a full-row next edge -> same 112px drop"
+  },
+  "testsPass": true,
+  "e2eSummary": "ALL solo (one at a time, ports freed between): campaign-builder 16/16, campaign-node-editors 10/10, campaign-list-detail 7/7 + campaign-list-no-overflow 1/1, broadcast-and-campaign 12/12. Unit: layout.test.ts + orthogonal-path.test.ts 37/37; full campaign unit suite 126/126.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "lintNote": "only the 7 known pre-existing react-hooks 'rule not found' errors (none in campaigns/); no new lint errors.",
+  "notes": "Floor enforced by maximizing the ANCHORABLE run, not just the gap: routing uses FIXED-px rail insets (RAIL_INSET) instead of fractional thirds, pushing horizontal crossings to the drop's ends so the middle/lower vertical run stays tall. verticalAnchor re-anchors each (+) to the middle of the taller run. layout.height grows with rowHeight (no clipping). down-only + axis-aligned + convergence checks preserved/strengthened. Version 0.41.2 -> 0.41.3. NOT committed/pushed (orchestrator commits). Visual fine-tune: bump MIN_SEGMENT + LAYOUT.rowHeight in tandem; RAIL_INSET tunes how close corners hug the ends."
+}

@@ -1,7 +1,46 @@
 // Unit: auto-layout (down-only tree, branch fan, diamond once) (§9B phase 5).
 // Pure — positions are computed from edges, never read from the def.
 import { describe, it, expect } from 'vitest';
-import { layoutDefinition, subtreeWidth, computeEdges, type CampaignDefinition } from './layout.js';
+import { layoutDefinition, subtreeWidth, computeEdges, LAYOUT, type CampaignDefinition } from './layout.js';
+import { orthogonalPath, verticalAnchor, MIN_SEGMENT } from './orthogonal-path.js';
+
+/** Collect the VERTICAL runs of an SVG path `d` as {x, y0, y1} (y0<y1). */
+function verticalRuns(d: string): Array<{ x: number; y0: number; y1: number }> {
+  const tokens = d.trim().split(/\s+/);
+  let i = 0;
+  let cx = 0;
+  let cy = 0;
+  const n = (): number => Number(tokens[i++]);
+  const runs: Array<{ x: number; y0: number; y1: number }> = [];
+  while (i < tokens.length) {
+    const cmd = tokens[i++];
+    if (cmd === 'M') {
+      cx = n();
+      cy = n();
+    } else if (cmd === 'V') {
+      const ny = n();
+      runs.push({ x: cx, y0: Math.min(cy, ny), y1: Math.max(cy, ny) });
+      cy = ny;
+    } else if (cmd === 'H') {
+      cx = n();
+    } else if (cmd === 'Q') {
+      n();
+      n();
+      cx = n();
+      cy = n();
+    }
+  }
+  return runs;
+}
+
+/** The height of the tallest vertical run on which `p` lies (null if none). */
+function anchorRunHeight(d: string, p: { x: number; y: number }): number | null {
+  const hits = verticalRuns(d).filter(
+    (r) => Math.abs(r.x - p.x) < 1e-6 && p.y >= r.y0 - 1e-6 && p.y <= r.y1 + 1e-6,
+  );
+  if (hits.length === 0) return null;
+  return Math.max(...hits.map((r) => r.y1 - r.y0));
+}
 
 const linear: CampaignDefinition = {
   startNode: 'trigger',
@@ -175,6 +214,70 @@ describe('layoutDefinition', () => {
     }
     const c = layoutDefinition(polluted);
     expect([...c.positions.entries()]).toEqual([...a.positions.entries()]);
+  });
+});
+
+describe('min vertical-segment floor (every (+) has room)', () => {
+  const cases: Array<[string, CampaignDefinition]> = [
+    ['linear', linear],
+    ['branch', branch],
+    ['diamond', diamond],
+    ['emptyArmDiamond', emptyArmDiamond],
+    ['fullyEmptyDiamond', fullyEmptyDiamond],
+  ];
+
+  it('the laid-out drop between adjacent depths comfortably exceeds MIN_SEGMENT', () => {
+    const drop = LAYOUT.rowHeight - LAYOUT.cardHeight;
+    expect(drop).toBeGreaterThanOrEqual(MIN_SEGMENT);
+    // With margin for the rail insets the worst case still clears the floor.
+    expect(drop).toBeGreaterThan(MIN_SEGMENT + 8);
+  });
+
+  for (const [name, def] of cases) {
+    it(`${name}: EVERY edge's (+) anchor lies on a vertical run ≥ MIN_SEGMENT`, () => {
+      const { positions } = layoutDefinition(def);
+      const edges = computeEdges(def, positions);
+      for (const e of edges) {
+        const d = orthogonalPath(e.fromPoint, e.toPoint, e.laneX);
+        const a = verticalAnchor(e.fromPoint, e.toPoint, e.laneX);
+        const h = anchorRunHeight(d, a);
+        expect(h, `edge ${e.from}->${e.to} (${e.slot}) anchor not on a run; d=${d}`).not.toBeNull();
+        expect(
+          h!,
+          `edge ${e.from}->${e.to} (${e.slot}) anchor run ${h} < ${MIN_SEGMENT}; d=${d}`,
+        ).toBeGreaterThanOrEqual(MIN_SEGMENT);
+      }
+    });
+  }
+
+  it("a condition's two arm (+) anchors are at DISTINCT x AND each on a run ≥ MIN_SEGMENT", () => {
+    for (const def of [branch, diamond, emptyArmDiamond, fullyEmptyDiamond]) {
+      const { positions } = layoutDefinition(def);
+      const edges = computeEdges(def, positions);
+      const cond = Object.entries(def.nodes).find(([, n]) => n.type === 'condition')![0];
+      const arms = edges.filter((e) => e.from === cond);
+      expect(arms.length).toBe(2);
+      const anchors = arms.map((e) => verticalAnchor(e.fromPoint, e.toPoint, e.laneX));
+      expect(anchors[0]!.x).not.toBe(anchors[1]!.x); // distinct lanes — no stacking
+      for (const e of arms) {
+        const h = anchorRunHeight(orthogonalPath(e.fromPoint, e.toPoint, e.laneX), verticalAnchor(e.fromPoint, e.toPoint, e.laneX));
+        expect(h).not.toBeNull();
+        expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
+      }
+    }
+  });
+
+  it('the merged trunk after a branch (join → continuation) is a vertical run ≥ MIN_SEGMENT', () => {
+    // diamond: join → exit1 is the merged trunk continuation edge.
+    const { positions } = layoutDefinition(diamond);
+    const edges = computeEdges(diamond, positions);
+    const trunk = edges.find((e) => e.from === 'join' && e.to === 'exit1')!;
+    const h = anchorRunHeight(
+      orthogonalPath(trunk.fromPoint, trunk.toPoint, trunk.laneX),
+      verticalAnchor(trunk.fromPoint, trunk.toPoint, trunk.laneX),
+    );
+    expect(h).not.toBeNull();
+    expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
   });
 });
 

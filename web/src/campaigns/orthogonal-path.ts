@@ -24,10 +24,24 @@ export interface Point {
 /** The default corner radius (px) before clamping. */
 export const CORNER_RADIUS = 14;
 
-/** The two horizontal rails of a lane route sit at 1/3 and 2/3 of the drop, so the
- *  lane vertical segment occupies the MIDDLE third (a real, anchorable V run). */
-const RAIL_TOP_FRAC = 1 / 3;
-const RAIL_BOT_FRAC = 2 / 3;
+/**
+ * MIN_SEGMENT — the floor (px) every anchorable VERTICAL run is built to meet, so a
+ * (+) control always has room and a node can be inserted on it. The layout
+ * (layout.ts) sizes its rows so the drop between any two cards comfortably exceeds
+ * this; the rail-inset routing below keeps the resulting V run ≥ MIN_SEGMENT.
+ * EASY TO TWEAK: raise/lower this floor + LAYOUT.rowHeight in tandem.
+ */
+export const MIN_SEGMENT = 64;
+
+/**
+ * RAIL_INSET — the FIXED vertical distance (px) a horizontal crossing sits in from
+ * the drop's ends. A lane route's two rails sit RAIL_INSET below `from` and above
+ * `to`, so the middle lane V = drop − 2·RAIL_INSET; a jog's single crossing sits
+ * RAIL_INSET below `from`, so its lower V leg = drop − RAIL_INSET − r. Choosing a
+ * FIXED inset (not a fraction of the drop) keeps the anchorable run tall regardless
+ * of the row height — pushing the corners to the ends instead of the middle.
+ */
+const RAIL_INSET = 22;
 
 /**
  * orthogonalPath(from, to, laneX?, radius?) — a rounded orthogonal path from `from`
@@ -69,31 +83,55 @@ export function orthogonalPath(
     return jog(from, to, radius);
   }
   // Full LANE route: stub down → across to lane → DOWN the lane → across → down.
-  const yTop = from.y + (to.y - from.y) * RAIL_TOP_FRAC;
-  const yBot = from.y + (to.y - from.y) * RAIL_BOT_FRAC;
+  // The two rails sit a FIXED RAIL_INSET in from the drop's ends, so the middle
+  // lane V run = drop − 2·RAIL_INSET stays tall (≥ MIN_SEGMENT for the laid-out
+  // gap) rather than collapsing to a third of a small drop.
+  const { yTop, yBot } = laneRailYs(from.y, to.y);
   const seg1 = jogTo(from.x, from.y, lane, yTop, radius); // into the lane top
   const seg2 = `V ${num(yBot)}`; // DOWN the lane (the anchorable vertical run)
   const seg3 = jogTail(lane, yBot, to.x, to.y, radius); // out of the lane into target
   return `M ${num(from.x)} ${num(from.y)} ${seg1} ${seg2} ${seg3}`.replace(/\s+/g, ' ').trim();
 }
 
-/** A classic V-H-V jog from `from` to `to` around the vertical mid-point. */
+/**
+ * The y of a JOG's single horizontal crossing. We place it a FIXED RAIL_INSET below
+ * `from` (clamped so it never crosses below the drop's midpoint when the drop is
+ * tiny), so the LOWER vertical leg — the anchorable run the (+) sits on — is long
+ * (drop − RAIL_INSET − r) rather than half the drop. Pushing the corner to the top
+ * keeps the lower V ≥ MIN_SEGMENT for the laid-out gap.
+ */
+function jogCrossingY(y1: number, y2: number): number {
+  const drop = y2 - y1;
+  return y1 + Math.min(RAIL_INSET, drop / 2);
+}
+
+/** The two lane rails (top/bottom), each a FIXED RAIL_INSET in from the drop's ends
+ *  (clamped so they never cross for a tiny drop) — the middle lane V is between. */
+function laneRailYs(y1: number, y2: number): { yTop: number; yBot: number } {
+  const drop = y2 - y1;
+  const inset = Math.min(RAIL_INSET, drop / 3);
+  return { yTop: y1 + inset, yBot: y2 - inset };
+}
+
+/** A V-H-V jog from `from` to `to`, the horizontal crossing near the TOP (so the
+ *  lower vertical leg is tall + anchorable). */
 function jog(from: Point, to: Point, radius: number): string {
-  const midY = (from.y + to.y) / 2;
+  const crossY = jogCrossingY(from.y, to.y);
   const dx = to.x - from.x;
   const dir = dx > 0 ? 1 : -1;
-  const vLeg = (to.y - from.y) / 2;
+  const upLeg = crossY - from.y;
+  const downLeg = to.y - crossY;
   const hLeg = Math.abs(dx);
-  const r = Math.max(0, Math.min(radius, vLeg / 2, hLeg / 2));
+  const r = Math.max(0, Math.min(radius, upLeg / 2, downLeg / 2, hLeg / 2));
   if (r === 0) {
-    return `M ${num(from.x)} ${num(from.y)} V ${num(midY)} H ${num(to.x)} V ${num(to.y)}`;
+    return `M ${num(from.x)} ${num(from.y)} V ${num(crossY)} H ${num(to.x)} V ${num(to.y)}`;
   }
   return (
     `M ${num(from.x)} ${num(from.y)} ` +
-    `V ${num(midY - r)} ` +
-    `Q ${num(from.x)} ${num(midY)} ${num(from.x + dir * r)} ${num(midY)} ` +
+    `V ${num(crossY - r)} ` +
+    `Q ${num(from.x)} ${num(crossY)} ${num(from.x + dir * r)} ${num(crossY)} ` +
     `H ${num(to.x - dir * r)} ` +
-    `Q ${num(to.x)} ${num(midY)} ${num(to.x)} ${num(midY + r)} ` +
+    `Q ${num(to.x)} ${num(crossY)} ${num(to.x)} ${num(crossY + r)} ` +
     `V ${num(to.y)}`
   );
 }
@@ -140,20 +178,21 @@ export function verticalAnchor(from: Point, to: Point, laneX?: number): Point {
     return { x: from.x, y: (from.y + to.y) / 2 };
   }
   if (lane === to.x || lane === from.x) {
-    // A jog: the final vertical leg runs at `to.x` (jog) — anchor on the LOWER V.
-    const midY = (from.y + to.y) / 2;
-    const vLeg = (to.y - from.y) / 2;
+    // A jog: the final vertical leg runs at `to.x`, from the (top-placed) crossing
+    // down to `to.y` — anchor at the MIDDLE of that tall lower V run.
+    const crossY = jogCrossingY(from.y, to.y);
+    const upLeg = crossY - from.y;
+    const downLeg = to.y - crossY;
     const hLeg = Math.abs(to.x - from.x);
-    const r = Math.max(0, Math.min(CORNER_RADIUS, vLeg / 2, hLeg / 2));
-    // The lower vertical leg spans [midY + r, to.y]; anchor at ITS midpoint so the
+    const r = Math.max(0, Math.min(CORNER_RADIUS, upLeg / 2, downLeg / 2, hLeg / 2));
+    // The lower vertical leg spans [crossY + r, to.y]; anchor at ITS midpoint so the
     // point is strictly inside the run. When lane===from.x (no jog horizontal) the
     // single vertical still spans this y, so the anchor is on it either way.
-    const lowerTop = midY + r;
+    const lowerTop = crossY + r;
     return { x: to.x, y: (lowerTop + to.y) / 2 };
   }
-  // Full lane route: anchor on the middle-third lane vertical at `laneX`.
-  const yTop = from.y + (to.y - from.y) * RAIL_TOP_FRAC;
-  const yBot = from.y + (to.y - from.y) * RAIL_BOT_FRAC;
+  // Full lane route: anchor on the MIDDLE of the (fixed-inset) lane vertical at laneX.
+  const { yTop, yBot } = laneRailYs(from.y, to.y);
   return { x: lane, y: (yTop + yBot) / 2 };
 }
 

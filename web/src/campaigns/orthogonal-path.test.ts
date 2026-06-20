@@ -3,7 +3,19 @@
 // `d` and asserts every drawn run changes only x OR only y, and that the (+) anchor
 // always lands ON a vertical run of the path. Pure.
 import { describe, it, expect } from 'vitest';
-import { orthogonalPath, verticalAnchor, edgeMidpoint, CORNER_RADIUS, type Point } from './orthogonal-path.js';
+import { orthogonalPath, verticalAnchor, edgeMidpoint, CORNER_RADIUS, MIN_SEGMENT, type Point } from './orthogonal-path.js';
+
+/** The tallest vertical run on which `p` (the (+) anchor) lies, if any. */
+function anchorRunHeight(d: string, p: Point): number | null {
+  const runs = verticalRuns(d).filter(
+    (r) => Math.abs(r.x - p.x) < 1e-6 && p.y >= r.y0 - 1e-6 && p.y <= r.y1 + 1e-6,
+  );
+  if (runs.length === 0) return null;
+  return Math.max(...runs.map((r) => r.y1 - r.y0));
+}
+
+/** A realistic laid-out drop between two adjacent cards (LAYOUT.rowHeight − cardHeight). */
+const LAID_OUT_DROP = 112;
 
 /** Tokenize a path's `d` into commands; assert each run moves on one axis only. */
 function assertAxisAligned(d: string): void {
@@ -147,6 +159,39 @@ describe('orthogonalPath', () => {
     const withLane = orthogonalPath(from, to, 120);
     const plain = orthogonalPath(from, to);
     expect(withLane).toBe(plain);
+  });
+
+  it('every routing mode keeps the (+) anchor on a vertical run ≥ MIN_SEGMENT for a laid-out drop', () => {
+    const y0 = 100;
+    const y1 = y0 + LAID_OUT_DROP;
+    // 1) straight-down trunk (single V).
+    {
+      const from = { x: 300, y: y0 };
+      const to = { x: 300, y: y1 };
+      const a = verticalAnchor(from, to);
+      const h = anchorRunHeight(orthogonalPath(from, to), a);
+      expect(h).not.toBeNull();
+      expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
+    }
+    // 2) a jog (fanned arm — distinct target column): the LOWER V leg is the anchor run.
+    {
+      const from = { x: 300, y: y0 };
+      const to = { x: 120, y: y1 };
+      const a = verticalAnchor(from, to);
+      const h = anchorRunHeight(orthogonalPath(from, to), a);
+      expect(h).not.toBeNull();
+      expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
+    }
+    // 3) a full lane route (empty arm — side lane to a directly-below join).
+    {
+      const from = { x: 300, y: y0 };
+      const to = { x: 300, y: y1 };
+      const laneX = 272;
+      const a = verticalAnchor(from, to, laneX);
+      const h = anchorRunHeight(orthogonalPath(from, to, laneX), a);
+      expect(h).not.toBeNull();
+      expect(h!).toBeGreaterThanOrEqual(MIN_SEGMENT);
+    }
   });
 });
 
