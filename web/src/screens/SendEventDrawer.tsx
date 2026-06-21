@@ -31,8 +31,8 @@ export function SendEventDrawer({
     // Suggest existing event types (autocomplete) so manual events stay consistent
     // with the ingested vocabulary.
     void api
-      .get<{ types: string[] }>('/events/types')
-      .then((r) => setKnownTypes(r.types ?? []))
+      .get<{ values: string[] }>('/events/types')
+      .then((r) => setKnownTypes(r.values ?? []))
       .catch(() => setKnownTypes([]));
   }, [open]);
 

@@ -92,6 +92,16 @@ function TriggerEditor(props: NodeEditorProps) {
   const [filterGroup, setFilterGroup] = useState<RuleGroup>(() => groupFromAst(initial.filter ?? null));
   const [segmentId, setSegmentId] = useState<string>(props.triggerSegmentId ?? '');
   const [profileChange, setProfileChange] = useState<ProfileChange>(initial.profileChange ?? 'any');
+  // Autocomplete the EVENT TYPE from the workspace's known event vocabulary
+  // (the same DISTINCT list /events/types feeds the manual Send-event drawer), so
+  // a journey trigger stays consistent with the ingested event names.
+  const [knownTypes, setKnownTypes] = useState<string[]>([]);
+  useEffect(() => {
+    void api
+      .get<{ values: string[] }>('/events/types')
+      .then((r) => setKnownTypes(r.values ?? []))
+      .catch(() => setKnownTypes([]));
+  }, []);
 
   const save = async (): Promise<void> => {
     if (kind === 'event' && !eventType.trim()) {
@@ -148,7 +158,18 @@ function TriggerEditor(props: NodeEditorProps) {
       {kind === 'event' ? (
         <>
           <Field label="Event type" hint="e.g. purchase, signup, lead.">
-            <Input data-testid="trigger-event-type" placeholder="purchase" value={eventType} onInput={(e: Event) => setEventType((e.target as HTMLInputElement).value)} />
+            <Input
+              data-testid="trigger-event-type"
+              placeholder="purchase"
+              list="trigger-event-type-options"
+              value={eventType}
+              onInput={(e: Event) => setEventType((e.target as HTMLInputElement).value)}
+            />
+            <datalist id="trigger-event-type-options">
+              {knownTypes.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
           </Field>
           <Field label="Only when the event matches (optional)" hint="Filter on the event payload.">
             <div data-testid="trigger-event-filter">

@@ -60,6 +60,11 @@ test('TRIGGER editor: event kind shows event type + manual shows a note', async 
   await drawer.getByTestId('trigger-kind').selectOption('event');
   await expect(drawer.getByTestId('trigger-event-type')).toBeVisible();
   await expect(drawer.getByTestId('trigger-event-filter')).toBeVisible();
+  // The EVENT TYPE input autocompletes the workspace's known event vocabulary
+  // (the seed has 'page_view' + 'purchase'), surfaced via a <datalist>.
+  await expect(
+    page.locator('#trigger-event-type-options option[value="purchase"]'),
+  ).toHaveCount(1);
   await drawer.getByTestId('trigger-event-type').fill('purchase');
   await drawer.getByTestId('node-save').click();
   await expect(drawer).toBeHidden();
