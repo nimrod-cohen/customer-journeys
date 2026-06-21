@@ -15,6 +15,12 @@ import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
 import { makeUnsubscribeHandler, runUnsubscribeInWorkspaceTx } from '@cdp/service-unsubscribe';
 
+/** A 1x1 fully-transparent GIF (the canonical 43-byte tracking pixel). */
+const TRANSPARENT_GIF = Buffer.from(
+  'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+  'base64',
+);
+
 export interface CreateAppOptions {
   readonly pool: Pool;
   readonly lookups?: AuthorizerLookups;
@@ -102,6 +108,35 @@ export function createApp(opts: CreateAppOptions): Hono {
     const url = rows[0]?.url;
     if (!url) return c.notFound();
     return c.redirect(url, 302);
+  });
+
+  // Open tracking (§10): a 1x1 pixel `/o/<token>` embedded in delivered mail.
+  // ALWAYS returns the transparent gif (a pixel must never error to the client —
+  // mail clients would show a broken image), and best-effort records the open
+  // (bump opens + first/last_open_at). Public; an unknown/foreign token still
+  // returns the gif but records nothing. The token already encodes the
+  // workspace/broadcast/profile, so the UPDATE is scoped by the token PK.
+  app.get('/o/:token', async (c) => {
+    const token = c.req.param('token');
+    if (/^[a-z0-9]{6,64}$/i.test(token)) {
+      try {
+        await opts.pool.query(
+          `UPDATE tracked_opens
+              SET opens = opens + 1,
+                  first_open_at = COALESCE(first_open_at, now()),
+                  last_open_at = now()
+            WHERE token = $1`,
+          [token],
+        );
+      } catch {
+        /* never let a pixel error reach the client */
+      }
+    }
+    return c.body(TRANSPARENT_GIF, 200, {
+      'content-type': 'image/gif',
+      'cache-control': 'no-store, no-cache, must-revalidate, private',
+      pragma: 'no-cache',
+    });
   });
 
   // Unsubscribe (§10): public, no auth — the link lands here from a delivered

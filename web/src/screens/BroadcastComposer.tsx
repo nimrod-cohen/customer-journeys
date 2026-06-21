@@ -26,6 +26,8 @@ interface BroadcastStats {
   delivered: number;
   failed: number;
   clicked: number;
+  opened: number;
+  unsubscribed: number;
 }
 interface Broadcast {
   id: string;
@@ -92,7 +94,35 @@ function agoLabel(ts: string | null): string {
 }
 
 function pct(n: number, d: number): string {
-  return d > 0 ? `${((n / d) * 100).toFixed(1)}%` : '—';
+  return d > 0 ? `${((n / d) * 100).toFixed(1)}%` : '0%';
+}
+
+/** One compact funnel cell: a label, a COUNT, and a small % beneath it. */
+function FunnelCell({
+  label,
+  count,
+  denom,
+  testid,
+  tone,
+}: {
+  label: string;
+  count: number;
+  /** Denominator for the % (sent or delivered, per the funnel). 0 → "0%". */
+  denom: number;
+  testid: string;
+  tone?: string;
+}) {
+  return (
+    <span class="flex flex-col items-center" data-testid={testid} title={`${count} (${pct(count, denom)})`}>
+      <span class="text-[10px] uppercase tracking-wide text-stone-400">{label}</span>
+      <span class={`font-semibold tabular-nums ${tone ?? 'text-ink-900'}`} data-testid={`${testid}-count`}>
+        {count}
+      </span>
+      <span class="text-[10px] tabular-nums text-stone-400" data-testid={`${testid}-pct`}>
+        {pct(count, denom)}
+      </span>
+    </span>
+  );
 }
 
 
@@ -235,7 +265,7 @@ export function BroadcastComposer() {
                 key={b.id}
                 // Fixed grid columns so the status badge and the right-hand slot
                 // line up across rows (icon · name/1fr · status · right slot).
-                class="grid grid-cols-[auto_minmax(0,1fr)_8rem_17rem] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+                class="grid grid-cols-[auto_minmax(0,1fr)_7rem_auto] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
               >
                 {/* Icon */}
                 <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5 shrink-0 self-start text-stone-400" stroke="currentColor" stroke-width="1.8">
@@ -266,19 +296,16 @@ export function BroadcastComposer() {
                 {/* Right slot: metrics (sent) OR actions (draft/scheduled), right-aligned */}
                 <span class="flex items-center justify-end gap-4">
                   {b.status === 'sent' && s ? (
-                    <span data-testid="broadcast-metrics" class="flex items-center gap-5 text-center text-sm tabular-nums">
-                      <span class="flex flex-col">
-                        <span class="text-[11px] uppercase tracking-wide text-stone-400">Failed</span>
-                        <span class={s.failed > 0 ? 'font-semibold text-rose-600' : 'text-stone-500'}>{s.failed}</span>
-                      </span>
-                      <span class="flex flex-col">
-                        <span class="text-[11px] uppercase tracking-wide text-stone-400">Delivered</span>
-                        <span class="font-semibold text-ink-900">{s.delivered}</span>
-                      </span>
-                      <span class="flex flex-col" title={`${s.clicked} clicks`}>
-                        <span class="text-[11px] uppercase tracking-wide text-stone-400">Clicked</span>
-                        <span class="font-semibold text-emerald-700">{pct(s.clicked, s.delivered)}</span>
-                      </span>
+                    // The conversion funnel: Sent · Delivered · Failed (of sent) ·
+                    // Opened · Clicked · Unsubscribed (of delivered). Each cell is a
+                    // count + a small %. (0% when the denominator is 0.)
+                    <span data-testid="broadcast-metrics" class="flex items-center gap-4 text-center text-sm">
+                      <FunnelCell label="Sent" count={s.sent} denom={s.sent} testid="bc-sent" />
+                      <FunnelCell label="Delivered" count={s.delivered} denom={s.sent} testid="bc-delivered" />
+                      <FunnelCell label="Failed" count={s.failed} denom={s.sent} testid="bc-failed" tone={s.failed > 0 ? 'text-rose-600' : 'text-stone-500'} />
+                      <FunnelCell label="Opened" count={s.opened} denom={s.delivered} testid="bc-opened" tone="text-sky-700" />
+                      <FunnelCell label="Clicked" count={s.clicked} denom={s.delivered} testid="bc-clicked" tone="text-emerald-700" />
+                      <FunnelCell label="Unsub" count={s.unsubscribed} denom={s.delivered} testid="bc-unsubscribed" tone={s.unsubscribed > 0 ? 'text-amber-700' : 'text-stone-500'} />
                     </span>
                   ) : null}
                   {/* All row actions consolidated into one kebab (⋮) menu. Edit/Send/

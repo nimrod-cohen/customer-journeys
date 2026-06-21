@@ -1607,8 +1607,29 @@ export const listBroadcasts: Handler = async (ctx, pool) => {
       GROUP BY broadcast_id`,
     [ctx.workspaceId],
   );
+  // Opened = DISTINCT profiles that loaded the open pixel (opens > 0); the pixel
+  // row is pre-created at send (opens=0) so an unopened send doesn't count. One
+  // tracked_opens row per (broadcast, profile) ⇒ counting rows = distinct opens.
+  const { rows: openRows } = await pool.query<{ broadcast_id: string; opened: number }>(
+    `SELECT broadcast_id, count(*)::int AS opened
+       FROM tracked_opens
+      WHERE workspace_id = $1 AND broadcast_id IS NOT NULL AND opens > 0
+      GROUP BY broadcast_id`,
+    [ctx.workspaceId],
+  );
+  // Unsubscribed = email_events 'unsubscribe' rows attributed to the broadcast
+  // (written by the unsubscribe POST when the link carried the broadcast id).
+  const { rows: unsubRows } = await pool.query<{ broadcast_id: string; unsubscribed: number }>(
+    `SELECT broadcast_id, count(*)::int AS unsubscribed
+       FROM email_events
+      WHERE workspace_id = $1 AND broadcast_id IS NOT NULL AND type = 'unsubscribe'
+      GROUP BY broadcast_id`,
+    [ctx.workspaceId],
+  );
   const statBy = new Map(statRows.map((s) => [s.broadcast_id, s]));
   const clickBy = new Map(clickRows.map((c) => [c.broadcast_id, c.clicked]));
+  const openBy = new Map(openRows.map((o) => [o.broadcast_id, o.opened]));
+  const unsubBy = new Map(unsubRows.map((u) => [u.broadcast_id, u.unsubscribed]));
 
   const broadcasts = rows.map((b) => {
     const s = statBy.get(b.id as string);
@@ -1619,6 +1640,8 @@ export const listBroadcasts: Handler = async (ctx, pool) => {
         delivered: s?.delivered ?? 0,
         failed: s?.failed ?? 0,
         clicked: clickBy.get(b.id as string) ?? 0,
+        opened: openBy.get(b.id as string) ?? 0,
+        unsubscribed: unsubBy.get(b.id as string) ?? 0,
       },
     };
   });

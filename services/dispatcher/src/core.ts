@@ -89,6 +89,10 @@ export interface DispatchContext {
    * when absent or when it renders empty.
    */
   readonly toAddress?: string | null;
+  /** Source broadcast — carried into the List-Unsubscribe header for attribution. */
+  readonly broadcastId?: string | null;
+  /** Source campaign — carried into the List-Unsubscribe header for attribution. */
+  readonly campaignId?: string | null;
 }
 
 /** Hours to hold off mailing an address after a soft bounce (give it time to clear). */
@@ -220,6 +224,76 @@ export function rewriteTrackingLinks(
   return { html: out, links };
 }
 
+// ── open tracking (§10) ──────────────────────────────────────────────────────
+
+/**
+ * Deterministic open-pixel token per (workspace, source, profile). Unlike a
+ * tracked LINK (shared across recipients to count total clicks), an open pixel is
+ * PER-RECIPIENT so we can attribute the open to a specific profile and count
+ * DISTINCT-profile opens (one tracked_opens row per token ⇒ per recipient). A
+ * re-send/retry to the same recipient reuses the token (idempotent upsert).
+ */
+export function openPixelToken(opts: {
+  workspaceId: string;
+  broadcastId: string | null;
+  campaignId: string | null;
+  profileId: string;
+}): string {
+  const source = opts.broadcastId ?? opts.campaignId ?? '';
+  return createHash('sha256')
+    .update(`open|${opts.workspaceId}|${source}|${opts.profileId}`)
+    .digest('hex')
+    .slice(0, 24);
+}
+
+/** A 1x1 transparent tracking pixel `<img>` pointing at the /o/<token> endpoint. */
+export function buildOpenPixelImg(url: string): string {
+  return `<img src="${url}" width="1" height="1" alt="" style="display:none" />`;
+}
+
+/**
+ * Inject the open-tracking pixel into the email HTML. The pixel loads the
+ * /o/<token> endpoint (which records the open + returns a gif). Inserted just
+ * before `</body>` when present, else appended. Returns the rewritten HTML +
+ * the token (to upsert a tracked_opens row). Pure (deterministic token).
+ */
+export function injectOpenPixel(
+  html: string,
+  opts: { baseUrl: string; workspaceId: string; broadcastId: string | null; campaignId: string | null; profileId: string },
+): { html: string; token: string } {
+  const token = openPixelToken(opts);
+  const url = `${opts.baseUrl.replace(/\/$/, '')}/o/${token}`;
+  const img = buildOpenPixelImg(url);
+  const lower = html.toLowerCase();
+  const bodyClose = lower.lastIndexOf('</body>');
+  const out =
+    bodyClose >= 0 ? `${html.slice(0, bodyClose)}${img}${html.slice(bodyClose)}` : `${html}${img}`;
+  return { html: out, token };
+}
+
+/**
+ * Upsert-record (or pre-create) a tracked_opens row. Used by the dispatcher to
+ * PRE-CREATE the row at send time (opens=0) so the funnel can attribute an open
+ * even before the pixel loads, and by the /o/<token> endpoint to bump the count.
+ * Idempotent on the token PK (workspace_id at $1).
+ */
+export function buildTrackedOpenInsert(
+  workspaceId: string,
+  token: string,
+  broadcastId: string | null,
+  campaignId: string | null,
+  profileId: string | null,
+): SqlStatement {
+  // workspace_id bound at $1 — the tx scoping guard (runStatementsInWorkspaceTx)
+  // requires the first param to be the workspace id (service role bypasses RLS).
+  return {
+    text: `INSERT INTO tracked_opens (workspace_id, token, broadcast_id, campaign_id, profile_id)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (token) DO NOTHING`,
+    values: [workspaceId, token, broadcastId, campaignId, profileId],
+  };
+}
+
 /** Upsert a tracked link (idempotent on the token PK). workspace_id at $1. */
 export function buildTrackedLinkInsert(
   workspaceId: string,
@@ -227,11 +301,13 @@ export function buildTrackedLinkInsert(
   broadcastId: string | null,
   campaignId: string | null,
 ): SqlStatement {
+  // workspace_id bound at $1 — the tx scoping guard (runStatementsInWorkspaceTx)
+  // requires the first param to be the workspace id (service role bypasses RLS).
   return {
-    text: `INSERT INTO tracked_links (token, workspace_id, broadcast_id, campaign_id, url)
+    text: `INSERT INTO tracked_links (workspace_id, token, broadcast_id, campaign_id, url)
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (token) DO NOTHING`,
-    values: [link.token, workspaceId, broadcastId, campaignId, link.url],
+    values: [workspaceId, link.token, broadcastId, campaignId, link.url],
   };
 }
 
@@ -276,6 +352,8 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
     baseUrl: ctx.unsubscribeBaseUrl,
     workspaceId: ctx.workspace.id,
     email,
+    broadcastId: ctx.broadcastId ?? null,
+    campaignId: ctx.campaignId ?? null,
   });
   const configSet = ctx.workspace.sending_identity?.config_set;
   return {

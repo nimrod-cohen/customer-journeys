@@ -3,6 +3,7 @@ import {
   parseUnsubscribeRequest,
   buildUnsubscribeSuppression,
   buildUnsubscribedAttribute,
+  buildUnsubscribeEvent,
 } from '../src/core.js';
 
 // §10 one-click unsubscribe. parseUnsubscribeRequest extracts workspace_id +
@@ -54,6 +55,48 @@ describe('parseUnsubscribeRequest', () => {
   it('accepts a full absolute URL', () => {
     const r = parseUnsubscribeRequest('GET', 'https://api.cdp.example/unsubscribe?workspace_id=ws-9&email=z%40q.com', null);
     expect(r.valid && r.workspaceId).toBe('ws-9');
+  });
+
+  it('extracts optional broadcast_id / campaign_id for attribution', () => {
+    const r = parseUnsubscribeRequest(
+      'POST',
+      '/unsubscribe?workspace_id=ws-1&email=a%40b.com&broadcast_id=bc1',
+      'List-Unsubscribe=One-Click',
+    );
+    expect(r.valid).toBe(true);
+    if (r.valid) {
+      expect(r.broadcastId).toBe('bc1');
+      expect(r.campaignId).toBeNull();
+    }
+  });
+
+  it('leaves broadcastId / campaignId null when absent', () => {
+    const r = parseUnsubscribeRequest('GET', '/unsubscribe?workspace_id=ws-1&email=a%40b.com', null);
+    expect(r.valid).toBe(true);
+    if (r.valid) {
+      expect(r.broadcastId).toBeNull();
+      expect(r.campaignId).toBeNull();
+    }
+  });
+});
+
+describe('buildUnsubscribeEvent', () => {
+  it("inserts an email_events row type='unsubscribe' attributed to the broadcast + profile, workspace-scoped", () => {
+    const s = buildUnsubscribeEvent('ws-1', 'a@b.com', 'bc1', null);
+    expect(s.text).toMatch(/INSERT INTO email_events/i);
+    expect(s.text).toContain("'unsubscribe'");
+    expect(s.values[0]).toBe('ws-1'); // workspace_id bound at $1
+    expect(s.values).toContain('bc1');
+    // workspace id is a bound param, never interpolated.
+    expect(s.text).not.toContain('ws-1');
+  });
+
+  it('omits the row entirely when there is no source broadcast/campaign (returns null)', () => {
+    expect(buildUnsubscribeEvent('ws-1', 'a@b.com', null, null)).toBeNull();
+  });
+
+  it('throws on a falsy workspaceId (tenant-isolation guard)', () => {
+    expect(() => buildUnsubscribeEvent('', 'a@b.com', 'bc1', null)).toThrow(/workspace/i);
   });
 });
 

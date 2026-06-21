@@ -46,7 +46,9 @@
 
 # REMAINING
 # [x] put today's date in as the default in the email schedule date, and today in the from/to date filters. v0.49.3
-* show conversion in % between sent, failed, unsubscribed, delivered, opened, clicked in broadcasts list
+# [x] show conversion (count + %) for sent/delivered/failed/opened/clicked/unsubscribed in the broadcasts list.
+#     Added first-party OPEN tracking (1x1 pixel /o/:token + tracked_opens, migration 0038) + per-broadcast
+#     unsubscribe attribution (email_events type=unsubscribe + broadcast/campaign cols). v0.50.0
 * allow sending SMS/WhatsApp in broadcasts and campaigns, not only emails.
 * topics unsubscribe management, instead of single subscribe/unsubscribe, build a list of topics and all the users to
   subscribe/unsubscribe based on topics and mediums 

@@ -11,6 +11,7 @@ import {
   buildUnsubscribeSuppression,
   buildUnsubscribedAttribute,
   buildUnsubscribeActivity,
+  buildUnsubscribeEvent,
   type SqlStatement,
 } from './core.js';
 
@@ -118,10 +119,19 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
       // Workspace-scoped writes in ONE tx — never touches another workspace:
       //   1. the suppression (authoritative SEND gate, §10),
       //   2. the profile `unsubscribed = true` attribute (so it's segmentable).
+      //   3. an email_events 'unsubscribe' row attributed to the source
+      //      broadcast/campaign (when the link carried one) — feeds the funnel.
+      const attribution = buildUnsubscribeEvent(
+        parsed.workspaceId,
+        parsed.email,
+        parsed.broadcastId,
+        parsed.campaignId,
+      );
       await deps.runInWorkspaceTx(parsed.workspaceId, [
         buildUnsubscribeSuppression(parsed.workspaceId, parsed.email),
         buildUnsubscribedAttribute(parsed.workspaceId, parsed.email),
         buildUnsubscribeActivity(parsed.workspaceId, parsed.email),
+        ...(attribution ? [attribution] : []),
       ]);
       return { statusCode: 200, headers: HTML_HEADERS, body: donePage(parsed.email) };
     } catch {

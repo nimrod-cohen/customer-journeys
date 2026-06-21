@@ -31,9 +31,13 @@ async function unsubAttr(admin: Pool, ws: string): Promise<string | null> {
   return (r.rows[0]?.u as string | undefined) ?? null;
 }
 
+const BCAST = 'ab100000-0000-0000-0000-0000000000c3';
+
 async function cleanup(admin: Pool): Promise<void> {
   for (const ws of [wsA, wsB]) {
+    await admin.query('DELETE FROM email_events WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM suppressions WHERE workspace_id = $1', [ws]);
+    await admin.query('DELETE FROM broadcasts WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);
   }
@@ -114,5 +118,42 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
   it('a request missing workspace_id is a 400 (never a guessed workspace)', async () => {
     const res = await handler({ httpMethod: 'POST', queryStringParameters: { email }, body: 'List-Unsubscribe=One-Click' });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('a POST carrying a broadcast_id records an email_events unsubscribe attributed to it (funnel)', async () => {
+    const bemail = 'attr@ub-scope.example';
+    await admin.query("INSERT INTO broadcasts (id, workspace_id, name, audience_kind, audience_ref, status) VALUES ($1,$2,'B','manual',$1,'sent')", [BCAST, wsA]);
+    await admin.query("INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,'p-attr',$2,'{}'::jsonb)", [wsA, bemail]);
+
+    const res = await handler({
+      httpMethod: 'POST',
+      rawPath: '/unsubscribe',
+      queryStringParameters: { workspace_id: wsA, email: bemail, broadcast_id: BCAST },
+      body: 'List-Unsubscribe=One-Click',
+    });
+    expect(res.statusCode).toBe(200);
+
+    const ev = await admin.query<{ broadcast_id: string; profile_id: string; type: string }>(
+      "SELECT broadcast_id, profile_id, type FROM email_events WHERE workspace_id = $1 AND type = 'unsubscribe'",
+      [wsA],
+    );
+    expect(ev.rows).toHaveLength(1);
+    expect(ev.rows[0]!.broadcast_id).toBe(BCAST);
+    expect(ev.rows[0]!.profile_id).not.toBeNull();
+    // The suppression + profile flag still happened (unchanged behavior).
+    expect(await suppressed(admin, wsA)).toBe(true);
+  });
+
+  it('a POST with NO broadcast/campaign records NO email_events attribution row', async () => {
+    const before = await admin.query("SELECT count(*)::int AS n FROM email_events WHERE workspace_id = $1 AND type='unsubscribe'", [wsB]);
+    await admin.query("INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,'p-noattr','noattr@ub-scope.example','{}'::jsonb)", [wsB]);
+    const res = await handler({
+      httpMethod: 'POST',
+      queryStringParameters: { workspace_id: wsB, email: 'noattr@ub-scope.example' },
+      body: 'List-Unsubscribe=One-Click',
+    });
+    expect(res.statusCode).toBe(200);
+    const after = await admin.query("SELECT count(*)::int AS n FROM email_events WHERE workspace_id = $1 AND type='unsubscribe'", [wsB]);
+    expect(after.rows[0].n).toBe(before.rows[0].n);
   });
 });

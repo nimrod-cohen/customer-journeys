@@ -39,6 +39,14 @@ test('create a broadcast via the wizard and Send now sends it immediately', asyn
   const item = page.getByTestId('broadcast-item').filter({ hasText: 'Spring sale' });
   await expect(item.getByTestId('broadcast-metrics')).toBeVisible();
   await expect(item.getByTestId('broadcast-metrics')).toContainText('Delivered');
+  // The full conversion funnel renders: Sent · Delivered · Failed · Opened ·
+  // Clicked · Unsubscribed — each a COUNT and a % (0 in local dev for the
+  // feedback-pipeline metrics; the cells still render).
+  for (const id of ['bc-sent', 'bc-delivered', 'bc-failed', 'bc-opened', 'bc-clicked', 'bc-unsubscribed']) {
+    await expect(item.getByTestId(id)).toBeVisible();
+    await expect(item.getByTestId(`${id}-count`)).toBeVisible();
+    await expect(item.getByTestId(`${id}-pct`)).toContainText('%');
+  }
   // Row actions live in a kebab (⋮) menu. A SENT broadcast offers only Duplicate —
   // no Send action even with the menu open.
   await item.getByTestId('broadcast-actions').click();

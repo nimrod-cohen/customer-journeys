@@ -61,4 +61,20 @@ describe('buildListUnsubscribeHeaders', () => {
       buildUnsubscribeUrl({ baseUrl, workspaceId: '', email: 'a@x.com' }),
     ).toThrow(/workspaceId/);
   });
+
+  it('carries optional broadcast_id / campaign_id for per-send attribution', () => {
+    const url = buildUnsubscribeUrl({
+      baseUrl,
+      workspaceId: wsA,
+      email: 'a@x.com',
+      broadcastId: 'bc1',
+    });
+    const parsed = new URL(url);
+    expect(parsed.searchParams.get('broadcast_id')).toBe('bc1');
+    expect(parsed.searchParams.get('campaign_id')).toBeNull();
+
+    const url2 = buildUnsubscribeUrl({ baseUrl, workspaceId: wsA, email: 'a@x.com', campaignId: 'cm1' });
+    expect(new URL(url2).searchParams.get('campaign_id')).toBe('cm1');
+    expect(new URL(url2).searchParams.get('broadcast_id')).toBeNull();
+  });
 });

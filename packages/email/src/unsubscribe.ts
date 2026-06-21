@@ -17,6 +17,10 @@ export interface UnsubscribeLinkParams {
   readonly email: string;
   /** Optional signed token proving the link wasn't forged. */
   readonly token?: string;
+  /** Optional source broadcast — attributes the unsubscribe to the send (funnel). */
+  readonly broadcastId?: string | null;
+  /** Optional source campaign — attributes the unsubscribe to the send (funnel). */
+  readonly campaignId?: string | null;
 }
 
 /** The header name/value pairs to attach to an outgoing message. */
@@ -40,6 +44,10 @@ export function buildUnsubscribeUrl(params: UnsubscribeLinkParams): string {
   url.searchParams.set('workspace_id', params.workspaceId);
   url.searchParams.set('email', params.email);
   if (params.token) url.searchParams.set('token', params.token);
+  // Optional per-send attribution: which broadcast/campaign drove this opt-out.
+  // Carried in the link so the unsubscribe POST can record it (funnel metric).
+  if (params.broadcastId) url.searchParams.set('broadcast_id', params.broadcastId);
+  if (params.campaignId) url.searchParams.set('campaign_id', params.campaignId);
   return url.toString();
 }
 

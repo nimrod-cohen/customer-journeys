@@ -8,6 +8,7 @@ export {
   buildUnsubscribeSuppression,
   buildUnsubscribedAttribute,
   buildUnsubscribeActivity,
+  buildUnsubscribeEvent,
   type SqlStatement,
   type UnsubscribeRequest,
   type ParsedUnsubscribe,

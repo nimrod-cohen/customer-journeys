@@ -24,6 +24,8 @@ import {
   buildSendEmailInput,
   rewriteTrackingLinks,
   buildTrackedLinkInsert,
+  injectOpenPixel,
+  buildTrackedOpenInsert,
   type DispatchContext,
   type DispatchDecision,
   type QuietHoursConfig,
@@ -222,7 +224,15 @@ export async function dispatchOutbox(
     // confirming sets the profile `unsubscribed = true`). unsubscribe_url is the
     // raw URL (for a custom-text link); unsubscribe is a ready-made anchor.
     if (profile.email) {
-      const unsubUrl = buildUnsubscribeUrl({ baseUrl: deps.unsubscribeBaseUrl, workspaceId, email: profile.email });
+      // Carry the source broadcast/campaign in the link so the unsubscribe POST
+      // can attribute the opt-out to the send (per-broadcast funnel metric).
+      const unsubUrl = buildUnsubscribeUrl({
+        baseUrl: deps.unsubscribeBaseUrl,
+        workspaceId,
+        email: profile.email,
+        broadcastId,
+        campaignId: ob.campaign_id ?? null,
+      });
       merge.unsubscribe_url = unsubUrl;
       merge.unsubscribe = `<a href="${unsubUrl}">Unsubscribe</a>`;
     }
@@ -236,6 +246,11 @@ export async function dispatchOutbox(
     // the email to a /t/<token> tracking link. Applies to EVERY outgoing email
     // (broadcast or campaign) — this is the one place all sends pass through.
     let trackedLinks: TrackedLink[] = [];
+    // Open tracking shares the same per-workspace opt-in as click tracking. The
+    // pixel token is per-recipient (one tracked_opens row per profile) so the
+    // funnel counts DISTINCT-profile opens. The row is pre-created at send (opens=0)
+    // so an unopened send is still attributed; the /o/<token> endpoint bumps it.
+    let openToken: string | null = null;
     if (linkTrackingOn && compiledHtml) {
       const rw = rewriteTrackingLinks(compiledHtml, {
         baseUrl: deps.linkTrackingBaseUrl,
@@ -245,6 +260,16 @@ export async function dispatchOutbox(
       });
       compiledHtml = rw.html;
       trackedLinks = rw.links;
+
+      const op = injectOpenPixel(compiledHtml, {
+        baseUrl: deps.linkTrackingBaseUrl,
+        workspaceId,
+        broadcastId,
+        campaignId: ob.campaign_id ?? null,
+        profileId: profile.id,
+      });
+      compiledHtml = op.html;
+      openToken = op.token;
     }
 
     const now = deps.now();
@@ -289,6 +314,8 @@ export async function dispatchOutbox(
       fromEmail,
       fromName,
       toAddress,
+      broadcastId,
+      campaignId: ob.campaign_id ?? null,
     };
 
     const decision: DispatchDecision = decideDispatch(ctx);
@@ -306,6 +333,9 @@ export async function dispatchOutbox(
     // 7. ONE tx: tracked links (idempotent) + messages_log + usage + mark sent.
     await deps.runInWorkspaceTx(workspaceId, [
       ...trackedLinks.map((l) => buildTrackedLinkInsert(workspaceId, l, broadcastId, ob.campaign_id ?? null)),
+      ...(openToken
+        ? [buildTrackedOpenInsert(workspaceId, openToken, broadcastId, ob.campaign_id ?? null, profile.id)]
+        : []),
       buildMessagesLogInsert(workspaceId, profile.id, ob.campaign_id, sesMessageId, broadcastId),
       buildUsageCounterIncrement(workspaceId, now),
       buildOutboxMarkSent(workspaceId, outboxId),
