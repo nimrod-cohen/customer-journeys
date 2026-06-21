@@ -18,7 +18,7 @@ import { setEditorReturn } from '../../store/editorReturn.js';
 import { Button, Field, Input, Select, Textarea } from '../../ui/kit.js';
 import { showToast } from '../../ui/toast.js';
 import { RuleBuilder } from '../../segments/RuleBuilder.js';
-import { groupFromAst, type AstNode, type RuleGroup } from '../../segments/ast-builder.js';
+import { groupFromAst, BUILDER_OPERATORS, type AstNode, type RuleGroup, type BuilderOperator } from '../../segments/ast-builder.js';
 import { displayType, type CanvasNode, type DslNode } from '../model.js';
 import {
   readTriggerConfig,
@@ -31,6 +31,11 @@ import {
   writeHourWindowConfig,
   writeConditionConfig,
   conditionGroupIsEmpty,
+  readEventPayloadFilter,
+  writeEventPayloadFilter,
+  emptyEventFilterRow,
+  type EventFilterForm,
+  type EventFilterRow,
   readSetAttributeValue,
   writeSetAttributeConfig,
   setAttributeFormHasKey,
@@ -88,8 +93,10 @@ function TriggerEditor(props: NodeEditorProps) {
   const [kind, setKind] = useState<TriggerKind>(initial.kind);
   const [name, setName] = useState(initial.label ?? '');
   const [eventType, setEventType] = useState(initial.eventType ?? '');
-  // The optional event payload filter reuses the rule builder → an AstNode.
-  const [filterGroup, setFilterGroup] = useState<RuleGroup>(() => groupFromAst(initial.filter ?? null));
+  // The optional filter NARROWS the already-chosen event by its PAYLOAD only —
+  // a list of `payload.<key> <op> <value>` rows (match all/any), NOT the full
+  // segment rule builder (which would re-ask "did event X" / profile fields).
+  const [filterForm, setFilterForm] = useState<EventFilterForm>(() => readEventPayloadFilter(initial.filter ?? null));
   const [segmentId, setSegmentId] = useState<string>(props.triggerSegmentId ?? '');
   const [profileChange, setProfileChange] = useState<ProfileChange>(initial.profileChange ?? 'any');
   // Autocomplete the EVENT TYPE from the workspace's known event vocabulary
@@ -108,7 +115,7 @@ function TriggerEditor(props: NodeEditorProps) {
       showToast('Enter the event type that enrolls a profile.', { tone: 'error' });
       return;
     }
-    const filterAst = kind === 'event' ? buildFilter(filterGroup) : null;
+    const filterAst = kind === 'event' ? writeEventPayloadFilter(filterForm) : null;
     await props.onSaveNode(
       writeTriggerConfig({
         kind,
@@ -171,10 +178,8 @@ function TriggerEditor(props: NodeEditorProps) {
               ))}
             </datalist>
           </Field>
-          <Field label="Only when the event matches (optional)" hint="Filter on the event payload.">
-            <div data-testid="trigger-event-filter">
-              <RuleBuilder group={filterGroup} onChange={setFilterGroup} allowEmptyRootRules />
-            </div>
+          <Field label="Only when the event matches (optional)" hint="Narrow it by the event's own attributes (payload).">
+            <EventPayloadFilter form={filterForm} eventType={eventType} onChange={setFilterForm} />
           </Field>
         </>
       ) : null}
@@ -204,9 +209,103 @@ function TriggerEditor(props: NodeEditorProps) {
   );
 }
 
-/** Compile the trigger filter group → an AstNode (null when empty). */
-function buildFilter(group: RuleGroup): AstNode | null {
-  return conditionGroupIsEmpty(group) ? null : (writeConditionConfig(group) as { ast: AstNode } | null)?.ast ?? null;
+/**
+ * The event trigger's PAYLOAD-ONLY filter: match all/any + a list of
+ * `payload.<attr> <op> <value>` rows. The attribute key autocompletes from the
+ * workspace's known payload keys for the chosen event type (/events/payload-keys).
+ * Distinct from the full RuleBuilder (the IF editor / segments use that) — here
+ * the event type is fixed, so only its attributes can narrow enrollment.
+ */
+function EventPayloadFilter(props: {
+  form: EventFilterForm;
+  eventType: string;
+  onChange: (form: EventFilterForm) => void;
+}) {
+  const { form, eventType, onChange } = props;
+  const [keys, setKeys] = useState<string[]>([]);
+  useEffect(() => {
+    const type = eventType.trim();
+    void api
+      .get<{ values: string[] }>('/events/payload-keys', type ? { query: { type } } : undefined)
+      .then((r) => setKeys(r.values ?? []))
+      .catch(() => setKeys([]));
+  }, [eventType]);
+
+  const setRow = (i: number, patch: Partial<EventFilterRow>): void =>
+    onChange({ ...form, rows: form.rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)) });
+  const addRow = (): void => onChange({ ...form, rows: [...form.rows, emptyEventFilterRow()] });
+  const removeRow = (i: number): void => {
+    const rows = form.rows.filter((_, idx) => idx !== i);
+    onChange({ ...form, rows: rows.length ? rows : [emptyEventFilterRow()] });
+  };
+
+  return (
+    <div data-testid="trigger-event-filter" class="space-y-3">
+      <div class="flex items-center gap-2 text-sm text-stone-600">
+        <span>Match</span>
+        <Select
+          data-testid="event-filter-match"
+          value={form.match}
+          onChange={(e: Event) => onChange({ ...form, match: (e.target as HTMLSelectElement).value as 'and' | 'or' })}
+        >
+          <option value="and">all (AND)</option>
+          <option value="or">any (OR)</option>
+        </Select>
+        <span>of these event attributes</span>
+      </div>
+
+      <datalist id="trigger-payload-key-options">
+        {keys.map((k) => (
+          <option key={k} value={k} />
+        ))}
+      </datalist>
+
+      {form.rows.map((row, i) => (
+        <div key={i} data-testid="event-filter-row" class="flex items-start gap-2">
+          <Input
+            data-testid="event-filter-field"
+            class="flex-1"
+            placeholder="attribute (e.g. webinar_id)"
+            list="trigger-payload-key-options"
+            value={row.field}
+            onInput={(e: Event) => setRow(i, { field: (e.target as HTMLInputElement).value })}
+          />
+          <Select
+            data-testid="event-filter-op"
+            value={row.operator}
+            onChange={(e: Event) => setRow(i, { operator: (e.target as HTMLSelectElement).value as BuilderOperator })}
+          >
+            {BUILDER_OPERATORS.map((op) => (
+              <option key={op} value={op}>
+                {op}
+              </option>
+            ))}
+          </Select>
+          {row.operator !== 'exists' ? (
+            <Input
+              data-testid="event-filter-value"
+              class="flex-1"
+              placeholder="value"
+              value={row.value}
+              onInput={(e: Event) => setRow(i, { value: (e.target as HTMLInputElement).value })}
+            />
+          ) : null}
+          <Button
+            data-testid="event-filter-remove"
+            variant="ghost"
+            aria-label="Remove this attribute filter"
+            onClick={() => removeRow(i)}
+          >
+            ✕
+          </Button>
+        </div>
+      ))}
+
+      <Button data-testid="event-filter-add" variant="ghost" onClick={addRow}>
+        + Add event attribute filter
+      </Button>
+    </div>
+  );
 }
 
 // ── WAIT ──────────────────────────────────────────────────────────────────────

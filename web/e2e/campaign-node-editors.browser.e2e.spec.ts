@@ -66,11 +66,23 @@ test('TRIGGER editor: event kind shows event type + manual shows a note', async 
     page.locator('#trigger-event-type-options option[value="purchase"]'),
   ).toHaveCount(1);
   await drawer.getByTestId('trigger-event-type').fill('purchase');
+
+  // The payload filter is PAYLOAD-ONLY (no "did event X" / profile fields): a
+  // match selector + rows of attribute·operator·value, starting with one blank row.
+  const row0 = drawer.getByTestId('event-filter-row').first();
+  await row0.getByTestId('event-filter-field').fill('amount');
+  await row0.getByTestId('event-filter-op').selectOption('>');
+  await row0.getByTestId('event-filter-value').fill('10');
   await drawer.getByTestId('node-save').click();
   await expect(drawer).toBeHidden();
 
+  // Reopen → the payload row persisted (bare key, operator, value).
   await page.getByTestId('node-trigger').getByTestId(/node-open-/).first().click();
-  await page.getByTestId('node-editor-trigger').getByTestId('trigger-kind').selectOption('manual');
+  const reopened = page.getByTestId('node-editor-trigger');
+  await expect(reopened.getByTestId('event-filter-field').first()).toHaveValue('amount');
+  await expect(reopened.getByTestId('event-filter-op').first()).toHaveValue('>');
+
+  await reopened.getByTestId('trigger-kind').selectOption('manual');
   await expect(page.getByTestId('trigger-manual-note')).toBeVisible();
 });
 

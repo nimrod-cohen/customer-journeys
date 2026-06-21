@@ -32,7 +32,10 @@ import {
   readWebhookConfig,
   webhookSecretHeaders,
   sendNodeNeedsEmail,
+  readEventPayloadFilter,
+  writeEventPayloadFilter,
 } from './node-config.js';
+import { evaluateEventPayloadFilter } from '@cdp/service-campaign-runner';
 
 // A model with one node per slot kind to test applyNodeConfig edge-preservation.
 function modelWithCondition(): CanvasModel {
@@ -348,6 +351,59 @@ describe('SEND default (placeholder removed)', () => {
     const node = defaultNodeConfig('send');
     expect((node as { template_id?: string }).template_id ?? '').not.toBe('placeholder');
     expect(sendNodeNeedsEmail(node)).toBe(true);
+  });
+});
+
+describe('event trigger payload filter (read/write)', () => {
+  it('writes a payload.* GroupNode the runner accepts; round-trips through read', () => {
+    const ast = writeEventPayloadFilter({
+      match: 'and',
+      rows: [
+        { field: 'webinar_id', operator: '=', value: '42' },
+        { field: 'plan', operator: 'in', value: 'pro, team' },
+        { field: 'coupon', operator: 'exists', value: '' },
+      ],
+    });
+    expect(ast).not.toBeNull();
+    // Every leaf is namespaced payload.* (the runner REQUIRES this).
+    const grp = ast as { op: string; conditions: { field: string; operator: string; value?: unknown }[] };
+    expect(grp.op).toBe('and');
+    expect(grp.conditions.map((c) => c.field)).toEqual(['payload.webinar_id', 'payload.plan', 'payload.coupon']);
+    expect(grp.conditions[0]!.value).toBe(42); // numeric coercion
+    expect(grp.conditions[1]!.value).toEqual(['pro', 'team']); // in → array
+    expect('value' in grp.conditions[2]!).toBe(false); // exists drops the value
+
+    // The runner can evaluate it against a payload.
+    expect(evaluateEventPayloadFilter(ast as never, { webinar_id: 42, plan: 'pro', coupon: 'X' })).toBe(true);
+    expect(evaluateEventPayloadFilter(ast as never, { webinar_id: 7, plan: 'pro', coupon: 'X' })).toBe(false);
+
+    // round-trip: read back into rows (bare keys, value re-stringified).
+    const form = readEventPayloadFilter(ast);
+    expect(form.match).toBe('and');
+    expect(form.rows.map((r) => r.field)).toEqual(['webinar_id', 'plan', 'coupon']);
+    expect(form.rows[1]!.value).toBe('pro, team');
+    expect(form.rows[2]!.operator).toBe('exists');
+  });
+
+  it('returns null when no row has a field; reads null/empty into one blank row', () => {
+    expect(writeEventPayloadFilter({ match: 'and', rows: [{ field: '  ', operator: '=', value: 'x' }] })).toBeNull();
+    const blank = readEventPayloadFilter(null);
+    expect(blank.match).toBe('and');
+    expect(blank.rows).toHaveLength(1);
+    expect(blank.rows[0]!.field).toBe('');
+  });
+
+  it('honors the any (OR) match', () => {
+    const ast = writeEventPayloadFilter({
+      match: 'or',
+      rows: [
+        { field: 'a', operator: '=', value: '1' },
+        { field: 'b', operator: '=', value: '2' },
+      ],
+    });
+    expect(evaluateEventPayloadFilter(ast as never, { a: 1, b: 99 })).toBe(true);
+    expect(evaluateEventPayloadFilter(ast as never, { a: 0, b: 0 })).toBe(false);
+    expect(readEventPayloadFilter(ast).match).toBe('or');
   });
 });
 

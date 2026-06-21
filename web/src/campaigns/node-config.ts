@@ -18,7 +18,12 @@ import {
 import {
   buildAstFromGroup,
   groupFromAst,
+  parseValue,
+  BUILDER_OPERATORS,
   type AstNode,
+  type ConditionNode,
+  type GroupNode,
+  type BuilderOperator,
   type RuleGroup,
 } from '../segments/ast-builder.js';
 import type { CanvasModel, CanvasNode, DslNode } from './model.js';
@@ -217,6 +222,86 @@ export function writeConditionConfig(group: RuleGroup, label?: string): DslNode 
   validateAst(ast as unknown as SegmentsAstNode); // throws on a malformed shape (defensive; the builder emits valid §8 AST)
   const trimmed = (label ?? '').trim();
   return trimmed ? { type: 'condition', label: trimmed, ast } : { type: 'condition', ast };
+}
+
+// ── EVENT TRIGGER payload filter ─────────────────────────────────────────────
+// The event trigger's optional "only when the event matches" filter is a
+// PAYLOAD-ONLY narrowing: the event TYPE is already chosen, so this just adds
+// `payload.<key> <op> <value>` conditions (match all/any). It is NOT the full
+// segment rule builder (which also offers profile fields + "did event X" — both
+// nonsensical here). The AST it emits is exactly what the runner's
+// `evaluateEventPayloadFilter` consumes: a GroupNode (op and/or) of payload.*
+// ConditionNodes. PURE + unit-tested.
+
+export type EventFilterMatch = 'and' | 'or';
+export interface EventFilterRow {
+  /** The payload key WITHOUT the `payload.` prefix (the UI shows the bare key). */
+  readonly field: string;
+  readonly operator: BuilderOperator;
+  readonly value: string;
+}
+export interface EventFilterForm {
+  readonly match: EventFilterMatch;
+  readonly rows: EventFilterRow[];
+}
+
+const PAYLOAD_PREFIX = 'payload.';
+
+/** A blank payload-filter row for a fresh editor. */
+export function emptyEventFilterRow(): EventFilterRow {
+  return { field: '', operator: '=', value: '' };
+}
+
+function isGroupNode(n: AstNode): n is GroupNode {
+  return typeof (n as GroupNode).op === 'string' && Array.isArray((n as GroupNode).conditions);
+}
+function isConditionNode(n: AstNode): n is ConditionNode {
+  return typeof (n as ConditionNode).field === 'string';
+}
+
+function leafToRow(c: ConditionNode): EventFilterRow {
+  const key = c.field.startsWith(PAYLOAD_PREFIX) ? c.field.slice(PAYLOAD_PREFIX.length) : c.field;
+  const operator = (BUILDER_OPERATORS as readonly string[]).includes(c.operator)
+    ? (c.operator as BuilderOperator)
+    : '=';
+  let value = '';
+  if (Array.isArray(c.value)) value = (c.value as unknown[]).join(', ');
+  else if (c.value !== undefined && c.value !== null) value = String(c.value);
+  return { field: key, operator, value };
+}
+
+/**
+ * Parse a stored event-payload filter AST back into the editor form. Accepts a
+ * GroupNode (and/or) of payload.* leaves OR a bare leaf; anything else (or null)
+ * yields one blank row so the editor always shows a starting row.
+ */
+export function readEventPayloadFilter(ast: AstNode | null | undefined): EventFilterForm {
+  if (ast && isGroupNode(ast) && (ast.op === 'and' || ast.op === 'or')) {
+    const rows = ast.conditions.filter(isConditionNode).map(leafToRow);
+    return { match: ast.op, rows: rows.length ? rows : [emptyEventFilterRow()] };
+  }
+  if (ast && isConditionNode(ast)) return { match: 'and', rows: [leafToRow(ast)] };
+  return { match: 'and', rows: [emptyEventFilterRow()] };
+}
+
+/**
+ * Serialize the editor form → a payload-filter AstNode (or null when no row has a
+ * field). Every leaf is namespaced `payload.<key>`; values are typed via the same
+ * `parseValue` the segment builder uses (numbers, comma-lists for in/not in,
+ * undefined for `exists`). The runner's `evaluateEventPayloadFilter` REJECTS a
+ * non-`payload.*` field, so the prefix is mandatory (never interpolated).
+ */
+export function writeEventPayloadFilter(form: EventFilterForm): AstNode | null {
+  const conditions: ConditionNode[] = form.rows
+    .filter((r) => r.field.trim().length > 0)
+    .map((r) => {
+      const key = r.field.trim();
+      const field = key.startsWith(PAYLOAD_PREFIX) ? key : PAYLOAD_PREFIX + key;
+      if (r.operator === 'exists') return { field, operator: 'exists' };
+      return { field, operator: r.operator, value: parseValue(r.operator, r.value) };
+    });
+  if (conditions.length === 0) return null;
+  return { op: form.match, conditions };
 }
 
 // ── SEND ───────────────────────────────────────────────────────────────────────
