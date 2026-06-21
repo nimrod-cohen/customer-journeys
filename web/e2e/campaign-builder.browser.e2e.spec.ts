@@ -1280,6 +1280,66 @@ test('MOVE a node to a chosen + relocates it (placement mode), source closes up'
   await expect(page.getByTestId('node-condition')).toBeVisible();
 });
 
+test('MOVE a single-out node onto an empty-If arm (the shared-merge bug): the + IS offered on the arm, the step relocates', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Move onto arm');
+
+  // Build trigger → If(empty arms: onTrue & onFalse BOTH → update) → update → exit:
+  //  1) insert an Update profile on trigger→exit_1  ⇒ trigger→update→exit_1
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-update-profile').click();
+  await expect(page.getByTestId('node-set_attribute')).toBeVisible();
+  //  2) insert an If on trigger→update ⇒ trigger→cond(onTrue→update, onFalse→update)
+  //     (the first (+), the trunk edge above the update, is trigger→update).
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+
+  // The condition's two empty arms both point AT the update (the shared merge). The
+  // update card sits BELOW the condition.
+  const condTop0 = (await page.getByTestId('node-condition').boundingBox())!.y;
+  const updTop0 = (await page.getByTestId('node-set_attribute').boundingBox())!.y;
+  expect(updTop0).toBeGreaterThan(condTop0);
+
+  // Open the update's ⋮ → "Move to…" → placement mode. The BUG was: NO + appeared on
+  // the arm edges. Now both arm edges are valid destinations.
+  const updCard = page.getByTestId('node-set_attribute');
+  await updCard.getByLabel('Step actions').click();
+  await updCard.getByTestId('node-move').click();
+  await expect(page.getByTestId('placement-banner')).toBeVisible();
+
+  // A placement target (+) IS present on the If's arm edges (the fix). During
+  // placement the (+) controls carry the `placement-target` testid; the two arm
+  // edges (cond→update) anchor BELOW the condition card top (only the trunk
+  // trigger→cond edge sits above it). Pick an arm target.
+  const condTopForPick = (await page.getByTestId('node-condition').boundingBox())!.y;
+  const targetTops = await page
+    .getByTestId('placement-target')
+    .evaluateAll((els) => els.map((e) => (e as HTMLElement).getBoundingClientRect().top));
+  const armTargets = targetTops
+    .map((top, i) => ({ top, i }))
+    .filter((t) => t.top > condTopForPick)
+    .map((t) => t.i);
+  expect(armTargets.length).toBeGreaterThanOrEqual(1);
+  await page.getByTestId('placement-target').nth(armTargets[0]!).click();
+  await expect(page.getByTestId('placement-banner')).toHaveCount(0);
+  await expect(page.getByTestId('toast')).toContainText(/moved/i);
+
+  // The update now sits ON an arm (still below the condition, exactly one card).
+  await expect(page.getByTestId('node-set_attribute')).toHaveCount(1);
+  const condTop1 = (await page.getByTestId('node-condition').boundingBox())!.y;
+  const updTop1 = (await page.getByTestId('node-set_attribute').boundingBox())!.y;
+  expect(updTop1).toBeGreaterThan(condTop1);
+
+  // Round-trips through the DSL: reopen and the graph reconstructs.
+  await page.getByTestId('campaigns-back').click();
+  await page.getByTestId('campaign-item').filter({ hasText: 'Move onto arm' }).getByTestId('campaign-open').click();
+  await page.getByTestId('campaign-canvas').waitFor();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+  await expect(page.getByTestId('node-set_attribute')).toHaveCount(1);
+});
+
 test('placement mode cancels via the banner button and via Escape', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

@@ -12,6 +12,8 @@ import {
   moveSubtree,
   duplicateSubtree,
   subtreeNodeIds,
+  movePlan,
+  canDropOnEdge,
   MutationError,
 } from './mutate.js';
 
@@ -367,10 +369,11 @@ describe('moveSubtree', () => {
     expect(() => validateCampaignDefinition(def)).not.toThrow();
   });
 
-  it('moves a CONDITION sub-branch (diamond arm): exclusive subtree relocates, continuation re-links', () => {
-    // trigger → cond(onTrue→send→exit_1, onFalse→exit_1). The Yes arm's SEND has
-    // S = {send} and continuation C = exit_1 (the join, reachable via onFalse). We
-    // also seed a wait UNDER the send so S has two members: send→wait→exit_1.
+  it('a single-out NON-condition node moves JUST itself (its tail stays put)', () => {
+    // trigger → cond(onTrue→send→wait→exit_1, onFalse→exit_1). The SEND is a
+    // single-out non-condition node — moving it now relocates ONLY the send (its
+    // `wait` tail is left where it was, the arm closes up to the wait). We move the
+    // send onto trigger→cond.
     let m = starterModel();
     m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
     const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
@@ -381,16 +384,46 @@ describe('moveSubtree', () => {
     m = insertOnEdge(m, sendEdge, 'wait', NOW); // cond.onTrue→send→wait→exit_1
     const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
 
-    // S(send) = {send, wait}; C = exit_1. Move the SEND branch onto trigger→cond.
-    expect(new Set(subtreeNodeIds(m, sendId))).toEqual(new Set([sendId, waitId]));
+    // movePlan(send) is SINGLE — S = {send} only (the tail does NOT come along).
+    const plan = movePlan(m, sendId);
+    expect(plan.mode).toBe('single');
+    expect(new Set(subtreeNodeIds(m, sendId))).toEqual(new Set([sendId]));
+
     const tEdge = m.edges.find((e) => e.from === 'trigger' && e.to === condId)!;
     const moved = moveSubtree(m, sendId, tEdge);
     const def = buildDefinition(moved);
-    // trigger now → send (the moved root); the cond's Yes arm re-links to C (exit_1).
+    // trigger now → send → cond (the send spliced onto trigger→cond).
     expect((def.nodes.trigger as unknown as { next: string }).next).toBe(sendId);
-    expect((def.nodes[condId] as unknown as { onTrue: string }).onTrue).toBe('exit_1'); // arm closed up to C
-    // The moved branch's boundary now rejoins at the dest target B (= cond).
-    expect((def.nodes[waitId] as unknown as { next: string }).next).toBe(condId);
+    expect((def.nodes[sendId] as unknown as { next: string }).next).toBe(condId);
+    // The Yes arm closed up around the gap the send left → it now points at the WAIT.
+    expect((def.nodes[condId] as unknown as { onTrue: string }).onTrue).toBe(waitId);
+    // The wait (the tail) STAYED put, still pointing at exit_1.
+    expect((def.nodes[waitId] as unknown as { next: string }).next).toBe('exit_1');
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('moves a CONDITION branch (the whole exclusive subtree relocates as a unit)', () => {
+    // trigger → cond(onTrue→exit_1, onFalse→exit_1) — then drop an inner If onto the
+    // Yes arm so we have a CONDITION sub-branch to move as a unit:
+    //   trigger → cond(onTrue→inner(onTrue→exit_1, onFalse→exit_1), onFalse→exit_1).
+    // Moving `inner` relocates the whole inner diamond (a condition root → 'branch').
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, yesEdge, 'condition', NOW); // Yes arm now holds an inner If
+    const innerId = m.nodes.find((n) => n.node.type === 'condition' && n.id !== condId)!.id;
+
+    const plan = movePlan(m, innerId);
+    expect(plan.mode).toBe('branch'); // a condition root always moves its branch
+    expect(plan.ids.has(innerId)).toBe(true);
+
+    const tEdge = m.edges.find((e) => e.from === 'trigger' && e.to === condId)!;
+    const moved = moveSubtree(m, innerId, tEdge);
+    const def = buildDefinition(moved);
+    // trigger now → inner (the moved condition root); the outer Yes arm closed to C.
+    expect((def.nodes.trigger as unknown as { next: string }).next).toBe(innerId);
+    expect((def.nodes[condId] as unknown as { onTrue: string }).onTrue).toBe('exit_1');
     expect(() => validateCampaignDefinition(def)).not.toThrow();
   });
 
@@ -419,46 +452,153 @@ describe('moveSubtree', () => {
     expect(moveSubtree(m, waitId, armEdge)).toBe(m); // unchanged reference
   });
 
-  it('a move that orphans a sibling subtree is rejected on persist by the SERVER validator', () => {
-    // trigger → cond(onTrue → exitA, onFalse → wait → exit_1). Move the onFalse WAIT
-    // branch (S = {wait, exit_1}, terminal, C = undefined) onto the Yes arm cond→exitA.
-    // Locally this passes the lightweight guards (a reachable exit remains, no
-    // dangling edge, no cycle), but it ORPHANS exitA — which the server's
-    // validateCampaignDefinition rejects on save (the screen surfaces the error).
+  it('a branch move that orphans a sibling subtree is rejected on persist by the SERVER validator', () => {
+    // trigger → cond(onTrue → exitA, onFalse → inner(onTrue→exit_1, onFalse→exit_1)).
+    // Move the onFalse INNER condition branch (S = {inner, exit_1}, terminal, C =
+    // undefined) onto the Yes arm cond→exitA. Locally this passes the lightweight
+    // guards (a reachable exit remains, no dangling edge, no cycle), but it ORPHANS
+    // exitA — which the server's validateCampaignDefinition rejects on save (the
+    // screen surfaces the error).
     let m = starterModel(); // trigger → exit_1
     m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW); // both arms → exit_1
     const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
     const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
     m = insertOnEdge(m, yesEdge, 'exit', NOW); // onTrue → exitA ; onFalse → exit_1
     const noEdge = m.edges.find((e) => e.from === condId && e.slot === 'onFalse')!;
-    m = insertOnEdge(m, noEdge, 'wait', NOW); // onFalse → wait → exit_1
-    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+    m = insertOnEdge(m, noEdge, 'condition', NOW); // onFalse → inner(onTrue→exit_1, onFalse→exit_1)
+    const innerId = m.nodes.find((n) => n.node.type === 'condition' && n.id !== condId)!.id;
     const exitA = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!.to;
 
     const armToExitA = m.edges.find((e) => e.from === condId && e.to === exitA)!;
-    const moved = moveSubtree(m, waitId, armToExitA); // local guards pass…
+    const moved = moveSubtree(m, innerId, armToExitA); // local guards pass…
     // …but the moved result orphans exitA → the SERVER validator rejects it (parity
     // with the persist-time rejection the screen surfaces).
     expect(() => validateCampaignDefinition(buildDefinition(moved))).toThrow();
   });
 
-  it('subtreeNodeIds returns the exclusive members (root + arm-only descendants), NOT the shared join', () => {
-    // trigger → cond(onTrue → send → wait → exit_1, onFalse → exit_1). The Yes-arm
-    // SEND has S = {send, wait}; exit_1 is the shared join (reachable via onFalse).
+  it('subtreeNodeIds on a CONDITION returns the exclusive members (root + arm-only descendants), NOT a SHARED join', () => {
+    // trigger → outer(onTrue → inner(onTrue→send→exit_1, onFalse→exit_1), onFalse→exit_1).
+    // exit_1 is reachable via the OUTER onFalse arm too, so it is a SHARED join — it
+    // is NOT exclusive to the inner condition. The inner condition's exclusive
+    // subtree is {inner, send}; exit_1 stays out. (A condition root still uses the
+    // exclusive-subtree shape — unchanged.)
     let m = starterModel();
     m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
-    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
-    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
-    m = insertOnEdge(m, yesEdge, 'send', NOW); // cond.onTrue→send→exit_1
+    const outerId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const outerYes = m.edges.find((e) => e.from === outerId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, outerYes, 'condition', NOW); // outer.onTrue → inner diamond
+    const innerId = m.nodes.find((n) => n.node.type === 'condition' && n.id !== outerId)!.id;
+    const innerYes = m.edges.find((e) => e.from === innerId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, innerYes, 'send', NOW); // inner.onTrue → send → exit_1
     const sendId = m.nodes.find((n) => n.node.type === 'action')!.id;
-    const sendEdge = m.edges.find((e) => e.from === sendId)!;
-    m = insertOnEdge(m, sendEdge, 'wait', NOW); // cond.onTrue→send→wait→exit_1
-    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
-    const ids = subtreeNodeIds(m, sendId);
+
+    const ids = subtreeNodeIds(m, innerId);
+    expect(ids.has(innerId)).toBe(true);
     expect(ids.has(sendId)).toBe(true);
-    expect(ids.has(waitId)).toBe(true);
-    expect(ids.has('exit_1')).toBe(false); // the shared continuation is NOT in S
-    expect(ids.has(condId)).toBe(false); // an ancestor is never in S
+    expect(ids.has('exit_1')).toBe(false); // the SHARED continuation is NOT in S
+    expect(ids.has(outerId)).toBe(false); // an ancestor is never in S
+
+    // A single-out NON-condition node (the send) yields just ITSELF (single mode).
+    expect([...subtreeNodeIds(m, sendId)]).toEqual([sendId]);
+  });
+});
+
+describe('movePlan + canDropOnEdge (single-out non-condition node moves JUST itself)', () => {
+  /**
+   * The bug shape: trigger → If(empty arms: onTrue & onFalse BOTH → update) →
+   * update(Set first_name) → exit. The `update` node is the single shared
+   * continuation of both arms; moving it onto an arm must be offered.
+   */
+  function emptyIfThenUpdate(): {
+    m: ReturnType<typeof starterModel>;
+    condId: string;
+    updateId: string;
+    exitId: string;
+  } {
+    let m = starterModel(); // trigger → exit_1
+    // Insert an update (set_attribute) on trigger→exit_1: trigger→update→exit_1.
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'set_attribute', NOW);
+    const updateId = m.nodes.find((n) => n.node.type === 'action')!.id;
+    // Insert a condition on trigger→update: trigger→cond(onTrue→update, onFalse→update)→…
+    const tEdge = m.edges.find((e) => e.from === 'trigger' && e.to === updateId)!;
+    m = insertOnEdge(m, tEdge, 'condition', NOW);
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    return { m, condId, updateId, exitId: 'exit_1' };
+  }
+
+  it('movePlan on the empty-If shared continuation is SINGLE (ids = {update})', () => {
+    const { m, updateId } = emptyIfThenUpdate();
+    const plan = movePlan(m, updateId);
+    expect(plan.mode).toBe('single');
+    expect([...plan.ids]).toEqual([updateId]);
+    expect(plan.continuation).toBe('exit_1'); // update.next
+  });
+
+  it('canDropOnEdge is TRUE for BOTH empty-If arm edges (they target the moving node), FALSE for its own out-edge', () => {
+    const { m, condId, updateId } = emptyIfThenUpdate();
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    const noEdge = m.edges.find((e) => e.from === condId && e.slot === 'onFalse')!;
+    expect(yesEdge.to).toBe(updateId);
+    expect(noEdge.to).toBe(updateId);
+    // Both arm edges (parent edges targeting the moving node) are valid destinations.
+    expect(canDropOnEdge(m, updateId, yesEdge)).toBe(true);
+    expect(canDropOnEdge(m, updateId, noEdge)).toBe(true);
+    // The node's OWN out-edge (update→exit_1) is NOT a valid destination.
+    const ownEdge = m.edges.find((e) => e.from === updateId)!;
+    expect(canDropOnEdge(m, updateId, ownEdge)).toBe(false);
+  });
+
+  it('THE BUG REPRO: moving `update` onto the Yes arm → cond.onTrue→update→exit, cond.onFalse→exit', () => {
+    const { m, condId, updateId } = emptyIfThenUpdate();
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    const moved = moveSubtree(m, updateId, yesEdge);
+    const def = buildDefinition(moved);
+    // onTrue now flows through the update before the exit; onFalse passes straight to exit.
+    expect((def.nodes[condId] as unknown as { onTrue: string }).onTrue).toBe(updateId);
+    expect((def.nodes[updateId] as unknown as { next: string }).next).toBe('exit_1');
+    expect((def.nodes[condId] as unknown as { onFalse: string }).onFalse).toBe('exit_1');
+    // exit_1 is now the 2-incoming merge (cond.onFalse + update). Valid def.
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('single-node move on a plain LINEAR chain moves just the node (the tail stays)', () => {
+    // trigger → wait → send → exit_1. Move the SEND up onto trigger→wait.
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'wait', NOW); // trigger→wait→exit_1
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+    m = insertOnEdge(m, m.edges.find((e) => e.from === waitId)!, 'send', NOW); // trigger→wait→send→exit_1
+    const sendId = m.nodes.find((n) => n.node.type === 'action')!.id;
+
+    const tEdge = m.edges.find((e) => e.from === 'trigger' && e.to === waitId)!;
+    const moved = moveSubtree(m, sendId, tEdge);
+    const def = buildDefinition(moved);
+    // trigger → send → wait → exit_1 (the send relocated; wait stays; exit unchanged).
+    expect((def.nodes.trigger as unknown as { next: string }).next).toBe(sendId);
+    expect((def.nodes[sendId] as unknown as { next: string }).next).toBe(waitId);
+    expect((def.nodes[waitId] as unknown as { next: string }).next).toBe('exit_1');
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('duplicate of a single node = one fresh node inserted, original intact', () => {
+    const { m, condId, updateId } = emptyIfThenUpdate();
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    const dup = duplicateSubtree(m, updateId, yesEdge);
+    const def = buildDefinition(dup);
+    const actions = Object.values(def.nodes).filter((n) => n.type === 'action');
+    expect(actions.length).toBe(2); // one fresh clone
+    expect(def.nodes[updateId]).toBeDefined(); // original intact (still the onFalse target)
+    const cloneId = (def.nodes[condId] as unknown as { onTrue: string }).onTrue;
+    expect(cloneId).not.toBe(updateId);
+    expect((def.nodes[cloneId] as unknown as { next: string }).next).toBe(updateId); // clone → dest target B
+    // onFalse still points at the original update (untouched).
+    expect((def.nodes[condId] as unknown as { onFalse: string }).onFalse).toBe(updateId);
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('moving a node onto its OWN out-edge throws', () => {
+    const { m, updateId } = emptyIfThenUpdate();
+    const ownEdge = m.edges.find((e) => e.from === updateId)!;
+    expect(() => moveSubtree(m, updateId, ownEdge)).toThrow(MutationError);
   });
 });
 
@@ -486,43 +626,44 @@ describe('duplicateSubtree', () => {
     expect(() => validateCampaignDefinition(def)).not.toThrow();
   });
 
-  it('duplicates a branch (fresh ids for all members, internal edges remapped, original intact)', () => {
-    // Build trigger → cond(onTrue→send→exit_1, onFalse→exit_1). The Yes arm's SEND
-    // has continuation C = exit_1 (the join reachable via onFalse), so S(send) =
-    // {send}. To get a multi-node subtree with a shared join we insert a wait on
-    // the Yes arm BELOW the send: cond.onTrue→send→wait→exit_1, onFalse→exit_1.
+  it('duplicates a CONDITION branch (fresh ids for all members, internal edges remapped, original intact)', () => {
+    // A condition root duplicates its WHOLE exclusive subtree. Build an inner If on
+    // the Yes arm of an outer If, with a send inside the inner Yes arm:
+    //   trigger → outer(onTrue→inner(onTrue→send→exit_1, onFalse→exit_1), onFalse→exit_1)
+    // Duplicating `inner` clones {inner, send} with fresh ids onto the outer onFalse arm.
     let m = starterModel();
     m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
-    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
-    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
-    m = insertOnEdge(m, yesEdge, 'send', NOW); // cond.onTrue→send→exit_1
+    const outerId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const outerYes = m.edges.find((e) => e.from === outerId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, outerYes, 'condition', NOW); // outer.onTrue → inner (diamond)
+    const innerId = m.nodes.find((n) => n.node.type === 'condition' && n.id !== outerId)!.id;
+    const innerYes = m.edges.find((e) => e.from === innerId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, innerYes, 'send', NOW); // inner.onTrue → send → exit_1
     const sendId = m.nodes.find((n) => n.node.type === 'action')!.id;
-    const sendEdge = m.edges.find((e) => e.from === sendId)!;
-    m = insertOnEdge(m, sendEdge, 'wait', NOW); // cond.onTrue→send→wait→exit_1
-    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
 
-    // S(send) = {send, wait}; C = exit_1 (reachable via the onFalse arm). Duplicate
-    // the SEND branch onto the onFalse arm (cond.onFalse→exit_1).
-    expect(new Set(subtreeNodeIds(m, sendId))).toEqual(new Set([sendId, waitId]));
-    const noEdge = m.edges.find((e) => e.from === condId && e.slot === 'onFalse')!;
-    const dup = duplicateSubtree(m, sendId, noEdge); // onFalse→cloneSend→cloneWait→exit_1
+    // movePlan(inner) is BRANCH with S ⊇ {inner, send}.
+    const plan = movePlan(m, innerId);
+    expect(plan.mode).toBe('branch');
+    expect(plan.ids.has(innerId)).toBe(true);
+    expect(plan.ids.has(sendId)).toBe(true);
+
+    const outerNo = m.edges.find((e) => e.from === outerId && e.slot === 'onFalse')!;
+    const dup = duplicateSubtree(m, innerId, outerNo); // clones the inner diamond onto onFalse
     const def = buildDefinition(dup);
+    const conds = Object.values(def.nodes).filter((n) => n.type === 'condition');
     const sends = Object.values(def.nodes).filter((n) => n.type === 'action');
-    const waits = Object.values(def.nodes).filter((n) => n.type === 'wait');
-    expect(sends.length).toBe(2); // cloned send
-    expect(waits.length).toBe(2); // cloned wait (internal member)
-    // The originals are untouched.
+    expect(conds.length).toBe(3); // outer + inner + cloned inner
+    expect(sends.length).toBe(2); // send + cloned send
+    // Originals untouched; the outer onFalse now points at a FRESH cloned condition.
+    expect(def.nodes[innerId]).toBeDefined();
     expect(def.nodes[sendId]).toBeDefined();
-    expect(def.nodes[waitId]).toBeDefined();
-    // The onFalse arm now points at the clone-root send (a fresh id, not the original).
-    const cloneRootId = (def.nodes[condId] as unknown as { onFalse: string }).onFalse;
-    expect(cloneRootId).not.toBe(sendId);
-    expect((def.nodes[cloneRootId] as unknown as { type: string }).type).toBe('action');
-    // The clone-root's internal edge points at its OWN clone wait (remapped), not the original.
-    const cloneNext = (def.nodes[cloneRootId] as unknown as { next: string }).next;
-    expect(cloneNext).not.toBe(waitId);
-    expect((def.nodes[cloneNext] as unknown as { type: string }).type).toBe('wait');
-    expect((def.nodes[cloneNext] as unknown as { next: string }).next).toBe('exit_1'); // clone boundary → C
+    const cloneRootId = (def.nodes[outerId] as unknown as { onFalse: string }).onFalse;
+    expect(cloneRootId).not.toBe(innerId);
+    expect((def.nodes[cloneRootId] as unknown as { type: string }).type).toBe('condition');
+    // The clone's onTrue points at its OWN cloned send (remapped), not the original.
+    const cloneYes = (def.nodes[cloneRootId] as unknown as { onTrue: string }).onTrue;
+    expect(cloneYes).not.toBe(sendId);
+    expect((def.nodes[cloneYes] as unknown as { type: string }).type).toBe('action');
     expect(() => validateCampaignDefinition(def)).not.toThrow();
   });
 

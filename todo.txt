@@ -46,6 +46,7 @@
 
 # REMAINING
 * put today's date in as the default in the email schedule date, and today in the from to dates filters
+* show conversion in % between sent, failed, unsubscribed, delivered, opened, clicked in broadcasts list
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).

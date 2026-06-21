@@ -10,7 +10,7 @@ import { ActionMenu } from '../ui/kit.js';
 import { layoutDefinition, mergeAnchor, LAYOUT, type LayoutEdge } from './layout.js';
 import { orthogonalPath, verticalAnchor } from './orthogonal-path.js';
 import { buildDefinition, displayType, type CanvasModel, type CanvasEdge, type CanvasNode } from './model.js';
-import { nodeSummary, subtreeNodeIds, branchContinuation } from './mutate.js';
+import { nodeSummary, canDropOnEdge, branchContinuation } from './mutate.js';
 
 /** An in-progress placement (Move / Duplicate): pick a destination + to splice at. */
 export interface Placement {
@@ -86,12 +86,13 @@ export function CampaignCanvas({
 }): JSX.Element {
   const layout = layoutDefinition(buildDefinition(model));
 
-  // While moving a branch, the (+) controls INSIDE the moving subtree are invalid
-  // destinations (would self-insert / cycle) — compute the member set to skip them.
-  const movingIds =
-    placement?.op === 'move' ? subtreeNodeIds(model, placement.rootId) : null;
-  const isInvalidTarget = (edge: CanvasEdge): boolean =>
-    movingIds !== null && (movingIds.has(edge.from) || movingIds.has(edge.to));
+  // While placing (Move or Duplicate), a (+) is only a valid destination if
+  // canDropOnEdge allows it. In SINGLE mode that's every edge except the moving
+  // node's own out-edge (so a parent/arm edge pointing AT the node is offered — e.g.
+  // an empty-If arm currently targeting the moving node); in BRANCH mode it excludes
+  // every edge inside the moving subtree (self-insert / cycle).
+  const isValidTarget = (edge: CanvasEdge): boolean =>
+    placement != null && canDropOnEdge(model, placement.rootId, edge);
 
   // Escape cancels an in-progress placement (parity with closing the palette).
   // Registered in the CAPTURE phase on `document` so it fires regardless of which
@@ -320,9 +321,11 @@ export function CampaignCanvas({
           const mid = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop, e.closeKnee, e.crossY);
           const edge = model.edges.find((me) => me.from === e.from && me.slot === e.slot && me.to === e.to);
           if (!edge) return null;
-          // While placing a MOVE, hide the (+) controls inside the moving subtree
-          // (invalid destinations — would self-insert / cycle).
-          if (placement && isInvalidTarget(edge)) return null;
+          // While placing, only show a (+) on a VALID destination edge (canDropOnEdge).
+          // In single mode that offers parent/arm edges (incl. an empty-If arm pointing
+          // AT the moving node) while excluding the node's own out-edge; in branch mode
+          // it excludes every edge inside the moving subtree (self-insert / cycle).
+          if (placement && !isValidTarget(edge)) return null;
           return (
             <button
               key={`ins-${e.from}-${e.slot}-${e.to}`}

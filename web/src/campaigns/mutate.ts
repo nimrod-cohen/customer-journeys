@@ -133,6 +133,15 @@ function repointSlot(node: DslNode, slot: CanvasEdge['slot'], to: string): DslNo
   return { ...node, [slot]: to };
 }
 
+/** How many edges in the whole graph point AT `id` (its in-degree). */
+function countIncoming(def: CampaignDefinition, id: string): number {
+  let n = 0;
+  for (const [nid, node] of Object.entries(def.nodes)) {
+    for (const e of outgoingEdges(nid, node)) if (e.to === id) n += 1;
+  }
+  return n;
+}
+
 /**
  * deleteNode(model, id) — remove node `id`, re-linking the graph so it stays a
  * valid down-only tree with no orphan. Rules:
@@ -341,7 +350,60 @@ function exclusiveSubtree(def: CampaignDefinition, rootId: string): Subtree {
 
 /** The set of node ids in the exclusive subtree of `rootId` (UI: hide invalid +s). */
 export function subtreeNodeIds(model: CanvasModel, rootId: string): Set<string> {
-  return exclusiveSubtree(buildDefinition(model), rootId).ids;
+  return movePlan(model, rootId).ids;
+}
+
+/**
+ * movePlan(model, rootId) — what a Move/Duplicate on `rootId` operates on.
+ *   - a CONDITION (branch root) → 'branch': its EXCLUSIVE SUBTREE relocates as a
+ *     unit (S + the single boundary continuation C). (unchanged behavior).
+ *   - a NON-condition node with EXACTLY ONE outgoing edge (`next`) → 'single': JUST
+ *     that node moves (ids = {rootId}, continuation = rootId.next). This makes
+ *     "move this step" intuitive AND lets a single step be dropped onto a sibling
+ *     arm — including an arm currently pointing at it (relocating it from a shared
+ *     merge onto one arm).
+ *   - anything else (a node with 0 or 2+ out-edges that isn't a condition — e.g. an
+ *     exit) falls back to the exclusive-subtree shape (the UI never offers Move/
+ *     Duplicate on an exit/trigger, so this is defensive).
+ */
+export function movePlan(
+  model: CanvasModel,
+  rootId: string,
+): { mode: 'single' | 'branch'; ids: Set<string>; continuation: string | undefined } {
+  const def = buildDefinition(model);
+  const node = def.nodes[rootId];
+  if (!node) return { mode: 'single', ids: new Set([rootId]), continuation: undefined };
+  if (node.type === 'condition') {
+    const { ids, continuation } = exclusiveSubtree(def, rootId);
+    return { mode: 'branch', ids, continuation };
+  }
+  const out = outgoingEdges(rootId, node);
+  if (out.length === 1) {
+    return { mode: 'single', ids: new Set([rootId]), continuation: out[0]!.to };
+  }
+  // Defensive fallback (exits / unexpected shapes): treat as an exclusive subtree.
+  const { ids, continuation } = exclusiveSubtree(def, rootId);
+  return { mode: 'branch', ids, continuation };
+}
+
+/**
+ * canDropOnEdge(model, rootId, destEdge) — is `destEdge` a VALID destination for a
+ * Move/Duplicate of `rootId`? The canvas uses this to decide which (+) controls to
+ * offer in placement mode.
+ *   - 'single' mode: valid UNLESS destEdge is the node's OWN out-edge
+ *     (destEdge.from === rootId — degenerate self-insert). A PARENT edge
+ *     (destEdge.to === rootId) IS valid — that's the whole point (e.g. dropping the
+ *     shared-merge continuation onto one arm currently pointing at it). The empty-If
+ *     case (two arm edges both targeting rootId) is therefore offered on both arms.
+ *   - 'branch' mode: valid UNLESS destEdge.from ∈ ids OR destEdge.to ∈ ids (inside
+ *     the moving subtree → self-insert / cycle). (unchanged behavior).
+ */
+export function canDropOnEdge(model: CanvasModel, rootId: string, destEdge: CanvasEdge): boolean {
+  const plan = movePlan(model, rootId);
+  if (plan.mode === 'single') {
+    return destEdge.from !== rootId;
+  }
+  return !(plan.ids.has(destEdge.from) || plan.ids.has(destEdge.to));
 }
 
 /**
@@ -527,7 +589,50 @@ function assertWellFormed(def: CampaignDefinition, message: string): void {
 export function moveSubtree(model: CanvasModel, rootId: string, destEdge: CanvasEdge): CanvasModel {
   if (rootId === model.start) throw new MutationError("The trigger can't be moved.");
   const def = buildDefinition(model);
-  const { ids: S, continuation: C } = exclusiveSubtree(def, rootId);
+  const plan = movePlan(model, rootId);
+
+  // SINGLE-NODE move: splice the node out (its parents re-link to rootId.next), then
+  // insert it on the (post-splice) destination edge. A→B becomes A→rootId→B'. This
+  // operates on JUST rootId — the tail below it stays where it is.
+  if (plan.mode === 'single') {
+    // Degenerate: dropping a node onto its OWN out-edge is meaningless.
+    if (destEdge.from === rootId) {
+      throw new MutationError("Choose a spot outside the step you're moving.");
+    }
+    // No-op: dropping onto an edge that ALREADY targets rootId AND is its SOLE
+    // incoming edge leaves the graph identical. (When rootId has 2+ parents — e.g.
+    // the empty-If shared continuation — a drop onto one arm DOES relocate it, so we
+    // only short-circuit the single-parent case.)
+    const incoming = countIncoming(def, rootId);
+    if (destEdge.to === rootId && incoming === 1) return model;
+    const successor = plan.continuation; // rootId.next
+    const nodes: Record<string, DslNode> = {};
+    // 1) SPLICE OUT rootId: every parent edge pointing at it re-links to its next.
+    //    We carry rootId itself through unchanged (re-pointed below).
+    for (const [nid, node] of Object.entries(def.nodes)) {
+      if (nid === rootId) continue;
+      nodes[nid] = repointParents(node, rootId, successor);
+    }
+    // 2) Resolve the destination's CURRENT target AFTER the splice (A's slot may have
+    //    just been re-pointed to `successor` if A was a parent of rootId).
+    const destFrom = nodes[destEdge.from];
+    if (!destFrom) throw new MutationError('That move would break the journey.');
+    const destTarget = (destFrom as Record<string, unknown>)[destEdge.slot];
+    if (typeof destTarget !== 'string' || destTarget.length === 0) {
+      throw new MutationError('That move would break the journey.');
+    }
+    // 3) INSERT rootId on the destination edge: A[slot] = rootId, rootId.next = the
+    //    destination's now-current target. (rootId keeps its own non-edge config.)
+    nodes[destEdge.from] = repointSlot(destFrom, destEdge.slot, rootId);
+    nodes[rootId] = repointSlot(def.nodes[rootId]!, 'next', destTarget);
+
+    const nextDef = { startNode: def.startNode, nodes };
+    assertWellFormed(nextDef, 'That move would break the journey.');
+    return parseDefinition(nextDef);
+  }
+
+  // BRANCH move (a condition root): relocate the EXCLUSIVE SUBTREE as a unit.
+  const { ids: S, continuation: C } = plan;
 
   // No-op: already sitting on this destination.
   if (destEdge.to === rootId) return model;
@@ -565,7 +670,29 @@ export function moveSubtree(model: CanvasModel, rootId: string, destEdge: Canvas
 export function duplicateSubtree(model: CanvasModel, rootId: string, destEdge: CanvasEdge): CanvasModel {
   if (rootId === model.start) throw new MutationError("The trigger can't be duplicated.");
   const def = buildDefinition(model);
-  const { ids: S, continuation: C } = exclusiveSubtree(def, rootId);
+  const plan = movePlan(model, rootId);
+
+  // SINGLE-NODE duplicate: clone JUST rootId with a fresh id and splice the copy on
+  // the destination edge (A→clone→B). The originals are untouched.
+  if (plan.mode === 'single') {
+    if (destEdge.from === rootId) {
+      throw new MutationError("Choose a spot outside the step you're copying.");
+    }
+    const existing = new Set<string>(Object.keys(def.nodes));
+    const cloneId = freshNodeId(paletteTypeOf(def.nodes[rootId]!), existing);
+    const nodes: Record<string, DslNode> = { ...def.nodes };
+    // The clone copies rootId's config, but its `next` is the destination's target B.
+    nodes[cloneId] = repointSlot({ ...def.nodes[rootId]! }, 'next', destEdge.to);
+    // Splice: A's slot that targeted B now targets the clone. Originals untouched.
+    nodes[destEdge.from] = repointSlot(nodes[destEdge.from]!, destEdge.slot, cloneId);
+
+    const nextDef = { startNode: def.startNode, nodes };
+    assertWellFormed(nextDef, 'That copy would break the journey.');
+    return parseDefinition(nextDef);
+  }
+
+  // BRANCH duplicate (a condition root): clone the EXCLUSIVE SUBTREE as a unit.
+  const { ids: S, continuation: C } = plan;
 
   // Build an old→new id map, minting a fresh id per cloned node (collision-checked
   // against the originals AND the ids already minted).
