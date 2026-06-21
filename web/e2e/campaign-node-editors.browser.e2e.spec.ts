@@ -222,8 +222,8 @@ test('UPDATE-PROFILE editor: a LIST of assignments (a literal + a JS value w/ pl
   await row1.getByTestId('assignment-value-mode').selectOption('js');
   await expect(row1.getByTestId('assignment-js')).toBeVisible();
   await row1.getByTestId('assignment-js').fill('return "Hi " + ');
-  // Insert a placeholder token via the per-row inserter (appends to the JS field).
-  await row1.getByTestId('placeholder-insert').selectOption('{{customer.first_name}}');
+  // Insert a placeholder token via the per-row tag cloud (click the chip → appends to JS).
+  await row1.getByTestId('placeholder-token').filter({ hasText: 'customer.first_name' }).click();
   await expect(row1.getByTestId('assignment-js')).toHaveValue('return "Hi " + {{customer.first_name}}');
 
   await drawer.getByTestId('node-save').click();

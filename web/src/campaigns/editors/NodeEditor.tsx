@@ -623,26 +623,26 @@ function UpdateProfileEditor(props: NodeEditorProps) {
   );
 }
 
-/** A small token-inserter Select for expression / js value fields (resets after pick). */
+/** A tag-cloud of clickable token links for expression / js value fields — clicking
+ *  one inserts its {{…}} token into the row's value (cleaner than a dropdown). */
 function PlaceholderInsert(props: { rowIndex: number; onInsert: (i: number, token: string) => void }) {
   return (
-    <Select
-      data-testid="placeholder-insert"
-      class="w-full text-xs"
-      value=""
-      onChange={(e: Event) => {
-        const sel = e.target as HTMLSelectElement;
-        props.onInsert(props.rowIndex, sel.value);
-        sel.value = '';
-      }}
-    >
-      <option value="">Insert a placeholder…</option>
+    <div data-testid="placeholder-insert" class="flex flex-wrap items-center gap-1.5">
+      <span class="text-[11px] font-medium uppercase tracking-wide text-stone-400">Insert</span>
       {PLACEHOLDER_TOKENS.map((t) => (
-        <option key={t.token} value={t.token}>
-          {t.token}
-        </option>
+        <button
+          key={t.token}
+          type="button"
+          data-testid="placeholder-token"
+          data-token={t.token}
+          title={t.token}
+          onClick={() => props.onInsert(props.rowIndex, t.token)}
+          class="rounded-md border border-stone-200 bg-stone-50 px-2 py-0.5 font-mono text-[11px] text-stone-600 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+        >
+          {t.label}
+        </button>
       ))}
-    </Select>
+    </div>
   );
 }
 
