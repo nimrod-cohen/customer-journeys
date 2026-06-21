@@ -61,6 +61,36 @@ describe('decideDispatch — guard order + short-circuit', () => {
     expect(d.stoppedAt).toBe('suppression');
   });
 
+  it('medium-group opt-out → skip, stoppedAt=medium-optout', () => {
+    const d = decideDispatch(base({ optedOutOfMedium: true }));
+    expect(d.action).toBe('skip');
+    expect(d.stoppedAt).toBe('medium-optout');
+  });
+
+  it('topic opt-out → skip, stoppedAt=topic-optout', () => {
+    const d = decideDispatch(base({ topicUnsubscribed: true }));
+    expect(d.action).toBe('skip');
+    expect(d.stoppedAt).toBe('topic-optout');
+  });
+
+  it('suppression beats medium/topic opt-out (order: suppression first)', () => {
+    const d = decideDispatch(base({ isSuppressed: true, optedOutOfMedium: true, topicUnsubscribed: true }));
+    expect(d.stoppedAt).toBe('suppression');
+  });
+
+  it('medium-group opt-out beats topic opt-out (order)', () => {
+    const d = decideDispatch(base({ optedOutOfMedium: true, topicUnsubscribed: true }));
+    expect(d.stoppedAt).toBe('medium-optout');
+  });
+
+  it('medium/topic opt-out beat the cap (order: opt-outs before cap/quiet)', () => {
+    const d = decideDispatch(
+      base({ topicUnsubscribed: true, recentSendCount: 999, quietHours: { startHour: 0, endHour: 23 } }),
+    );
+    expect(d.action).toBe('skip');
+    expect(d.stoppedAt).toBe('topic-optout');
+  });
+
   it('frequency cap blocks before quiet → skip, stoppedAt=frequency-cap', () => {
     const d = decideDispatch(
       base({ recentSendCount: 7, quietHours: { startHour: 0, endHour: 23 } }),

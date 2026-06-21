@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { canSend, buildListUnsubscribeHeaders, type SendingIdentity } from '@cdp/email';
 import type { SendEmailInput } from '@cdp/email';
 import { expandCustomerToken, type WorkspaceStatus } from '@cdp/shared';
-import type { ChannelMessage, Medium } from '@cdp/channels';
+import type { ChannelMessage, Medium, MediumGroup } from '@cdp/channels';
 
 /** A parameterized query ready for `pool.query(text, values)` (shared shape). */
 export interface SqlStatement {
@@ -78,6 +78,21 @@ export interface DispatchContext {
   /** Whether the recipient is suppressed (per-workspace OR global hard bounce). */
   readonly isSuppressed: boolean;
   /**
+   * Whether the recipient has opted OUT of this message's MEDIUM GROUP
+   * (CLAUDE.md topic-subscriptions): a `channel_optouts` row for `email` or
+   * `sms_whatsapp`. A GLOBAL per-group opt-out — independent of any topic. When
+   * true the send is SKIPPED (recorded, never crashes the batch). Defaults false.
+   */
+  readonly optedOutOfMedium?: boolean;
+  /**
+   * Whether the recipient is unsubscribed from this message's TOPIC: the message
+   * carries a `topic_id` AND a `topic_subscriptions` row says `subscribed=false`.
+   * Topic subscription is DEFAULT-ON (absence of a row = subscribed), so this is
+   * true ONLY for an explicit topic opt-out. When true the send is SKIPPED.
+   * Defaults false (an untopiced message, or a still-subscribed recipient).
+   */
+  readonly topicUnsubscribed?: boolean;
+  /**
    * Timestamp of the recipient's most recent soft bounce, if any. While within
    * SOFT_BOUNCE_COOLDOWN_HOURS after it, the address is given time to recover and
    * is NOT mailed (the send is deferred). Absent/null → no cooldown.
@@ -114,6 +129,8 @@ export const SOFT_BOUNCE_COOLDOWN_HOURS = 24;
 export type GuardStage =
   | 'gate'
   | 'suppression'
+  | 'medium-optout'
+  | 'topic-optout'
   | 'soft-bounce-cooldown'
   | 'frequency-cap'
   | 'quiet-hours';
@@ -412,7 +429,20 @@ export function decideDispatch(ctx: DispatchContext): DispatchDecision {
   if (ctx.isSuppressed) {
     return { action: 'skip', reason: 'recipient suppressed', stoppedAt: 'suppression' };
   }
-  // 2b. soft-bounce cooldown — give a transiently-failing mailbox time to clear
+  // 2a. medium-group opt-out — the recipient opted out of this whole channel
+  //     family (email or sms_whatsapp). A GLOBAL preference, independent of any
+  //     topic; checked right after the hard suppression (both are recipient-level
+  //     opt-outs that must short-circuit before topic / cap / quiet checks).
+  if (ctx.optedOutOfMedium) {
+    return { action: 'skip', reason: 'recipient opted out of this channel', stoppedAt: 'medium-optout' };
+  }
+  // 2b. topic opt-out — the message is tagged with a topic the recipient
+  //     unsubscribed from (topic_subscriptions.subscribed=false). Default-on, so
+  //     this only fires on an explicit topic opt-out.
+  if (ctx.topicUnsubscribed) {
+    return { action: 'skip', reason: 'recipient unsubscribed from this topic', stoppedAt: 'topic-optout' };
+  }
+  // 2c. soft-bounce cooldown — give a transiently-failing mailbox time to clear
   //     before mailing it again (defer, don't drop).
   if (ctx.lastSoftBounceAt) {
     const eligibleAt = new Date(
@@ -514,6 +544,48 @@ export function buildIsSuppressedQuery(workspaceId: string, email: string): SqlS
              SELECT 1 FROM global_hard_bounces WHERE email = $2
            ) AS suppressed`,
     values: [workspaceId, email],
+  };
+}
+
+/**
+ * Has this recipient opted OUT of the message's MEDIUM GROUP? True iff a
+ * `channel_optouts` row exists for (workspace_id, profile_id, medium_group). A
+ * GLOBAL per-group opt-out (CLAUDE.md topic-subscriptions). workspace_id at $1;
+ * returns a single boolean column `opted_out`.
+ */
+export function buildMediumOptOutQuery(
+  workspaceId: string,
+  profileId: string,
+  mediumGroup: MediumGroup,
+): SqlStatement {
+  if (!workspaceId) throw new Error('buildMediumOptOutQuery: workspaceId is required');
+  return {
+    text: `SELECT EXISTS (
+             SELECT 1 FROM channel_optouts
+             WHERE workspace_id = $1 AND profile_id = $2 AND medium_group = $3
+           ) AS opted_out`,
+    values: [workspaceId, profileId, mediumGroup],
+  };
+}
+
+/**
+ * Is this recipient unsubscribed from the message's TOPIC? Topic subscription is
+ * DEFAULT-ON, so this is true ONLY when an explicit `topic_subscriptions` row
+ * says `subscribed=false`. workspace_id at $1; returns a single boolean column
+ * `unsubscribed`.
+ */
+export function buildTopicUnsubscribedQuery(
+  workspaceId: string,
+  profileId: string,
+  topicId: string,
+): SqlStatement {
+  if (!workspaceId) throw new Error('buildTopicUnsubscribedQuery: workspaceId is required');
+  return {
+    text: `SELECT EXISTS (
+             SELECT 1 FROM topic_subscriptions
+             WHERE workspace_id = $1 AND profile_id = $2 AND topic_id = $3 AND subscribed = false
+           ) AS unsubscribed`,
+    values: [workspaceId, profileId, topicId],
   };
 }
 

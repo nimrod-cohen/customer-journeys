@@ -134,6 +134,13 @@ async function ownsResource(
   return (rowCount ?? 0) > 0;
 }
 
+/** Whether a topic id belongs to the active workspace (tenancy guard, inv.2). */
+async function topicBelongsToWorkspace(pool: Pool, workspaceId: string, topicId: string): Promise<boolean> {
+  const q = scopedQuery(workspaceId, 'SELECT 1 FROM topics WHERE id = $1', [topicId]);
+  const { rowCount } = await pool.query(q.text, q.values);
+  return (rowCount ?? 0) > 0;
+}
+
 // ---------------------------------------------------------------------------
 // session / identity
 // ---------------------------------------------------------------------------
@@ -1069,6 +1076,78 @@ export const deleteDomainSender: Handler = async (ctx, pool, req) => {
 // segments + audiences (manage_content)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// topics (subscription management) — workspace-scoped CRUD (manage_content)
+// ---------------------------------------------------------------------------
+
+/** GET /topics?include_archived= — the workspace's topics (active only by default). */
+export const listTopics: Handler = async (ctx, pool, req) => {
+  const includeArchived = req.query.include_archived === 'true' || req.query.include_archived === '1';
+  const q = scopedQuery(
+    ctx.workspaceId,
+    includeArchived
+      ? 'SELECT id, name, description, archived, created_at FROM topics'
+      : 'SELECT id, name, description, archived, created_at FROM topics WHERE archived = false',
+  );
+  const { rows } = await pool.query(`${q.text} ORDER BY created_at DESC`, q.values);
+  return ok({ topics: rows });
+};
+
+/** POST /topics — create a topic. name required; scoped to the active workspace. */
+export const createTopic: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const name = String(b.name ?? '').trim();
+  if (!name) return ok({ error: 'name required' }, 400);
+  const description = b.description != null ? String(b.description) : null;
+  const { rows } = await pool.query(
+    `INSERT INTO topics (workspace_id, name, description)
+     VALUES ($1, $2, $3) RETURNING id, name, description, archived, created_at`,
+    [ctx.workspaceId, name, description],
+  );
+  return ok({ topic: rows[0] }, 201);
+};
+
+/** PATCH /topics/:id — rename / re-describe / archive. Scoped; a foreign id 404s. */
+export const updateTopic: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const name = b.name !== undefined ? String(b.name).trim() : null;
+  if (b.name !== undefined && !name) return ok({ error: 'name required' }, 400);
+  const archived = b.archived !== undefined ? Boolean(b.archived) : null;
+  const description = b.description !== undefined ? (b.description != null ? String(b.description) : null) : undefined;
+  const q = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE topics SET
+       name = COALESCE($1, name),
+       description = CASE WHEN $2::boolean THEN $3 ELSE description END,
+       archived = COALESCE($4, archived)
+     WHERE id = $5`,
+    [name, description !== undefined, description ?? null, archived, id],
+  );
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  const sel = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, description, archived, created_at FROM topics WHERE id = $1',
+    [id],
+  );
+  const { rows } = await pool.query(sel.text, sel.values);
+  return ok({ topic: rows[0] });
+};
+
+/** DELETE /topics/:id — hard-delete a topic (its subscription rows cascade). Scoped. */
+export const deleteTopic: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  // Defensively null out any broadcast/campaign reference so the FK doesn't block
+  // (an attached topic just becomes untopiced — sends to everyone not opted out).
+  await pool.query('UPDATE broadcasts SET topic_id = NULL WHERE workspace_id = $1 AND topic_id = $2', [ctx.workspaceId, id]);
+  await pool.query('UPDATE campaigns SET topic_id = NULL WHERE workspace_id = $1 AND topic_id = $2', [ctx.workspaceId, id]);
+  const q = scopedQuery(ctx.workspaceId, 'DELETE FROM topics WHERE id = $1', [id]);
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ deleted: rowCount });
+};
+
 export const listSegments: Handler = async (ctx, pool) => {
   const q = scopedQuery(
     ctx.workspaceId,
@@ -1669,7 +1748,7 @@ export const getBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, medium, text_body, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz FROM broadcasts WHERE id = $1',
+    'SELECT id, name, status, medium, text_body, topic_id, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz FROM broadcasts WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -1815,15 +1894,21 @@ export const createBroadcast: Handler = async (ctx, pool, req) => {
   // back to email (the check constraint also enforces it).
   const medium = b.medium === 'sms' || b.medium === 'whatsapp' ? String(b.medium) : 'email';
   const textBody = medium === 'email' ? null : b.text_body != null ? String(b.text_body) : null;
+  // An optional TOPIC tag (subscription gating). A cross-workspace topic id is
+  // rejected — workspace from the token, never trusted from the body (inv.2).
+  const topicId = b.topic_id != null ? String(b.topic_id) : null;
+  if (topicId && !(await topicBelongsToWorkspace(pool, ctx.workspaceId, topicId)))
+    return ok({ error: 'unknown topic' }, 400);
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, medium, text_body, template_id, audience_kind, audience_ref, scheduled_at, scheduled_tz, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, name, status, medium`,
+    `INSERT INTO broadcasts (workspace_id, name, medium, text_body, template_id, topic_id, audience_kind, audience_ref, scheduled_at, scheduled_tz, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, name, status, medium`,
     [
       ctx.workspaceId,
       String(b.name ?? 'Untitled'),
       medium,
       textBody,
       b.template_id ?? null,
+      topicId,
       String(b.audience_kind ?? 'segment'),
       b.audience_ref ?? null,
       scheduledAt,
@@ -1860,6 +1945,12 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
   const textBodyProvided = b.text_body !== undefined;
   const textBody =
     medium === 'email' ? null : textBodyProvided ? (b.text_body != null ? String(b.text_body) : null) : null;
+  // topic_id is updated only when the key is present; a cross-workspace id is
+  // rejected (inv.2). `topic_id: null` explicitly clears the tag.
+  const topicProvided = b.topic_id !== undefined;
+  const topicId = topicProvided && b.topic_id != null ? String(b.topic_id) : null;
+  if (topicId && !(await topicBelongsToWorkspace(pool, ctx.workspaceId, topicId)))
+    return ok({ error: 'unknown topic' }, 400);
   const upd = scopedQuery(
     ctx.workspaceId,
     `UPDATE broadcasts SET
@@ -1872,6 +1963,7 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
        status = $7,
        medium = COALESCE($9, medium),
        text_body = CASE WHEN $9 = 'email' THEN NULL WHEN $10 THEN $11 ELSE text_body END,
+       topic_id = CASE WHEN $12::boolean THEN $13 ELSE topic_id END,
        updated_at = now()
      WHERE id = $8`,
     [
@@ -1886,6 +1978,8 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
       medium,
       textBodyProvided,
       textBody,
+      topicProvided,
+      topicId,
     ],
   );
   const { rowCount } = await pool.query(upd.text, upd.values);
@@ -1902,7 +1996,7 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const src = scopedQuery(
     ctx.workspaceId,
-    'SELECT name, template_id, audience_kind, audience_ref, medium, text_body FROM broadcasts WHERE id = $1',
+    'SELECT name, template_id, audience_kind, audience_ref, medium, text_body, topic_id FROM broadcasts WHERE id = $1',
     [id],
   );
   const b = (await pool.query(src.text, src.values)).rows[0] as
@@ -1913,6 +2007,7 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
         audience_ref: string;
         medium: string;
         text_body: string | null;
+        topic_id: string | null;
       }
     | undefined;
   if (!b) return ok({ error: 'not found' }, 404);
@@ -1930,8 +2025,8 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
     templateId = t?.id ?? null;
   }
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, medium, text_body, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8) RETURNING id, name, status, medium`,
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, medium, text_body, topic_id, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9) RETURNING id, name, status, medium`,
     [
       ctx.workspaceId,
       `${b.name} (copy)`,
@@ -1940,6 +2035,7 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
       b.audience_ref,
       b.medium,
       b.text_body,
+      b.topic_id,
       ctx.userId ?? null,
     ],
   );
@@ -4131,6 +4227,10 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /domain-senders': listDomainSenders,
   'POST /domain-senders': createDomainSender,
   'DELETE /domain-senders/:id': deleteDomainSender,
+  'GET /topics': listTopics,
+  'POST /topics': createTopic,
+  'PATCH /topics/:id': updateTopic,
+  'DELETE /topics/:id': deleteTopic,
   'GET /segments': listSegments,
   'GET /segments/:id': getSegment,
   'POST /segments': createSegment,

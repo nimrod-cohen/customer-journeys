@@ -114,8 +114,9 @@ describe.skipIf(!RUN)('dispatcher send-gate uses verified sending_domains (real 
     expect(ses.sends).toHaveLength(1);
     // From falls back to no-reply@<verified domain> (no named sender on the template).
     expect(ses.sends[0]!.from).toBe('no-reply@mail.acme.com');
-    // {{unsubscribe}} rendered into this recipient's workspace-scoped opt-out link.
-    expect(ses.sends[0]!.html).toContain('unsubscribe?workspace_id=');
+    // {{unsubscribe}} rendered into this recipient's workspace-scoped PREFERENCE
+    // CENTER link (manage your subscription — topics + channel groups + opt-out-all).
+    expect(ses.sends[0]!.html).toContain('manage-subscription?workspace_id=');
     expect(ses.sends[0]!.html).toContain('email=vd%40example.com');
     const ob = await admin.query('SELECT status FROM outbox WHERE id = $1', [outboxId]);
     expect(ob.rows[0].status).toBe('sent');

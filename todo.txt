@@ -64,6 +64,7 @@
 * UI should work in mobile as well, make the whole thing responsive.
 * Connect to SMS via provider
 * Connect to  WhatsApp official API
+* never send emails/sms/WhatsApp to unsubscribed profile, even if he meets the segment/filter criteria. 
 
 
 # TBD - FUTURE , NOT TO BE DONE NOW

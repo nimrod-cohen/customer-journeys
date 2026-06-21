@@ -23,6 +23,7 @@ import { ProfileDetail } from './screens/ProfileDetail.js';
 import { TemplatesList } from './screens/TemplatesList.js';
 import { Help } from './screens/Help.js';
 import { Activity } from './screens/Activity.js';
+import { Topics } from './screens/Topics.tsx';
 import { TemplateEditor } from './screens/TemplateEditor.tsx';
 import { DialogHost } from './ui/dialog.tsx';
 import { ToastHost } from './ui/toast.tsx';
@@ -88,6 +89,8 @@ function screenFor(path: string): JSX.Element {
       return <TemplateEditor />;
     case '/profiles':
       return <ProfileExplorer />;
+    case '/topics':
+      return <Topics />;
     case '/suppressions':
       return <SuppressionList />;
     case '/admin':

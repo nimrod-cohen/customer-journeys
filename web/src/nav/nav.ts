@@ -28,6 +28,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // The email editor itself (/editor) has no standalone nav item — it is reached
   // from the Templates list and from the "Design email" action on Broadcasts.
   { id: 'profiles', label: 'Profiles', path: '/profiles', capability: 'manage_content' },
+  // Subscription topics recipients can opt out of (the preference center).
+  { id: 'topics', label: 'Topics', path: '/topics', capability: 'manage_content' },
   { id: 'suppressions', label: 'Suppressions', path: '/suppressions', capability: 'manage_content' },
   // Company settings holds the company/workspaces tab AND the Billing & usage tab.
   // Visible to anyone who can manage the company OR view billing (e.g. accounting).

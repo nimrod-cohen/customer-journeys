@@ -407,6 +407,10 @@ export function BroadcastWizard({ id }: { id?: string }) {
   const [medium, setMedium] = useState<Medium>('email');
   const [textBody, setTextBody] = useState('');
   const [tplId, setTplId] = useState('');
+  // Optional TOPIC tag (subscription gating): a recipient unsubscribed from this
+  // topic is skipped at send. '' = no topic (sends to everyone not opted out).
+  const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
+  const [topicId, setTopicId] = useState('');
   // The broadcast's WORKING COPY of a template (kind='copy'): picking a library
   // template clones it so this broadcast's content is independently editable and
   // the library original stays pristine.
@@ -435,9 +439,11 @@ export function BroadcastWizard({ id }: { id?: string }) {
     void Promise.all([
       api.get<{ segments: Segment[] }>('/segments'),
       api.get<{ templates: Template[] }>('/templates'),
-    ]).then(([s, t]) => {
+      api.get<{ topics: { id: string; name: string }[] }>('/topics'),
+    ]).then(([s, t, tp]) => {
       setSegments(s.segments);
       setTemplates(t.templates);
+      setTopics(tp.topics);
     });
   }, []);
 
@@ -446,7 +452,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
   useEffect(() => {
     if (!id) return;
     void api
-      .get<{ broadcast: Broadcast & { audience_ref: string; template_id: string | null; text_body: string | null } }>(`/broadcasts/${id}`)
+      .get<{ broadcast: Broadcast & { audience_ref: string; template_id: string | null; text_body: string | null; topic_id: string | null } }>(`/broadcasts/${id}`)
       .then((r) => {
         const b = r.broadcast;
         if (!EDITABLE.has(b.status)) {
@@ -458,6 +464,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
         setMedium((b.medium ?? 'email') as Medium);
         setTextBody(b.text_body ?? '');
         setTplId(b.template_id ?? '');
+        setTopicId(b.topic_id ?? '');
         if (b.scheduled_at) {
           const tz = b.scheduled_tz || BROWSER_TZ;
           setScheduleMode('later');
@@ -556,6 +563,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
       audience_kind: 'segment',
       audience_ref: segId,
       template_id: tplId || null,
+      topic_id: topicId || null,
       scheduled_at: scheduledIso,
       scheduled_tz: scheduledIso ? timeZone : null,
     };
@@ -635,6 +643,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
         audience_kind: 'segment',
         audience_ref: segId,
         template_id: medium === 'email' ? tplId : null,
+        topic_id: topicId || null,
         scheduled_at: scheduledIso,
         scheduled_tz: scheduledIso ? timeZone : null,
       };
@@ -754,6 +763,23 @@ export function BroadcastWizard({ id }: { id?: string }) {
                   </option>
                 ))}
               </Select>
+            </Field>
+            <Field label="Topic (optional)">
+              <Select
+                data-testid="broadcast-topic"
+                value={topicId}
+                onChange={(e: Event) => setTopicId((e.target as HTMLSelectElement).value)}
+              >
+                <option value="">No topic</option>
+                {topics.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+              <p class="mt-1 text-xs text-stone-500">
+                Recipients who unsubscribed from this topic are skipped automatically.
+              </p>
             </Field>
           </div>
         ) : step === 1 && medium !== 'email' ? (

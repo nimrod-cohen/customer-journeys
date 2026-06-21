@@ -17,6 +17,8 @@ import {
   buildOutboxClaim,
   buildRecentSendCountQuery,
   buildIsSuppressedQuery,
+  buildMediumOptOutQuery,
+  buildTopicUnsubscribedQuery,
   buildLastSoftBounceQuery,
   buildMessagesLogInsert,
   buildMessagesLogFailure,
@@ -36,7 +38,13 @@ import {
   type TrackedLink,
 } from './core.js';
 import { customerMerge, expandCustomerToken } from '@cdp/shared';
-import { resolveChannelProvider, isTextMedium, type ChannelProvider, type Medium } from '@cdp/channels';
+import {
+  resolveChannelProvider,
+  isTextMedium,
+  mediumGroupOf,
+  type ChannelProvider,
+  type Medium,
+} from '@cdp/channels';
 
 /** A minimal query reader (returns rows). The orchestrator never opens a tx. */
 export interface Reader {
@@ -233,16 +241,38 @@ export async function dispatchOutbox(
     // broadcast row for the text body. Email is the default for anything untagged.
     let medium: Medium = 'email';
     let textBody: string | null = null;
+    // The message's optional TOPIC (CLAUDE.md topic-subscriptions): lives on the
+    // broadcast/campaign row. A recipient unsubscribed from it is skipped.
+    let topicId: string | null = null;
     const payloadMedium = payload['medium'];
-    if (broadcastId && (payloadMedium === 'sms' || payloadMedium === 'whatsapp')) {
-      const { rows: bcRows } = await deps.reader.query<{ medium: string; text_body: string | null }>(
-        `SELECT medium, text_body FROM broadcasts WHERE workspace_id = $1 AND id = $2`,
-        [workspaceId, broadcastId],
-      );
-      if (bcRows[0] && (bcRows[0].medium === 'sms' || bcRows[0].medium === 'whatsapp')) {
-        medium = bcRows[0].medium;
-        textBody = bcRows[0].text_body;
+    if (broadcastId) {
+      // Load the broadcast row once: it carries text_body (sms/whatsapp) AND topic_id.
+      const { rows: bcRows } = await deps.reader.query<{
+        medium: string;
+        text_body: string | null;
+        topic_id: string | null;
+      }>(`SELECT medium, text_body, topic_id FROM broadcasts WHERE workspace_id = $1 AND id = $2`, [
+        workspaceId,
+        broadcastId,
+      ]);
+      if (bcRows[0]) {
+        topicId = bcRows[0].topic_id ?? null;
+        if (
+          (payloadMedium === 'sms' || payloadMedium === 'whatsapp') &&
+          (bcRows[0].medium === 'sms' || bcRows[0].medium === 'whatsapp')
+        ) {
+          medium = bcRows[0].medium;
+          textBody = bcRows[0].text_body;
+        }
       }
+    } else if (ob.campaign_id) {
+      // Campaign sends are email-only this phase; carry the campaign's topic (the
+      // column is ready — gating applies uniformly through the same pipeline).
+      const { rows: cmRows } = await deps.reader.query<{ topic_id: string | null }>(
+        `SELECT topic_id FROM campaigns WHERE workspace_id = $1 AND id = $2`,
+        [workspaceId, ob.campaign_id],
+      );
+      topicId = cmRows[0]?.topic_id ?? null;
     }
 
     // The recipient's own data populates the `customer.*` namespace; an explicit
@@ -250,14 +280,20 @@ export async function dispatchOutbox(
     // values are authoritative (override a stale payload customer key).
     const merge: Record<string, string> = { ...asStringRecord(payload['merge']), ...customerMerge(profile) };
     // `{{unsubscribe}}` / `{{unsubscribe_url}}` resolve to THIS recipient's
-    // workspace-scoped unsubscribe link (the page re-affirms before opting out;
-    // confirming sets the profile `unsubscribed = true`). unsubscribe_url is the
-    // raw URL (for a custom-text link); unsubscribe is a ready-made anchor.
+    // workspace-scoped PREFERENCE CENTER (manage your subscription) — where they
+    // can opt out of specific topics / a channel group, or unsubscribe from
+    // everything (CLAUDE.md topic-subscriptions). unsubscribe_url is the raw URL
+    // (for a custom-text link); unsubscribe is a ready-made anchor. The RFC 8058
+    // one-click List-Unsubscribe header (built in @cdp/email) still points at
+    // /unsubscribe — a full email-group opt-out — for mail-client compliance.
     if (profile.email) {
-      // Carry the source broadcast/campaign in the link so the unsubscribe POST
-      // can attribute the opt-out to the send (per-broadcast funnel metric).
+      // The preference center shares the scoped-link shape; derive its base from
+      // the unsubscribe base (…/unsubscribe → …/manage-subscription).
+      const manageBaseUrl = deps.unsubscribeBaseUrl.replace(/\/unsubscribe$/, '/manage-subscription');
+      // Carry the source broadcast/campaign in the link so a full opt-out can be
+      // attributed to the send (per-broadcast funnel metric).
       const unsubUrl = buildUnsubscribeUrl({
-        baseUrl: deps.unsubscribeBaseUrl,
+        baseUrl: manageBaseUrl,
         workspaceId,
         email: profile.email,
         broadcastId,
@@ -327,6 +363,22 @@ export async function dispatchOutbox(
       lastSoftBounceAt = sbRows[0]?.at ? new Date(sbRows[0].at) : null;
     }
 
+    // Topic / medium-group opt-outs (CLAUDE.md topic-subscriptions). Scoped by
+    // (workspace_id, profile_id). The medium-group opt-out is GLOBAL (the whole
+    // email or sms_whatsapp family); the topic opt-out only applies when the
+    // message carries a topic AND the profile explicitly unsubscribed from it
+    // (default-on: absence of a row = still subscribed).
+    const moq = buildMediumOptOutQuery(workspaceId, profile.id, mediumGroupOf(medium));
+    const { rows: moRows } = await deps.reader.query<{ opted_out: boolean }>(moq.text, moq.values);
+    const optedOutOfMedium = moRows[0]?.opted_out === true;
+
+    let topicUnsubscribed = false;
+    if (topicId) {
+      const tq = buildTopicUnsubscribedQuery(workspaceId, profile.id, topicId);
+      const { rows: tRows } = await deps.reader.query<{ unsubscribed: boolean }>(tq.text, tq.values);
+      topicUnsubscribed = tRows[0]?.unsubscribed === true;
+    }
+
     // recent-send count for the frequency cap window.
     let recentSendCount = 0;
     if (frequencyCapPerDays && frequencyCapPerDays > 0) {
@@ -349,6 +401,8 @@ export async function dispatchOutbox(
       quietHours,
       recentSendCount,
       isSuppressed,
+      optedOutOfMedium,
+      topicUnsubscribed,
       lastSoftBounceAt,
       now,
       unsubscribeBaseUrl: deps.unsubscribeBaseUrl,
@@ -364,7 +418,12 @@ export async function dispatchOutbox(
     // Non-send outcomes: release the claim back so the row reflects a terminal
     // (skip/refuse) or re-runnable (defer) state, but NEVER call SES/the provider.
     if (decision.action !== 'send') {
-      return finalizeNonSend(deps, workspaceId, outboxId, decision);
+      return finalizeNonSend(deps, workspaceId, outboxId, decision, {
+        profileId: profile.id,
+        campaignId: ob.campaign_id ?? null,
+        broadcastId,
+        medium,
+      });
     }
 
     // 5/6. all-pass — ROUTE BY MEDIUM. Email keeps the SES path UNCHANGED. The
@@ -453,12 +512,21 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
   return { result: 'send', sesMessageId: providerMessageId };
 }
 
+/** The send identity a non-send finalize needs to record a messages_log row. */
+interface NonSendTarget {
+  readonly profileId: string;
+  readonly campaignId: string | null;
+  readonly broadcastId: string | null;
+  readonly medium: Medium;
+}
+
 /** Set a claimed row to a terminal/deferred state for a non-send decision. */
 async function finalizeNonSend(
   deps: DispatchDeps,
   workspaceId: string,
   outboxId: string,
   decision: DispatchDecision,
+  target: NonSendTarget,
 ): Promise<DispatchOutcome> {
   if (decision.action === 'defer') {
     // Re-queue: reset to pending so a later sweep/redrive re-evaluates it.
@@ -469,9 +537,26 @@ async function finalizeNonSend(
       deferUntil: decision.deferUntil ?? deps.now(),
     };
   }
-  // skip / refuse → terminal: mark the row so it isn't retried.
+  // skip / refuse → terminal: mark the row so it isn't retried. A SKIP (suppression,
+  // medium-group opt-out, topic opt-out, frequency cap) is ALSO recorded as a
+  // messages_log 'skipped' row so the skip is auditable (per-send stats / activity)
+  // and the batch never silently drops a recipient. A 'refuse' (workspace not
+  // active/verified) is an operator state, not a per-recipient outcome, so it only
+  // marks the outbox row. Both commit in ONE workspace-scoped tx.
   const status = decision.action === 'refuse' ? 'refused' : 'skipped';
   await deps.runInWorkspaceTx(workspaceId, [
+    ...(decision.action === 'skip'
+      ? [
+          buildMessagesLogFailure(
+            workspaceId,
+            target.profileId,
+            target.campaignId,
+            target.broadcastId,
+            target.medium,
+            'skipped',
+          ),
+        ]
+      : []),
     {
       text: `UPDATE outbox SET status = $3, sent_at = now() WHERE workspace_id = $1 AND id = $2`,
       values: [workspaceId, outboxId, status],

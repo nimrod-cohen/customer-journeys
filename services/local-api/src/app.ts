@@ -13,7 +13,11 @@ import { makePgLookups } from './lookups.js';
 import { makeLocalDeps, type LocalApiDeps } from './deps.js';
 import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
-import { makeUnsubscribeHandler, runUnsubscribeInWorkspaceTx } from '@cdp/service-unsubscribe';
+import {
+  makeUnsubscribeHandler,
+  makePreferenceCenterHandler,
+  runUnsubscribeInWorkspaceTx,
+} from '@cdp/service-unsubscribe';
 
 /** A 1x1 fully-transparent GIF (the canonical 43-byte tracking pixel). */
 const TRANSPARENT_GIF = Buffer.from(
@@ -159,6 +163,34 @@ export function createApp(opts: CreateAppOptions): Hono {
   });
   app.post('/unsubscribe', async (c) => {
     const r = await runUnsubscribe('POST', c);
+    return c.body(r.body, r.statusCode as 200, r.headers ?? {});
+  });
+
+  // Preference center (CLAUDE.md topic-subscriptions): public, no auth — the
+  // "manage your subscription" page the `{{unsubscribe}}` body link points to.
+  // GET renders the topics + channel checkboxes; POST writes the granular prefs
+  // (a partial opt-out keeps the person reachable on still-subscribed channels;
+  // "unsubscribe from everything" sets the full suppression). workspace_id + email
+  // come ONLY from the scoped link. Reuses the SAME handler the Lambda runs.
+  const preferenceCenter = makePreferenceCenterHandler({
+    reader: opts.pool,
+    runInWorkspaceTx: (workspaceId, statements) => runUnsubscribeInWorkspaceTx(opts.pool, workspaceId, statements),
+  });
+  const runPrefCenter = async (
+    method: 'GET' | 'POST',
+    c: { req: { url: string; text: () => Promise<string> } },
+  ) => {
+    const qs = new URL(c.req.url).search.replace(/^\?/, '');
+    const base = { httpMethod: method, path: '/manage-subscription', rawQueryString: qs };
+    if (method === 'POST') return preferenceCenter({ ...base, body: await c.req.text().catch(() => '') });
+    return preferenceCenter(base);
+  };
+  app.get('/manage-subscription', async (c) => {
+    const r = await runPrefCenter('GET', c);
+    return c.body(r.body, r.statusCode as 200, r.headers ?? {});
+  });
+  app.post('/manage-subscription', async (c) => {
+    const r = await runPrefCenter('POST', c);
     return c.body(r.body, r.statusCode as 200, r.headers ?? {});
   });
 

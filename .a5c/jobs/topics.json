@@ -1,0 +1,37 @@
+{
+  "filesModified": [
+    "package.json (version 0.51.0 -> 0.52.0)",
+    "CLAUDE.md",
+    "packages/channels/src/index.ts",
+    "services/dispatcher/src/core.ts",
+    "services/dispatcher/src/dispatch.ts",
+    "services/dispatcher/test/dispatch-decision-pipeline.test.ts",
+    "services/dispatcher/test/verified-domain-gate.integration.test.ts",
+    "services/local-api/src/handlers.ts",
+    "services/local-api/src/routes.ts",
+    "services/local-api/src/app.ts",
+    "services/unsubscribe/src/index.ts",
+    "web/src/AppShell.tsx",
+    "web/src/nav/nav.ts",
+    "web/src/screens/BroadcastComposer.tsx",
+    "web/e2e/seed.ts"
+  ],
+  "filesCreated": [
+    "packages/db/supabase/migrations/0040_topics_subscriptions.sql",
+    "services/dispatcher/test/topic-medium-gating.integration.test.ts",
+    "services/local-api/test/topics-crud.integration.test.ts",
+    "services/local-api/test/preference-center.integration.test.ts",
+    "services/unsubscribe/src/preference-center.ts",
+    "services/unsubscribe/src/preference-handler.ts",
+    "services/unsubscribe/test/preference-center-core.test.ts",
+    "web/src/screens/Topics.tsx",
+    "web/e2e/topics-and-preference-center.browser.e2e.spec.ts"
+  ],
+  "migration": "0040_topics_subscriptions.sql (applied + idempotent on BOTH cdp and cdp_e2e)",
+  "approach": "Per-topic subscriptions (topic_subscriptions, default subscribed) + global per-medium-group opt-out (channel_optouts: email|sms_whatsapp) + hard suppression untouched. Dispatcher gains 2 skip stages (medium-optout, topic-optout) after suppression; skips now write messages_log 'skipped'. Topics admin CRUD + web screen + nav. Public preference center at /manage-subscription: partial opt-out never sets global suppression (person stays reachable on other channels); 'unsubscribe from everything' = full suppression + flag. {{unsubscribe}} body link -> preference center; RFC8058 one-click header stays /unsubscribe. Broadcast wizard topic selector. mediumGroupOf in @cdp/channels.",
+  "integrationPass": true,
+  "e2ePass": true,
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "ALL GREEN. Integration: dispatcher gating 12 + pipeline 6, topics CRUD 6, preference center 7, preference core 10. Full vitest: dispatcher 106, unsubscribe 32, channels 13, email 33, local-api 269, web-unit 262 — all pass. Typecheck 45/45. Lint: only the 7 KNOWN pre-existing react-hooks errors, NO new. E2E SOLO full suite: 133 passed (+ 1 pre-existing flaky company-ses-config that passes on retry, unrelated). Version bumped to 0.52.0. CLAUDE.md updated. NOTHING committed. campaigns.topic_id column added + dispatcher gates it; campaign-builder topic selector is the noted follow-up."
+}

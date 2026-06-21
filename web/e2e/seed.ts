@@ -29,6 +29,16 @@ export const SEG_B = '0e2efe00-0000-4000-8000-0000000000c3';
 export const SEG_DYN_A = '0e2efe00-0000-4000-8000-0000000000c4'; // dynamic: attributes.tier = vip
 export const SEG_A2 = '0e2efe00-0000-4000-8000-0000000000c5'; // segment in the 2nd Acme workspace
 export const CAMP_A = '0e2efe00-0000-4000-8000-0000000000c6'; // a started branching campaign in WS_A
+export const TOPIC_A = '0e2efe00-0000-4000-8000-0000000000c7'; // a subscription topic in WS_A (admin screen)
+export const TOPIC_A_NAME = 'Product news';
+// The public preference-center fixture lives in WS_B so its mutations (a partial
+// opt-out + "unsubscribe from everything" writing a suppression) never pollute
+// the WS_A profile/suppression counts other specs assert. WS_B already has a
+// profile (b1@beta.com); we add a WS_B topic for it.
+export const TOPIC_B = '0e2efe00-0000-4000-8000-0000000000c8'; // a subscription topic in WS_B
+export const TOPIC_B_NAME = 'Beta updates';
+/** The WS_B profile email used to drive the public preference center. */
+export const PREF_EMAIL = 'b1@beta.com';
 
 /** Segment names — asserted present/absent after switching workspaces. WS_A and
  * WS_A2 are BOTH in the Acme company (a user belongs to ONE company, which may
@@ -117,6 +127,11 @@ export async function seed(): Promise<void> {
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
       [SEG_B, WS_B, SEG_B_NAME, 'manual'],
     );
+    // A subscription TOPIC in WS_A (the Topics admin screen e2e asserts it) + one
+    // in WS_B (the public preference center e2e renders/mutates it against the WS_B
+    // profile b1@beta.com, isolating its writes from WS_A's asserted counts).
+    await pool.query("INSERT INTO topics (id, workspace_id, name) VALUES ($1,$2,$3)", [TOPIC_A, WS_A, TOPIC_A_NAME]);
+    await pool.query("INSERT INTO topics (id, workspace_id, name) VALUES ($1,$2,$3)", [TOPIC_B, WS_B, TOPIC_B_NAME]);
     // A DYNAMIC segment in A (rule attributes.tier = vip) with NO materialized
     // memberships — the Profiles filter must live-evaluate it.
     await pool.query(
@@ -272,6 +287,10 @@ export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void>
   for (const ws of [WS_A, WS_A2, WS_B]) {
     await pool.query('DELETE FROM segment_change_log WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
+    // Subscription state (CLAUDE.md topic-subscriptions): drop the opt-out rows
+    // (FK to profiles + topics) BEFORE profiles/topics so the teardown isn't blocked.
+    await pool.query('DELETE FROM topic_subscriptions WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM channel_optouts WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM suppressions WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [ws]);
     // usage_counters now gets rows from local SMS/WhatsApp sends (the text channels
@@ -285,6 +304,7 @@ export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void>
     await pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM segments WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM email_templates WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM topics WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM assets WHERE workspace_id = $1', [ws]);

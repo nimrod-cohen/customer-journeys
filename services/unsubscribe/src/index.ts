@@ -21,6 +21,26 @@ export {
   type UnsubscribeDeps,
 } from './handler.js';
 export { makeProdDeps, runUnsubscribeInWorkspaceTx, type PoolLike } from './deps.js';
+export {
+  makePreferenceCenterHandler,
+  type PreferenceCenterDeps,
+  type PreferenceReader,
+} from './preference-handler.js';
+export {
+  parsePreferenceUpdate,
+  buildActiveTopicsQuery,
+  buildTopicStateQuery,
+  buildGroupStateQuery,
+  buildTopicSubscriptionUpsert,
+  buildChannelOptOutWrite,
+  buildOptOutAllTopics,
+  toTopicChoices,
+  isMediumGroup,
+  MEDIUM_GROUPS,
+  type MediumGroup,
+  type TopicChoice,
+  type PreferenceUpdate,
+} from './preference-center.js';
 
 let cached: ReturnType<typeof makeUnsubscribeHandler> | undefined;
 

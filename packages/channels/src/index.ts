@@ -31,6 +31,32 @@ export function isTextMedium(m: unknown): m is TextMedium {
   return m === 'sms' || m === 'whatsapp';
 }
 
+/**
+ * A subscription MEDIUM GROUP — the granularity at which a recipient opts out of
+ * a whole channel family (CLAUDE.md topic-subscriptions). The user's model groups
+ * WhatsApp + SMS together: `email` and `sms_whatsapp`. A `channel_optouts` row is
+ * keyed on one of these.
+ */
+export type MediumGroup = 'email' | 'sms_whatsapp';
+
+/** The two medium groups (for validation / UI). */
+export const MEDIUM_GROUPS: readonly MediumGroup[] = ['email', 'sms_whatsapp'] as const;
+
+/** Whether `g` is a recognised medium group. */
+export function isMediumGroup(g: unknown): g is MediumGroup {
+  return g === 'email' || g === 'sms_whatsapp';
+}
+
+/** The medium group a sending medium belongs to (email→email; sms/whatsapp→sms_whatsapp). */
+export function mediumGroupOf(m: Medium): MediumGroup {
+  return m === 'email' ? 'email' : 'sms_whatsapp';
+}
+
+/** Human label for a medium group (UI / preference center). */
+export function mediumGroupLabel(g: MediumGroup): string {
+  return g === 'email' ? 'Email' : 'WhatsApp & SMS';
+}
+
 /** Human label for a medium (UI badges / messages). */
 export function mediumLabel(m: Medium): string {
   switch (m) {
