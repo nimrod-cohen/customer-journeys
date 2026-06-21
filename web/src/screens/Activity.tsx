@@ -219,7 +219,7 @@ export function Activity() {
                       <tr data-testid="activity-detail-row" class="bg-stone-50/40">
                         <td />
                         <td colSpan={5} class="px-4 pb-4 pt-1">
-                          <JsonView value={r.detail} />
+                          <JsonView value={r.detail} bare />
                         </td>
                       </tr>
                     ) : null}

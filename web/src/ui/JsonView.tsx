@@ -31,16 +31,34 @@ export function prettyJson(value: unknown): string {
   }
 }
 
-/** A scrollable, wrapping, pretty-printed JSON block. */
-export function JsonView({ value, class: cls = '' }: { value: unknown; class?: string }) {
-  return (
+/**
+ * A wrapping, pretty-printed JSON block. `bare` drops the boxed container (bg/ring/
+ * padding) for inline use (e.g. a master/detail table row). Long unbreakable strings
+ * always WRAP and never widen the layout: `break-words` plus, in bare mode, a
+ * `w-0 min-w-full` wrapper so the <pre> can't force a table cell wider than its column.
+ */
+export function JsonView({
+  value,
+  class: cls = '',
+  bare = false,
+}: {
+  value: unknown;
+  class?: string;
+  bare?: boolean;
+}) {
+  const pre = (
     <pre
       data-testid="json-view"
-      class={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-stone-50 px-3 py-2 text-xs leading-relaxed text-stone-600 ring-1 ring-inset ring-stone-100 ${cls}`}
+      class={`max-h-96 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-stone-600 ${
+        bare ? '' : 'rounded-lg bg-stone-50 px-3 py-2 ring-1 ring-inset ring-stone-100'
+      } ${cls}`}
     >
       {prettyJson(value)}
     </pre>
   );
+  // In a table cell, a <pre>'s intrinsic min-content can stretch the column; a
+  // zero-width / min-full wrapper pins it to the available width so it wraps.
+  return bare ? <div class="w-0 min-w-full">{pre}</div> : pre;
 }
 
 /**
