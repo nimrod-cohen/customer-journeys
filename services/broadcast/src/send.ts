@@ -66,6 +66,10 @@ interface BroadcastRow {
   readonly audience_ref: string;
   readonly scheduled_at: string | Date | null;
   readonly status: string;
+  /** The sending channel (email default; sms/whatsapp for text broadcasts). */
+  readonly medium: string;
+  /** The SMS/WhatsApp body (null for email, which uses its template instance). */
+  readonly text_body: string | null;
 }
 
 const DEFAULT_BATCH_SIZE = 500;
@@ -83,7 +87,7 @@ export async function runBroadcast(
 ): Promise<RunBroadcastResult> {
   // 1. Load the broadcast row. workspace_id comes FROM the row (CLAUDE.md inv.2).
   const { rows } = await deps.reader.query<BroadcastRow>(
-    `SELECT id, workspace_id, template_id, audience_kind, audience_ref, scheduled_at, status
+    `SELECT id, workspace_id, template_id, audience_kind, audience_ref, scheduled_at, status, medium, text_body
      FROM broadcasts WHERE id = $1`,
     [broadcastId],
   );
@@ -91,6 +95,8 @@ export async function runBroadcast(
   if (!bc) return { result: 'skipped', reason: 'broadcast not found' };
   const workspaceId = bc.workspace_id;
   const now = deps.now();
+  const medium = bc.medium === 'sms' || bc.medium === 'whatsapp' ? bc.medium : 'email';
+  const isText = medium !== 'email';
 
   // 2. Guards: terminal/illegal status, not-yet-due schedule.
   if (bc.status !== 'draft' && bc.status !== 'scheduled') {
@@ -99,8 +105,14 @@ export async function runBroadcast(
   if (!isScheduleDue(bc.scheduled_at, now)) {
     return { result: 'skipped', reason: 'not yet due' };
   }
-  if (!bc.template_id) {
+  // EMAIL needs its template instance (the body + envelope). TEXT channels need a
+  // non-blank text_body instead (no template). The outbox carries the template_id
+  // for email and null for text; the Dispatcher reads text_body from the row.
+  if (!isText && !bc.template_id) {
     return { result: 'skipped', reason: 'broadcast has no template' };
+  }
+  if (isText && (!bc.text_body || bc.text_body.trim() === '')) {
+    return { result: 'skipped', reason: 'broadcast has no message body' };
   }
 
   // 3. Claim: compare-and-set status→sending. If the row already moved (a
@@ -152,8 +164,10 @@ export async function runBroadcast(
     }
 
     // The envelope (subject / From / To) lives on the email instance (template),
-    // resolved by the Dispatcher at send. The payload only carries attribution.
-    const payload = { broadcast_id: broadcastId };
+    // resolved by the Dispatcher at send. The payload carries attribution + the
+    // MEDIUM so the Dispatcher routes the send (email → SES; sms/whatsapp → the
+    // channel provider, reading text_body from the broadcast row).
+    const payload = { broadcast_id: broadcastId, medium };
     const batchSize = deps.batchSize ?? DEFAULT_BATCH_SIZE;
     const batches = chunk(profileIds, batchSize);
 

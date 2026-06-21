@@ -7,7 +7,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { setEditorReturn, takeReturnedTemplate, takeReturnedTo } from '../store/editorReturn.js';
-import { ActionMenu, Badge, Button, Card, Field, Input, PageHeader, Select, EmptyState, toneFor } from '../ui/kit.js';
+import { ActionMenu, Badge, Button, Card, Field, Input, PageHeader, Select, Textarea, EmptyState, toneFor } from '../ui/kit.js';
 import type { ActionMenuItem } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
@@ -29,10 +29,16 @@ interface BroadcastStats {
   opened: number;
   unsubscribed: number;
 }
+/** The sending channel of a broadcast. */
+type Medium = 'email' | 'sms' | 'whatsapp';
+const MEDIUM_LABEL: Record<Medium, string> = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp' };
+
 interface Broadcast {
   id: string;
   name: string;
   status: string;
+  /** Sending channel (email default). */
+  medium?: Medium;
   scheduled_at: string | null;
   /** The IANA zone the send time was expressed in (null unless scheduled). */
   scheduled_tz?: string | null;
@@ -286,10 +292,13 @@ export function BroadcastComposer() {
                   {b.updated_at ? <span class="truncate text-[11px] text-stone-400">Edited {agoLabel(b.updated_at)}</span> : null}
                 </span>
 
-                {/* Status badge — fixed column → aligned across rows */}
-                <span class="justify-self-start">
+                {/* Status + channel badges — fixed column → aligned across rows */}
+                <span class="flex flex-col items-start gap-1 justify-self-start">
                   <Badge data-testid="broadcast-status" tone={toneFor(b.status)}>
                     {b.status}
+                  </Badge>
+                  <Badge data-testid="broadcast-medium-badge" tone="neutral">
+                    {MEDIUM_LABEL[(b.medium ?? 'email') as Medium]}
                   </Badge>
                 </span>
 
@@ -332,8 +341,10 @@ export function BroadcastComposer() {
                             {
                               label: 'Send',
                               onSelect: () => send(b.id),
-                              disabled: blockSend || sendingId !== null,
-                              ...(blockSend
+                              // The no-verified-domain block is EMAIL-only — SMS/
+                              // WhatsApp don't need a sending domain.
+                              disabled: (blockSend && (b.medium ?? 'email') === 'email') || sendingId !== null,
+                              ...(blockSend && (b.medium ?? 'email') === 'email'
                                 ? { title: 'Verify a sending domain in Workspace settings before sending.' }
                                 : {}),
                               'data-testid': 'send-broadcast',
@@ -391,6 +402,10 @@ export function BroadcastWizard({ id }: { id?: string }) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [name, setName] = useState('');
   const [segId, setSegId] = useState('');
+  // The sending channel. Email uses the email-instance/envelope flow; sms/whatsapp
+  // use a plain-text body (merge-tag enabled) sent to the recipient phone.
+  const [medium, setMedium] = useState<Medium>('email');
+  const [textBody, setTextBody] = useState('');
   const [tplId, setTplId] = useState('');
   // The broadcast's WORKING COPY of a template (kind='copy'): picking a library
   // template clones it so this broadcast's content is independently editable and
@@ -431,7 +446,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
   useEffect(() => {
     if (!id) return;
     void api
-      .get<{ broadcast: Broadcast & { audience_ref: string; template_id: string | null } }>(`/broadcasts/${id}`)
+      .get<{ broadcast: Broadcast & { audience_ref: string; template_id: string | null; text_body: string | null } }>(`/broadcasts/${id}`)
       .then((r) => {
         const b = r.broadcast;
         if (!EDITABLE.has(b.status)) {
@@ -440,6 +455,8 @@ export function BroadcastWizard({ id }: { id?: string }) {
         }
         setName(b.name);
         setSegId(b.audience_ref ?? '');
+        setMedium((b.medium ?? 'email') as Medium);
+        setTextBody(b.text_body ?? '');
         setTplId(b.template_id ?? '');
         if (b.scheduled_at) {
           const tz = b.scheduled_tz || BROWSER_TZ;
@@ -534,6 +551,8 @@ export function BroadcastWizard({ id }: { id?: string }) {
     const scheduledIso = scheduleMode === 'later' && scheduledAt ? zonedInputToUtcIso(scheduledAt, timeZone) : null;
     const body = {
       name: name || 'Untitled broadcast',
+      medium,
+      text_body: medium === 'email' ? null : textBody,
       audience_kind: 'segment',
       audience_ref: segId,
       template_id: tplId || null,
@@ -577,7 +596,9 @@ export function BroadcastWizard({ id }: { id?: string }) {
         envelope && envelope.to_address.trim() !== '' ? null : 'To',
         envelope && envelope.subject.trim() !== '' ? null : 'Subject',
       ].filter((x): x is string => x !== null);
-  const step1Valid = tplId !== '' && missingEnvelope.length === 0;
+  // EMAIL needs a complete email instance; the TEXT channels need a non-blank body.
+  const step1Valid =
+    medium === 'email' ? tplId !== '' && missingEnvelope.length === 0 : textBody.trim() !== '';
   const canReach = (target: number): boolean =>
     target === 0 ? true : target === 1 ? step0Valid : step0Valid && step1Valid;
 
@@ -609,9 +630,11 @@ export function BroadcastWizard({ id }: { id?: string }) {
       const scheduledIso = action === 'schedule' && scheduledAt ? zonedInputToUtcIso(scheduledAt, timeZone) : null;
       const body = {
         name: name || 'Untitled broadcast',
+        medium,
+        text_body: medium === 'email' ? null : textBody,
         audience_kind: 'segment',
         audience_ref: segId,
-        template_id: tplId,
+        template_id: medium === 'email' ? tplId : null,
         scheduled_at: scheduledIso,
         scheduled_tz: scheduledIso ? timeZone : null,
       };
@@ -701,6 +724,23 @@ export function BroadcastWizard({ id }: { id?: string }) {
                 onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
               />
             </Field>
+            <Field label="Channel">
+              <Select
+                data-testid="broadcast-medium"
+                value={medium}
+                onChange={(e: Event) => setMedium((e.target as HTMLSelectElement).value as Medium)}
+              >
+                <option value="email">Email</option>
+                <option value="sms">SMS</option>
+                <option value="whatsapp">WhatsApp</option>
+              </Select>
+              {medium !== 'email' ? (
+                <p class="mt-1 text-xs text-stone-500">
+                  {MEDIUM_LABEL[medium]} messages send to each recipient's phone ({'{{customer.phone}}'}). Recipients
+                  without a phone are skipped.
+                </p>
+              ) : null}
+            </Field>
             <Field label="Audience (segment)">
               <Select
                 data-testid="broadcast-segment"
@@ -715,6 +755,31 @@ export function BroadcastWizard({ id }: { id?: string }) {
                 ))}
               </Select>
             </Field>
+          </div>
+        ) : step === 1 && medium !== 'email' ? (
+          <div class="space-y-3">
+            <p class="text-sm text-stone-600">
+              Write the {MEDIUM_LABEL[medium]} message. It's sent as plain text to each recipient's phone. Use merge
+              tags like <code class="rounded bg-stone-100 px-1">{'{{customer.first_name}}'}</code> to personalize.
+            </p>
+            <Field label={`${MEDIUM_LABEL[medium]} message`}>
+              <Textarea
+                data-testid="broadcast-text-body"
+                rows={6}
+                placeholder={'Hi {{customer.first_name}}, your order has shipped!'}
+                value={textBody}
+                onInput={(e: Event) => setTextBody((e.target as HTMLTextAreaElement).value)}
+              />
+            </Field>
+            {textBody.trim() === '' ? (
+              <p data-testid="text-body-incomplete" class="text-xs font-medium text-amber-700">
+                Add a message body before continuing.
+              </p>
+            ) : (
+              <p data-testid="text-body-complete" class="text-xs text-emerald-700">
+                Message ready.
+              </p>
+            )}
           </div>
         ) : step === 1 ? (
           <div class="space-y-3">
@@ -846,10 +911,21 @@ export function BroadcastWizard({ id }: { id?: string }) {
             >
               <dt class="text-stone-500">Name</dt>
               <dd class="text-ink-900">{name || '—'}</dd>
+              <dt class="text-stone-500">Channel</dt>
+              <dd class="text-ink-900" data-testid="review-medium">{MEDIUM_LABEL[medium]}</dd>
               <dt class="text-stone-500">Audience</dt>
               <dd class="text-ink-900">{segName}</dd>
-              <dt class="text-stone-500">Email</dt>
-              <dd class="text-ink-900">{tplName}</dd>
+              {medium === 'email' ? (
+                <>
+                  <dt class="text-stone-500">Email</dt>
+                  <dd class="text-ink-900">{tplName}</dd>
+                </>
+              ) : (
+                <>
+                  <dt class="text-stone-500">Message</dt>
+                  <dd class="text-ink-900 whitespace-pre-wrap" data-testid="review-text-body">{textBody || '—'}</dd>
+                </>
+              )}
               <dt class="text-stone-500">When</dt>
               <dd class="text-ink-900">
                 {scheduleMode === 'later' && scheduledAt

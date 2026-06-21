@@ -19,9 +19,12 @@ import {
   buildIsSuppressedQuery,
   buildLastSoftBounceQuery,
   buildMessagesLogInsert,
+  buildMessagesLogFailure,
   buildUsageCounterIncrement,
   buildOutboxMarkSent,
   buildSendEmailInput,
+  buildChannelMessage,
+  resolveTextRecipient,
   rewriteTrackingLinks,
   buildTrackedLinkInsert,
   injectOpenPixel,
@@ -32,7 +35,8 @@ import {
   type SqlStatement,
   type TrackedLink,
 } from './core.js';
-import { customerMerge } from '@cdp/shared';
+import { customerMerge, expandCustomerToken } from '@cdp/shared';
+import { resolveChannelProvider, isTextMedium, type ChannelProvider, type Medium } from '@cdp/channels';
 
 /** A minimal query reader (returns rows). The orchestrator never opens a tx. */
 export interface Reader {
@@ -48,6 +52,13 @@ export interface DispatchDeps {
   readonly reader: Reader;
   /** The injectable SES client (mocked in tests; never sends real mail). */
   readonly ses: SesEmailClient;
+  /**
+   * The injectable text-channel provider resolver (sms/whatsapp). Defaults to
+   * `@cdp/channels` `resolveChannelProvider` (the deterministic MOCK this phase —
+   * never hits the network). Tests inject a counting fake; a future real
+   * Twilio/Meta adapter slots in here without touching the orchestrator.
+   */
+  readonly resolveChannel?: (medium: Medium) => ChannelProvider;
   /** Apply a list of statements in ONE workspace-scoped tx (atomic write). */
   runInWorkspaceTx(workspaceId: string, statements: readonly SqlStatement[]): Promise<void>;
   /** Injected clock for cap/quiet determinism. */
@@ -215,6 +226,25 @@ export async function dispatchOutbox(
     // Broadcasts tag their outbox rows with broadcast_id (campaigns use ob.campaign_id);
     // carry it into messages_log so per-broadcast stats are a simple GROUP BY.
     const broadcastId = typeof payload['broadcast_id'] === 'string' ? (payload['broadcast_id'] as string) : null;
+
+    // MEDIUM routing (CLAUDE.md multi-channel). The medium + text_body live on the
+    // BROADCAST row (campaigns are email-only this phase). The payload carries
+    // `medium` (set by runBroadcast) as the authoritative hint; we still read the
+    // broadcast row for the text body. Email is the default for anything untagged.
+    let medium: Medium = 'email';
+    let textBody: string | null = null;
+    const payloadMedium = payload['medium'];
+    if (broadcastId && (payloadMedium === 'sms' || payloadMedium === 'whatsapp')) {
+      const { rows: bcRows } = await deps.reader.query<{ medium: string; text_body: string | null }>(
+        `SELECT medium, text_body FROM broadcasts WHERE workspace_id = $1 AND id = $2`,
+        [workspaceId, broadcastId],
+      );
+      if (bcRows[0] && (bcRows[0].medium === 'sms' || bcRows[0].medium === 'whatsapp')) {
+        medium = bcRows[0].medium;
+        textBody = bcRows[0].text_body;
+      }
+    }
+
     // The recipient's own data populates the `customer.*` namespace; an explicit
     // per-send `payload.merge` provides any extra tags. Profile-derived customer
     // values are authoritative (override a stale payload customer key).
@@ -242,9 +272,17 @@ export async function dispatchOutbox(
         : null;
     const quietHours = parseQuietHours(payload['quiet_hours']);
 
+    // Text channels send to the recipient PHONE. The To token defaults to
+    // {{customer.phone}} (resolves to attributes.phone via the customer.* resolver),
+    // rendered per recipient at decision time. The raw phone is also kept for the
+    // no-phone skip check (mirrors how a missing email is handled for email).
+    const phone = merge[expandCustomerToken('customer.phone')] ?? null;
+    const effectiveToAddress = isTextMedium(medium) ? toAddress || '{{customer.phone}}' : toAddress;
+
     // Click tracking (§10): when the workspace enables it, rewrite every link in
     // the email to a /t/<token> tracking link. Applies to EVERY outgoing email
     // (broadcast or campaign) — this is the one place all sends pass through.
+    // Text channels (sms/whatsapp) carry no HTML, so tracking is email-only.
     let trackedLinks: TrackedLink[] = [];
     // Open tracking shares the same per-workspace opt-in as click tracking. The
     // pixel token is per-recipient (one tracked_opens row per profile) so the
@@ -303,6 +341,9 @@ export async function dispatchOutbox(
       profile: { id: profile.id, email: profile.email },
       template: { compiledHtml },
       subject,
+      medium,
+      textBody,
+      phone,
       merge,
       frequencyCapPerDays,
       quietHours,
@@ -313,7 +354,7 @@ export async function dispatchOutbox(
       unsubscribeBaseUrl: deps.unsubscribeBaseUrl,
       fromEmail,
       fromName,
-      toAddress,
+      toAddress: effectiveToAddress,
       broadcastId,
       campaignId: ob.campaign_id ?? null,
     };
@@ -321,12 +362,28 @@ export async function dispatchOutbox(
     const decision: DispatchDecision = decideDispatch(ctx);
 
     // Non-send outcomes: release the claim back so the row reflects a terminal
-    // (skip/refuse) or re-runnable (defer) state, but NEVER call SES.
+    // (skip/refuse) or re-runnable (defer) state, but NEVER call SES/the provider.
     if (decision.action !== 'send') {
       return finalizeNonSend(deps, workspaceId, outboxId, decision);
     }
 
-    // 5/6. all-pass: build the SES input and SEND (the only SES call site).
+    // 5/6. all-pass — ROUTE BY MEDIUM. Email keeps the SES path UNCHANGED. The
+    // text channels (sms/whatsapp) render text_body merge tags + the recipient
+    // phone and send via the injected ChannelProvider (the deterministic mock).
+    if (isTextMedium(medium)) {
+      return dispatchTextChannel(deps, {
+        workspaceId,
+        outboxId,
+        ctx,
+        medium,
+        campaignId: ob.campaign_id ?? null,
+        broadcastId,
+        profileId: profile.id,
+        now,
+      });
+    }
+
+    // EMAIL: build the SES input and SEND (the only SES call site).
     const input: SendEmailInput = buildSendEmailInput(ctx);
     const { sesMessageId } = await deps.ses.sendEmail(input);
 
@@ -336,7 +393,7 @@ export async function dispatchOutbox(
       ...(openToken
         ? [buildTrackedOpenInsert(workspaceId, openToken, broadcastId, ob.campaign_id ?? null, profile.id)]
         : []),
-      buildMessagesLogInsert(workspaceId, profile.id, ob.campaign_id, sesMessageId, broadcastId),
+      buildMessagesLogInsert(workspaceId, profile.id, ob.campaign_id, sesMessageId, broadcastId, 'email'),
       buildUsageCounterIncrement(workspaceId, now),
       buildOutboxMarkSent(workspaceId, outboxId),
     ]);
@@ -349,6 +406,51 @@ export async function dispatchOutbox(
     const reason = err instanceof Error ? err.message : String(err);
     return { result: 'retryable-failure', reason };
   }
+}
+
+/** Args for the text-channel (sms/whatsapp) send path. */
+interface TextSendArgs {
+  readonly workspaceId: string;
+  readonly outboxId: string;
+  readonly ctx: DispatchContext;
+  readonly medium: Medium;
+  readonly campaignId: string | null;
+  readonly broadcastId: string | null;
+  readonly profileId: string;
+  readonly now: Date;
+}
+
+/**
+ * Send one sms/whatsapp message through the injected ChannelProvider (the mock
+ * this phase). Runs AFTER the decision pipeline has passed (gate/suppression/
+ * cap/quiet-hours). A recipient with NO phone is SKIPPED — we record a
+ * messages_log skip row and mark the outbox row done, NEVER crashing the batch
+ * (mirrors how a missing email is handled). On success we write a messages_log
+ * row (medium + provider message id) + usage + mark sent in ONE tx; a provider
+ * failure resets the claim for a retry (bounded → DLQ).
+ */
+async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Promise<DispatchOutcome> {
+  const { workspaceId, outboxId, ctx, medium, campaignId, broadcastId, profileId, now } = args;
+  // No phone → skip (terminal). Record a skipped messages_log row + mark done.
+  const renderedTo = resolveTextRecipient(ctx);
+  if (!renderedTo) {
+    await deps.runInWorkspaceTx(workspaceId, [
+      buildMessagesLogFailure(workspaceId, profileId, campaignId, broadcastId, medium, 'skipped'),
+      buildOutboxMarkSent(workspaceId, outboxId),
+    ]);
+    return { result: 'skip', reason: 'recipient has no phone' };
+  }
+
+  const provider = (deps.resolveChannel ?? resolveChannelProvider)(medium);
+  const message = buildChannelMessage(ctx);
+  const { providerMessageId } = await provider.send(message);
+
+  await deps.runInWorkspaceTx(workspaceId, [
+    buildMessagesLogInsert(workspaceId, profileId, campaignId, providerMessageId, broadcastId, medium),
+    buildUsageCounterIncrement(workspaceId, now, `${medium}_sent`),
+    buildOutboxMarkSent(workspaceId, outboxId),
+  ]);
+  return { result: 'send', sesMessageId: providerMessageId };
 }
 
 /** Set a claimed row to a terminal/deferred state for a non-send decision. */

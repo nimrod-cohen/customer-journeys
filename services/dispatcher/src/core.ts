@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { canSend, buildListUnsubscribeHeaders, type SendingIdentity } from '@cdp/email';
 import type { SendEmailInput } from '@cdp/email';
 import { expandCustomerToken, type WorkspaceStatus } from '@cdp/shared';
+import type { ChannelMessage, Medium } from '@cdp/channels';
 
 /** A parameterized query ready for `pool.query(text, values)` (shared shape). */
 export interface SqlStatement {
@@ -55,6 +56,17 @@ export interface DispatchContext {
   readonly profile: DispatchProfile;
   readonly template: DispatchTemplate;
   readonly subject: string;
+  /**
+   * The sending medium (CLAUDE.md multi-channel). Defaults to `email` when
+   * absent (every legacy send is email). For `sms`/`whatsapp` the send goes via
+   * a `ChannelProvider` to the recipient PHONE using `textBody` (no MJML/HTML),
+   * and the verified-domain gate is SKIPPED (that gate is email-only).
+   */
+  readonly medium?: Medium;
+  /** The plain-text SMS/WhatsApp body (merge-tag enabled). Email uses `template`. */
+  readonly textBody?: string | null;
+  /** The recipient's phone (`customer.phone`) for sms/whatsapp. */
+  readonly phone?: string | null;
   /** Merge values substituted into the compiled HTML. */
   readonly merge: Readonly<Record<string, string>>;
   /** Frequency cap (max sends per window); null/0 → no cap. */
@@ -381,11 +393,18 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
  * Later predicates are NOT evaluated once a guard blocks.
  */
 export function decideDispatch(ctx: DispatchContext): DispatchDecision {
-  // 1. gate
-  if (!canSend(ctx.workspace)) {
+  // 1. gate — MEDIUM-AWARE. The VERIFIED-DOMAIN gate (canSend) is EMAIL-ONLY
+  //    (a verified sending domain is meaningless for SMS/WhatsApp). For the text
+  //    channels we still refuse a non-active (onboarding/suspended) workspace —
+  //    a suspended workspace must not send over ANY channel — but we do NOT
+  //    require a verified email domain. The provider always resolves (the mock),
+  //    so a text send's gate is purely the workspace-active check.
+  const medium = ctx.medium ?? 'email';
+  const gateOk = medium === 'email' ? canSend(ctx.workspace) : ctx.workspace.status === 'active';
+  if (!gateOk) {
     return {
       action: 'refuse',
-      reason: 'workspace not active/verified',
+      reason: medium === 'email' ? 'workspace not active/verified' : 'workspace not active',
       stoppedAt: 'gate',
     };
   }
@@ -514,19 +533,77 @@ export function buildLastSoftBounceQuery(workspaceId: string, email: string): Sq
 }
 
 /** A successful send's messages_log row (§9 step 7). workspace_id bound at $1.
- *  Attributed to its campaign OR broadcast (whichever queued it) for per-send stats. */
+ *  Attributed to its campaign OR broadcast (whichever queued it) for per-send stats.
+ *  `medium` records the channel (email default; sms/whatsapp for text sends) and
+ *  `ses_message_id` carries the provider message id regardless of channel. */
 export function buildMessagesLogInsert(
   workspaceId: string,
   profileId: string,
   campaignId: string | null,
   sesMessageId: string,
   broadcastId: string | null = null,
+  medium: Medium = 'email',
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildMessagesLogInsert: workspaceId is required');
   return {
-    text: `INSERT INTO messages_log (workspace_id, profile_id, campaign_id, broadcast_id, ses_message_id, status)
-           VALUES ($1, $2, $3, $4, $5, 'sent')`,
-    values: [workspaceId, profileId, campaignId, broadcastId, sesMessageId],
+    text: `INSERT INTO messages_log (workspace_id, profile_id, campaign_id, broadcast_id, ses_message_id, status, medium)
+           VALUES ($1, $2, $3, $4, $5, 'sent', $6)`,
+    values: [workspaceId, profileId, campaignId, broadcastId, sesMessageId, medium],
+  };
+}
+
+/**
+ * A FAILED/SKIPPED send's messages_log row (a text send with no recipient phone,
+ * or a provider failure) — recorded so the batch never crashes and the outcome
+ * is visible, mirroring how email skips/refusals are handled. `ses_message_id`
+ * is null (nothing was sent). workspace_id bound at $1.
+ */
+export function buildMessagesLogFailure(
+  workspaceId: string,
+  profileId: string,
+  campaignId: string | null,
+  broadcastId: string | null,
+  medium: Medium,
+  status: 'failed' | 'skipped',
+): SqlStatement {
+  if (!workspaceId) throw new Error('buildMessagesLogFailure: workspaceId is required');
+  return {
+    text: `INSERT INTO messages_log (workspace_id, profile_id, campaign_id, broadcast_id, ses_message_id, status, medium)
+           VALUES ($1, $2, $3, $4, NULL, $5, $6)`,
+    values: [workspaceId, profileId, campaignId, broadcastId, status, medium],
+  };
+}
+
+/**
+ * Resolve the text-channel recipient (a PHONE) for an sms/whatsapp send. The To
+ * is the `toAddress` token (default `{{customer.phone}}`), rendered per recipient
+ * via the merge map. An UNRESOLVED token (the merge map had no value, so the
+ * `{{...}}` is left intact) or an empty render means the recipient has NO phone —
+ * we return '' so the orchestrator records a messages_log skip (mirroring how a
+ * missing email is handled), never sending. Falls back to the raw `ctx.phone`.
+ */
+export function resolveTextRecipient(ctx: DispatchContext): string {
+  if (ctx.toAddress) {
+    const rendered = renderTemplateBody(ctx.toAddress, ctx.merge).trim();
+    // A still-unresolved `{{...}}` token means the merge had no value → no phone.
+    if (rendered && !rendered.includes('{{')) return rendered;
+  }
+  return (ctx.phone ?? '').trim();
+}
+
+/**
+ * Build the prepared text-channel message for an sms/whatsapp send. The To is the
+ * resolved recipient PHONE (see `resolveTextRecipient`) and the body is `textBody`
+ * with merge tags rendered — NO MJML, NO HTML. Throws if the recipient has no
+ * phone (the orchestrator checks `resolveTextRecipient` first and records a
+ * messages_log skip instead of calling this).
+ */
+export function buildChannelMessage(ctx: DispatchContext): ChannelMessage {
+  const to = resolveTextRecipient(ctx);
+  if (!to) throw new Error('buildChannelMessage: recipient has no phone');
+  return {
+    to,
+    body: renderTemplateBody(ctx.textBody ?? '', ctx.merge),
   };
 }
 

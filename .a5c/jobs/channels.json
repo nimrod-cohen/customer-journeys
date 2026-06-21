@@ -1,0 +1,39 @@
+{
+  "filesCreated": [
+    "packages/channels/package.json",
+    "packages/channels/tsconfig.json",
+    "packages/channels/src/index.ts",
+    "packages/channels/test/providers.test.ts",
+    "packages/db/supabase/migrations/0039_broadcast_medium.sql",
+    "services/dispatcher/test/text-channel-core.test.ts",
+    "services/broadcast/test/text-channel-chain.integration.test.ts",
+    "services/local-api/test/broadcast-channel.integration.test.ts",
+    "web/e2e/broadcast-channels.browser.e2e.spec.ts"
+  ],
+  "filesModified": [
+    "services/dispatcher/src/core.ts",
+    "services/dispatcher/src/dispatch.ts",
+    "services/dispatcher/src/index.ts",
+    "services/dispatcher/src/deps.ts",
+    "services/dispatcher/package.json",
+    "services/dispatcher/tsconfig.json",
+    "services/broadcast/src/core.ts",
+    "services/broadcast/src/send.ts",
+    "services/broadcast/package.json",
+    "services/local-api/src/handlers.ts",
+    "services/local-api/package.json",
+    "services/local-api/tsconfig.json",
+    "web/src/screens/BroadcastComposer.tsx",
+    "web/e2e/seed.ts",
+    "package.json (version 0.50.0 -> 0.51.0)",
+    "CLAUDE.md"
+  ],
+  "migration": "0039_broadcast_medium.sql (APPLIED to cdp + cdp_e2e; broadcasts.medium CHECK email|sms|whatsapp + broadcasts.text_body + messages_log.medium)",
+  "approach": "New @cdp/channels pkg (Medium type, ChannelProvider iface, deterministic offline MockSms/MockWhatsApp providers, resolveChannelProvider seam with TODO for real Twilio/Meta). Dispatcher routes by medium: email = SES path UNCHANGED; sms/whatsapp = render text_body+phone via mock provider, messages_log(medium, provider id), skip no-phone, no verified-domain gate (active-only), suppression/cap/quiet-hours still apply. runBroadcast threads medium via outbox payload; sendBroadcast gating branches (text needs non-blank body); dispatchBroadcastNow always delivers text locally via mock. Wizard: broadcast-medium selector + broadcast-text-body textarea + channel badge. Delivery-health dashboard scoped EMAIL-only so text sends don't pollute SES metrics.",
+  "unitPass": true,
+  "integrationPass": true,
+  "e2ePass": true,
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "ALL GREEN. channels 13 unit; dispatcher 89 (incl. 10 new text-channel-core + email regression intact); broadcast 42 (incl. 2 new sms+whatsapp chain); local-api 256 (incl. 5 new broadcast-channel gating/send/regression/404); web 262 unit. Full Playwright e2e: 130 passed, 1 flaky (company-ses-config, passed on retry, pre-existing timing flake unrelated to channels), 0 failed. Fixed a cross-test contamination: scoped delivery-health dashboard to medium='email' (text sends now write messages_log locally, which email never did) + added usage_counters to the e2e seed cleanup. typecheck 45/45; lint only the 7 known pre-existing react-hooks errors (no NEW). Version 0.51.0. NOT committed (orchestrator commits). Follow-ups: campaigns SMS/WhatsApp + real Twilio/Meta adapters (seam ready)."
+}

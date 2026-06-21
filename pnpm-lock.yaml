@@ -52,6 +52,12 @@ importers:
         specifier: ^2.147.0
         version: 2.1126.0
 
+  packages/channels:
+    dependencies:
+      '@cdp/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/db:
     dependencies:
       pg:
@@ -217,6 +223,9 @@ importers:
         specifier: ^8.12.0
         version: 8.21.0
     devDependencies:
+      '@cdp/channels':
+        specifier: workspace:*
+        version: link:../../packages/channels
       '@types/aws-lambda':
         specifier: ^8.10.140
         version: 8.10.162
@@ -266,6 +275,9 @@ importers:
       '@aws-sdk/client-sesv2':
         specifier: ^3.620.0
         version: 3.1063.0
+      '@cdp/channels':
+        specifier: workspace:*
+        version: link:../../packages/channels
       '@cdp/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -378,6 +390,9 @@ importers:
 
   services/local-api:
     dependencies:
+      '@cdp/channels':
+        specifier: workspace:*
+        version: link:../../packages/channels
       '@cdp/db':
         specifier: workspace:*
         version: link:../../packages/db

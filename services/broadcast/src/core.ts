@@ -36,7 +36,7 @@ export function buildBroadcastDedupeKey(broadcastId: string, profileId: string):
 export function buildBroadcastOutboxInsert(
   workspaceId: string,
   broadcastId: string,
-  templateId: string,
+  templateId: string | null,
   payload: Record<string, unknown>,
   profileIds: readonly string[],
 ): SqlStatement {

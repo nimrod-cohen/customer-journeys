@@ -19,6 +19,7 @@
     "lint": "eslint src --no-error-on-unmatched-pattern"
   },
   "dependencies": {
+    "@cdp/channels": "workspace:*",
     "@cdp/db": "workspace:*",
     "@cdp/email": "workspace:*",
     "@cdp/runner-webhook": "workspace:*",

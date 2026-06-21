@@ -13,6 +13,7 @@ import type { Pool, PoolClient } from 'pg';
 import { promises as dns } from 'node:dns';
 import { createSesClient, type SesEmailClient } from '@cdp/email';
 import { dispatchOutbox, type DispatchDeps } from '@cdp/service-dispatcher';
+import { resolveChannelProvider } from '@cdp/channels';
 import {
   DEV_USERS,
   OPEN_EVENT_TYPES,
@@ -439,8 +440,21 @@ async function dispatchBroadcastNow(
   deps: LocalApiDeps,
   broadcastId: string,
 ): Promise<void> {
+  // The medium decides whether a local dispatch can actually deliver. EMAIL needs
+  // REAL SES creds (mock/none → the long-standing local no-op, rows stay pending).
+  // The TEXT channels (sms/whatsapp) ALWAYS deliver locally via the deterministic
+  // MOCK channel provider — no credentials needed — so dev/e2e send for real.
+  const bcRow = await pool.query<{ medium: string }>(
+    'SELECT medium FROM broadcasts WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, broadcastId],
+  );
+  const medium = bcRow.rows[0]?.medium ?? 'email';
+  const isText = medium === 'sms' || medium === 'whatsapp';
+
   const { ses, mode } = await sesForWorkspace(pool, workspaceId, deps);
-  if (mode !== 'real') return; // only real SES creds actually deliver (mock/none → no-op)
+  // For EMAIL: only real SES creds deliver. For TEXT: always deliver (mock channel),
+  // using whatever SES client (the dispatcher never calls SES for a text send).
+  if (!isText && mode !== 'real') return;
   const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
   const dispatchDeps: DispatchDeps = {
     reader: {
@@ -450,6 +464,8 @@ async function dispatchBroadcastNow(
       },
     },
     ses,
+    // The mock channel resolver (sms/whatsapp). Deterministic + offline.
+    resolveChannel: resolveChannelProvider,
     runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
     now: () => new Date(),
     unsubscribeBaseUrl: `${base}/unsubscribe`,
@@ -1574,7 +1590,7 @@ export const listBroadcasts: Handler = async (ctx, pool) => {
   // otherwise inject its WHERE after the ORDER BY → invalid SQL).
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz, sent_at, updated_at FROM broadcasts',
+    'SELECT id, name, status, medium, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz, sent_at, updated_at FROM broadcasts',
   );
   const { rows } = await pool.query<Record<string, unknown>>(`${q.text} ORDER BY created_at DESC`, q.values);
 
@@ -1653,7 +1669,7 @@ export const getBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz FROM broadcasts WHERE id = $1',
+    'SELECT id, name, status, medium, text_body, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz FROM broadcasts WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -1794,12 +1810,19 @@ export const createBroadcast: Handler = async (ctx, pool, req) => {
   if (leadErr) return ok({ error: leadErr }, 400);
   // The zone is only meaningful alongside a scheduled time.
   const scheduledTz = scheduledAt && b.scheduled_tz ? String(b.scheduled_tz) : null;
+  // The sending channel (email default). Email uses its template instance; the
+  // text channels (sms/whatsapp) carry a plain-text body. An unknown medium falls
+  // back to email (the check constraint also enforces it).
+  const medium = b.medium === 'sms' || b.medium === 'whatsapp' ? String(b.medium) : 'email';
+  const textBody = medium === 'email' ? null : b.text_body != null ? String(b.text_body) : null;
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, scheduled_at, scheduled_tz, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, name, status`,
+    `INSERT INTO broadcasts (workspace_id, name, medium, text_body, template_id, audience_kind, audience_ref, scheduled_at, scheduled_tz, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, name, status, medium`,
     [
       ctx.workspaceId,
       String(b.name ?? 'Untitled'),
+      medium,
+      textBody,
       b.template_id ?? null,
       String(b.audience_kind ?? 'segment'),
       b.audience_ref ?? null,
@@ -1830,6 +1853,13 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
   const leadErr = scheduleLeadError(scheduledAt);
   if (leadErr) return ok({ error: leadErr }, 400);
   const scheduledTz = scheduledAt && b.scheduled_tz ? String(b.scheduled_tz) : null;
+  // medium/text_body are COALESCE-updated only when provided (so an email-only
+  // edit can't accidentally null them); a provided medium of 'email' clears the body.
+  const medium =
+    b.medium === 'sms' || b.medium === 'whatsapp' || b.medium === 'email' ? String(b.medium) : null;
+  const textBodyProvided = b.text_body !== undefined;
+  const textBody =
+    medium === 'email' ? null : textBodyProvided ? (b.text_body != null ? String(b.text_body) : null) : null;
   const upd = scopedQuery(
     ctx.workspaceId,
     `UPDATE broadcasts SET
@@ -1840,6 +1870,8 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
        scheduled_at = $5,
        scheduled_tz = $6,
        status = $7,
+       medium = COALESCE($9, medium),
+       text_body = CASE WHEN $9 = 'email' THEN NULL WHEN $10 THEN $11 ELSE text_body END,
        updated_at = now()
      WHERE id = $8`,
     [
@@ -1851,6 +1883,9 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
       scheduledTz,
       scheduleStatus(scheduledAt),
       id,
+      medium,
+      textBodyProvided,
+      textBody,
     ],
   );
   const { rowCount } = await pool.query(upd.text, upd.values);
@@ -1867,11 +1902,18 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const src = scopedQuery(
     ctx.workspaceId,
-    'SELECT name, template_id, audience_kind, audience_ref FROM broadcasts WHERE id = $1',
+    'SELECT name, template_id, audience_kind, audience_ref, medium, text_body FROM broadcasts WHERE id = $1',
     [id],
   );
   const b = (await pool.query(src.text, src.values)).rows[0] as
-    | { name: string; template_id: string | null; audience_kind: string; audience_ref: string }
+    | {
+        name: string;
+        template_id: string | null;
+        audience_kind: string;
+        audience_ref: string;
+        medium: string;
+        text_body: string | null;
+      }
     | undefined;
   if (!b) return ok({ error: 'not found' }, 404);
 
@@ -1888,9 +1930,18 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
     templateId = t?.id ?? null;
   }
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, 'draft', $6) RETURNING id, name, status`,
-    [ctx.workspaceId, `${b.name} (copy)`, templateId, b.audience_kind, b.audience_ref, ctx.userId ?? null],
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, medium, text_body, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8) RETURNING id, name, status, medium`,
+    [
+      ctx.workspaceId,
+      `${b.name} (copy)`,
+      templateId,
+      b.audience_kind,
+      b.audience_ref,
+      b.medium,
+      b.text_body,
+      ctx.userId ?? null,
+    ],
   );
   return ok({ broadcast: rows[0] }, 201);
 };
@@ -1937,39 +1988,51 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
   // (Explicit b.workspace_id scope — scopedQuery's unqualified column would be
   // ambiguous across the JOIN.)
   const { rows: guardRows } = await pool.query<{
+    medium: string;
+    text_body: string | null;
     template_id: string | null;
     subject: string | null;
     sender_id: string | null;
     to_address: string | null;
   }>(
-    `SELECT b.template_id, t.subject, t.sender_id, t.to_address FROM broadcasts b
+    `SELECT b.medium, b.text_body, b.template_id, t.subject, t.sender_id, t.to_address FROM broadcasts b
        LEFT JOIN email_templates t ON t.id = b.template_id AND t.workspace_id = b.workspace_id
       WHERE b.workspace_id = $1 AND b.id = $2`,
     [ctx.workspaceId, id],
   );
   if (!guardRows[0]) return ok({ error: 'not found' }, 404);
-  // From / To / Subject are ALL required, set on the email itself (the editor).
-  // The From must be a real named sender — there is no no-reply fallback.
-  if (!guardRows[0].sender_id) {
-    return ok({ error: 'Choose who the email is from — open the email and pick a sender (add one under Sending domains).' }, 409);
-  }
-  if (!guardRows[0].to_address || !guardRows[0].to_address.trim()) {
-    return ok({ error: 'Set the To field on the email before sending.' }, 409);
-  }
-  if (!guardRows[0].subject || !guardRows[0].subject.trim()) {
-    return ok({ error: 'Add a subject line to the email before sending.' }, 409);
-  }
-  // Pre-send gate (§10/inv.7): refuse to send unless this workspace has a VERIFIED
-  // sending domain. (Sends ultimately go through the Dispatcher, but enforce here
-  // too so a broadcast is never queued/marked sent with no way to actually send.)
-  // (No LIMIT in the fragment — scopedQuery wraps everything after WHERE.)
-  const vq = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM sending_domains WHERE verified = true');
-  const verified = await pool.query(vq.text, vq.values);
-  if (!verified.rowCount) {
-    return ok(
-      { error: 'No verified sending domain. Verify one in Workspace settings → Sending domains before sending.' },
-      409,
-    );
+  const medium = guardRows[0].medium;
+  if (medium === 'sms' || medium === 'whatsapp') {
+    // TEXT channels: the ONLY gate is a non-blank message body. No envelope (From/
+    // To/Subject) and NO verified-domain gate — those are email-only (a verified
+    // sending domain is meaningless for SMS/WhatsApp; the provider always resolves).
+    if (!guardRows[0].text_body || !guardRows[0].text_body.trim()) {
+      return ok({ error: 'Add a message body before sending.' }, 409);
+    }
+  } else {
+    // EMAIL: From / To / Subject are ALL required, set on the email itself (the
+    // editor). The From must be a real named sender — there is no no-reply fallback.
+    if (!guardRows[0].sender_id) {
+      return ok({ error: 'Choose who the email is from — open the email and pick a sender (add one under Sending domains).' }, 409);
+    }
+    if (!guardRows[0].to_address || !guardRows[0].to_address.trim()) {
+      return ok({ error: 'Set the To field on the email before sending.' }, 409);
+    }
+    if (!guardRows[0].subject || !guardRows[0].subject.trim()) {
+      return ok({ error: 'Add a subject line to the email before sending.' }, 409);
+    }
+    // Pre-send gate (§10/inv.7): refuse to send unless this workspace has a VERIFIED
+    // sending domain. (Sends ultimately go through the Dispatcher, but enforce here
+    // too so a broadcast is never queued/marked sent with no way to actually send.)
+    // (No LIMIT in the fragment — scopedQuery wraps everything after WHERE.)
+    const vq = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM sending_domains WHERE verified = true');
+    const verified = await pool.query(vq.text, vq.values);
+    if (!verified.rowCount) {
+      return ok(
+        { error: 'No verified sending domain. Verify one in Workspace settings → Sending domains before sending.' },
+        409,
+      );
+    }
   }
   const result = await runBroadcast(deps.broadcast, id);
   // Production parity: actually deliver via SES now (when the workspace has SES
@@ -3647,7 +3710,10 @@ export const dashboardDeliveryHealth: Handler = async (ctx, pool, req) => {
   // from email_events (each message has at most one of these terminal events).
   const [sentRes, evRes, suppRes, trendRes] = await Promise.all([
     pool.query<{ c: number }>(
-      `SELECT count(*)::int AS c FROM messages_log WHERE workspace_id = $1 AND sent_at >= ${since}`,
+      // EMAIL-only: this dashboard is about SES deliverability/reputation (bounce +
+      // complaint rates from email_events). SMS/WhatsApp are a separate channel and
+      // don't have an email feedback pipeline, so they're excluded from the count.
+      `SELECT count(*)::int AS c FROM messages_log WHERE workspace_id = $1 AND medium = 'email' AND sent_at >= ${since}`,
       [ws, days],
     ),
     pool.query<{ type: string; c: number }>(
@@ -3676,7 +3742,7 @@ export const dashboardDeliveryHealth: Handler = async (ctx, pool, req) => {
          FROM days d
          LEFT JOIN (
            SELECT date_trunc('day', sent_at) AS day, count(*) AS sent
-             FROM messages_log WHERE workspace_id = $1 AND sent_at >= ${since}
+             FROM messages_log WHERE workspace_id = $1 AND medium = 'email' AND sent_at >= ${since}
             GROUP BY 1
          ) m ON m.day = d.day
          LEFT JOIN (

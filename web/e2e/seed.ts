@@ -215,6 +215,14 @@ export async function seed(): Promise<void> {
         WHERE workspace_id = $1 AND external_id = 'a2'`,
       [WS_A],
     );
+    // a1 (the manual-segment member) carries a phone so an SMS/WhatsApp broadcast
+    // to that segment has a deliverable recipient (the text channels send to
+    // {{customer.phone}}). first_name lets the body merge tag render.
+    await pool.query(
+      `UPDATE profiles SET attributes = attributes || '{"phone": "+15551230001", "first_name": "Ada"}'::jsonb
+        WHERE workspace_id = $1 AND external_id = 'a1'`,
+      [WS_A],
+    );
     // Give the first profile (a1) past events + a manual segment membership so the
     // Profile detail screen's Events/Segments tabs render live data in the e2e.
     await pool.query('UPDATE profile_features SET total_events = 2 WHERE profile_id = $1', [
@@ -266,6 +274,9 @@ export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void>
     await pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM suppressions WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [ws]);
+    // usage_counters now gets rows from local SMS/WhatsApp sends (the text channels
+    // deliver locally via the mock); clear them so the workspace can be torn down.
+    await pool.query('DELETE FROM usage_counters WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM email_events WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM outbox WHERE workspace_id = $1', [ws]);

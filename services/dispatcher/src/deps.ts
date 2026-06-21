@@ -8,6 +8,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { getPool } from '@cdp/db';
 import { ProdSesEmailClient } from '@cdp/email';
+import { resolveChannelProvider } from '@cdp/channels';
 import type { SqlStatement } from './core.js';
 import type { HandlerDeps } from './handler.js';
 import type { Reader } from './dispatch.js';
@@ -67,6 +68,9 @@ export function makeProdDeps(): HandlerDeps {
   return {
     reader,
     ses: new ProdSesEmailClient(),
+    // The text-channel resolver (sms/whatsapp). MOCK this phase (deterministic,
+    // offline); a real Twilio/Meta adapter slots in inside @cdp/channels.
+    resolveChannel: resolveChannelProvider,
     runInWorkspaceTx: (workspaceId, statements) =>
       runStatementsInWorkspaceTx(pool, workspaceId, statements),
     now: () => new Date(),
