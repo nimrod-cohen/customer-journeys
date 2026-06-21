@@ -528,43 +528,51 @@ export async function sweepDueScheduledBroadcasts(pool: Pool, deps: LocalApiDeps
  */
 async function dispatchCampaignOutboxNow(pool: Pool, deps: LocalApiDeps): Promise<void> {
   // Pending campaign outbox rows (a campaign send, not a broadcast), per workspace.
-  const { rows } = await pool.query<{ id: string; workspace_id: string }>(
-    `SELECT id, workspace_id FROM outbox
+  // The row's payload->>'medium' decides delivery: EMAIL needs REAL SES creds
+  // (mock/none → no-op, the long-standing local behaviour); a TEXT send (sms/
+  // whatsapp) ALWAYS delivers via the deterministic MOCK channel provider — no
+  // credentials needed — exactly like a text broadcast.
+  const { rows } = await pool.query<{ id: string; workspace_id: string; medium: string | null }>(
+    `SELECT id, workspace_id, payload->>'medium' AS medium FROM outbox
      WHERE status = 'pending' AND payload->>'campaign_id' IS NOT NULL
      ORDER BY workspace_id, created_at`,
   );
   if (rows.length === 0) return;
   const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
-  // Build one DispatchDeps per workspace (its company's SES creds), reusing it for
-  // every row in that workspace. Skip workspaces without REAL SES (mock/none).
-  const dispatchByWs = new Map<string, DispatchDeps | null>();
+  // Build one DispatchDeps per workspace (its company's SES creds + the mock channel
+  // resolver), reusing it for every row in that workspace. We also track whether the
+  // workspace has REAL SES so an EMAIL row in a mock-SES workspace stays pending.
+  const dispatchByWs = new Map<string, { deps: DispatchDeps; realSes: boolean }>();
   for (const r of rows) {
-    let dispatchDeps = dispatchByWs.get(r.workspace_id);
-    if (dispatchDeps === undefined) {
+    let entry = dispatchByWs.get(r.workspace_id);
+    if (entry === undefined) {
       const { ses, mode } = await sesForWorkspace(pool, r.workspace_id, deps);
-      dispatchDeps =
-        mode !== 'real'
-          ? null
-          : {
-              reader: {
-                query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
-                  const res = await pool.query(text, values ? [...values] : undefined);
-                  return { rows: res.rows as T[] };
-                },
-              },
-              ses,
-              runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
-              now: () => new Date(),
-              unsubscribeBaseUrl: `${base}/unsubscribe`,
-              linkTrackingBaseUrl: base,
-            };
-      dispatchByWs.set(r.workspace_id, dispatchDeps);
+      entry = {
+        realSes: mode === 'real',
+        deps: {
+          reader: {
+            query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+              const res = await pool.query(text, values ? [...values] : undefined);
+              return { rows: res.rows as T[] };
+            },
+          },
+          ses,
+          // The mock channel resolver (sms/whatsapp) — deterministic + offline.
+          resolveChannel: resolveChannelProvider,
+          runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
+          now: () => new Date(),
+          unsubscribeBaseUrl: `${base}/unsubscribe`,
+          linkTrackingBaseUrl: base,
+        },
+      };
+      dispatchByWs.set(r.workspace_id, entry);
     }
-    if (!dispatchDeps) continue; // no real SES for this workspace → leave row pending
+    const isText = r.medium === 'sms' || r.medium === 'whatsapp';
+    if (!isText && !entry.realSes) continue; // email + no real SES → leave row pending
     try {
       // dispatchOutbox never throws on a send failure (resets the claim), so one
       // bad recipient can't abort the batch.
-      await dispatchOutbox(dispatchDeps, r.id);
+      await dispatchOutbox(entry.deps, r.id);
     } catch {
       /* isolate: one failed campaign send must not abort the batch */
     }
@@ -2278,12 +2286,13 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
     draft_trigger_segment_id: string | null;
     trigger_on: string | null;
     keep_while_in_segment: string | null;
+    topic_id: string | null;
     active_version_id: string | null;
     active_version: number | null;
     active_version_name: string | null;
   }>(
     `SELECT c.id, c.name, c.status, c.definition, c.draft_definition, c.trigger_segment_id,
-            c.draft_trigger_segment_id, c.trigger_on, c.keep_while_in_segment, c.active_version_id,
+            c.draft_trigger_segment_id, c.trigger_on, c.keep_while_in_segment, c.topic_id, c.active_version_id,
             av.version AS active_version, av.name AS active_version_name
      FROM campaigns c
      LEFT JOIN campaign_versions av ON av.id = c.active_version_id AND av.workspace_id = c.workspace_id
@@ -2326,6 +2335,7 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
     trigger_segment_id: triggerSegmentId, // draft trigger ?? live trigger
     trigger_on: r.trigger_on,
     keep_while_in_segment: r.keep_while_in_segment,
+    topic_id: r.topic_id, // the campaign-level topic (dispatcher gates sends on it)
   };
   return ok({ campaign, timezone });
 };
@@ -2412,6 +2422,17 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
     if (resolved === REJECT) return ok({ error: 'trigger_segment_id not found in this workspace' }, 400);
     triggerSegmentId = resolved;
   }
+  // The campaign-level TOPIC (campaigns.topic_id — migration 0040): the dispatcher
+  // gates campaign sends by it (a topic-unsubscribed profile is skipped). A supplied
+  // topic_id MUST resolve inside the workspace (inv.2); null/'' explicitly clears it.
+  const setTopic = b.topic_id !== undefined;
+  let topicId: string | null = null;
+  if (setTopic && b.topic_id !== null && b.topic_id !== '') {
+    if (typeof b.topic_id !== 'string' || !(await topicBelongsToWorkspace(pool, ctx.workspaceId, b.topic_id))) {
+      return ok({ error: 'topic_id not found in this workspace' }, 400);
+    }
+    topicId = b.topic_id;
+  }
   const q = scopedQuery(
     ctx.workspaceId,
     `UPDATE campaigns SET
@@ -2420,7 +2441,8 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
        status = COALESCE($4, status),
        trigger_on = COALESCE($6, trigger_on),
        keep_while_in_segment = CASE WHEN $7::boolean THEN $8 ELSE keep_while_in_segment END,
-       trigger_segment_id = CASE WHEN $9::boolean THEN $10 ELSE trigger_segment_id END
+       trigger_segment_id = CASE WHEN $9::boolean THEN $10 ELSE trigger_segment_id END,
+       topic_id = CASE WHEN $11::boolean THEN $12 ELSE topic_id END
      WHERE id = $5`,
     [
       b.name !== undefined ? String(b.name) : null,
@@ -2433,6 +2455,8 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
       (b.keep_while_in_segment ?? null) as string | null,
       setTriggerSegment,
       triggerSegmentId,
+      setTopic,
+      topicId,
     ],
   );
   const { rowCount } = await pool.query(q.text, q.values);

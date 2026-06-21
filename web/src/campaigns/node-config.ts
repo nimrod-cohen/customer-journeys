@@ -319,6 +319,48 @@ export function sendNodeTemplateId(node: DslNode): string | null {
   return typeof t === 'string' && t.trim().length > 0 ? t : null;
 }
 
+/** A send node's medium ('email' default). */
+export type SendMedium = 'email' | 'sms' | 'whatsapp';
+
+/** Whether a send medium is a text channel (sms/whatsapp). */
+export function isTextSendMedium(m: string): m is 'sms' | 'whatsapp' {
+  return m === 'sms' || m === 'whatsapp';
+}
+
+/** The send node's medium ('email' default, back-compat for an untagged send). */
+export function sendNodeMedium(node: DslNode): SendMedium {
+  const m = (node as { medium?: unknown }).medium;
+  return m === 'sms' || m === 'whatsapp' ? m : 'email';
+}
+
+/** The SEND editor's channel form (medium + the plain text body for sms/whatsapp). */
+export interface SendForm {
+  readonly medium: SendMedium;
+  readonly textBody: string;
+}
+
+/** Read a send node into its channel form (medium + body). Email back-compat. */
+export function readSendConfig(node: DslNode): SendForm {
+  const tb = (node as { text_body?: unknown }).text_body;
+  return { medium: sendNodeMedium(node), textBody: typeof tb === 'string' ? tb : '' };
+}
+
+/**
+ * Serialize a send node's channel config (medium + body). For EMAIL the body is
+ * dropped and the existing template copy id (`keepTemplateId`) is preserved — the
+ * email instance is attached/designed through the clone flow, not this editor. For
+ * a TEXT send (sms/whatsapp) the trimmed body is carried and NO template_id is set
+ * (a text send has no template). Edges are re-applied by applyNodeConfig.
+ */
+export function writeSendConfig(form: SendForm, keepTemplateId?: string | null): DslNode {
+  if (isTextSendMedium(form.medium)) {
+    return { type: 'action', kind: 'send', medium: form.medium, text_body: form.textBody.trim() };
+  }
+  const node: DslNode = { type: 'action', kind: 'send', medium: 'email' };
+  if (keepTemplateId) (node as { template_id?: string }).template_id = keepTemplateId;
+  return node;
+}
+
 // ── UPDATE-PROFILE (set_attribute) ──────────────────────────────────────────────
 
 export type ValueMode = 'literal' | 'expression' | 'js';

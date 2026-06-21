@@ -790,7 +790,12 @@ export function nodeSummary(canvasNode: CanvasNode): string {
     }
     case 'action': {
       const kind = String((node as { kind?: unknown }).kind ?? '');
-      if (kind === 'send') return 'Send email';
+      if (kind === 'send') {
+        const medium = String((node as { medium?: unknown }).medium ?? 'email');
+        if (medium === 'sms') return 'Send SMS';
+        if (medium === 'whatsapp') return 'Send WhatsApp';
+        return 'Send email';
+      }
       if (kind === 'set_attribute') {
         // Prefer the assignments LIST (Feature B): 1 → "Set <key>", N → "Set N attributes".
         const list = (node as { assignments?: ReadonlyArray<{ key?: unknown }> }).assignments;

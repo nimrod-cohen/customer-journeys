@@ -122,4 +122,36 @@ describeMaybe('POST /campaigns/:id/activate — machine-usable body + typed erro
     const row = await world.pool.query<{ status: string }>('SELECT status FROM campaigns WHERE id = $1', [camp]);
     expect(row.rows[0]!.status).toBe('draft');
   });
+
+  // ── multi-channel publish gate (v0.54.0) ──────────────────────────────────────
+
+  const smsDef = (body: string) => ({
+    startNode: 't',
+    nodes: {
+      t: { type: 'trigger', kind: 'manual', next: 'send' },
+      send: { type: 'action', kind: 'send', medium: 'sms', text_body: body, next: 'x' },
+      x: { type: 'exit' },
+    },
+  });
+
+  it('a TEXT (sms) send with a BLANK body is REFUSED (typed 4xx, naming text_body); stays draft', async () => {
+    const camp = await makeCampaign(smsDef('   '));
+    const res = await call(world.env, 'POST', `/campaigns/${camp}/activate`, { token: tok() });
+    expect(res.status).toBe(400);
+    expect((res.body as { error?: string }).error).toMatch(/text_body/i);
+    const row = await world.pool.query<{ status: string }>('SELECT status FROM campaigns WHERE id = $1', [camp]);
+    expect(row.rows[0]!.status).toBe('draft');
+  });
+
+  it('a configured TEXT campaign ACTIVATES with NO verified sending domain (text skips the email/domain gate)', async () => {
+    // Un-verify the only domain — a text campaign must still activate.
+    await world.pool.query('UPDATE sending_domains SET verified = false WHERE id = $1', [DOMAIN]);
+    const camp = await makeCampaign(smsDef('Hi {{customer.first_name}}!'));
+    const res = await call(world.env, 'POST', `/campaigns/${camp}/activate`, { token: tok() });
+    await world.pool.query('UPDATE sending_domains SET verified = true WHERE id = $1', [DOMAIN]);
+    expect(res.status).toBe(200);
+    expect((res.body as { status?: string }).status).toBe('active');
+    const row = await world.pool.query<{ status: string }>('SELECT status FROM campaigns WHERE id = $1', [camp]);
+    expect(row.rows[0]!.status).toBe('active');
+  });
 });

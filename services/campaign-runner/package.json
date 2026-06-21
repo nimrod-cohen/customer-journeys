@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.620.0",
+    "@cdp/channels": "workspace:*",
     "@cdp/db": "workspace:*",
     "@cdp/runner-webhook": "workspace:*",
     "@cdp/segments": "workspace:*",

@@ -43,11 +43,20 @@ describe('processNode', () => {
     expect((processNode(node, state(), false, NOW) as { nextNode: string }).nextNode).toBe('no');
   });
 
-  it('action send emits a send side effect and advances', () => {
+  it('action send emits a send side effect and advances (email default)', () => {
     const node: Node = { type: 'action', kind: 'send', template_id: 'tpl', next: 'x' };
     const r = processNode(node, state(), false, NOW);
     expect(r.disposition).toBe('advance');
-    expect(r.sideEffects).toEqual([{ kind: 'send', templateId: 'tpl', nodeId: '' }]);
+    expect(r.sideEffects).toEqual([{ kind: 'send', medium: 'email', templateId: 'tpl', textBody: null, nodeId: '' }]);
+  });
+
+  it('action send with an sms medium emits a TEXT send side effect (body, no template)', () => {
+    const node: Node = { type: 'action', kind: 'send', medium: 'sms', text_body: 'Hi {{customer.first_name}}', next: 'x' };
+    const r = processNode(node, state(), false, NOW);
+    expect(r.disposition).toBe('advance');
+    expect(r.sideEffects).toEqual([
+      { kind: 'send', medium: 'sms', templateId: null, textBody: 'Hi {{customer.first_name}}', nodeId: '' },
+    ]);
   });
 
   it('action set_attribute emits a set_attribute side effect', () => {

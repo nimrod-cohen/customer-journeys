@@ -32,6 +32,8 @@ import {
   readWebhookConfig,
   webhookSecretHeaders,
   sendNodeNeedsEmail,
+  readSendConfig,
+  writeSendConfig,
   readEventPayloadFilter,
   writeEventPayloadFilter,
 } from './node-config.js';
@@ -353,6 +355,50 @@ describe('SEND default (placeholder removed)', () => {
     expect(sendNodeNeedsEmail(node)).toBe(true);
   });
 });
+
+describe('SEND channel (medium + text_body)', () => {
+  it('reads an unconfigured/email send as medium=email (back-compat)', () => {
+    expect(readSendConfig({ type: 'action', kind: 'send' }).medium).toBe('email');
+    expect(readSendConfig({ type: 'action', kind: 'send', template_id: 't' }).medium).toBe('email');
+  });
+
+  it('reads a text send back (medium + body)', () => {
+    const form = readSendConfig({ type: 'action', kind: 'send', medium: 'sms', text_body: 'Hi' });
+    expect(form).toEqual({ medium: 'sms', textBody: 'Hi' });
+  });
+
+  it('writes an email send WITHOUT a text_body (preserves an existing template_id)', () => {
+    const node = writeSendConfig({ medium: 'email', textBody: 'ignored' }, 'tpl-99');
+    expect(node).toMatchObject({ type: 'action', kind: 'send', medium: 'email', template_id: 'tpl-99' });
+    expect((node as { text_body?: string }).text_body).toBeUndefined();
+    // The runner validator accepts it (email send with a template).
+    expect(() => validateCampaignDefinition(wrapSend(node))).not.toThrow();
+  });
+
+  it('writes a text send carrying the trimmed body and NO template_id; runner accepts it', () => {
+    const node = writeSendConfig({ medium: 'sms', textBody: '  Hi {{customer.first_name}}  ' }, 'tpl-stale');
+    expect(node).toMatchObject({ type: 'action', kind: 'send', medium: 'sms', text_body: 'Hi {{customer.first_name}}' });
+    expect((node as { template_id?: string }).template_id).toBeUndefined();
+    expect(() => validateCampaignDefinition(wrapSend(node))).not.toThrow();
+  });
+
+  it('a text send with a blank body is rejected by the runner validator', () => {
+    const node = writeSendConfig({ medium: 'whatsapp', textBody: '   ' });
+    expect(() => validateCampaignDefinition(wrapSend(node))).toThrow(/text_body/i);
+  });
+});
+
+/** Wrap a send DslNode into a minimal valid graph for the real runner validator. */
+function wrapSend(send: object): CampaignDefinition {
+  return {
+    startNode: 't',
+    nodes: {
+      t: { type: 'trigger', kind: 'manual', next: 's' } as never,
+      s: { ...(send as object), next: 'x' } as never,
+      x: { type: 'exit' } as never,
+    },
+  };
+}
 
 describe('event trigger payload filter (read/write)', () => {
   it('writes a payload.* GroupNode the runner accepts; round-trips through read', () => {

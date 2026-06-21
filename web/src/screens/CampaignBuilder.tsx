@@ -19,7 +19,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
+import { Badge, Button, Card, Field, Input, Select, PageHeader, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
 import type { ActionMenuItem } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.js';
 import { showToast } from '../ui/toast.js';
@@ -390,6 +390,10 @@ export function CampaignDetail({ id }: { id?: string }) {
   const [timeZone, setTimeZone] = useState('UTC');
   const [triggerSegmentId, setTriggerSegmentId] = useState<string | null>(null);
   const [segments, setSegments] = useState<SegmentLite[]>([]);
+  // The campaign-level TOPIC (campaigns.topic_id): the dispatcher gates campaign
+  // sends by it (a topic-unsubscribed profile is skipped). "No topic" = null.
+  const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
+  const [topicId, setTopicId] = useState<string | null>(null);
   const [paletteEdge, setPaletteEdge] = useState<CanvasEdge | null>(null);
   // When set, the palette is opened to insert a step AFTER this condition's branch
   // (the merge (+)); the chosen type splices in BEFORE the continuation.
@@ -421,6 +425,7 @@ export function CampaignDetail({ id }: { id?: string }) {
   useEffect(() => {
     void reloadList();
     void api.get<{ segments: SegmentLite[] }>('/segments').then((r) => setSegments(r.segments)).catch(() => undefined);
+    void api.get<{ topics: { id: string; name: string }[] }>('/topics').then((r) => setTopics(r.topics)).catch(() => undefined);
     if (existingId) void openById(existingId);
   }, [existingId]);
 
@@ -443,6 +448,7 @@ export function CampaignDetail({ id }: { id?: string }) {
         liveDefinition: CampaignDefinition;
         hasDraft: boolean;
         trigger_segment_id: string | null;
+        topic_id: string | null;
       };
       timezone: string;
     }>(`/campaigns/${cid}`);
@@ -451,6 +457,7 @@ export function CampaignDetail({ id }: { id?: string }) {
     setStatus(res.campaign.status);
     setModel(parseDefinition(res.campaign.definition));
     setTriggerSegmentId(res.campaign.trigger_segment_id ?? null);
+    setTopicId(res.campaign.topic_id ?? null);
     setLiveDefinition(res.campaign.liveDefinition);
     // The server resolves trigger_segment_id to the DRAFT trigger when a draft
     // exists; the LIVE trigger equals it only when there's no unsaved draft. We use
@@ -649,6 +656,23 @@ export function CampaignDetail({ id }: { id?: string }) {
     await persist(undefined, segmentId);
   };
 
+  // The campaign-level TOPIC is a campaign-ROW field (not in the definition jsonb),
+  // persisted via PUT /campaigns/:id. A brand-new campaign is created first (persist)
+  // so it has a row to set the topic on. RETURNS the promise so the Select-driven
+  // save can surface failures; optimistic with rollback on error.
+  const saveTopic = async (next: string | null): Promise<void> => {
+    const prev = topicId;
+    setTopicId(next);
+    try {
+      const cid = editingId ?? (await persist());
+      await api.put(`/campaigns/${cid}`, { body: { topic_id: next } });
+      await reloadList();
+    } catch (err) {
+      setTopicId(prev);
+      showToast((err as { error?: string })?.error ?? 'Could not save the topic.', { tone: 'error' });
+    }
+  };
+
   // PUBLISH the draft as a new VERSION (Draft → Live). Persist the draft first so
   // the gate sees the latest copy, then POST /publish {name, scope}. The gate runs
   // BEFORE any mutation: a 400 is a structural reason; a 409 carries {error, node?,
@@ -827,6 +851,20 @@ export function CampaignDetail({ id }: { id?: string }) {
                 value={name}
                 onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
               />
+            </Field>
+            <Field label="Topic" class="max-w-xs flex-1" hint="Recipients unsubscribed from this topic are skipped.">
+              <Select
+                data-testid="campaign-topic"
+                value={topicId ?? ''}
+                onChange={(e: Event) => void saveTopic((e.target as HTMLSelectElement).value || null)}
+              >
+                <option value="">No topic</option>
+                {topics.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
             </Field>
             <div class="flex items-center gap-2">
               {isDirty ? (

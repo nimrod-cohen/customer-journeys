@@ -45,6 +45,10 @@ import {
   writeWebhookConfig,
   webhookSecretHeaders,
   sendNodeTemplateId,
+  sendNodeMedium,
+  readSendConfig,
+  writeSendConfig,
+  type SendMedium,
   type TriggerKind,
   type ProfileChange,
   type HourWindowForm,
@@ -492,9 +496,59 @@ interface Template {
 
 function SendEditor(props: NodeEditorProps) {
   const attachedId = sendNodeTemplateId(props.node.node);
+  const [medium, setMedium] = useState<SendMedium>(() => sendNodeMedium(props.node.node));
   const [templates, setTemplates] = useState<Template[]>([]);
   const [pick, setPick] = useState('');
   const [envelope, setEnvelope] = useState<{ subject: string; sender_id: string | null; to_address: string } | null>(null);
+  const [textBody, setTextBody] = useState<string>(() => readSendConfig(props.node.node).textBody);
+
+  // The medium selector — sits above the per-channel body. Changing it does not
+  // persist on its own; Save (text) or the attach/design flow (email) persists.
+  const mediumSelect = (
+    <Field label="Channel">
+      <Select
+        data-testid="send-medium"
+        value={medium}
+        onChange={(e: Event) => setMedium((e.target as HTMLSelectElement).value as SendMedium)}
+      >
+        <option value="email">Email</option>
+        <option value="sms">SMS</option>
+        <option value="whatsapp">WhatsApp</option>
+      </Select>
+    </Field>
+  );
+
+  // A TEXT send (sms/whatsapp): a plain merge-tag body, saved into the node config.
+  if (medium === 'sms' || medium === 'whatsapp') {
+    const saveText = async (): Promise<void> => {
+      if (!textBody.trim()) {
+        showToast('Add a message body before saving.', { tone: 'error' });
+        return;
+      }
+      await props.onSaveNode(writeSendConfig({ medium, textBody }));
+      props.onDone();
+    };
+    return (
+      <div class="space-y-4">
+        {mediumSelect}
+        <Field label="Message body" hint="Plain text. Merge tags like {{customer.first_name}} render per recipient.">
+          <Textarea
+            data-testid="send-text-body"
+            rows={5}
+            placeholder={`Hi {{customer.first_name}}, …`}
+            value={textBody}
+            onInput={(e: Event) => setTextBody((e.target as HTMLTextAreaElement).value)}
+          />
+        </Field>
+        <p class="text-xs text-stone-400">
+          Sends to the recipient&apos;s phone ({'{{customer.phone}}'}) via the {medium === 'sms' ? 'SMS' : 'WhatsApp'} provider.
+        </p>
+        <Button data-testid="send-save-text" onClick={saveText}>
+          Save
+        </Button>
+      </div>
+    );
+  }
 
   // Library templates for the picker (only kind!='copy' ones are reusable designs).
   useEffect(() => {
@@ -548,6 +602,7 @@ function SendEditor(props: NodeEditorProps) {
   if (attachedId) {
     return (
       <div class="space-y-4">
+        {mediumSelect}
         <div data-testid="send-email-instance" class="rounded-xl border border-sky-200 bg-sky-50/50 p-4">
           <p class="text-sm font-semibold text-sky-800">This step's email</p>
           <dl class="mt-2 space-y-1 text-sm text-stone-600">
@@ -571,6 +626,7 @@ function SendEditor(props: NodeEditorProps) {
 
   return (
     <div class="space-y-4">
+      {mediumSelect}
       <p class="text-sm text-stone-500">This step sends an email through the dispatcher. Start from a library template (it's cloned into this step's own editable copy) or design a blank one.</p>
       <Field label="Start from a template">
         <div class="flex items-center gap-2">

@@ -712,6 +712,23 @@ describe('nodeSummary', () => {
     expect(nodeSummary(byId('x'))).toBe('Exit');
   });
 
+  it('reflects the send medium (SMS / WhatsApp / email)', () => {
+    const m = parseDefinition({
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'sms' },
+        sms: { type: 'action', kind: 'send', medium: 'sms', text_body: 'Hi', next: 'wa' },
+        wa: { type: 'action', kind: 'send', medium: 'whatsapp', text_body: 'Yo', next: 'em' },
+        em: { type: 'action', kind: 'send', medium: 'email', template_id: 't', next: 'x' },
+        x: { type: 'exit' },
+      },
+    });
+    const byId = (id: string) => m.nodes.find((n) => n.id === id)!;
+    expect(nodeSummary(byId('sms'))).toBe('Send SMS');
+    expect(nodeSummary(byId('wa'))).toBe('Send WhatsApp');
+    expect(nodeSummary(byId('em'))).toBe('Send email');
+  });
+
   it('profile trigger summary reflects the profileChange', () => {
     const make = (profileChange?: string) =>
       parseDefinition({

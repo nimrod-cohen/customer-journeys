@@ -9,6 +9,10 @@
 // compile through @cdp/segments).
 import { validateAst, type AstNode } from '@cdp/segments';
 import { isExpressionSpec, isLiteralSpec, isJsSpec, type ValueSpec } from '@cdp/shared';
+import { isMedium, isTextMedium, type Medium } from '@cdp/channels';
+
+// Re-export the sending medium so consumers importing from the runner's DSL get it.
+export type { Medium } from '@cdp/channels';
 
 // Re-export the value spec so consumers importing from the runner's DSL get it.
 export type { ValueSpec } from '@cdp/shared';
@@ -114,7 +118,20 @@ export interface WebhookAction {
 export interface ActionNode {
   readonly type: 'action';
   readonly kind: 'send' | 'set_attribute';
-  /** For kind='send': the email template to enqueue through the Dispatcher.
+  /**
+   * For kind='send': the sending MEDIUM (CLAUDE.md multi-channel). Default 'email'
+   * when absent (every legacy send is email). 'email' uses the template_id email
+   * copy (envelope on the template); 'sms'/'whatsapp' send the recipient PHONE the
+   * plain `text_body` via a ChannelProvider (no template, no verified-domain gate).
+   */
+  readonly medium?: Medium;
+  /**
+   * For kind='send' with an sms/whatsapp medium: the plain-text body (merge-tag
+   * enabled — {{customer.*}} / {{event.*}} rendered at dispatch). REQUIRED (non-
+   * blank) for a text send; ignored for email (which uses template_id).
+   */
+  readonly text_body?: string;
+  /** For kind='send' (email): the email template to enqueue through the Dispatcher.
    * The envelope (subject / From / To) lives ON that template, not here. */
   readonly template_id?: string;
   /** For kind='set_attribute' (SINGLE assignment, back-compat): the attribute key. */
@@ -357,13 +374,8 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
         throw new Error(`validateCampaignDefinition: action "${id}" has an invalid kind`);
       }
       const act = node as ActionNode;
-      // A send node's email is attached via the SEND editor's clone/attach flow
-      // (§9B phase 6); an UNATTACHED send node (no template_id) is a structurally
-      // valid DRAFT — the PUBLISH gate (collectSendNodeEnvelopeGaps) blocks
-      // activation until an email with a From/To/Subject is attached. When a
-      // template_id IS present it must be a non-empty string.
-      if (kind === 'send' && act.template_id !== undefined && (typeof act.template_id !== 'string' || !act.template_id)) {
-        throw new Error(`validateCampaignDefinition: send action "${id}" template_id must be a non-empty string`);
+      if (kind === 'send') {
+        validateSendNode(id, act);
       }
       if (kind === 'set_attribute') {
         validateSetAttributeNode(id, act);
@@ -377,6 +389,32 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
       return;
     case 'exit':
       return;
+  }
+}
+
+/**
+ * Validate a SEND action node (pure, §9B multi-channel). The `medium` is OPTIONAL
+ * (defaults to 'email'); when present it MUST be a recognised medium. Per medium:
+ *   - email: an UNATTACHED send (no template_id) is a valid DRAFT — the PUBLISH
+ *     gate (collectSendNodeEnvelopeGaps) blocks activation until an envelope-
+ *     complete email is attached. A present template_id must be a non-empty string.
+ *   - sms/whatsapp: `text_body` is REQUIRED and must be a non-blank string (the
+ *     plain message body; merge tags render at dispatch). template_id is ignored.
+ */
+function validateSendNode(id: string, act: ActionNode): void {
+  if (act.medium !== undefined && !isMedium(act.medium)) {
+    throw new Error(`validateCampaignDefinition: send action "${id}" has an invalid medium`);
+  }
+  const medium: Medium = act.medium ?? 'email';
+  if (isTextMedium(medium)) {
+    if (typeof act.text_body !== 'string' || act.text_body.trim().length === 0) {
+      throw new Error(`validateCampaignDefinition: ${medium} send action "${id}" needs a non-blank text_body`);
+    }
+    return;
+  }
+  // email
+  if (act.template_id !== undefined && (typeof act.template_id !== 'string' || !act.template_id)) {
+    throw new Error(`validateCampaignDefinition: send action "${id}" template_id must be a non-empty string`);
   }
 }
 
@@ -617,11 +655,13 @@ export interface SendNodeEnvelope {
   readonly subject: string | null;
 }
 
-/** A per-send-node publish gap: which of sender/to/subject is missing (first only). */
+/** A per-send-node publish gap: which field is missing (first only). For an EMAIL
+ *  send it is one of sender/to/subject (sendBroadcast order); for a TEXT send
+ *  (sms/whatsapp) it is 'body' (a blank text_body). */
 export interface SendNodeEnvelopeGap {
   readonly nodeId: string;
-  /** The single highest-priority missing field (sendBroadcast order). */
-  readonly missing: 'sender' | 'to' | 'subject';
+  /** The single highest-priority missing field. */
+  readonly missing: 'sender' | 'to' | 'subject' | 'body';
 }
 
 /**
@@ -649,9 +689,18 @@ export function collectSendNodeEnvelopeGaps(
     if (!node) continue;
     if (node.type === 'action' && (node as ActionNode).kind === 'send') {
       const act = node as ActionNode;
-      const env = act.template_id ? envelopes[act.template_id] : undefined;
-      const missing = firstEnvelopeGap(env);
-      if (missing) gaps.push({ nodeId: id, missing });
+      const medium: Medium = act.medium ?? 'email';
+      if (isTextMedium(medium)) {
+        // A TEXT send (sms/whatsapp) is gated ONLY on a non-blank body — the email
+        // envelope (From/To/Subject) + verified-domain gate are email-only.
+        if (typeof act.text_body !== 'string' || act.text_body.trim().length === 0) {
+          gaps.push({ nodeId: id, missing: 'body' });
+        }
+      } else {
+        const env = act.template_id ? envelopes[act.template_id] : undefined;
+        const missing = firstEnvelopeGap(env);
+        if (missing) gaps.push({ nodeId: id, missing });
+      }
     }
     for (const t of edgesOf(node)) queue.push(t);
   }

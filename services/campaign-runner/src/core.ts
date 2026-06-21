@@ -13,6 +13,7 @@
 import { buildSegmentMatch, resolveOperator } from '@cdp/segments';
 import type { AstNode } from '@cdp/segments';
 import { isWindowOpen, nextWindowOpening, zonedInputToUtcIso, resolveEventPath } from '@cdp/shared';
+import { isTextMedium, type Medium } from '@cdp/channels';
 import {
   type Node,
   type WaitNode,
@@ -46,10 +47,18 @@ export const DEFAULT_REENROLLMENT_POLICY: ReenrollmentPolicy = 'once';
 /** A side effect produced by processing a node (consumed by the orchestrator). */
 export type SideEffect =
   | {
-      /** Enqueue an email send through the Dispatcher (outbox + {outbox_id}). */
+      /** Enqueue a send through the Dispatcher (outbox + {outbox_id}). */
       readonly kind: 'send';
-      /** The template to send. */
-      readonly templateId: string;
+      /**
+       * The sending MEDIUM (CLAUDE.md multi-channel). 'email' uses the template
+       * copy (templateId); 'sms'/'whatsapp' carry the plain `textBody` to the
+       * recipient phone via a ChannelProvider. Defaults to 'email'.
+       */
+      readonly medium: Medium;
+      /** For an EMAIL send: the template copy to send (the email instance). */
+      readonly templateId: string | null;
+      /** For a TEXT send (sms/whatsapp): the plain-text body (merge-tag enabled). */
+      readonly textBody: string | null;
       /** The node id this send originates from (drives the dedupe_key). */
       readonly nodeId: string;
     }
@@ -315,8 +324,17 @@ function actionSideEffect(node: ActionNode | WebhookAction): SideEffect | null {
     return { kind: 'webhook', node, nodeId: '' };
   }
   if (node.kind === 'send') {
+    const medium: Medium = node.medium ?? 'email';
+    if (isTextMedium(medium)) {
+      // A TEXT send carries the plain body (no template). A blank body emits no
+      // effect (the publish gate blocks activation; this is defense-in-depth).
+      const body = typeof node.text_body === 'string' ? node.text_body : '';
+      if (!body.trim()) return null;
+      return { kind: 'send', medium, templateId: null, textBody: body, nodeId: '' };
+    }
+    // EMAIL: needs an attached template copy (else nothing to send).
     if (!node.template_id) return null;
-    return { kind: 'send', templateId: node.template_id, nodeId: '' };
+    return { kind: 'send', medium: 'email', templateId: node.template_id, textBody: null, nodeId: '' };
   }
   if (node.kind === 'set_attribute') {
     // Normalize to a LIST of keyed assignments. An `assignments` array (Feature B)
@@ -867,7 +885,7 @@ export function buildCampaignOutboxInsert(
   workspaceId: string,
   campaignId: string,
   profileId: string,
-  templateId: string,
+  templateId: string | null,
   nodeId: string,
   payload: Record<string, unknown> = {},
 ): SqlStatement {

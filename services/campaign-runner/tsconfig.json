@@ -7,6 +7,7 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../../packages/shared" },
+    { "path": "../../packages/channels" },
     { "path": "../../packages/db" },
     { "path": "../../packages/runner-webhook" },
     { "path": "../../packages/segments" },

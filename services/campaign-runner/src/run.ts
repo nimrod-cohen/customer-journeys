@@ -251,6 +251,14 @@ async function chainTick(
     for (const eff of result.sideEffects) {
       if (eff.kind === 'send') {
         sends.push({ ...eff, nodeId: currentNodeId });
+        // A TEXT send (sms/whatsapp) carries its medium + plain body in the OUTBOX
+        // PAYLOAD so the Dispatcher (which has no broadcast row for a campaign send)
+        // renders {{customer.phone}} → provider via the existing text path. An EMAIL
+        // send leaves the payload empty (its content lives on the template copy).
+        const payload: Record<string, unknown> =
+          eff.medium !== 'email'
+            ? { medium: eff.medium, text_body: eff.textBody ?? '' }
+            : {};
         writes.push(
           buildCampaignOutboxInsert(
             workspaceId,
@@ -258,6 +266,7 @@ async function chainTick(
             row.profile_id,
             eff.templateId,
             currentNodeId,
+            payload,
           ),
         );
       } else if (eff.kind === 'webhook') {

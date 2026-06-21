@@ -17,13 +17,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { hasDatabaseUrl } from '@cdp/db';
 import { makeWorld, tokenFor, call, type TestWorld } from './seed.js';
 
-const WS = '0c0d0e96-0000-4000-8000-000000000a01';
-const WS_OTHER = '0c0d0e96-0000-4000-8000-000000000a02';
-const USER = '0c0d0e96-0000-4000-8000-0000000000b1';
-const USER_OTHER = '0c0d0e96-0000-4000-8000-0000000000b2';
-const DOMAIN = '0c0d0e96-0000-4000-8000-0000000000d1';
-const SENDER = '0c0d0e96-0000-4000-8000-0000000000f1';
-const SEGMENT = '0c0d0e96-0000-4000-8000-0000000000e1';
+const WS = '0c0d0ed1-0000-4000-8000-000000000a01';
+const WS_OTHER = '0c0d0ed1-0000-4000-8000-000000000a02';
+const USER = '0c0d0ed1-0000-4000-8000-0000000000b1';
+const USER_OTHER = '0c0d0ed1-0000-4000-8000-0000000000b2';
+const DOMAIN = '0c0d0ed1-0000-4000-8000-0000000000d1';
+const SENDER = '0c0d0ed1-0000-4000-8000-0000000000f1';
+const SEGMENT = '0c0d0ed1-0000-4000-8000-0000000000e1';
 
 const describeMaybe = hasDatabaseUrl() ? describe : describe.skip;
 

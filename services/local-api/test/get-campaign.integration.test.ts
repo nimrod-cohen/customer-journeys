@@ -13,6 +13,8 @@ const WS = '0c0d0e94-0000-4000-8000-000000000a01';
 const WS_OTHER = '0c0d0e94-0000-4000-8000-000000000a02';
 const USER = '0c0d0e94-0000-4000-8000-0000000000b1';
 const USER_OTHER = '0c0d0e94-0000-4000-8000-0000000000b2';
+const TOPIC = '0c0d0e94-0000-4000-8000-0000000000c1';
+const TOPIC_OTHER = '0c0d0e94-0000-4000-8000-0000000000c2';
 
 const describeMaybe = hasDatabaseUrl() ? describe : describe.skip;
 
@@ -50,6 +52,8 @@ describeMaybe('GET /campaigns/:id — definition round-trip (real Postgres)', ()
       await world.pool.query("INSERT INTO workspaces (id, name, status) VALUES ($1,'W','active')", [ws]);
       await world.pool.query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')", [ws, user]);
     }
+    await world.pool.query("INSERT INTO topics (id, workspace_id, name) VALUES ($1,$2,'News')", [TOPIC, WS]);
+    await world.pool.query("INSERT INTO topics (id, workspace_id, name) VALUES ($1,$2,'Foreign')", [TOPIC_OTHER, WS_OTHER]);
   });
 
   afterAll(async () => {
@@ -62,6 +66,7 @@ describeMaybe('GET /campaigns/:id — definition round-trip (real Postgres)', ()
   async function cleanup(): Promise<void> {
     for (const ws of [WS, WS_OTHER]) {
       await world.pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);
+      await world.pool.query('DELETE FROM topics WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
     }
@@ -96,6 +101,33 @@ describeMaybe('GET /campaigns/:id — definition round-trip (real Postgres)', ()
     const def = (got.body as { campaign: { definition: unknown } }).campaign.definition;
     expect(def).toEqual(branchDef);
     expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('PUT /campaigns/:id sets a workspace topic_id; GET surfaces it; a foreign topic is rejected', async () => {
+    const created = await call(world.env, 'POST', '/campaigns', {
+      token: tok(),
+      body: { name: 'Topiced', definition: linearDef },
+    });
+    const id = (created.body as { campaign: { id: string } }).campaign.id;
+
+    // Set an in-workspace topic.
+    const put = await call(world.env, 'PUT', `/campaigns/${id}`, { token: tok(), body: { topic_id: TOPIC } });
+    expect(put.status).toBe(200);
+    const got = await call(world.env, 'GET', `/campaigns/${id}`, { token: tok() });
+    expect((got.body as { campaign: { topic_id: string | null } }).campaign.topic_id).toBe(TOPIC);
+
+    // A FOREIGN topic id is rejected (inv.2) — the stored topic is unchanged.
+    const bad = await call(world.env, 'PUT', `/campaigns/${id}`, { token: tok(), body: { topic_id: TOPIC_OTHER } });
+    expect(bad.status).toBe(400);
+    expect((bad.body as { error?: string }).error).toMatch(/topic_id not found/i);
+    const after = await call(world.env, 'GET', `/campaigns/${id}`, { token: tok() });
+    expect((after.body as { campaign: { topic_id: string | null } }).campaign.topic_id).toBe(TOPIC);
+
+    // Clearing the topic (null) is allowed.
+    const clear = await call(world.env, 'PUT', `/campaigns/${id}`, { token: tok(), body: { topic_id: null } });
+    expect(clear.status).toBe(200);
+    const cleared = await call(world.env, 'GET', `/campaigns/${id}`, { token: tok() });
+    expect((cleared.body as { campaign: { topic_id: string | null } }).campaign.topic_id).toBeNull();
   });
 
   it('404s for a campaign in ANOTHER workspace (token-scoped, inv.2)', async () => {

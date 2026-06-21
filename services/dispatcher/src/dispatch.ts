@@ -235,10 +235,11 @@ export async function dispatchOutbox(
     // carry it into messages_log so per-broadcast stats are a simple GROUP BY.
     const broadcastId = typeof payload['broadcast_id'] === 'string' ? (payload['broadcast_id'] as string) : null;
 
-    // MEDIUM routing (CLAUDE.md multi-channel). The medium + text_body live on the
-    // BROADCAST row (campaigns are email-only this phase). The payload carries
-    // `medium` (set by runBroadcast) as the authoritative hint; we still read the
-    // broadcast row for the text body. Email is the default for anything untagged.
+    // MEDIUM routing (CLAUDE.md multi-channel). For a BROADCAST the medium +
+    // text_body live on the broadcast row (the payload carries `medium` as the
+    // authoritative hint). For a CAMPAIGN send there is NO broadcast row, so the
+    // runner carries the medium + plain text_body in the OUTBOX PAYLOAD (the
+    // campaign send-node config); email is the default for anything untagged.
     let medium: Medium = 'email';
     let textBody: string | null = null;
     // The message's optional TOPIC (CLAUDE.md topic-subscriptions): lives on the
@@ -266,13 +267,18 @@ export async function dispatchOutbox(
         }
       }
     } else if (ob.campaign_id) {
-      // Campaign sends are email-only this phase; carry the campaign's topic (the
-      // column is ready — gating applies uniformly through the same pipeline).
+      // Campaign send: the medium + text body ride the OUTBOX PAYLOAD (no broadcast
+      // row to read). Carry the campaign's topic for the uniform topic gate.
       const { rows: cmRows } = await deps.reader.query<{ topic_id: string | null }>(
         `SELECT topic_id FROM campaigns WHERE workspace_id = $1 AND id = $2`,
         [workspaceId, ob.campaign_id],
       );
       topicId = cmRows[0]?.topic_id ?? null;
+      if (payloadMedium === 'sms' || payloadMedium === 'whatsapp') {
+        medium = payloadMedium;
+        const pt = payload['text_body'];
+        textBody = typeof pt === 'string' ? pt : null;
+      }
     }
 
     // The recipient's own data populates the `customer.*` namespace; an explicit

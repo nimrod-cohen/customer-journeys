@@ -241,6 +241,9 @@ importers:
       '@aws-sdk/client-sqs':
         specifier: ^3.620.0
         version: 3.1063.0
+      '@cdp/channels':
+        specifier: workspace:*
+        version: link:../../packages/channels
       '@cdp/db':
         specifier: workspace:*
         version: link:../../packages/db
