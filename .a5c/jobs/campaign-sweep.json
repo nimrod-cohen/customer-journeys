@@ -1,0 +1,19 @@
+{
+  "filesModified": [
+    "CLAUDE.md",
+    "package.json",
+    "pnpm-lock.yaml",
+    "services/local-api/package.json",
+    "services/local-api/tsconfig.json",
+    "services/local-api/src/handlers.ts",
+    "services/local-api/src/server.ts"
+  ],
+  "filesCreated": [
+    "services/local-api/test/campaign-sweep.integration.test.ts"
+  ],
+  "approach": "Added a LOCAL in-process campaign-enrollment sweep to the dev server, mirroring the existing scheduled-broadcast sweep. handlers.ts gains sweepDueCampaignEnrollments(pool, deps): builds a local RunDeps over the pool (withTx=withWorkspaceTx, runInWorkspaceTx=runStatementsInWorkspaceTx, fetchWebhookClient, decrypt helpers, a NO-OP SqsSender), runs buildSweepQuery(now) and runEnrollment per due id (per-row try/catch), then dispatchCampaignOutboxNow drains pending campaign outbox rows per workspace via DispatchDeps/dispatchOutbox (real-SES-only, no-op otherwise). server.ts wires it on LOCAL_CAMPAIGN_SWEEP_MS (default 30000) with a boot call + setInterval, long-lived server only (never createApp). Added @cdp/runner-webhook as a local-api workspace dep + tsconfig project reference.",
+  "testsPass": true,
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "Integration test (real PG @ localhost:5433/cdp) prefix 0c0d0eba**: trigger(profile,any)->set_attribute(first_name=js from customer.name)->exit enrollment ticks to completed + attribute lands, workspace-isolated, idempotent. local-api 247/247 + campaign-runner 224/224 pass. Typecheck 43/43. Lint clean except the 7 pre-existing @cdp/web react-hooks 'rule not found' errors (unrelated). Version bumped 0.45.0 -> 0.46.0. Not committed/pushed per instructions; dev server untouched. The sweep is GLOBAL/cross-workspace (production parity) so the processed count includes any other due dev enrollments — the test asserts >=2 and verifies the two seeded rows specifically."
+}

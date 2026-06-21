@@ -9,6 +9,7 @@
     { "path": "../../packages/shared" },
     { "path": "../../packages/db" },
     { "path": "../../packages/email" },
+    { "path": "../../packages/runner-webhook" },
     { "path": "../../packages/segments" },
     { "path": "../../packages/tenancy" },
     { "path": "../api" },

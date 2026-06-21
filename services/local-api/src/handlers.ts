@@ -67,11 +67,17 @@ import {
   collectSendNodeEnvelopeGaps,
   nextLifecycle,
   campaignCountsShape,
+  runEnrollment,
+  buildSweepQuery,
+  withWorkspaceTx,
+  runStatementsInWorkspaceTx as campaignRunnerTx,
   type CampaignLifecycleAction,
   type CampaignCountRow,
   type EnrollDeps,
   type CampaignDefinition,
+  type RunDeps,
 } from '@cdp/service-campaign-runner';
+import { fetchWebhookClient } from '@cdp/runner-webhook';
 import { runBroadcast, buildDueScheduledBroadcastsQuery } from '@cdp/service-broadcast';
 import {
   computeCostViewForWorkspaces,
@@ -483,6 +489,113 @@ export async function sweepDueScheduledBroadcasts(pool: Pool, deps: LocalApiDeps
     } catch {
       /* isolate: one failed broadcast must not abort the sweep; next tick retries */
     }
+  }
+  return processed;
+}
+
+/**
+ * Dispatch every PENDING CAMPAIGN outbox row for REAL, right now — the campaign
+ * twin of dispatchBroadcastNow. Campaign SEND nodes write outbox rows tagged with
+ * `payload.campaign_id`; production drains them off SQS via the Dispatcher Lambda,
+ * but the dev server has no queue/loop, so we run the SAME dispatcher core
+ * synchronously after a sweep tick. Grouped by workspace; only the workspaces
+ * whose company has REAL SES credentials actually deliver (mock/none → no-op, the
+ * long-standing local behaviour, so a set_attribute/exit-only campaign with NO
+ * outbox rows is simply a no-op). Failures are isolated and never thrown.
+ */
+async function dispatchCampaignOutboxNow(pool: Pool, deps: LocalApiDeps): Promise<void> {
+  // Pending campaign outbox rows (a campaign send, not a broadcast), per workspace.
+  const { rows } = await pool.query<{ id: string; workspace_id: string }>(
+    `SELECT id, workspace_id FROM outbox
+     WHERE status = 'pending' AND payload->>'campaign_id' IS NOT NULL
+     ORDER BY workspace_id, created_at`,
+  );
+  if (rows.length === 0) return;
+  const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
+  // Build one DispatchDeps per workspace (its company's SES creds), reusing it for
+  // every row in that workspace. Skip workspaces without REAL SES (mock/none).
+  const dispatchByWs = new Map<string, DispatchDeps | null>();
+  for (const r of rows) {
+    let dispatchDeps = dispatchByWs.get(r.workspace_id);
+    if (dispatchDeps === undefined) {
+      const { ses, mode } = await sesForWorkspace(pool, r.workspace_id, deps);
+      dispatchDeps =
+        mode !== 'real'
+          ? null
+          : {
+              reader: {
+                query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+                  const res = await pool.query(text, values ? [...values] : undefined);
+                  return { rows: res.rows as T[] };
+                },
+              },
+              ses,
+              runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
+              now: () => new Date(),
+              unsubscribeBaseUrl: `${base}/unsubscribe`,
+              linkTrackingBaseUrl: base,
+            };
+      dispatchByWs.set(r.workspace_id, dispatchDeps);
+    }
+    if (!dispatchDeps) continue; // no real SES for this workspace → leave row pending
+    try {
+      // dispatchOutbox never throws on a send failure (resets the claim), so one
+      // bad recipient can't abort the batch.
+      await dispatchOutbox(dispatchDeps, r.id);
+    } catch {
+      /* isolate: one failed campaign send must not abort the batch */
+    }
+  }
+}
+
+/**
+ * Advance every CAMPAIGN ENROLLMENT whose time has arrived — the LOCAL equivalent
+ * of the production EventBridge campaign sweep (`@cdp/service-campaign-runner`
+ * scheduledSweepHandler → buildSweepQuery → runEnrollment), which the dev server
+ * has no scheduler to run. Without this, enrollments are created (the trigger
+ * fires) but NEVER advance, so update-profile/wait/send steps never run and
+ * journeys never complete. We build a local RunDeps over the pool (the SAME
+ * withWorkspaceTx single-tx tick path production uses; a NO-OP SQS sender since
+ * local has no queue — we dispatch the outbox synchronously after, like
+ * broadcasts) and run each due enrollment, isolating per-row failures. Returns
+ * how many enrollments it ticked.
+ */
+export async function sweepDueCampaignEnrollments(pool: Pool, deps: LocalApiDeps): Promise<number> {
+  const runDeps: RunDeps = {
+    reader: {
+      query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+        const r = await pool.query(text, values ? [...values] : undefined);
+        return { rows: r.rows as T[] };
+      },
+    },
+    // Local has no SQS — sends are dispatched synchronously below (like broadcasts).
+    // A no-op sender keeps the runner happy (it enqueues the outbox id we then drain).
+    sqs: { async send() { return { MessageId: `local-campaign-${Date.now()}` }; } },
+    withTx: (fn) => withWorkspaceTx(pool, fn),
+    runInWorkspaceTx: (workspaceId, statements) => campaignRunnerTx(pool, workspaceId, statements),
+    now: () => new Date(),
+    dispatchQueueUrl: process.env.DISPATCH_QUEUE_URL ?? 'local://dispatch',
+    webhookClient: fetchWebhookClient(),
+    decryptSecret,
+    isEncryptedSecret,
+  };
+  const q = buildSweepQuery(new Date());
+  const { rows } = await pool.query<{ id: string }>(q.text, q.values);
+  let processed = 0;
+  for (const { id } of rows) {
+    try {
+      await runEnrollment(runDeps, id);
+      processed++;
+    } catch {
+      /* isolate: one bad enrollment must not abort the sweep; next tick retries */
+    }
+  }
+  // Drain any campaign send outbox rows this tick produced (no-op without real SES,
+  // and for set_attribute/exit-only campaigns there are none — that's fine).
+  try {
+    await dispatchCampaignOutboxNow(pool, deps);
+  } catch {
+    /* isolate: dispatch must not abort the sweep */
   }
   return processed;
 }

@@ -21,6 +21,7 @@
   "dependencies": {
     "@cdp/db": "workspace:*",
     "@cdp/email": "workspace:*",
+    "@cdp/runner-webhook": "workspace:*",
     "@cdp/segments": "workspace:*",
     "@cdp/service-api": "workspace:*",
     "@cdp/service-authorizer": "workspace:*",

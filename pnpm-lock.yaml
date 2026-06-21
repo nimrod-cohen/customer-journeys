@@ -384,6 +384,9 @@ importers:
       '@cdp/email':
         specifier: workspace:*
         version: link:../../packages/email
+      '@cdp/runner-webhook':
+        specifier: workspace:*
+        version: link:../../packages/runner-webhook
       '@cdp/segments':
         specifier: workspace:*
         version: link:../../packages/segments
