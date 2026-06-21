@@ -1,0 +1,23 @@
+{
+  "filesModified": [
+    "services/local-api/src/handlers.ts",
+    "services/local-api/src/routes.ts",
+    "web/src/screens/CampaignBuilder.tsx",
+    "web/e2e/campaign-versioning.browser.e2e.spec.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "filesCreated": [
+    "web/src/campaigns/PublishVersionModal.tsx",
+    "services/local-api/test/campaign-enrollments-list.integration.test.ts",
+    "web/e2e/campaign-list-publish-journeys.browser.e2e.spec.ts"
+  ],
+  "task1": "DONE: History tab hides version-revert on the active (is_active) row (version-active badge kept); backend revertCampaign 409s when version_id === active_version_id (defense-in-depth).",
+  "task2": "DONE: GET /campaigns LIST returns hasDraft per campaign; CampaignsList row menu shows campaign-publish ('Publish…') when status==='draft' || hasDraft; opens the shared PublishVersionModal (extracted from CampaignBuilder.tsx); POST /campaigns/:id/publish with forward/backfill; gate 400/409 surfaced inline; success toasts + reloads list.",
+  "task3": "DONE: new tab campaign-tab-journeys in CampaignDetail backed by GET /campaigns/:id/enrollments (manage_content, workspace-scoped, cross-workspace 404, joins profiles for email, newest-first, LIMIT 200); journey-row per enrollment with email/profile_id, journey-status Badge, current step label (nodeSummary, '—' fallback), enrolled + last-updated times; styled empty state.",
+  "testsPass": true,
+  "e2eSummary": "Full campaign e2e suite: 68 passed (3.0m), SOLO run. Includes new campaign-list-publish-journeys (2) + the active-row-hides-revert assertion in campaign-versioning. All existing campaign-builder/list-detail/lifecycle/node-editors/versioning/no-overflow/pan-zoom/delete/publish-gate/journey-smoke green.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "Vitest: @cdp/service-local-api 245 passed (53 files, incl. new campaign-enrollments-list.integration.test.ts 4 tests); @cdp/service-campaign-runner 224 passed (39 files). DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp for integration. Lint: only the 7 known pre-existing react-hooks 'rule not found' errors (none in CampaignBuilder.tsx) — no new errors. Version bumped 0.44.1 -> 0.45.0. CLAUDE.md updated. NO migration (campaign_enrollments exists). Did NOT commit/push. Note: my integration test originally collided on workspace ids (0c0d0e97) with campaign-lifecycle.integration.test.ts under the shared DB + parallel vitest; reassigned to the free 0c0d0eab prefix and re-ran green."
+}

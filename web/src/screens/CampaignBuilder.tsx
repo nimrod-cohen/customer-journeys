@@ -17,7 +17,6 @@
 // send node's "Design email" lands here (the editor's setEditorReturn targets
 // /campaigns/:id). Server-calling buttons RETURN the promise; no native dialogs.
 import { useEffect, useState } from 'preact/hooks';
-import { createPortal } from 'preact/compat';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Badge, Button, Card, Field, Input, PageHeader, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
@@ -36,6 +35,8 @@ import {
   type PaletteType,
 } from '../campaigns/model.js';
 import { backfillAllowed, draftDiffersFrom, type PublishScope } from '../campaigns/versioning.js';
+import { PublishVersionModal } from '../campaigns/PublishVersionModal.js';
+import { nodeSummary } from '../campaigns/mutate.js';
 import { applyNodeConfig } from '../campaigns/node-config.js';
 import {
   insertOnEdge,
@@ -64,6 +65,9 @@ interface CampaignListItem {
   // A never-published campaign (false) can be hard-DELETED; a published one is
   // history and is archive-only.
   published?: boolean;
+  // True when an unsaved draft exists that differs from the live definition. With
+  // status === 'draft' (never published), it drives the list's "Publish…" action.
+  hasDraft?: boolean;
 }
 
 interface SegmentLite {
@@ -81,6 +85,16 @@ interface CampaignVersion {
   is_active: boolean;
 }
 
+/** One enrollment in the Journeys tab — a profile that has entered this campaign. */
+interface CampaignEnrollment {
+  profile_id: string;
+  email: string | null;
+  status: string;
+  current_node: string;
+  enrolled_at: string;
+  updated_at: string;
+}
+
 /** Format a version's created_at for the History list (locale, fail-soft). */
 function whenLabel(iso: string): string {
   const t = Date.parse(iso);
@@ -95,6 +109,10 @@ const ARCHIVED = 'archived';
 
 export function CampaignsList() {
   const [campaigns, setCampaigns] = useState<CampaignListItem[] | null>(null);
+  // The campaign whose "Publish…" dialog is open (its def decides backfill), plus a
+  // publish-gate reason surfaced inline in the same modal the detail screen uses.
+  const [publishing, setPublishing] = useState<{ id: string; name: string; canBackfill: boolean } | null>(null);
+  const [publishReason, setPublishReason] = useState('');
 
   const reload = async (): Promise<void> => {
     const c = await api.get<{ campaigns: CampaignListItem[] }>('/campaigns');
@@ -150,6 +168,46 @@ export function CampaignsList() {
       showToast('Campaign deleted.', { tone: 'success' });
     } catch (e) {
       showToast((e as { error?: string })?.error ?? 'Could not delete the campaign.', { tone: 'error' });
+    }
+  };
+
+  // Open the SAME publish dialog the detail screen uses, from the list. We fetch the
+  // campaign first so the modal can decide whether backfill is offered (a
+  // segment_entry trigger with a segment) — exactly like the detail's canBackfill.
+  const openPublish = async (id: string, name: string): Promise<void> => {
+    setPublishReason('');
+    try {
+      const res = await api.get<{
+        campaign: { definition: CampaignDefinition; trigger_segment_id: string | null };
+      }>(`/campaigns/${id}`);
+      const canBackfill = backfillAllowed(res.campaign.definition, res.campaign.trigger_segment_id ?? null);
+      setPublishing({ id, name, canBackfill });
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not load the campaign.', { tone: 'error' });
+    }
+  };
+
+  // Confirm the publish from the list modal. On the gate's 400/409 (incomplete send
+  // node / invalid def / no verified domain) we surface the reason INLINE in the
+  // modal (it renders publish reasons); on success we toast (incl. the backfilled
+  // count) + refresh the list (status → active, hasDraft → false).
+  const publish = async (name: string, scope: PublishScope): Promise<void> => {
+    if (!publishing) return;
+    setPublishReason('');
+    try {
+      const res = await api.post<{ version: number; name: string; enrolled: number }>(
+        `/campaigns/${publishing.id}/publish`,
+        { body: { name, scope } },
+      );
+      setPublishing(null);
+      await reload();
+      const msg =
+        scope === 'backfill' && res.enrolled > 0
+          ? `Published v${res.version} · enrolled ${res.enrolled} existing profile${res.enrolled === 1 ? '' : 's'}`
+          : `Published v${res.version}`;
+      showToast(msg, { tone: 'success' });
+    } catch (e) {
+      setPublishReason((e as { error?: string })?.error ?? 'Could not publish this campaign.');
     }
   };
 
@@ -231,6 +289,19 @@ export function CampaignsList() {
                       onSelect: () => navigate(`/campaigns/${c.id}`),
                       'data-testid': 'campaign-edit',
                     } satisfies ActionMenuItem,
+                    // "Publish…" is offered when the campaign is PUBLISHABLE: a
+                    // never-published draft (status === 'draft') OR it has an unsaved
+                    // draft differing from live. Opens the same publish dialog as the
+                    // detail screen.
+                    ...(c.status === 'draft' || c.hasDraft
+                      ? [
+                          {
+                            label: 'Publish…',
+                            onSelect: () => openPublish(c.id, c.name),
+                            'data-testid': 'campaign-publish',
+                          } satisfies ActionMenuItem,
+                        ]
+                      : []),
                     ...(c.status === 'active'
                       ? [
                           {
@@ -275,6 +346,17 @@ export function CampaignsList() {
           <EmptyState>No campaigns yet — create one with “New campaign”.</EmptyState>
         </div>
       )}
+
+      {/* Publish from the list — the same modal the detail builder uses. */}
+      {publishing ? (
+        <PublishVersionModal
+          defaultName={publishing.name || 'Untitled campaign'}
+          canBackfill={publishing.canBackfill}
+          reason={publishReason}
+          onPublish={publish}
+          onClose={() => setPublishing(null)}
+        />
+      ) : null}
     </section>
   );
 }
@@ -320,10 +402,11 @@ export function CampaignDetail({ id }: { id?: string }) {
   // VERSIONING. The builder edits the DRAFT; live is the last published definition.
   // `live*` snapshot what was published (for the unsaved-draft diff); a fresh new
   // campaign has no live baseline (so any edit reads as an unsaved draft).
-  const [tab, setTab] = useState<'builder' | 'history'>('builder');
+  const [tab, setTab] = useState<'builder' | 'history' | 'journeys'>('builder');
   const [liveDefinition, setLiveDefinition] = useState<CampaignDefinition | null>(null);
   const [liveTriggerSegmentId, setLiveTriggerSegmentId] = useState<string | null>(null);
   const [versions, setVersions] = useState<CampaignVersion[] | null>(null);
+  const [enrollments, setEnrollments] = useState<CampaignEnrollment[] | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
 
   // (The list of campaigns is loaded only so save/reload can keep it fresh for the
@@ -380,6 +463,13 @@ export function CampaignDetail({ id }: { id?: string }) {
   const reloadVersions = async (cid: string): Promise<void> => {
     const r = await api.get<{ versions: CampaignVersion[] }>(`/campaigns/${cid}/versions`);
     setVersions(r.versions);
+  };
+
+  // Refresh the Journeys tab — the profiles that have passed through this campaign.
+  // Workspace-scoped server-side (the campaign id resolves inside the token's ws).
+  const reloadEnrollments = async (cid: string): Promise<void> => {
+    const r = await api.get<{ enrollments: CampaignEnrollment[] }>(`/campaigns/${cid}/enrollments`);
+    setEnrollments(r.enrollments);
   };
 
   // Insert a node — either on the chosen edge, or AFTER a condition's branch (the
@@ -644,6 +734,20 @@ export function CampaignDetail({ id }: { id?: string }) {
     if (editingId) void reloadVersions(editingId);
   };
 
+  // Open the Journeys tab — lazily fetch the enrollment list.
+  const openJourneys = (): void => {
+    setTab('journeys');
+    if (editingId) void reloadEnrollments(editingId);
+  };
+
+  // Map a current_node id → a human label from the loaded definition (the canvas
+  // model). A node that no longer exists (e.g. an old enrollment on a since-edited
+  // graph) shows '—'.
+  const nodeLabel = (nodeId: string): string => {
+    const cn = model.nodes.find((n) => n.id === nodeId);
+    return cn ? nodeSummary(cn) : '—';
+  };
+
   // Open the Save-version modal (clears any stale publish reason first).
   const openPublish = (): void => {
     clearPublish();
@@ -688,6 +792,7 @@ export function CampaignDetail({ id }: { id?: string }) {
           {(
             [
               { key: 'builder', label: 'Builder', testId: 'campaign-tab-builder', onSelect: () => setTab('builder') },
+              { key: 'journeys', label: 'Journeys', testId: 'campaign-tab-journeys', onSelect: openJourneys },
               { key: 'history', label: 'History', testId: 'campaign-tab-history', onSelect: openHistory },
             ] as const
           ).map((t) => (
@@ -774,6 +879,8 @@ export function CampaignDetail({ id }: { id?: string }) {
             </p>
           ) : null}
         </Card>
+      ) : tab === 'journeys' ? (
+        <CampaignJourneys enrollments={enrollments} nodeLabel={nodeLabel} />
       ) : (
         <CampaignHistory versions={versions} onRevert={revert} />
       )}
@@ -856,129 +963,6 @@ export function CampaignDetail({ id }: { id?: string }) {
   );
 }
 
-// --- The Save-version modal (styled, NOT a native dialog) --------------------
-
-function PublishVersionModal({
-  defaultName,
-  canBackfill,
-  reason,
-  onPublish,
-  onClose,
-}: {
-  defaultName: string;
-  canBackfill: boolean;
-  reason: string;
-  onPublish: (name: string, scope: PublishScope) => Promise<void>;
-  onClose: () => void;
-}): ReturnType<typeof createPortal> {
-  const [versionName, setVersionName] = useState(defaultName);
-  // Backfill is only offered for a segment_entry trigger with a segment; otherwise
-  // forward-only. Default forward.
-  const [scope, setScope] = useState<PublishScope>('forward');
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const trimmed = versionName.trim();
-  const confirm = (): Promise<void> => onPublish(trimmed, canBackfill ? scope : 'forward');
-
-  return createPortal(
-    <div
-      class="fixed inset-0 z-[200] flex items-center justify-center bg-black/45 p-6"
-      onClick={onClose}
-    >
-      <div
-        data-testid="publish-modal"
-        class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 class="text-base font-bold text-ink-950">Save &amp; publish a version</h3>
-        <p class="mt-1 text-sm text-stone-500">
-          Name this version, then publish it. The live campaign updates immediately.
-        </p>
-
-        <Field label="Version name" class="mt-4">
-          <Input
-            data-testid="version-name"
-            placeholder="e.g. Spring refresh"
-            value={versionName}
-            onInput={(e: Event) => setVersionName((e.target as HTMLInputElement).value)}
-          />
-        </Field>
-
-        <div class="mt-4" data-testid="publish-scope">
-          <span class="label">Who to enroll</span>
-          {canBackfill ? (
-            <div class="mt-1 space-y-2">
-              <label class="flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="publish-scope"
-                  data-testid="publish-scope-forward"
-                  checked={scope === 'forward'}
-                  onChange={() => setScope('forward')}
-                  class="mt-0.5"
-                />
-                <span>
-                  <span class="font-medium text-ink-900">New entrants only</span>
-                  <span class="block text-xs text-stone-500">Enroll people as they enter the segment from now on.</span>
-                </span>
-              </label>
-              <label class="flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="publish-scope"
-                  data-testid="publish-scope-backfill"
-                  checked={scope === 'backfill'}
-                  onChange={() => setScope('backfill')}
-                  class="mt-0.5"
-                />
-                <span>
-                  <span class="font-medium text-ink-900">Backfill existing members</span>
-                  <span class="block text-xs text-stone-500">Also enroll everyone currently in the segment.</span>
-                </span>
-              </label>
-            </div>
-          ) : (
-            <p data-testid="publish-scope-hint" class="mt-1 text-xs text-stone-500">
-              New entrants only. Backfill is available when the trigger is a segment with a segment selected.
-            </p>
-          )}
-        </div>
-
-        {reason ? (
-          <p
-            data-testid="publish-modal-reason"
-            class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200"
-          >
-            {reason}
-          </p>
-        ) : null}
-
-        <div class="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            data-testid="publish-cancel"
-            class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <Button data-testid="publish-confirm" disabled={!trimmed} onClick={confirm}>
-            Publish
-          </Button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 // --- The History tab (published versions, newest-first) ----------------------
 
 function CampaignHistory({
@@ -1014,15 +998,78 @@ function CampaignHistory({
                 <span class="block truncate font-medium text-ink-900">{v.name}</span>
                 <span class="block text-xs text-stone-400">{whenLabel(v.created_at)}</span>
               </span>
+              {/* Revert is HIDDEN for the active version — reverting to what's already
+                  live is a confusing no-op (the server also 409s, defense-in-depth).
+                  The Active badge stays so the live version is still identifiable. */}
               <span class="flex items-center gap-2">
                 {v.is_active ? (
                   <Badge data-testid="version-active" tone="success">
                     Active
                   </Badge>
-                ) : null}
-                <Button data-testid="version-revert" variant="secondary" size="sm" onClick={() => onRevert(v)}>
-                  Revert
-                </Button>
+                ) : (
+                  <Button data-testid="version-revert" variant="secondary" size="sm" onClick={() => onRevert(v)}>
+                    Revert
+                  </Button>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+// --- The Journeys tab (profiles that have passed through this campaign) -------
+
+function CampaignJourneys({
+  enrollments,
+  nodeLabel,
+}: {
+  enrollments: CampaignEnrollment[] | null;
+  nodeLabel: (nodeId: string) => string;
+}): ReturnType<typeof Card> {
+  return (
+    <Card class="p-5" data-testid="campaign-journeys">
+      <h3 class="text-sm font-semibold text-ink-900">Journeys</h3>
+      <p class="mt-1 text-sm text-stone-500">
+        Everyone who has entered this campaign, the step they’re on, and when they joined.
+      </p>
+      {enrollments === null ? (
+        <p class="mt-4 text-sm text-stone-500">Loading…</p>
+      ) : enrollments.length === 0 ? (
+        <div class="mt-4">
+          <EmptyState>No profiles have entered this journey yet.</EmptyState>
+        </div>
+      ) : (
+        <ul class="mt-4 space-y-2">
+          {enrollments.map((e) => (
+            <li
+              key={e.profile_id}
+              data-testid="journey-row"
+              class="grid grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_auto_auto] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3"
+            >
+              {/* Profile (email, falling back to the profile id). */}
+              <span class="min-w-0">
+                <span class="block truncate font-medium text-ink-900" title={e.email ?? e.profile_id}>
+                  {e.email ?? e.profile_id}
+                </span>
+              </span>
+              {/* Status badge. */}
+              <Badge data-testid="journey-status" tone={toneFor(e.status)}>
+                {e.status}
+              </Badge>
+              {/* Current step (human label from the loaded definition). */}
+              <span class="min-w-0 truncate text-sm text-stone-600" title={nodeLabel(e.current_node)}>
+                {nodeLabel(e.current_node)}
+              </span>
+              {/* Enrolled at. */}
+              <span class="text-xs text-stone-400" title="Enrolled">
+                {whenLabel(e.enrolled_at)}
+              </span>
+              {/* Last updated at. */}
+              <span class="text-xs text-stone-400" title="Last updated">
+                {whenLabel(e.updated_at)}
               </span>
             </li>
           ))}

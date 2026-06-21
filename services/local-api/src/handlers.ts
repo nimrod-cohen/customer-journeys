@@ -1852,11 +1852,22 @@ export const listCampaigns: Handler = async (ctx, pool) => {
   // `published` (active_version_id IS NOT NULL) lets the UI choose Delete (a
   // never-published draft) vs Archive (a published campaign — history, never
   // hard-deleted). It rides the same workspace-scoped SELECT.
+  // `hasDraft` mirrors getCampaign: an unsaved draft exists when draft_definition
+  // is NOT NULL and differs from the live definition (a no-op draft reads as none).
+  // It (and status === 'draft') drives the list's "Publish…" affordance.
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, (active_version_id IS NOT NULL) AS published FROM campaigns',
+    `SELECT id, name, status, (active_version_id IS NOT NULL) AS published,
+            (draft_definition IS NOT NULL AND draft_definition::text IS DISTINCT FROM definition::text) AS "hasDraft"
+     FROM campaigns`,
   );
-  const { rows } = await pool.query<{ id: string; name: string; status: string; published: boolean }>(
+  const { rows } = await pool.query<{
+    id: string;
+    name: string;
+    status: string;
+    published: boolean;
+    hasDraft: boolean;
+  }>(
     `${q.text} ORDER BY created_at DESC`,
     q.values,
   );
@@ -2475,6 +2486,15 @@ export const revertCampaign: Handler = async (ctx, pool, req) => {
   const v = await pool.query<{ definition: CampaignDefinition; trigger_segment_id: string | null }>(vSel.text, vSel.values);
   if (!v.rows[0]) return ok({ error: 'not found' }, 404);
 
+  // Reverting to the version that is ALREADY live is a no-op (the UI hides Revert
+  // on the active row; this is defense-in-depth). 409 rather than silently writing.
+  const cSel = scopedQuery(ctx.workspaceId, 'SELECT active_version_id FROM campaigns WHERE id = $1', [id]);
+  const camp = await pool.query<{ active_version_id: string | null }>(cSel.text, cSel.values);
+  if (!camp.rows[0]) return ok({ error: 'not found' }, 404); // foreign campaign id (inv.2)
+  if (camp.rows[0].active_version_id === versionId) {
+    return ok({ error: "That version is already live — there's nothing to revert to." }, 409);
+  }
+
   const upd = scopedQuery(
     ctx.workspaceId,
     'UPDATE campaigns SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2 WHERE id = $3',
@@ -2537,6 +2557,43 @@ export const enrollIntoCampaign: Handler = async (ctx, pool, req) => {
     segmentId,
   });
   return ok({ enrolled: res.enrolled });
+};
+
+/**
+ * GET /campaigns/:id/enrollments — the profiles that have passed through THIS
+ * campaign (the Journeys tab). Joins campaign_enrollments → profiles for the
+ * email, newest-enrolled first, capped to 200. Everything is scoped to the
+ * TOKEN's workspace (ctx.workspaceId, NEVER a body/query workspace_id — inv.1/
+ * inv.2): a campaign in another workspace 404s and the enrollment + profile rows
+ * are both bound to ctx.workspaceId so a foreign id never surfaces another
+ * tenant's people. Capability-gated (manage_content, routes.ts).
+ */
+export const listCampaignEnrollments: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  // The campaign must belong to the token's workspace (else 404 — inv.2).
+  if (!(await ownsResource(pool, ctx.workspaceId, 'campaigns', id))) {
+    return ok({ error: 'not found' }, 404);
+  }
+  // Both the enrollment and the joined profile are pinned to ctx.workspaceId so a
+  // cross-tenant profile can never appear (the FK is intra-workspace, but scope it
+  // explicitly — RLS is bypassed by the service role, inv.1).
+  const { rows } = await pool.query<{
+    profile_id: string;
+    email: string | null;
+    status: string;
+    current_node: string;
+    enrolled_at: string;
+    updated_at: string;
+  }>(
+    `SELECT e.profile_id, p.email, e.status, e.current_node, e.enrolled_at, e.updated_at
+     FROM campaign_enrollments e
+     JOIN profiles p ON p.id = e.profile_id AND p.workspace_id = e.workspace_id
+     WHERE e.workspace_id = $1 AND e.campaign_id = $2
+     ORDER BY e.enrolled_at DESC
+     LIMIT 200`,
+    [ctx.workspaceId, id],
+  );
+  return ok({ enrollments: rows });
 };
 
 // ---------------------------------------------------------------------------
@@ -3905,6 +3962,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /campaigns': listCampaigns,
   'GET /campaigns/:id': getCampaign,
   'GET /campaigns/:id/versions': listCampaignVersions,
+  'GET /campaigns/:id/enrollments': listCampaignEnrollments,
   'POST /campaigns': createCampaign,
   'DELETE /campaigns/:id': deleteCampaign,
   'PUT /campaigns/:id': updateCampaign,

@@ -90,6 +90,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /campaigns': 'manage_content',
   'GET /campaigns/:id': 'manage_content',
   'GET /campaigns/:id/versions': 'manage_content',
+  'GET /campaigns/:id/enrollments': 'manage_content',
   'POST /campaigns': 'manage_content',
   'DELETE /campaigns/:id': 'manage_content',
   'PUT /campaigns/:id': 'manage_content',

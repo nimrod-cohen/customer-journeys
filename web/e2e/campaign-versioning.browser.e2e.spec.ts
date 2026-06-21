@@ -81,6 +81,11 @@ test('edit → draft indicator → publish v1 → History lists it active → v2
   await expect(rows.nth(1)).toContainText('v1');
   await expect(rows.nth(1).getByTestId('version-active')).toHaveCount(0);
 
+  // The ACTIVE version row (v2) hides Revert (reverting to live is a no-op); a
+  // NON-active row (v1) still offers it.
+  await expect(rows.nth(0).getByTestId('version-revert')).toHaveCount(0);
+  await expect(rows.nth(1).getByTestId('version-revert')).toBeVisible();
+
   // REVERT to v1 → styled confirm → loads it into the draft, back on the Builder tab.
   await rows.nth(1).getByTestId('version-revert').click();
   await page.getByTestId('app-dialog').waitFor();
