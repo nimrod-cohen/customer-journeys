@@ -168,15 +168,30 @@ function TriggerEditor(props: NodeEditorProps) {
             <Input
               data-testid="trigger-event-type"
               placeholder="purchase"
-              list="trigger-event-type-options"
               value={eventType}
               onInput={(e: Event) => setEventType((e.target as HTMLInputElement).value)}
             />
-            <datalist id="trigger-event-type-options">
-              {knownTypes.map((t) => (
-                <option key={t} value={t} />
-              ))}
-            </datalist>
+            {knownTypes.length > 0 ? (
+              <div data-testid="trigger-event-type-suggestions" class="mt-2 flex flex-wrap items-center gap-1.5">
+                <span class="text-[11px] font-medium uppercase tracking-wide text-stone-400">Seen in this workspace</span>
+                {knownTypes.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    data-testid="trigger-event-type-suggestion"
+                    data-type={t}
+                    onClick={() => setEventType(t)}
+                    class={`rounded-md border px-2 py-0.5 font-mono text-[11px] transition-colors ${
+                      eventType === t
+                        ? 'border-brand-400 bg-brand-50 text-brand-700'
+                        : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700'
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </Field>
           <Field label="Only when the event matches (optional)" hint="Narrow it by the event's own attributes (payload).">
             <EventPayloadFilter form={filterForm} eventType={eventType} onChange={setFilterForm} />
