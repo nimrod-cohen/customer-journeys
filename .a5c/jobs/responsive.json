@@ -1,0 +1,19 @@
+{
+  "filesModified": [
+    "web/src/AppShell.tsx",
+    "web/src/ui/kit.tsx",
+    "web/src/screens/BroadcastComposer.tsx",
+    "web/src/screens/CampaignBuilder.tsx",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "filesCreated": [
+    "web/e2e/responsive.browser.e2e.spec.ts"
+  ],
+  "approach": "Screens already mostly responsive (overflow-x-auto tables, sm:/lg: grids, flex-wrap headers/filters, kit Drawer already w-full on mobile, modals max-w-md+p-6). Core gap = AppShell sidebar is a fixed always-visible w-64 aside with no mobile drawer. Plan: (1) AppShell -> mobile slide-in drawer + nav-menu-toggle hamburger + overlay, fixed sidebar at md+ unchanged; reduce <main> padding on mobile. (2) kit: PageHeader stack actions on mobile, Button min-h touch, Card padding. (3) Spot-fix any non-wrapping headers. (4) add responsive.browser.e2e.spec.ts 390px smoke. Preserve all data-testid + desktop layout.",
+  "fullE2ePass": true,
+  "mobileSmokePass": true,
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "DONE. typecheck clean; lint = only the 7 known pre-existing react-hooks rule-not-found errors (no new). Full web e2e SOLO: 134 passed + 1 flaky (company-ses-config, passed on retry + passes solo cleanly — full-suite load flake, unrelated to changes), incl. the new responsive 390px smoke (green). Mobile smoke also run solo: green. Version 0.52.0 -> 0.53.0. CLAUDE.md updated. NOT committed."
+}

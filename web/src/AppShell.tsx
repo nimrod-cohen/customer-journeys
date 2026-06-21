@@ -109,6 +109,21 @@ export function AppShell(): JSX.Element {
   const session = useStore(sessionStore);
   const route = useStore(routeStore);
   const nav = buildNav(session.role);
+  // Mobile nav drawer: the sidebar slides in over an overlay below md; it stays a
+  // fixed in-flow sidebar at md+ (desktop unchanged). Closes on route change.
+  const [navOpen, setNavOpen] = useState(false);
+  useEffect(() => {
+    setNavOpen(false);
+  }, [route]);
+  // Lock body scroll while the mobile drawer is open.
+  useEffect(() => {
+    if (!navOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [navOpen]);
 
   // Land on a permitted screen: if the current route isn't in the role's nav
   // (e.g. a system-admin with no active workspace can't open /dashboards),
@@ -126,9 +141,20 @@ export function AppShell(): JSX.Element {
 
   return (
     <div class="flex min-h-screen">
+      {/* Mobile overlay scrim — only when the drawer is open, below md. */}
+      {navOpen ? (
+        <div
+          data-testid="nav-overlay"
+          class="fixed inset-0 z-40 bg-ink-950/50 md:hidden"
+          onClick={() => setNavOpen(false)}
+          aria-hidden="true"
+        />
+      ) : null}
       <aside
         data-testid="app-nav"
-        class="sticky top-0 flex h-screen w-64 shrink-0 flex-col gap-1 bg-gradient-to-b from-ink-950 to-ink-900 px-3 py-4 text-stone-300"
+        class={`fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 transform flex-col gap-1 bg-gradient-to-b from-ink-950 to-ink-900 px-3 py-4 text-stone-300 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] md:sticky md:top-0 md:z-auto md:translate-x-0 md:transition-none ${
+          navOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
       >
         {/* Brand */}
         <div class="flex items-center gap-2.5 px-2 pb-3">
@@ -222,11 +248,31 @@ export function AppShell(): JSX.Element {
           the viewport to fit wide content (e.g. the campaigns list row) instead of
           shrinking — causing page-level horizontal overflow. min-w-0 lets it shrink
           to the flex track so overflow-x-hidden + inner max-w-6xl/truncation apply. */}
-      <main data-testid="app-body" class="min-w-0 flex-1 overflow-x-hidden px-8 py-8">
+      <main data-testid="app-body" class="flex min-w-0 flex-1 flex-col overflow-x-hidden">
+        {/* Mobile topbar with the hamburger (below md only); the sidebar is the nav
+            at md+. Sticky so the menu toggle is always reachable while scrolling. */}
+        <div class="sticky top-0 z-30 flex items-center gap-2 border-b border-stone-200 bg-white/90 px-4 py-2.5 backdrop-blur md:hidden">
+          <button
+            data-testid="nav-menu-toggle"
+            type="button"
+            aria-label="Open navigation menu"
+            aria-expanded={navOpen}
+            onClick={() => setNavOpen((v) => !v)}
+            class="grid h-10 w-10 place-items-center rounded-lg text-ink-700 transition hover:bg-stone-100"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-6 w-6">
+              <path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round" />
+            </svg>
+          </button>
+          <span class="font-display text-sm font-bold text-ink-950">Customer Journeys</span>
+        </div>
         {/* Key by route AND active workspace so switching company/workspace
             remounts the screen and re-fetches its (now re-scoped) data, even when
             the route is unchanged (e.g. switching while already on Dashboards). */}
-        <div key={`${effectiveRoute}:${session.workspaceId ?? ''}`} class="mx-auto max-w-6xl animate-fade-up">
+        <div
+          key={`${effectiveRoute}:${session.workspaceId ?? ''}`}
+          class="mx-auto w-full max-w-6xl flex-1 animate-fade-up px-4 py-5 sm:px-6 md:px-8 md:py-8"
+        >
           {screenFor(effectiveRoute)}
         </div>
       </main>

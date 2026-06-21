@@ -270,8 +270,10 @@ export function BroadcastComposer() {
                 data-testid="broadcast-item"
                 key={b.id}
                 // Fixed grid columns so the status badge and the right-hand slot
-                // line up across rows (icon · name/1fr · status · right slot).
-                class="grid grid-cols-[auto_minmax(0,1fr)_7rem_auto] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+                // line up across rows (icon · name/1fr · status · right slot). On
+                // mobile it collapses to two columns (icon · name) with the status
+                // and right slot wrapping onto their own full-width rows.
+                class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card sm:grid-cols-[auto_minmax(0,1fr)_7rem_auto] sm:gap-4"
               >
                 {/* Icon */}
                 <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5 shrink-0 self-start text-stone-400" stroke="currentColor" stroke-width="1.8">
@@ -292,8 +294,9 @@ export function BroadcastComposer() {
                   {b.updated_at ? <span class="truncate text-[11px] text-stone-400">Edited {agoLabel(b.updated_at)}</span> : null}
                 </span>
 
-                {/* Status + channel badges — fixed column → aligned across rows */}
-                <span class="flex flex-col items-start gap-1 justify-self-start">
+                {/* Status + channel badges — fixed column → aligned across rows.
+                    On mobile they wrap below the name (full row, col 2). */}
+                <span class="col-start-2 flex flex-row flex-wrap items-start gap-1 justify-self-start sm:col-start-auto sm:flex-col">
                   <Badge data-testid="broadcast-status" tone={toneFor(b.status)}>
                     {b.status}
                   </Badge>
@@ -302,8 +305,9 @@ export function BroadcastComposer() {
                   </Badge>
                 </span>
 
-                {/* Right slot: metrics (sent) OR actions (draft/scheduled), right-aligned */}
-                <span class="flex items-center justify-end gap-4">
+                {/* Right slot: metrics (sent) OR actions (draft/scheduled). On mobile
+                    it spans the full row and wraps; right-aligned at sm+. */}
+                <span class="col-start-2 flex flex-wrap items-center justify-start gap-x-4 gap-y-2 sm:col-start-auto sm:flex-nowrap sm:justify-end">
                   {b.status === 'sent' && s ? (
                     // The conversion funnel: Sent · Delivered · Failed (of sent) ·
                     // Opened · Clicked · Unsubscribed (of delivered). Each cell is a

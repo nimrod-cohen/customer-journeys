@@ -235,7 +235,9 @@ export function CampaignsList() {
               <li
                 data-testid="campaign-item"
                 key={c.id}
-                class="grid grid-cols-[minmax(0,1fr)_8rem_auto_auto] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+                // Mobile: name + kebab on row 1, status + counts wrapping below.
+                // At sm+ the original four-track grid (name · status · counts · actions).
+                class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card sm:grid-cols-[minmax(0,1fr)_8rem_minmax(0,auto)_auto] sm:gap-4"
               >
                 {/* Name */}
                 <a
@@ -246,8 +248,8 @@ export function CampaignsList() {
                   {c.name}
                 </a>
 
-                {/* Status badge */}
-                <span class="justify-self-start">
+                {/* Status badge — order so the kebab stays on row 1 at mobile. */}
+                <span class="order-3 col-start-1 justify-self-start sm:order-none sm:col-start-auto">
                   <Badge data-testid="campaign-status" tone={toneFor(c.status)}>
                     {c.status}
                   </Badge>
@@ -257,7 +259,7 @@ export function CampaignsList() {
                     track can shrink at narrow widths (graceful degrade, no clip). */}
                 <span
                   data-testid="campaign-counts"
-                  class="flex min-w-0 flex-wrap items-center justify-end gap-x-4 gap-y-1 text-center text-sm tabular-nums"
+                  class="order-4 col-start-1 flex min-w-0 flex-wrap items-center justify-start gap-x-4 gap-y-1 text-center text-sm tabular-nums sm:order-none sm:col-start-auto sm:justify-end"
                   title={`${total} enrolled`}
                 >
                   <span class="flex flex-col" data-testid="campaign-count-active">
@@ -1047,7 +1049,7 @@ function CampaignJourneys({
             <li
               key={e.profile_id}
               data-testid="journey-row"
-              class="grid grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_auto_auto] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3"
+              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 rounded-xl border border-stone-200 bg-white px-4 py-3 sm:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_auto_auto] sm:gap-4"
             >
               {/* Profile (email, falling back to the profile id). */}
               <span class="min-w-0">

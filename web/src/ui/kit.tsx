@@ -250,12 +250,12 @@ export function PageHeader({
   actions?: ComponentChildren;
 }): JSX.Element {
   return (
-    <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="text-2xl font-bold text-ink-950">{title}</h1>
+    <header class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between sm:gap-4">
+      <div class="min-w-0">
+        <h1 class="text-xl font-bold text-ink-950 sm:text-2xl">{title}</h1>
         {subtitle ? <p class="mt-1 text-sm text-stone-500">{subtitle}</p> : null}
       </div>
-      {actions ? <div class="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div class="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </header>
   );
 }
