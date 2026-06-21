@@ -69,6 +69,32 @@ test('TRIGGER editor: event kind shows event type + manual shows a note', async 
   await expect(page.getByTestId('trigger-manual-note')).toBeVisible();
 });
 
+test('TRIGGER editor: profile kind picks created/updated, saves, reload persists + card summary reflects it', async ({ page }) => {
+  await openCampaigns(page);
+  await openSeeded(page);
+  await page.getByTestId('node-trigger').getByTestId(/node-open-/).first().click();
+  const drawer = page.getByTestId('node-editor-trigger');
+
+  // Choose the profile trigger → the profile-change Select appears.
+  await drawer.getByTestId('trigger-kind').selectOption('profile');
+  await expect(drawer.getByTestId('trigger-profile-change')).toBeVisible();
+  await drawer.getByTestId('trigger-profile-change').selectOption('updated');
+  await drawer.getByTestId('node-save').click();
+  await expect(drawer).toBeHidden();
+
+  // The trigger card summary reflects the choice.
+  await expect(page.getByTestId('node-trigger')).toContainText('On profile updated');
+
+  // Reload the page → it persisted (kind + profileChange round-trip).
+  await page.reload();
+  await page.getByTestId('campaign-canvas').waitFor();
+  await expect(page.getByTestId('node-trigger')).toContainText('On profile updated');
+  await page.getByTestId('node-trigger').getByTestId(/node-open-/).first().click();
+  const drawer2 = page.getByTestId('node-editor-trigger');
+  await expect(drawer2.getByTestId('trigger-kind')).toHaveValue('profile');
+  await expect(drawer2.getByTestId('trigger-profile-change')).toHaveValue('updated');
+});
+
 test('WAIT editor: set 3 days, save, reload round-trips the summary', async ({ page }) => {
   await openCampaigns(page);
   await openSeeded(page);

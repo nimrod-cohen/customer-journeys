@@ -13,19 +13,26 @@ import { isExpressionSpec, isLiteralSpec, isJsSpec, type ValueSpec } from '@cdp/
 // Re-export the value spec so consumers importing from the runner's DSL get it.
 export type { ValueSpec } from '@cdp/shared';
 
+/** Which profile mutation enrolls for a kind='profile' trigger. */
+export type ProfileChange = 'created' | 'updated' | 'any';
+
 /** A trigger node — how a profile enters the campaign (§9B enrollment).
- *  Three kinds (re-enrollment policy is 'once' for all of them — see core.ts):
+ *  Four kinds (re-enrollment policy is 'once' for all of them — see core.ts):
  *    - segment_entry: enrollment is driven by campaigns.trigger_segment_id (the
  *      segment lives on the CAMPAIGN ROW, not the node) via enrollFromSegmentChange.
  *    - event: an INGESTED EVENT of `eventType` (optionally matching `filter`, a
  *      payload-only AstNode) enrolls the profile via enrollFromEvent. Both fields
  *      live HERE in the definition JSON (no migration).
+ *    - profile: enrolls when a PROFILE is CREATED or UPDATED (enrollFromProfileChange,
+ *      wired at createProfile / updateProfile / CSV import). `profileChange` narrows
+ *      which mutation fires it (created | updated | any; default 'any'). The profile's
+ *      own data is available downstream via the customer.* namespace — no event payload.
  *    - manual: no auto-source — enrolled by the API (POST /campaigns/:id/enroll).
  */
 export interface TriggerNode {
   readonly type: 'trigger';
   /** segment_entry uses campaigns.trigger_segment_id; others live in definition. */
-  readonly kind: 'segment_entry' | 'event' | 'manual';
+  readonly kind: 'segment_entry' | 'event' | 'profile' | 'manual';
   /** Optional human label for the trigger card (e.g. "New VIPs"), shown on the canvas.
    *  Purely cosmetic — like a condition's label, it NEVER affects routing or validation. */
   readonly label?: string;
@@ -34,6 +41,8 @@ export interface TriggerNode {
   /** For kind='event' (OPTIONAL): a payload-only filter (payload.* namespace),
    *  evaluated against the ingested event payload in-memory at enroll time. */
   readonly filter?: AstNode;
+  /** For kind='profile' (OPTIONAL): which mutation enrolls (default 'any'). */
+  readonly profileChange?: ProfileChange;
   /** The node id to advance to once enrolled. */
   readonly next: string;
 }
@@ -282,8 +291,27 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
 
   switch (node.type) {
     case 'trigger':
-      if (node.kind !== 'segment_entry' && node.kind !== 'event' && node.kind !== 'manual') {
+      if (
+        node.kind !== 'segment_entry' &&
+        node.kind !== 'event' &&
+        node.kind !== 'profile' &&
+        node.kind !== 'manual'
+      ) {
         throw new Error(`validateCampaignDefinition: trigger "${id}" has an invalid kind`);
+      }
+      if (node.kind === 'profile') {
+        // profileChange is OPTIONAL (defaults to 'any' at enroll time). When present
+        // it MUST be one of created|updated|any.
+        if (
+          node.profileChange !== undefined &&
+          node.profileChange !== 'created' &&
+          node.profileChange !== 'updated' &&
+          node.profileChange !== 'any'
+        ) {
+          throw new Error(
+            `validateCampaignDefinition: profile trigger "${id}" profileChange must be created|updated|any`,
+          );
+        }
       }
       if (node.kind === 'event') {
         // An event trigger MUST name the event type; the optional payload filter is

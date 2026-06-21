@@ -301,6 +301,37 @@ describe('TRIGGER', () => {
     expect(() => validateCampaignDefinition(def)).not.toThrow();
   });
 
+  it('profile → {kind:profile, profileChange}; round-trips created|updated|any (default any)', () => {
+    expect(writeTriggerConfig({ kind: 'profile', profileChange: 'created' })).toEqual({
+      type: 'trigger',
+      kind: 'profile',
+      profileChange: 'created',
+    });
+    expect(writeTriggerConfig({ kind: 'profile', profileChange: 'updated' })).toEqual({
+      type: 'trigger',
+      kind: 'profile',
+      profileChange: 'updated',
+    });
+    // No profileChange supplied → defaults to 'any'.
+    expect(writeTriggerConfig({ kind: 'profile' })).toEqual({ type: 'trigger', kind: 'profile', profileChange: 'any' });
+    // An invalid value is coerced to 'any'.
+    expect(writeTriggerConfig({ kind: 'profile', profileChange: 'bogus' as never })).toEqual({
+      type: 'trigger',
+      kind: 'profile',
+      profileChange: 'any',
+    });
+    // read back
+    expect(readTriggerConfig({ type: 'trigger', kind: 'profile', profileChange: 'updated' })).toMatchObject({
+      kind: 'profile',
+      profileChange: 'updated',
+    });
+    expect(readTriggerConfig({ type: 'trigger', kind: 'profile' }).profileChange).toBe('any');
+    // a profile trigger validates through the runner
+    const node = { ...writeTriggerConfig({ kind: 'profile', profileChange: 'any' }), next: 'x' };
+    const def: CampaignDefinition = { startNode: 't', nodes: { t: node as never, x: { type: 'exit' } } };
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
   it('carries an optional trimmed non-blank `label` (cosmetic) and reads it back', () => {
     expect(writeTriggerConfig({ kind: 'manual' })).not.toHaveProperty('label');
     expect(writeTriggerConfig({ kind: 'manual', label: '   ' })).not.toHaveProperty('label');

@@ -502,6 +502,65 @@ export function parseEventEnrollmentTrigger(
   return intents;
 }
 
+// ── profile-change-trigger enrollment ─────────────────────────────────────────
+
+/** Which profile mutation a profile-change row represents (created | updated). */
+export type ProfileChangeKind = 'created' | 'updated';
+
+/**
+ * A profile-change row (the bits profile-trigger enrollment cares about). Mirrors
+ * the shape the local-api / processor has at createProfile / updateProfile time.
+ */
+export interface ProfileChangeRow {
+  readonly workspace_id: string;
+  readonly profile_id: string;
+  /** Whether the profile was just CREATED or UPDATED. */
+  readonly change: ProfileChangeKind;
+}
+
+/**
+ * A profile-trigger campaign's enrollment-relevant columns. `profileChange` is the
+ * trigger's configured filter (created | updated | any) — the orchestrator keeps
+ * a campaign whose configured profileChange matches the row's change.
+ */
+export interface ProfileCampaignTriggerRow {
+  readonly id: string;
+  readonly workspace_id: string;
+  readonly start_node: string;
+  /** The trigger node's profileChange (default 'any'). */
+  readonly profileChange: 'created' | 'updated' | 'any';
+}
+
+/**
+ * Parse a profile-change row into enrollment intents (§9B) — the profile-kind
+ * analogue of parseEventEnrollmentTrigger. An intent is produced per ACTIVE
+ * profile-trigger campaign (same workspace) whose configured profileChange MATCHES
+ * the row's change: a 'created' row matches profileChange in {created, any}; an
+ * 'updated' row matches {updated, any}. THROWS on a falsy workspaceId (tenant-
+ * isolation guard, parity with parseEventEnrollmentTrigger). No event is persisted
+ * onto enrollment.state — the profile's own data is read via customer.* downstream.
+ */
+export function parseProfileEnrollmentTrigger(
+  row: ProfileChangeRow,
+  campaigns: readonly ProfileCampaignTriggerRow[],
+): EnrollmentIntent[] {
+  if (!row.workspace_id) throw new Error('parseProfileEnrollmentTrigger: workspace_id is required');
+  if (row.change !== 'created' && row.change !== 'updated') return [];
+  const intents: EnrollmentIntent[] = [];
+  for (const c of campaigns) {
+    if (c.workspace_id !== row.workspace_id) continue; // tenant isolation
+    const want = c.profileChange ?? 'any';
+    if (want !== 'any' && want !== row.change) continue;
+    intents.push({
+      workspaceId: row.workspace_id,
+      campaignId: c.id,
+      profileId: row.profile_id,
+      startNode: c.start_node,
+    });
+  }
+  return intents;
+}
+
 // ── event payload filter (pure, closed-grammar, no DB) ────────────────────────
 
 /** The jsonb prefix for an event-trigger payload filter field (payload.<key>). */

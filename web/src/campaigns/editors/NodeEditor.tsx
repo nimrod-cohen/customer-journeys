@@ -40,6 +40,7 @@ import {
   webhookSecretHeaders,
   sendNodeTemplateId,
   type TriggerKind,
+  type ProfileChange,
   type HourWindowForm,
   type ValueMode,
   type AssignmentRow,
@@ -90,6 +91,7 @@ function TriggerEditor(props: NodeEditorProps) {
   // The optional event payload filter reuses the rule builder → an AstNode.
   const [filterGroup, setFilterGroup] = useState<RuleGroup>(() => groupFromAst(initial.filter ?? null));
   const [segmentId, setSegmentId] = useState<string>(props.triggerSegmentId ?? '');
+  const [profileChange, setProfileChange] = useState<ProfileChange>(initial.profileChange ?? 'any');
 
   const save = async (): Promise<void> => {
     if (kind === 'event' && !eventType.trim()) {
@@ -103,6 +105,7 @@ function TriggerEditor(props: NodeEditorProps) {
         ...(name.trim() ? { label: name } : {}),
         ...(eventType.trim() ? { eventType } : {}),
         ...(filterAst ? { filter: filterAst } : {}),
+        ...(kind === 'profile' ? { profileChange } : {}),
       }),
     );
     // The segment_entry trigger's segment is a CAMPAIGN-ROW field — saved separately.
@@ -124,6 +127,7 @@ function TriggerEditor(props: NodeEditorProps) {
         <Select data-testid="trigger-kind" value={kind} onChange={(e: Event) => setKind((e.target as HTMLSelectElement).value as TriggerKind)}>
           <option value="segment_entry">When a profile enters a segment</option>
           <option value="event">When a profile does an event</option>
+          <option value="profile">When a profile is created or updated</option>
           <option value="manual">Manually enrolled</option>
         </Select>
       </Field>
@@ -152,6 +156,20 @@ function TriggerEditor(props: NodeEditorProps) {
             </div>
           </Field>
         </>
+      ) : null}
+
+      {kind === 'profile' ? (
+        <Field label="Enroll when the profile is" hint="A profile created and/or updated enrolls into this journey.">
+          <Select
+            data-testid="trigger-profile-change"
+            value={profileChange}
+            onChange={(e: Event) => setProfileChange((e.target as HTMLSelectElement).value as ProfileChange)}
+          >
+            <option value="created">Created</option>
+            <option value="updated">Updated</option>
+            <option value="any">Created or updated</option>
+          </Select>
+        </Field>
       ) : null}
 
       {kind === 'manual' ? <p data-testid="trigger-manual-note" class="text-sm text-stone-500">Profiles are enrolled manually (or by the API). No extra config.</p> : null}

@@ -60,6 +60,7 @@ import {
 import {
   validateCampaignDefinition,
   enrollFromEvent,
+  enrollFromProfileChange,
   enrollFromSegmentChange,
   enrollProfileManually,
   enrollSegmentSnapshot,
@@ -2609,6 +2610,14 @@ export const createProfile: Handler = async (ctx, pool, req) => {
      VALUES ($1, $2, 'profile', 'profile_created', 'info', 'created manually')`,
     [ctx.workspaceId, profileId],
   );
+  // PROFILE-TRIGGER ENROLLMENT (§9B): enroll this new profile into active
+  // profile-trigger campaigns whose profileChange is created/any. Idempotent (ON
+  // CONFLICT 'once'). Workspace-scoped; never trusts a body workspace_id.
+  await enrollFromProfileChange(enrollDepsOnPool(pool), {
+    workspace_id: ctx.workspaceId,
+    profile_id: profileId,
+    change: 'created',
+  });
   return ok({ profile: rows[0] }, 201);
 };
 
@@ -2630,6 +2639,7 @@ export const importProfilesCsv: Handler = async (ctx, pool, req) => {
 
   let created = 0;
   let updated = 0;
+  const createdIds: string[] = [];
   const errors: Array<{ row: number; email: string; error: string }> = [];
   for (let i = 0; i < rows.length; i++) {
     const r = asObject(rows[i]);
@@ -2657,6 +2667,7 @@ export const importProfilesCsv: Handler = async (ctx, pool, req) => {
       const row = res.rows[0]!;
       if (row.inserted) {
         created++;
+        createdIds.push(row.id);
         await pool.query(
           `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2)
            ON CONFLICT (profile_id) DO NOTHING`,
@@ -2677,6 +2688,21 @@ export const importProfilesCsv: Handler = async (ctx, pool, req) => {
        VALUES ($1, NULL, 'import', 'profiles_imported', 'info', $2)`,
       [ctx.workspaceId, `CSV import — ${created} created, ${updated} updated`],
     );
+  }
+  // PROFILE-TRIGGER ENROLLMENT (§9B): each IMPORTED (created) profile enrolls into
+  // active profile-trigger campaigns whose profileChange is created/any. Idempotent
+  // (ON CONFLICT 'once'). Workspace-scoped; per-profile so a slow campaign-set read
+  // per row is bounded by the import cap. (Updates via CSV merge are NOT treated as
+  // an 'updated' profile-trigger event here — only first-time creation enrolls.)
+  if (createdIds.length > 0) {
+    const enrollDeps = enrollDepsOnPool(pool);
+    for (const pid of createdIds) {
+      await enrollFromProfileChange(enrollDeps, {
+        workspace_id: ctx.workspaceId,
+        profile_id: pid,
+        change: 'created',
+      });
+    }
   }
   return ok({ created, updated, skipped: errors.length, total: rows.length, errors: errors.slice(0, 50) });
 };
@@ -2889,6 +2915,13 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
      VALUES ($1, $2, 'profile', 'profile_updated', 'info', $3)`,
     [ctx.workspaceId, id, changed.length ? `edited ${changed.join(', ')}` : 'edited'],
   );
+  // PROFILE-TRIGGER ENROLLMENT (§9B): enroll into active profile-trigger campaigns
+  // whose profileChange is updated/any. Idempotent (ON CONFLICT 'once'). Scoped.
+  await enrollFromProfileChange(enrollDepsOnPool(pool), {
+    workspace_id: ctx.workspaceId,
+    profile_id: id,
+    change: 'updated',
+  });
   return ok({ profile: rows[0] });
 };
 

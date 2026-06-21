@@ -48,7 +48,10 @@ function stripEdges(node: DslNode): DslNode {
 
 // ── TRIGGER ───────────────────────────────────────────────────────────────────
 
-export type TriggerKind = 'segment_entry' | 'event' | 'manual';
+export type TriggerKind = 'segment_entry' | 'event' | 'profile' | 'manual';
+
+/** Which profile mutation a kind='profile' trigger enrolls on. */
+export type ProfileChange = 'created' | 'updated' | 'any';
 
 export interface TriggerForm {
   readonly kind: TriggerKind;
@@ -56,27 +59,40 @@ export interface TriggerForm {
   readonly eventType?: string;
   /** kind='event' (optional): a payload-only filter AstNode. */
   readonly filter?: AstNode;
+  /** kind='profile' (optional): which mutation enrolls (default 'any'). */
+  readonly profileChange?: ProfileChange;
   /** An OPTIONAL cosmetic name shown on the trigger card (like a condition's label). */
   readonly label?: string;
 }
 
+function asProfileChange(v: unknown): ProfileChange {
+  return v === 'created' || v === 'updated' || v === 'any' ? v : 'any';
+}
+
 /** Read a trigger node into its editable form (segment id lives on the campaign row). */
 export function readTriggerConfig(node: DslNode): TriggerForm {
-  const n = node as { kind?: string; eventType?: string; filter?: AstNode; label?: unknown };
+  const n = node as { kind?: string; eventType?: string; filter?: AstNode; profileChange?: unknown; label?: unknown };
   const kind: TriggerKind =
-    n.kind === 'event' || n.kind === 'manual' || n.kind === 'segment_entry' ? n.kind : 'segment_entry';
+    n.kind === 'event' || n.kind === 'manual' || n.kind === 'profile' || n.kind === 'segment_entry'
+      ? n.kind
+      : 'segment_entry';
   const label = typeof n.label === 'string' && n.label.trim() ? n.label.trim() : undefined;
   const base: TriggerForm = { kind, ...(label ? { label } : {}) };
-  return kind === 'event'
-    ? { ...base, ...(n.eventType ? { eventType: n.eventType } : {}), ...(n.filter ? { filter: n.filter } : {}) }
-    : base;
+  if (kind === 'event') {
+    return { ...base, ...(n.eventType ? { eventType: n.eventType } : {}), ...(n.filter ? { filter: n.filter } : {}) };
+  }
+  if (kind === 'profile') {
+    return { ...base, profileChange: asProfileChange(n.profileChange) };
+  }
+  return base;
 }
 
 /**
  * Serialize a trigger form to a node patch. The segment id for kind='segment_entry'
  * is a CAMPAIGN-ROW field (campaigns.trigger_segment_id) and is NEVER written into
- * the node. kind='event' carries eventType (+ optional payload filter). A trimmed
- * non-blank `label` (cosmetic — never routing/validation) is carried for any kind.
+ * the node. kind='event' carries eventType (+ optional payload filter); kind='profile'
+ * carries profileChange (created|updated|any). A trimmed non-blank `label` (cosmetic
+ * — never routing/validation) is carried for any kind.
  */
 export function writeTriggerConfig(form: TriggerForm): DslNode {
   const label = (form.label ?? '').trim();
@@ -89,6 +105,9 @@ export function writeTriggerConfig(form: TriggerForm): DslNode {
       ...(form.filter ? { filter: form.filter } : {}),
       ...labelPart,
     };
+  }
+  if (form.kind === 'profile') {
+    return { type: 'trigger', kind: 'profile', profileChange: asProfileChange(form.profileChange), ...labelPart };
   }
   return { type: 'trigger', kind: form.kind, ...labelPart };
 }

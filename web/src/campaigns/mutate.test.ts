@@ -571,6 +571,21 @@ describe('nodeSummary', () => {
     expect(nodeSummary(byId('x'))).toBe('Exit');
   });
 
+  it('profile trigger summary reflects the profileChange', () => {
+    const make = (profileChange?: string) =>
+      parseDefinition({
+        startNode: 'trigger',
+        nodes: {
+          trigger: { type: 'trigger', kind: 'profile', ...(profileChange ? { profileChange } : {}), next: 'x' },
+          x: { type: 'exit' },
+        },
+      }).nodes.find((n) => n.id === 'trigger')!;
+    expect(nodeSummary(make('created'))).toBe('On profile created');
+    expect(nodeSummary(make('updated'))).toBe('On profile updated');
+    expect(nodeSummary(make('any'))).toBe('On profile created or updated');
+    expect(nodeSummary(make())).toBe('On profile created or updated'); // default any
+  });
+
   it('a named condition shows its label instead of the generic "If / branch"', () => {
     const m = parseDefinition({
       startNode: 'trigger',

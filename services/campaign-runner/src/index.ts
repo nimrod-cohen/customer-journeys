@@ -8,6 +8,7 @@ import { makeProdDeps } from './deps.js';
 export {
   type Node,
   type TriggerNode,
+  type ProfileChange,
   type WaitNode,
   type ConditionNode,
   type ActionNode,
@@ -37,6 +38,7 @@ export {
   DEFAULT_REENROLLMENT_POLICY,
   parseEnrollmentTrigger,
   parseEventEnrollmentTrigger,
+  parseProfileEnrollmentTrigger,
   evaluateEventPayloadFilter,
   buildEnrollmentInsert,
   parseKeepWhileInCancellations,
@@ -64,6 +66,9 @@ export {
   type SegmentChangeLogRow,
   type EventRow,
   type EventCampaignTriggerRow,
+  type ProfileChangeRow,
+  type ProfileCampaignTriggerRow,
+  type ProfileChangeKind,
   type CampaignTriggerRow,
   type CampaignKeepRow,
   type CancelIntent,
@@ -73,6 +78,7 @@ export {
 export {
   enrollFromSegmentChange,
   enrollFromEvent,
+  enrollFromProfileChange,
   enrollProfileManually,
   enrollSegmentSnapshot,
   type EnrollDeps,

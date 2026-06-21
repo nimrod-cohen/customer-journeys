@@ -17,6 +17,7 @@
 import {
   parseEnrollmentTrigger,
   parseEventEnrollmentTrigger,
+  parseProfileEnrollmentTrigger,
   evaluateEventPayloadFilter,
   buildEnrollmentInsert,
   buildEnrollmentInsertWithState,
@@ -25,6 +26,8 @@ import {
   type SegmentChangeLogRow,
   type EventRow,
   type EventCampaignTriggerRow,
+  type ProfileChangeRow,
+  type ProfileCampaignTriggerRow,
   type CampaignTriggerRow,
   type CampaignKeepRow,
   type EnrollmentIntent,
@@ -196,6 +199,63 @@ export async function enrollFromEvent(deps: EnrollDeps, row: EventRow): Promise<
           event: i.event,
         })
       : buildEnrollmentInsert(i.workspaceId, i.campaignId, i.profileId, i.startNode),
+  );
+  if (statements.length > 0) await deps.runInWorkspaceTx(row.workspace_id, statements);
+  return { enrolled: intents.length, intents };
+}
+
+/**
+ * Enroll a profile into the active PROFILE-trigger campaigns matched by a profile
+ * CREATE or UPDATE (§9B) — the profile analogue of enrollFromEvent. Reads the
+ * active campaigns in the profile's workspace, resolves each one's trigger node,
+ * keeps only those whose kind='profile' AND whose configured profileChange matches
+ * the change (created → {created, any}; updated → {updated, any}), then inserts the
+ * enrollment(s) at the start node in ONE workspace-scoped tx. The ON CONFLICT
+ * 'once' guard makes a re-save / re-import / re-run enroll at most once. No event
+ * payload is persisted (event.* resolves safe-empty; the profile's data is read via
+ * customer.* downstream). Tenant isolation: campaigns are read WHERE workspace_id=$1
+ * and every write binds workspace_id at $1.
+ */
+export async function enrollFromProfileChange(
+  deps: EnrollDeps,
+  row: ProfileChangeRow,
+): Promise<SimpleEnrollResult> {
+  if (!row.workspace_id) throw new Error('enrollFromProfileChange: workspace_id is required');
+  if (row.change !== 'created' && row.change !== 'updated') return { enrolled: 0, intents: [] };
+
+  // Active campaigns in THIS workspace (the trigger kind / profileChange is resolved
+  // from each definition; mirrors enrollFromEvent's read-small-set-resolve-in-code).
+  const { rows: campaignRows } = await deps.reader.query<CampaignRow>(
+    `SELECT id, workspace_id, trigger_segment_id, trigger_on, definition
+     FROM campaigns
+     WHERE workspace_id = $1 AND status = 'active'`,
+    [row.workspace_id],
+  );
+
+  const triggerRows: ProfileCampaignTriggerRow[] = [];
+  for (const c of campaignRows) {
+    let trigger: TriggerNode;
+    let startNode: string;
+    try {
+      validateCampaignDefinition(c.definition);
+      const node = resolveStartNode(c.definition);
+      if (node.type !== 'trigger' || node.kind !== 'profile') continue; // only profile triggers
+      trigger = node;
+      startNode = c.definition.startNode;
+    } catch {
+      continue; // skip an invalid definition rather than crash the hook
+    }
+    triggerRows.push({
+      id: c.id,
+      workspace_id: c.workspace_id,
+      start_node: startNode,
+      profileChange: trigger.profileChange ?? 'any',
+    });
+  }
+
+  const intents = parseProfileEnrollmentTrigger(row, triggerRows);
+  const statements: SqlStatement[] = intents.map((i) =>
+    buildEnrollmentInsert(i.workspaceId, i.campaignId, i.profileId, i.startNode),
   );
   if (statements.length > 0) await deps.runInWorkspaceTx(row.workspace_id, statements);
   return { enrolled: intents.length, intents };

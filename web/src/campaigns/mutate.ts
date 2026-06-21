@@ -632,6 +632,12 @@ export function nodeSummary(canvasNode: CanvasNode): string {
       const label = String((node as { label?: unknown }).label ?? '').trim();
       if (label) return label;
       const kind = String((node as { kind?: unknown }).kind ?? 'segment_entry');
+      if (kind === 'profile') {
+        const pc = String((node as { profileChange?: unknown }).profileChange ?? 'any');
+        if (pc === 'created') return 'On profile created';
+        if (pc === 'updated') return 'On profile updated';
+        return 'On profile created or updated';
+      }
       const map: Record<string, string> = {
         segment_entry: 'On segment entry',
         event: 'On event',
