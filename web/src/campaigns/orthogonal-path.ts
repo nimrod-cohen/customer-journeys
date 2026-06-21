@@ -25,14 +25,25 @@ export interface Point {
 export const CORNER_RADIUS = 14;
 
 /**
- * PLUS_PAD — RULE 1 (v0.42.0): the MINIMUM length (px) of straight VERTICAL line that
- * must sit ABOVE a `+` insertion control AND below it. Every `+` (campaign-edge-insert
- * AND campaign-merge-insert) is centered on a vertical run with ≥ PLUS_PAD of line on
- * EACH side — so a `+` is never bare and never within PLUS_PAD of a knee/corner. The
- * `+` button is ~28px (PLUS_DIAMETER), so an anchorable run must fit line+`+`+line ⇒
- * MIN_SEGMENT ≥ 2·PLUS_PAD + PLUS_DIAMETER. EASY TO TWEAK in tandem with rowHeight.
+ * PLUS_DIAMETER — the rendered diameter (px) of a `+` insertion control. The button is
+ * `h-6 w-6` (24px) with a 1px `border` on each side (≈ 26px box) plus a focus ring /
+ * shadow halo — taken as 28px, the full visual circle height. This is the unit RULE 1
+ * pads against (PLUS_PAD === PLUS_DIAMETER): the line on each side of a `+` is at least
+ * the circle's own height, so a `+` never visually touches a knee, node or another `+`.
  */
-export const PLUS_PAD = 20;
+export const PLUS_DIAMETER = 28;
+
+/**
+ * PLUS_PAD — RULE 1 (v0.42.0; tightened v0.42.2): the MINIMUM length (px) of straight
+ * VERTICAL line that must sit ABOVE a `+` insertion control AND below it. Every `+`
+ * (campaign-edge-insert AND campaign-merge-insert) is centered on a vertical run with
+ * ≥ PLUS_PAD of line on EACH side — so a `+` is never bare and never within PLUS_PAD of
+ * a knee/corner. USER RULE (v0.42.2): the minimum pad on EACH side must be AT LEAST the
+ * HEIGHT OF THE `+` CIRCLE, anywhere a `+` is rendered — so PLUS_PAD === PLUS_DIAMETER.
+ * An anchorable run must fit line+`+`+line ⇒ MIN_SEGMENT ≥ 2·PLUS_PAD + PLUS_DIAMETER =
+ * 3·PLUS_DIAMETER. EASY TO TWEAK in tandem with rowHeight.
+ */
+export const PLUS_PAD = PLUS_DIAMETER;
 
 /**
  * PLUS_TOP_GAP — the COMFORTABLE length (px) of straight VERTICAL line a node-following
@@ -48,18 +59,16 @@ export const PLUS_PAD = 20;
  */
 export const PLUS_TOP_GAP = 44;
 
-/** The rendered diameter (px) of a `+` insertion control (h-6 w-6 ≈ 24, + ring/shadow). */
-export const PLUS_DIAMETER = 28;
-
 /**
  * MIN_SEGMENT — the floor (px) every anchorable VERTICAL run is built to meet, so a
  * (+) control always has line+`+`+line room (RULE 1) and a node can be inserted on it.
  * Sized = 2·PLUS_PAD + PLUS_DIAMETER so the run always fits PLUS_PAD above + the button
- * + PLUS_PAD below. The layout (layout.ts) sizes its rows so the drop between any two
- * cards comfortably exceeds this; the rail-inset routing below keeps the resulting V
- * run ≥ MIN_SEGMENT. EASY TO TWEAK: raise/lower this floor + LAYOUT.rowHeight in tandem.
+ * + PLUS_PAD below. With PLUS_PAD === PLUS_DIAMETER (v0.42.2) this is 3·PLUS_DIAMETER ≈
+ * 84px. The layout (layout.ts) sizes its rows so the drop between any two cards
+ * comfortably exceeds this; the rail-inset routing below keeps the resulting V run ≥
+ * MIN_SEGMENT. EASY TO TWEAK: raise/lower this floor + LAYOUT.rowHeight in tandem.
  */
-export const MIN_SEGMENT = 2 * PLUS_PAD + PLUS_DIAMETER; // 68
+export const MIN_SEGMENT = 2 * PLUS_PAD + PLUS_DIAMETER; // 3·PLUS_DIAMETER = 84
 
 /**
  * RAIL_INSET — the FIXED vertical distance (px) a horizontal crossing sits in from

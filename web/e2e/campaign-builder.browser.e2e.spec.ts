@@ -759,7 +759,11 @@ test('RULES 1+2 (Yes=1 / No=3): arms close at the SAME y; every + has line above
   // RULE 1: every + (edge-insert + merge-insert) has CONNECTOR PIXELS above AND below
   // it at its x — never a bare + or a corner +. We read each +'s center, then check the
   // SVG connector layer for path coverage just above and just below it on its column.
-  const PAD = 12; // screen px probed above/below (≤ PLUS_PAD at scale 1)
+  // v0.42.2 USER RULE: the pad on each side of every + is ≥ the +-circle height
+  // (PLUS_DIAMETER ≈ 28). Probe near the full circle height above AND below — a hit
+  // there proves a real line ≥ ~circle-height on each side (a couple px under 28 for
+  // sub-pixel/scale rounding so it stays meaningful without flaking).
+  const PAD = 24; // screen px probed above/below (≈ PLUS_DIAMETER, ≤ PLUS_PAD at scale 1)
   const pluses = await page
     .getByTestId('campaign-edge-insert')
     .evaluateAll((els) =>

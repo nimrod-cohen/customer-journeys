@@ -94,19 +94,20 @@ export interface LayoutEdge {
  * a card's bottom and the next card's top — the space every connector's vertical run
  * is carved from. It is kept comfortably above `MIN_SEGMENT` (orthogonal-path.ts) so
  * each edge's anchorable V run (the trunk V, a branch arm lane, the merged trunk)
- * clears the floor with room for its (+) and an inserted node. With rowHeight 184 /
- * cardHeight 72 the drop is 112px; the rail-inset routing keeps even the worst run
- * (the lane middle V = drop − 2·RAIL_INSET = 68px, the jog lower leg ≈ 76px) ≥ 64px.
+ * clears the floor with room for its (+) and an inserted node. With rowHeight 200 /
+ * cardHeight 72 the drop is 128px (v0.42.2, raised from 112 when PLUS_PAD grew to the
+ * +-circle height ⇒ MIN_SEGMENT 84); the rail-inset routing keeps even the worst run
+ * (the lane middle V = drop − 2·RAIL_INSET = 84px, the jog upper leg ≈ 92px) ≥ MIN_SEGMENT.
  * EASY TO TWEAK: bump rowHeight (drop) and MIN_SEGMENT in tandem to taste.
  *
  * BRANCH/MERGE reservation: a condition's arm children + its diamond join sit one
- * full row (the 112px drop) below the If, so each arm gets its own TALL vertical lane
+ * full row (the 128px drop) below the If, so each arm gets its own TALL vertical lane
  * and the merged trunk after the join (join → continuation/Exit) is a full-row drop
  * too — both ≥ MIN_SEGMENT, so the per-arm (+)s and the merge (+) are never crammed.
  */
 export const LAYOUT = {
   colWidth: 240,
-  rowHeight: 184,
+  rowHeight: 200,
   cardWidth: 200,
   cardHeight: 72,
   padX: 80,
@@ -468,9 +469,10 @@ export const JOIN_EXTRA_DROP = 48;
  * SIZED FOR PLUS_TOP_GAP (v0.42.1): it is also what makes a CLOSING edge's UPPER leg (the
  * longer arm's leaf → the shared closure knee, where that arm's append-+ sits via padHigh)
  * tall enough to realize a comfortable PLUS_TOP_GAP line above the +. That upper leg =
- * (rowHeight − cardHeight) + JOIN_MERGE_DROP − MERGE_LOWER_RUN − r ≈ JOIN_MERGE_DROP + 2,
- * so JOIN_MERGE_DROP ≥ 2·PLUS_TOP_GAP keeps the upper leg ≥ 2·PLUS_TOP_GAP (≈94px here) ⇒
- * the append-+ clears PLUS_TOP_GAP above AND ≥ PLUS_PAD below. (Bumped 56 → 92.)
+ * (rowHeight − cardHeight) + JOIN_MERGE_DROP − MERGE_LOWER_RUN − r. With the v0.42.2 drop
+ * (128) and MERGE_LOWER_RUN (100), the upper leg = 128 + 92 − 100 − 14 = 106px ≥
+ * 2·PLUS_TOP_GAP (88) AND ≥ MIN_SEGMENT (84) ⇒ the append-+ clears PLUS_TOP_GAP above AND
+ * ≥ PLUS_PAD below. (Bumped 56 → 92; held at 92 in v0.42.2.)
  */
 export const JOIN_MERGE_DROP = 92;
 
@@ -490,8 +492,12 @@ export const MERGE_PLUS_GAP = 40;
  * this run with ≥ PLUS_PAD line above + below (RULE 1), so MERGE_LOWER_RUN ≥ MIN_SEGMENT.
  * The longer arm's last-node-bottom → this y is the UPPER leg of its closing jog, also
  * sized ≥ MIN_SEGMENT by rowHeight + JOIN_MERGE_DROP.
+ *
+ * v0.42.2: PLUS_PAD grew to the +-circle height (28) ⇒ MIN_SEGMENT = 84. The merge (+)'s
+ * own central run = MERGE_LOWER_RUN − CORNER_RADIUS, so MERGE_LOWER_RUN ≥ MIN_SEGMENT +
+ * CORNER_RADIUS (= 98) to keep ≥ PLUS_PAD line above + below it; set 100.
  */
-export const MERGE_LOWER_RUN = 96;
+export const MERGE_LOWER_RUN = 100;
 
 /**
  * EMPTY_ARM_LANE — the side-lane offset (px) used ONLY by an EMPTY condition arm

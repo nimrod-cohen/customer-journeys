@@ -22,7 +22,7 @@ import {
   LAYOUT,
   type CampaignDefinition,
 } from './layout.js';
-import { orthogonalPath, verticalAnchor, MIN_SEGMENT, PLUS_TOP_GAP } from './orthogonal-path.js';
+import { orthogonalPath, verticalAnchor, MIN_SEGMENT, PLUS_TOP_GAP, PLUS_DIAMETER } from './orthogonal-path.js';
 
 /** Collect the VERTICAL runs of an SVG path `d` as {x, y0, y1} (y0<y1), tracing the pen. */
 function verticalRuns(d: string): Array<{ x: number; y0: number; y1: number }> {
@@ -59,20 +59,24 @@ function horizontalKnees(d: string): number {
 }
 
 /**
- * RULE 1 oracle — assert anchor `p` sits on ONE vertical run of `d` that spans at
- * least [p.y - PLUS_PAD, p.y + PLUS_PAD] (line above AND below, no corner within
- * PLUS_PAD). Returns nothing; throws via expect on failure.
+ * RULE 1 oracle (tightened v0.42.2) — assert anchor `p` sits on ONE vertical run of `d`
+ * that spans at least [p.y − PLUS_DIAMETER, p.y + PLUS_DIAMETER]: the USER RULE that the
+ * minimum pad on EACH side of EVERY `+` is at least the height of the `+` CIRCLE. Since
+ * PLUS_PAD === PLUS_DIAMETER (v0.42.2), this asserts ≥ PLUS_DIAMETER above AND below.
+ * Returns nothing; throws via expect on failure.
  */
 function assertLineAboveAndBelow(d: string, p: { x: number; y: number }, label: string): void {
   const runs = verticalRuns(d).filter((r) => Math.abs(r.x - p.x) < 1e-6);
   const hit = runs.find((r) => p.y >= r.y0 - 1e-6 && p.y <= r.y1 + 1e-6);
   expect(hit, `${label}: + anchor ${JSON.stringify(p)} not on a vertical run of ${d}`).toBeTruthy();
-  expect(p.y - hit!.y0, `${label}: < PLUS_PAD line ABOVE the + (above=${(p.y - hit!.y0).toFixed(1)})`).toBeGreaterThanOrEqual(
-    PLUS_PAD - 1e-6,
-  );
-  expect(hit!.y1 - p.y, `${label}: < PLUS_PAD line BELOW the + (below=${(hit!.y1 - p.y).toFixed(1)})`).toBeGreaterThanOrEqual(
-    PLUS_PAD - 1e-6,
-  );
+  expect(
+    p.y - hit!.y0,
+    `${label}: < +-circle-height line ABOVE the + (above=${(p.y - hit!.y0).toFixed(1)}, need ≥ ${PLUS_DIAMETER})`,
+  ).toBeGreaterThanOrEqual(PLUS_DIAMETER - 1e-6);
+  expect(
+    hit!.y1 - p.y,
+    `${label}: < +-circle-height line BELOW the + (below=${(hit!.y1 - p.y).toFixed(1)}, need ≥ ${PLUS_DIAMETER})`,
+  ).toBeGreaterThanOrEqual(PLUS_DIAMETER - 1e-6);
 }
 
 /**
@@ -244,8 +248,10 @@ function appendEdgePlusAnchors(def: CampaignDefinition): Array<{ label: string; 
 
 describe('RULE 1 — every + has ≥ PLUS_PAD line ABOVE and BELOW it', () => {
   it('PLUS_PAD and MIN_SEGMENT are sized so a line+`+`+line run always fits', () => {
-    const plusDiameter = 28;
-    expect(MIN_SEGMENT).toBeGreaterThanOrEqual(2 * PLUS_PAD + plusDiameter);
+    // v0.42.2 USER RULE: the per-side pad is AT LEAST the +-circle height everywhere.
+    expect(PLUS_PAD).toBe(PLUS_DIAMETER);
+    expect(MIN_SEGMENT).toBeGreaterThanOrEqual(2 * PLUS_PAD + PLUS_DIAMETER);
+    expect(MIN_SEGMENT).toBe(3 * PLUS_DIAMETER); // = 84
   });
 
   for (const [name, def] of ALL_FIXTURES) {

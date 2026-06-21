@@ -1,0 +1,26 @@
+{
+  "filesModified": [
+    "web/src/campaigns/orthogonal-path.ts",
+    "web/src/campaigns/layout.ts",
+    "web/src/campaigns/branch-invariants.test.ts",
+    "web/src/campaigns/orthogonal-path.test.ts",
+    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "constants": {
+    "PLUS_PAD": 28,
+    "PLUS_DIAMETER": 28,
+    "MIN_SEGMENT": 84,
+    "rowHeight": 200,
+    "JOIN_MERGE_DROP": 92,
+    "MERGE_LOWER_RUN": 100,
+    "PLUS_TOP_GAP": 44,
+    "JOIN_EXTRA_DROP": 48
+  },
+  "testsPass": true,
+  "e2eSummary": "42 passed (1.7m), solo run: campaign-builder + campaign-node-editors + campaign-list-detail + campaign-list-no-overflow + campaign-canvas-pan-zoom. Includes the RULES 1+2 stroke-above-and-below test with PAD=24 (~+-circle-height) probe.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "PLUS_PAD now === PLUS_DIAMETER (28) so the min pad on each side of every + is >= the +-circle height everywhere. MIN_SEGMENT = 3*PLUS_DIAMETER = 84. rowHeight 184->200 (drop 112->128): lane-middle V = 84, jog upper leg ~92, both >= MIN_SEGMENT. MERGE_LOWER_RUN 96->100 so the merge +'s central run (MERGE_LOWER_RUN - CORNER_RADIUS = 86) >= MIN_SEGMENT. PLUS_TOP_GAP held at 44 (>= PLUS_PAD); JOIN_MERGE_DROP held at 92 (longer-arm closing upper leg = drop + 92 - 100 - 14 = 106 >= 2*PLUS_TOP_GAP and >= MIN_SEGMENT); JOIN_EXTRA_DROP held at 48. RULE-1 oracle now asserts >= PLUS_DIAMETER on both sides for every +. Full web unit suite 227 passed / 4 skipped. Cold web typecheck exit 0. Lint: only the 7 known pre-existing react-hooks 'rule not found' errors, no new. Version bumped to 0.42.2. NOT committed/pushed (orchestrator commits)."
+}
