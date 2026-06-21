@@ -60,11 +60,13 @@ test('TRIGGER editor: event kind shows event type + manual shows a note', async 
   await drawer.getByTestId('trigger-kind').selectOption('event');
   await expect(drawer.getByTestId('trigger-event-type')).toBeVisible();
   await expect(drawer.getByTestId('trigger-event-filter')).toBeVisible();
-  // The EVENT TYPE field shows the workspace's known event types as clickable
-  // suggestion chips (the seed has 'page_view' + 'purchase'); clicking one fills it.
-  const purchaseChip = drawer.getByTestId('trigger-event-type-suggestion').filter({ hasText: 'purchase' });
-  await expect(purchaseChip).toBeVisible();
-  await purchaseChip.click();
+  // The EVENT TYPE field is an autocomplete: focusing it opens a dropdown of the
+  // workspace's known event types (the seed has 'page_view' + 'purchase'); clicking
+  // a suggestion fills the input.
+  await drawer.getByTestId('trigger-event-type').click();
+  const purchaseOpt = drawer.getByTestId('value-suggestion').filter({ hasText: 'purchase' });
+  await expect(purchaseOpt).toBeVisible();
+  await purchaseOpt.click();
   await expect(drawer.getByTestId('trigger-event-type')).toHaveValue('purchase');
 
   // The payload filter is PAYLOAD-ONLY (no "did event X" / profile fields): a

@@ -16,6 +16,7 @@ import { api } from '../../store/session.js';
 import { navigate } from '../../router.js';
 import { setEditorReturn } from '../../store/editorReturn.js';
 import { Button, Field, Input, Select, Textarea } from '../../ui/kit.js';
+import { Suggest } from '../../ui/Suggest.js';
 import { showToast } from '../../ui/toast.js';
 import { RuleBuilder } from '../../segments/RuleBuilder.js';
 import { groupFromAst, BUILDER_OPERATORS, type AstNode, type RuleGroup, type BuilderOperator } from '../../segments/ast-builder.js';
@@ -99,16 +100,6 @@ function TriggerEditor(props: NodeEditorProps) {
   const [filterForm, setFilterForm] = useState<EventFilterForm>(() => readEventPayloadFilter(initial.filter ?? null));
   const [segmentId, setSegmentId] = useState<string>(props.triggerSegmentId ?? '');
   const [profileChange, setProfileChange] = useState<ProfileChange>(initial.profileChange ?? 'any');
-  // Autocomplete the EVENT TYPE from the workspace's known event vocabulary
-  // (the same DISTINCT list /events/types feeds the manual Send-event drawer), so
-  // a journey trigger stays consistent with the ingested event names.
-  const [knownTypes, setKnownTypes] = useState<string[]>([]);
-  useEffect(() => {
-    void api
-      .get<{ values: string[] }>('/events/types')
-      .then((r) => setKnownTypes(r.values ?? []))
-      .catch(() => setKnownTypes([]));
-  }, []);
 
   const save = async (): Promise<void> => {
     if (kind === 'event' && !eventType.trim()) {
@@ -165,33 +156,13 @@ function TriggerEditor(props: NodeEditorProps) {
       {kind === 'event' ? (
         <>
           <Field label="Event type" hint="e.g. purchase, signup, lead.">
-            <Input
-              data-testid="trigger-event-type"
+            <Suggest
+              testId="trigger-event-type"
               placeholder="purchase"
               value={eventType}
-              onInput={(e: Event) => setEventType((e.target as HTMLInputElement).value)}
+              onChange={setEventType}
+              fetcher={(q) => api.get<{ values: string[] }>('/events/types', { query: { q } }).then((r) => r.values)}
             />
-            {knownTypes.length > 0 ? (
-              <div data-testid="trigger-event-type-suggestions" class="mt-2 flex flex-wrap items-center gap-1.5">
-                <span class="text-[11px] font-medium uppercase tracking-wide text-stone-400">Seen in this workspace</span>
-                {knownTypes.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    data-testid="trigger-event-type-suggestion"
-                    data-type={t}
-                    onClick={() => setEventType(t)}
-                    class={`rounded-md border px-2 py-0.5 font-mono text-[11px] transition-colors ${
-                      eventType === t
-                        ? 'border-brand-400 bg-brand-50 text-brand-700'
-                        : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            ) : null}
           </Field>
           <Field label="Only when the event matches (optional)" hint="Narrow it by the event's own attributes (payload).">
             <EventPayloadFilter form={filterForm} eventType={eventType} onChange={setFilterForm} />
@@ -237,15 +208,6 @@ function EventPayloadFilter(props: {
   onChange: (form: EventFilterForm) => void;
 }) {
   const { form, eventType, onChange } = props;
-  const [keys, setKeys] = useState<string[]>([]);
-  useEffect(() => {
-    const type = eventType.trim();
-    void api
-      .get<{ values: string[] }>('/events/payload-keys', type ? { query: { type } } : undefined)
-      .then((r) => setKeys(r.values ?? []))
-      .catch(() => setKeys([]));
-  }, [eventType]);
-
   const setRow = (i: number, patch: Partial<EventFilterRow>): void =>
     onChange({ ...form, rows: form.rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)) });
   const addRow = (): void => onChange({ ...form, rows: [...form.rows, emptyEventFilterRow()] });
@@ -269,21 +231,19 @@ function EventPayloadFilter(props: {
         <span>of these event attributes</span>
       </div>
 
-      <datalist id="trigger-payload-key-options">
-        {keys.map((k) => (
-          <option key={k} value={k} />
-        ))}
-      </datalist>
-
       {form.rows.map((row, i) => (
         <div key={i} data-testid="event-filter-row" class="flex items-start gap-2">
-          <Input
-            data-testid="event-filter-field"
-            class="flex-1"
+          <Suggest
+            testId="event-filter-field"
+            wrapperClass="relative flex-1"
             placeholder="attribute (e.g. webinar_id)"
-            list="trigger-payload-key-options"
             value={row.field}
-            onInput={(e: Event) => setRow(i, { field: (e.target as HTMLInputElement).value })}
+            onChange={(v) => setRow(i, { field: v })}
+            fetcher={(q) =>
+              api
+                .get<{ values: string[] }>('/events/payload-keys', { query: { type: eventType.trim(), q } })
+                .then((r) => r.values)
+            }
           />
           <Select
             data-testid="event-filter-op"
