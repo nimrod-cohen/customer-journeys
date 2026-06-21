@@ -259,12 +259,22 @@ function EventPayloadFilter(props: {
             ))}
           </Select>
           {row.operator !== 'exists' ? (
-            <Input
-              data-testid="event-filter-value"
-              class="flex-1 min-w-0"
+            <Suggest
+              testId="event-filter-value"
+              wrapperClass="relative flex-1 min-w-0"
               placeholder="value"
               value={row.value}
-              onInput={(e: Event) => setRow(i, { value: (e.target as HTMLInputElement).value })}
+              onChange={(v) => setRow(i, { value: v })}
+              fetcher={
+                row.field.trim()
+                  ? (q) =>
+                      api
+                        .get<{ values: string[] }>('/events/payload-values', {
+                          query: { type: eventType.trim(), key: row.field.trim(), q },
+                        })
+                        .then((r) => r.values)
+                  : null
+              }
             />
           ) : null}
           <Button

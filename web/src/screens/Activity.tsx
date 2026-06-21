@@ -6,6 +6,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
 import { useStore } from '../store/store.js';
 import { Badge, Button, Card, EmptyState, Field, Input, PageHeader, Select } from '../ui/kit.js';
+import { CollapsibleJson } from '../ui/JsonView.js';
 
 interface ActivityRow {
   at: string;
@@ -175,8 +176,8 @@ export function Activity() {
                     <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
                   </td>
                   <td class="px-4 py-2.5 text-stone-600">{r.email ?? '—'}</td>
-                  <td class="max-w-[20rem] truncate px-4 py-2.5 font-mono text-xs text-stone-500" title={r.detail ?? ''}>
-                    {r.detail || '—'}
+                  <td class="px-4 py-2.5 align-top font-mono text-xs text-stone-500">
+                    <CollapsibleJson value={r.detail} />
                   </td>
                 </tr>
               ))}

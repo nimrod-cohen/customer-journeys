@@ -61,6 +61,30 @@ describe('evaluateEventPayloadFilter — pure event-payload filter eval', () => 
     expect(evaluateEventPayloadFilter(filter, {})).toBe(false);
   });
 
+  it('a NESTED dotted key resolves deep AND is FORGIVING (webinar_data?.id semantics)', () => {
+    const exists = { field: 'payload.webinar_data.id', operator: 'exists' };
+    // present nested leaf ⇒ true
+    expect(evaluateEventPayloadFilter(exists, { webinar_data: { id: 'w1' } })).toBe(true);
+    // webinar_data present but no id ⇒ false (no throw)
+    expect(evaluateEventPayloadFilter(exists, { webinar_data: {} })).toBe(false);
+    // webinar_data entirely absent ⇒ false (NO exception — the whole point)
+    expect(evaluateEventPayloadFilter(exists, {})).toBe(false);
+    expect(evaluateEventPayloadFilter(exists, { other: 1 })).toBe(false);
+    // a SCALAR at webinar_data can't be descended ⇒ false, still no throw
+    expect(evaluateEventPayloadFilter(exists, { webinar_data: 'nope' })).toBe(false);
+
+    // equality on a nested leaf works, and is forgiving when the parent is missing
+    const eq = { field: 'payload.webinar_data.id', operator: '=', value: 'w1' };
+    expect(evaluateEventPayloadFilter(eq, { webinar_data: { id: 'w1' } })).toBe(true);
+    expect(evaluateEventPayloadFilter(eq, { webinar_data: { id: 'w2' } })).toBe(false);
+    expect(evaluateEventPayloadFilter(eq, {})).toBe(false); // no parent ⇒ false, never throws
+
+    // array index traversal is supported too (items.0.sku)
+    const arr = { field: 'payload.items.0.sku', operator: '=', value: 'book' };
+    expect(evaluateEventPayloadFilter(arr, { items: [{ sku: 'book' }] })).toBe(true);
+    expect(evaluateEventPayloadFilter(arr, { items: [] })).toBe(false); // out of range ⇒ false
+  });
+
   it('an unknown operator is REJECTED (throws) — closed grammar', () => {
     const filter = { field: 'payload.x', operator: 'LIKE', value: '%a%' };
     expect(() => evaluateEventPayloadFilter(filter, { x: 'a' })).toThrow();

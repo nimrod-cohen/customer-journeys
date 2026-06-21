@@ -12,7 +12,7 @@
 //     then the Dispatcher's atomic claim sends once.
 import { buildSegmentMatch, resolveOperator } from '@cdp/segments';
 import type { AstNode } from '@cdp/segments';
-import { isWindowOpen, nextWindowOpening, zonedInputToUtcIso } from '@cdp/shared';
+import { isWindowOpen, nextWindowOpening, zonedInputToUtcIso, resolveEventPath } from '@cdp/shared';
 import {
   type Node,
   type WaitNode,
@@ -622,7 +622,12 @@ export function evaluateEventPayloadFilter(
   const key = leaf.field.slice(PAYLOAD_FILTER_PREFIX.length);
   if (key.length === 0) throw new Error('evaluateEventPayloadFilter: empty payload key');
   const op = resolveOperator(leaf.operator); // THROWS on a non-whitelisted operator
-  const actual = payload[key];
+  // DEEP-DOT, FORGIVING resolution (the `webinar_data?.id` semantic): a dotted key
+  // descends nested objects/arrays and yields `undefined` for ANY missing segment —
+  // so `webinar_data.id exists` is false (never throws) when `webinar_data` is
+  // absent, and true only when the nested leaf is actually present. A flat key
+  // (no dot) behaves exactly like the old `payload[key]` lookup.
+  const actual = resolveEventPath(payload, key);
   return applyPayloadOperator(op, actual, leaf.value);
 }
 

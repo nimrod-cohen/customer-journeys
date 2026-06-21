@@ -74,6 +74,10 @@ test('TRIGGER editor: event kind shows event type + manual shows a note', async 
   const row0 = drawer.getByTestId('event-filter-row').first();
   await row0.getByTestId('event-filter-field').fill('amount');
   await row0.getByTestId('event-filter-op').selectOption('>');
+  // The VALUE box also autocompletes the existing values of that attribute
+  // (the seed purchase event has amount=50).
+  await row0.getByTestId('event-filter-value').click();
+  await expect(drawer.getByTestId('value-suggestion').filter({ hasText: '50' })).toBeVisible();
   await row0.getByTestId('event-filter-value').fill('10');
   await drawer.getByTestId('node-save').click();
   await expect(drawer).toBeHidden();

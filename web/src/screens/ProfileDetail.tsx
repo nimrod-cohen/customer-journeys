@@ -9,6 +9,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { ActionMenu, Badge, Button, Card, EmptyState, Field, Input, Select, toneFor } from '../ui/kit.js';
+import { JsonView } from '../ui/JsonView.js';
 import { MergeProfileDrawer } from './MergeProfileDrawer.js';
 import { SendEventDrawer } from './SendEventDrawer.js';
 
@@ -562,9 +563,7 @@ function EventsTab({ id }: { id: string }) {
             <time class="font-mono text-xs text-stone-500">{fmt(ev.occurred_at)}</time>
           </div>
           {ev.payload && Object.keys(ev.payload).length > 0 ? (
-            <pre class="mt-1 overflow-x-auto rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600 ring-1 ring-inset ring-stone-100">
-              {JSON.stringify(ev.payload)}
-            </pre>
+            <JsonView value={ev.payload} class="mt-1" />
           ) : null}
         </li>
       ))}
