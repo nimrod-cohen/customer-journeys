@@ -464,8 +464,15 @@ export const JOIN_EXTRA_DROP = 48;
  * down to the join with the merge (+) centered on it: a clear line ABOVE the (+)
  * (closure corner → +) AND BELOW it (+ → join card). Without this the closure corner
  * sat right at the (+) (no line above). Tweak alongside rowHeight to taste.
+ *
+ * SIZED FOR PLUS_TOP_GAP (v0.42.1): it is also what makes a CLOSING edge's UPPER leg (the
+ * longer arm's leaf → the shared closure knee, where that arm's append-+ sits via padHigh)
+ * tall enough to realize a comfortable PLUS_TOP_GAP line above the +. That upper leg =
+ * (rowHeight − cardHeight) + JOIN_MERGE_DROP − MERGE_LOWER_RUN − r ≈ JOIN_MERGE_DROP + 2,
+ * so JOIN_MERGE_DROP ≥ 2·PLUS_TOP_GAP keeps the upper leg ≥ 2·PLUS_TOP_GAP (≈94px here) ⇒
+ * the append-+ clears PLUS_TOP_GAP above AND ≥ PLUS_PAD below. (Bumped 56 → 92.)
  */
-export const JOIN_MERGE_DROP = 56;
+export const JOIN_MERGE_DROP = 92;
 
 /**
  * MERGE_PLUS_GAP — DEPRECATED (v0.42.0). The merge (+) is now CENTERED on the central

@@ -821,6 +821,53 @@ test('RULES 1+2 (Yes=1 / No=3): arms close at the SAME y; every + has line above
     expect(ok, `+ at screen (${Math.round(p.cx)},${Math.round(p.cy)}) lacks a line above AND below`).toBe(true);
   }
 
+  // v0.42.1: each ARM's CLOSING + (the append-+ right after the arm's last node) must have
+  // a COMFORTABLE line above it — consistent with the centered trunk +s — not the bare
+  // minimum. We probe the connector stroke well above the + center (cy − TOP_PROBE, where
+  // TOP_PROBE ≈ PLUS_TOP_GAP·0.6 screen px): a hit there means a real vertical spacer runs
+  // above the +. The two closing arm +s are the lowest edge-insert + in each arm column.
+  const cb = await conditionBottom(page);
+  const armColPluses = pluses.filter((p) => p.cy > cb); // the two arm columns' +s
+  // Group by x-column, take the LOWEST + in each (the arm's closing-edge append-+).
+  const byCol = new Map<number, { cx: number; cy: number }>();
+  for (const p of armColPluses) {
+    const colKey = Math.round(p.cx / 8) * 8;
+    const cur = byCol.get(colKey);
+    if (!cur || p.cy > cur.cy) byCol.set(colKey, p);
+  }
+  const closingPluses = [...byCol.values()];
+  expect(closingPluses.length, 'expected two arm closing +s (one per arm column)').toBeGreaterThanOrEqual(2);
+  const TOP_PROBE = Math.round(44 * 0.6); // ≈ PLUS_TOP_GAP·0.6 screen px above the + center
+  for (const p of closingPluses) {
+    const ok = await page.getByTestId('campaign-connectors').evaluate(
+      (svg, ctx) => {
+        const paths = Array.from(svg.querySelectorAll('path')) as SVGPathElement[];
+        const ctm = (svg as SVGSVGElement).getScreenCTM();
+        if (!ctm) return false;
+        const inv = ctm.inverse();
+        const pt = (svg as SVGSVGElement).createSVGPoint();
+        const probe = (sx: number, sy: number): boolean => {
+          pt.x = sx;
+          pt.y = sy;
+          const lp = pt.matrixTransform(inv);
+          for (const [dx, dy] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2]]) {
+            pt.x = lp.x + dx;
+            pt.y = lp.y + dy;
+            const local = (svg as SVGSVGElement).createSVGPoint();
+            local.x = lp.x + dx;
+            local.y = lp.y + dy;
+            if (paths.some((path) => path.isPointInStroke(local))) return true;
+          }
+          return false;
+        };
+        // Stroke well ABOVE the + center → a comfortable top spacer (≥ ~PLUS_TOP_GAP·0.6).
+        return probe(ctx.cx, ctx.cy - ctx.top);
+      },
+      { cx: p.cx, cy: p.cy, top: TOP_PROBE },
+    );
+    expect(ok, `arm closing + at (${Math.round(p.cx)},${Math.round(p.cy)}) lacks a COMFORTABLE line above (≥ ~PLUS_TOP_GAP)`).toBe(true);
+  }
+
   await page.getByTestId('save-campaign').click();
   await expect(page.getByTestId('toast')).toBeVisible();
 });

@@ -34,6 +34,20 @@ export const CORNER_RADIUS = 14;
  */
 export const PLUS_PAD = 20;
 
+/**
+ * PLUS_TOP_GAP — the COMFORTABLE length (px) of straight VERTICAL line a node-following
+ * append-`+` (a `padHigh`-anchored control: a jog's / closing-edge's upper leg, straight
+ * below its source node) is biased to leave ABOVE it — so its top spacer visually MATCHES
+ * the centered trunk `+`s (a straight-V trunk over the laid-out drop has ~56px above; a
+ * top-knee arm + has ~40px) instead of the bare minimum PLUS_PAD. The `+` is anchored at
+ * `runTop + PLUS_TOP_GAP`, CLAMPED so there is still ≥ PLUS_PAD line BELOW it (on a short
+ * run it falls back toward the run's center, keeping ≥ PLUS_PAD on BOTH sides — RULE 1).
+ * For the gap to actually be realized (not clamped) a node-following run must be ≥
+ * 2·PLUS_TOP_GAP; the layout sizes the closing-edge upper leg (JOIN_MERGE_DROP) to clear
+ * that. Chosen 44px (between the trunk's 56 and the top-knee's 40) for visual consistency.
+ */
+export const PLUS_TOP_GAP = 44;
+
 /** The rendered diameter (px) of a `+` insertion control (h-6 w-6 ≈ 24, + ring/shadow). */
 export const PLUS_DIAMETER = 28;
 
@@ -360,16 +374,23 @@ function padCenter(y0: number, y1: number): number {
 }
 
 /**
- * padHigh(y0, y1) — the y of a `+` biased HIGH on the run [y0, y1] (PLUS_PAD below the
- * top) so the arm's append-(+) sits right under its source node, yet still leaves
- * ≥ PLUS_PAD of line ABOVE and BELOW (RULE 1). Clamped to the run's mid so it never
- * drops below where ≥ PLUS_PAD remains below it.
+ * padHigh(y0, y1) — the y of a node-following append-`+` biased HIGH on the run [y0, y1]
+ * with a COMFORTABLE PLUS_TOP_GAP of line ABOVE it (so its top spacer matches the centered
+ * trunk `+`s), while still leaving ≥ PLUS_PAD of line BELOW (RULE 1). It sits at
+ * `y0 + PLUS_TOP_GAP`, CLAMPED so:
+ *   • it never falls below `y1 − PLUS_PAD` (≥ PLUS_PAD always remains BELOW), and
+ *   • on a SHORT run (< PLUS_TOP_GAP + PLUS_PAD) it falls back toward the run's CENTER,
+ *     keeping ≥ PLUS_PAD on BOTH sides (never crossing the midpoint).
+ * So the append-+ gets a proper line above (≥ PLUS_TOP_GAP when the run is ≥ 2·PLUS_TOP_GAP,
+ * which the layout guarantees for a node-following closing-edge upper leg) yet stays HIGH,
+ * right under its node and well above the merge + on the (separate, lower) central run.
  */
 function padHigh(y0: number, y1: number): number {
   const center = (y0 + y1) / 2;
-  // PLUS_PAD below the top (line above the +) — but never above the center, so there is
-  // always ≥ PLUS_PAD of line BELOW too (the run is sized ≥ 2·PLUS_PAD by the layout).
-  return Math.min(y0 + PLUS_PAD, center);
+  // The comfortable target: PLUS_TOP_GAP of line above. But never drop past the run's
+  // center (so ≥ PLUS_PAD of line remains below on a run sized ≥ 2·PLUS_PAD). On a short
+  // run the center wins → a balanced fallback with ≥ PLUS_PAD on both sides.
+  return Math.min(y0 + PLUS_TOP_GAP, center);
 }
 
 /**

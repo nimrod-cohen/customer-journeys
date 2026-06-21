@@ -3,7 +3,7 @@
 // `d` and asserts every drawn run changes only x OR only y, and that the (+) anchor
 // always lands ON a vertical run of the path. Pure.
 import { describe, it, expect } from 'vitest';
-import { orthogonalPath, verticalAnchor, edgeMidpoint, closeKneeLowerRun, CORNER_RADIUS, MIN_SEGMENT, type Point } from './orthogonal-path.js';
+import { orthogonalPath, verticalAnchor, edgeMidpoint, closeKneeLowerRun, CORNER_RADIUS, MIN_SEGMENT, PLUS_TOP_GAP, type Point } from './orthogonal-path.js';
 
 /** The tallest vertical run on which `p` (the (+) anchor) lies, if any. */
 function anchorRunHeight(d: string, p: Point): number | null {
@@ -321,6 +321,24 @@ describe('close-knee jog into a merge join — the central run the merge + ancho
     expect(run.y1 - run.y0).toBeGreaterThan(LAID_OUT_DROP * 3);
     // The arm + is far above the bottom of that run (well separated from the merge +).
     expect(run.y1 - armPlus.y).toBeGreaterThan(MIN_SEGMENT);
+  });
+
+  it('v0.42.1: a closing edge with a layout crossY gives its append-+ a COMFORTABLE PLUS_TOP_GAP line above (not bare PLUS_PAD)', () => {
+    // Mirror the layout: a closing jog carries an explicit crossY (the shared closure y,
+    // MERGE_LOWER_RUN above the join). The upper leg [from.y, crossY-r] is sized so padHigh
+    // realizes the full PLUS_TOP_GAP above the +, with ≥ PLUS_PAD below.
+    const from = { x: 300, y: 100 };
+    const to = { x: 200, y: 100 + LAID_OUT_DROP + 92 }; // + JOIN_MERGE_DROP
+    const crossY = to.y - 96; // = join.y − MERGE_LOWER_RUN
+    const armPlus = verticalAnchor(from, to, to.x, false, true, crossY);
+    expect(armPlus.x).toBe(from.x);
+    const upper = verticalRuns(orthogonalPath(from, to, to.x, undefined, false, true, crossY)).find(
+      (r) => Math.abs(r.x - from.x) < 1e-6,
+    )!;
+    // Line ABOVE the + is the comfortable PLUS_TOP_GAP …
+    expect(armPlus.y - upper.y0).toBeCloseTo(PLUS_TOP_GAP, 5);
+    // … and there is still ≥ PLUS_PAD line BELOW it (RULE 1).
+    expect(upper.y1 - armPlus.y).toBeGreaterThanOrEqual(20 - 1e-6);
   });
 });
 

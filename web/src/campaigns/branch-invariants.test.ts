@@ -19,9 +19,10 @@ import {
   mergeAnchor,
   branchClosureY,
   PLUS_PAD,
+  LAYOUT,
   type CampaignDefinition,
 } from './layout.js';
-import { orthogonalPath, verticalAnchor, MIN_SEGMENT } from './orthogonal-path.js';
+import { orthogonalPath, verticalAnchor, MIN_SEGMENT, PLUS_TOP_GAP } from './orthogonal-path.js';
 
 /** Collect the VERTICAL runs of an SVG path `d` as {x, y0, y1} (y0<y1), tracing the pen. */
 function verticalRuns(d: string): Array<{ x: number; y0: number; y1: number }> {
@@ -71,6 +72,31 @@ function assertLineAboveAndBelow(d: string, p: { x: number; y: number }, label: 
   );
   expect(hit!.y1 - p.y, `${label}: < PLUS_PAD line BELOW the + (below=${(hit!.y1 - p.y).toFixed(1)})`).toBeGreaterThanOrEqual(
     PLUS_PAD - 1e-6,
+  );
+}
+
+/**
+ * v0.42.1 oracle — a node-following APPEND/CLOSING-EDGE `+` (a `padHigh`-anchored control:
+ * a jog's / arm-closing-edge's UPPER leg, straight below its source node) must have a
+ * COMFORTABLE line ABOVE it (≥ PLUS_TOP_GAP, not merely PLUS_PAD), consistent with the
+ * centered trunk +s — while still keeping ≥ PLUS_PAD line BELOW (RULE 1). The line-above
+ * equals PLUS_TOP_GAP whenever the run is ≥ 2·PLUS_TOP_GAP (the layout sizes the closing
+ * upper leg to clear that); on any shorter run padHigh falls back toward center, so we
+ * assert ≥ PLUS_TOP_GAP only where the run can actually realize it.
+ */
+function assertComfortableTopGap(d: string, p: { x: number; y: number }, label: string): void {
+  const runs = verticalRuns(d).filter((r) => Math.abs(r.x - p.x) < 1e-6);
+  const hit = runs.find((r) => p.y >= r.y0 - 1e-6 && p.y <= r.y1 + 1e-6);
+  expect(hit, `${label}: + anchor ${JSON.stringify(p)} not on a vertical run of ${d}`).toBeTruthy();
+  const above = p.y - hit!.y0;
+  const below = hit!.y1 - p.y;
+  // Always ≥ PLUS_PAD below (RULE 1) — the comfortable top gap never starves the bottom.
+  expect(below, `${label}: < PLUS_PAD line BELOW the append-+ (below=${below.toFixed(1)})`).toBeGreaterThanOrEqual(
+    PLUS_PAD - 1e-6,
+  );
+  // The run is sized (by JOIN_MERGE_DROP / rowHeight) to realize the full PLUS_TOP_GAP.
+  expect(above, `${label}: append-+ has only ${above.toFixed(1)}px above (< PLUS_TOP_GAP ${PLUS_TOP_GAP})`).toBeGreaterThanOrEqual(
+    PLUS_TOP_GAP - 1e-6,
   );
 }
 
@@ -193,6 +219,29 @@ function allPlusAnchors(def: CampaignDefinition): Array<{ label: string; d: stri
   return out;
 }
 
+/**
+ * The node-following APPEND/CLOSING-EDGE +s of a layout — the `padHigh`-anchored edge
+ * inserts (a jog or an arm-closing-edge whose + sits on the UPPER leg straight below its
+ * source node, at fromPoint.x). These are the +s v0.42.1 gives a comfortable PLUS_TOP_GAP
+ * line above. A straight-V trunk + (centered, padCenter) and a top-knee arm + (padCenter on
+ * the child column) are EXCLUDED — they already have a comfortable centered gap.
+ */
+function appendEdgePlusAnchors(def: CampaignDefinition): Array<{ label: string; d: string; p: { x: number; y: number } }> {
+  const { edges } = layoutDefinition(def);
+  const out: Array<{ label: string; d: string; p: { x: number; y: number } }> = [];
+  for (const e of edges) {
+    const straightV = Math.abs(e.fromPoint.x - e.laneX) < 1e-6 && Math.abs(e.laneX - e.toPoint.x) < 1e-6;
+    if (straightV) continue; // centered trunk + (padCenter) — not an append/closing-edge +
+    if (e.kneeTop) continue; // top-knee arm + is padCenter on the child column
+    const d = orthogonalPath(e.fromPoint, e.toPoint, e.laneX, undefined, e.kneeTop, e.closeKnee, e.crossY);
+    const p = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop, e.closeKnee, e.crossY);
+    // Only those that actually anchor on the source-side upper leg (padHigh at from.x).
+    if (Math.abs(p.x - e.fromPoint.x) > 1e-6) continue;
+    out.push({ label: `append-+ ${e.from}->${e.to} (${e.slot}${e.closeKnee ? ',close' : ''})`, d, p });
+  }
+  return out;
+}
+
 describe('RULE 1 — every + has ≥ PLUS_PAD line ABOVE and BELOW it', () => {
   it('PLUS_PAD and MIN_SEGMENT are sized so a line+`+`+line run always fits', () => {
     const plusDiameter = 28;
@@ -210,6 +259,41 @@ describe('RULE 1 — every + has ≥ PLUS_PAD line ABOVE and BELOW it', () => {
   it('no + sits within PLUS_PAD of a corner (the above/below check IS that property)', () => {
     // Re-stated as a direct property over the busiest fixture.
     for (const a of allPlusAnchors(yes1no3)) assertLineAboveAndBelow(a.d, a.p, `yes1no3 ${a.label}`);
+  });
+});
+
+describe('v0.42.1 — append/closing-edge +s have a COMFORTABLE line above (≥ PLUS_TOP_GAP)', () => {
+  it('PLUS_TOP_GAP is comfortably above PLUS_PAD (a proper spacer, not the minimum)', () => {
+    expect(PLUS_TOP_GAP).toBeGreaterThan(PLUS_PAD);
+  });
+
+  for (const [name, def] of [
+    ['equalArms', equalArms],
+    ['yes1no3', yes1no3],
+    ['no1yes3', no1yes3],
+    ['linear', linear],
+  ] as const) {
+    it(`${name}: every append/closing-edge + has ≥ PLUS_TOP_GAP line above AND ≥ PLUS_PAD below`, () => {
+      const anchors = appendEdgePlusAnchors(def);
+      // equalArms/yes1no3/no1yes3 all have arm-closing edges → at least one append-+.
+      // (linear has the same single-jog/straight kind; if it produces none that's fine.)
+      if (name !== 'linear') expect(anchors.length).toBeGreaterThan(0);
+      for (const a of anchors) assertComfortableTopGap(a.d, a.p, `${name} ${a.label}`);
+    });
+  }
+
+  it('the arm-closing + stays HIGH (near its node) and well ABOVE the merge + below it', () => {
+    const { positions, edges } = layoutDefinition(yes1no3);
+    const join = positions.get('join')!;
+    const merge = mergeAnchor(edges, positions, 'join');
+    for (const e of edges.filter((x) => x.closeKnee === true)) {
+      const p = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop, e.closeKnee, e.crossY);
+      // The append-+ sits comfortably above the merge + (they never adjoin).
+      expect(merge.y - p.y).toBeGreaterThan(PLUS_PAD);
+      // And it stays near its own source node (within one row's drop), not drifted down.
+      expect(p.y - e.fromPoint.y).toBeLessThan(LAYOUT.rowHeight);
+    }
+    expect(join.y).toBeGreaterThan(merge.y);
   });
 });
 

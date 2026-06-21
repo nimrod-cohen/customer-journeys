@@ -1,0 +1,18 @@
+{
+  "filesModified": [
+    "web/src/campaigns/orthogonal-path.ts",
+    "web/src/campaigns/layout.ts",
+    "web/src/campaigns/branch-invariants.test.ts",
+    "web/src/campaigns/orthogonal-path.test.ts",
+    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "constants": { "PLUS_TOP_GAP": 44, "PLUS_PAD": 20, "PLUS_DIAMETER": 28, "MIN_SEGMENT": 68, "JOIN_MERGE_DROP_old": 56, "JOIN_MERGE_DROP_new": 92, "MERGE_LOWER_RUN": 96, "rowHeight": 184 },
+  "fix": "padHigh now biases the node-following append-+ by PLUS_TOP_GAP (44px) below the run top instead of PLUS_PAD (20px), clamped to the run center so >= PLUS_PAD always remains below (RULE 1). Bumped JOIN_MERGE_DROP 56->92 so the LONGER arm's closing-edge upper leg (where padHigh anchors) is >= 2*PLUS_TOP_GAP (~94px) and can realize the full comfortable gap. MIN_SEGMENT/MERGE_LOWER_RUN unchanged.",
+  "testsPass": true,
+  "e2eSummary": "SOLO playwright (one invocation at a time): RULES 1+2 (Yes=1/No=3) augmented with a comfortable-top-gap probe (SVG isPointInStroke at +center - ~PLUS_TOP_GAP*0.6 on each arm's closing +) -> PASS. Full campaign suite (campaign-builder, campaign-node-editors, campaign-list-detail, campaign-list-no-overflow, campaign-canvas-pan-zoom) = 42 passed in 1.7m. Ports freed + pkill before each run.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "Unit: 82 campaign geometry tests green (was 75; +6 branch-invariants v0.42.1 block + 1 orthogonal-path PLUS_TOP_GAP test). Full web unit suite 227 passed/4 skipped. Lint: only the 7 known pre-existing react-hooks/exhaustive-deps 'rule not found' errors, no new. probe values (yes1no3): closeKnee arm +s line-above 20->44; longer arm closing upper leg 58->94 (above=44,below=50); merge + still on separate lower run far below. Version bumped 0.42.0 -> 0.42.1. CLAUDE.md updated with the v0.42.1 PLUS_TOP_GAP note. NOT committed/pushed (orchestrator commits)."
+}
