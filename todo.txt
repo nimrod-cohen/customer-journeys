@@ -49,22 +49,24 @@
 # [x] show conversion (count + %) for sent/delivered/failed/opened/clicked/unsubscribed in the broadcasts list.
 #     Added first-party OPEN tracking (1x1 pixel /o/:token + tracked_opens, migration 0038) + per-broadcast
 #     unsubscribe attribution (email_events type=unsubscribe + broadcast/campaign cols). v0.50.0
-* allow sending SMS/WhatsApp in broadcasts and campaigns, not only emails.
-* topics unsubscribe management, instead of single subscribe/unsubscribe, build a list of topics and all the users to
-  subscribe/unsubscribe based on topics and mediums 
-  currently medium options are 
-  1. WhatsApp & SMS
-  2. Email
-  here's an example of how the unsubscribe page should look like with topics: 
-  https://bursa4u.com/manage-subscription/?cid=bcaf0602f82cd98104
-  from now on, a person may unsubscribe from all channels, or just part of them, 
-  he is not taken off the list unless he asked to be completely unsubscribed, 
-  he can be unsubscribed or suppressed in mail but not by SMS/WhatsApp, or the other way around.
-
-* UI should work in mobile as well, make the whole thing responsive.
-* Connect to SMS via provider
-* Connect to  WhatsApp official API
-* never send emails/sms/WhatsApp to unsubscribed profile, even if he meets the segment/filter criteria. 
+# [x] allow sending SMS/WhatsApp in broadcasts AND campaigns, not only emails. New @cdp/channels layer +
+#     deterministic MOCK providers + resolveChannelProvider seam; broadcasts.medium/text_body (mig 0039);
+#     dispatcher routes by medium; campaign send-node medium + text_body (jsonb). v0.51.0 (broadcasts) + v0.54.0 (campaigns).
+# [x] topics unsubscribe management: workspace topics + per-topic (default-subscribed) + global per-medium-group
+#     opt-out (email | sms_whatsapp) (mig 0040); public preference center GET/POST /manage-subscription
+#     (partial opt-out keeps the person on other channels; "unsubscribe from everything" = full suppression);
+#     dispatcher gates by suppression → medium-group opt-out → topic; topics admin + broadcast/campaign topic
+#     selector. v0.52.0 (+ campaign topic selector v0.54.0).
+# [x] UI responsive (core flows): mobile drawer nav (nav-menu-toggle) + responsive kit/tables/forms/drawers;
+#     designer + campaign canvas stay desktop-first. v0.53.0
+# [x] never send to an unsubscribed profile even if it matches the segment — the dispatcher (the single send
+#     point for broadcasts AND campaigns) skips suppressed / medium-group-opted-out / topic-unsubscribed
+#     recipients before sending, on every medium. v0.52.0
+# [~] Connect to a REAL SMS provider  — BLOCKED on human prerequisites (provider account + credentials, like
+#     SES production access). Architecture + mock done; real adapter slots into resolveChannelProvider (@cdp/channels).
+#     See .a5c/PROVIDERS-SETUP.md.
+# [~] Connect to the REAL WhatsApp official API — same: BLOCKED on a Meta WhatsApp Business account + credentials.
+#     Architecture + mock done; see .a5c/PROVIDERS-SETUP.md.
 
 
 # TBD - FUTURE , NOT TO BE DONE NOW
