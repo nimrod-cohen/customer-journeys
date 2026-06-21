@@ -150,7 +150,15 @@ describe.skipIf(!RUN)('broadcast → dispatcher chain with guards (real Postgres
     // SES called ONLY for the non-suppressed recipient.
     expect(ses.sends).toHaveLength(1);
 
-    const ml = await admin.query('SELECT count(*)::int n FROM messages_log WHERE workspace_id = $1', [ws]);
-    expect(ml.rows[0].n).toBe(1);
+    // messages_log now records BOTH the actual send AND the skip (v0.52.0: a skipped
+    // recipient gets a status='skipped' row so the skip is auditable) — 1 sent + 1 skipped.
+    const ml = await admin.query(
+      `SELECT count(*) FILTER (WHERE status = 'skipped')::int AS skipped,
+              count(*) FILTER (WHERE status <> 'skipped')::int AS sent
+         FROM messages_log WHERE workspace_id = $1`,
+      [ws],
+    );
+    expect(ml.rows[0].sent).toBe(1);
+    expect(ml.rows[0].skipped).toBe(1);
   });
 });
