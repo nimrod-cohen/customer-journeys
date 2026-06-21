@@ -1849,8 +1849,14 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
 export const listCampaigns: Handler = async (ctx, pool) => {
   // ORDER BY is appended AFTER scopedQuery builds the WHERE (scopedQuery anchors
   // the workspace_id clause at the tail when the fragment has no WHERE of its own).
-  const q = scopedQuery(ctx.workspaceId, 'SELECT id, name, status FROM campaigns');
-  const { rows } = await pool.query<{ id: string; name: string; status: string }>(
+  // `published` (active_version_id IS NOT NULL) lets the UI choose Delete (a
+  // never-published draft) vs Archive (a published campaign — history, never
+  // hard-deleted). It rides the same workspace-scoped SELECT.
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, status, (active_version_id IS NOT NULL) AS published FROM campaigns',
+  );
+  const { rows } = await pool.query<{ id: string; name: string; status: string; published: boolean }>(
     `${q.text} ORDER BY created_at DESC`,
     q.values,
   );
@@ -1900,6 +1906,50 @@ function makeLifecycleHandler(action: CampaignLifecycleAction): Handler {
 export const pauseCampaign: Handler = makeLifecycleHandler('pause');
 export const resumeCampaign: Handler = makeLifecycleHandler('resume');
 export const archiveCampaign: Handler = makeLifecycleHandler('archive');
+
+/**
+ * DELETE /campaigns/:id — HARD-delete a campaign that was NEVER PUBLISHED
+ * (active_version_id IS NULL: it was only ever a draft). A campaign that HAS
+ * been published is history — it is never hard-deleted; archive it instead
+ * (409). Workspace-scoped: the campaign must resolve INSIDE ctx.workspaceId (a
+ * foreign/missing id 404s, inv.1/inv.2 — workspace_id is NEVER taken from the
+ * body) and capability-gated (manage_content, routes.ts).
+ *
+ * The delete runs in ONE workspace-scoped tx: drop any campaign_enrollments
+ * (defensive — a never-published campaign has none, and the FK is NOT NULL with
+ * no cascade) then the campaign row. campaign_versions ON DELETE CASCADE handles
+ * any draft-saved snapshots (there shouldn't be any since it was never published).
+ */
+export const deleteCampaign: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const sel = scopedQuery(
+    ctx.workspaceId,
+    'SELECT active_version_id FROM campaigns WHERE id = $1',
+    [id],
+  );
+  const row = (await pool.query(sel.text, sel.values)).rows[0] as
+    | { active_version_id: string | null }
+    | undefined;
+  if (!row) return ok({ error: 'not found' }, 404);
+  if (row.active_version_id !== null) {
+    return ok({ error: "A published campaign can't be deleted — archive it instead." }, 409);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const delEnroll = scopedQuery(ctx.workspaceId, 'DELETE FROM campaign_enrollments WHERE campaign_id = $1', [id]);
+    await client.query(delEnroll.text, delEnroll.values);
+    const delCamp = scopedQuery(ctx.workspaceId, 'DELETE FROM campaigns WHERE id = $1', [id]);
+    await client.query(delCamp.text, delCamp.values);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+  return ok({ deleted: 1 });
+};
 
 /**
  * GET /campaigns/:id — the full campaign + its definition for the builder to
@@ -3856,6 +3906,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /campaigns/:id': getCampaign,
   'GET /campaigns/:id/versions': listCampaignVersions,
   'POST /campaigns': createCampaign,
+  'DELETE /campaigns/:id': deleteCampaign,
   'PUT /campaigns/:id': updateCampaign,
   'PUT /campaigns/:id/draft': saveCampaignDraft,
   'POST /campaigns/:id/publish': publishCampaign,

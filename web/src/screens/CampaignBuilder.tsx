@@ -60,6 +60,10 @@ interface CampaignListItem {
   name: string;
   status: string;
   counts: EnrollmentCounts;
+  // True once the campaign has had at least one publish (active_version_id set).
+  // A never-published campaign (false) can be hard-DELETED; a published one is
+  // history and is archive-only.
+  published?: boolean;
 }
 
 interface SegmentLite {
@@ -126,6 +130,26 @@ export function CampaignsList() {
       await reload();
     } catch (e) {
       showToast((e as { error?: string })?.error ?? 'Could not archive the campaign.', { tone: 'error' });
+    }
+  };
+  // Hard-delete a NEVER-published campaign (offered instead of Archive when
+  // published === false). Confirmed via the styled dialog (never window.confirm);
+  // on success the row drops from the list; a 409 (the server's never-delete-a-
+  // published-campaign guard) surfaces as a toast.
+  const remove = async (id: string, name: string): Promise<void> => {
+    const ok = await askConfirm({
+      title: 'Delete campaign?',
+      message: `Delete “${name}”? This can’t be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.del(`/campaigns/${id}`);
+      setCampaigns((prev) => (prev ?? []).filter((c) => c.id !== id));
+      showToast('Campaign deleted.', { tone: 'success' });
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not delete the campaign.', { tone: 'error' });
     }
   };
 
@@ -225,12 +249,21 @@ export function CampaignsList() {
                           } satisfies ActionMenuItem,
                         ]
                       : []),
-                    {
-                      label: 'Archive',
-                      onSelect: () => archive(c.id, c.name),
-                      danger: true,
-                      'data-testid': 'campaign-archive',
-                    } satisfies ActionMenuItem,
+                    // A never-published campaign (published === false) can be
+                    // hard-DELETED; a published one is history and stays archive-only.
+                    c.published === false
+                      ? ({
+                          label: 'Delete',
+                          onSelect: () => remove(c.id, c.name),
+                          danger: true,
+                          'data-testid': 'campaign-delete',
+                        } satisfies ActionMenuItem)
+                      : ({
+                          label: 'Archive',
+                          onSelect: () => archive(c.id, c.name),
+                          danger: true,
+                          'data-testid': 'campaign-archive',
+                        } satisfies ActionMenuItem),
                   ]}
                 />
               </li>
