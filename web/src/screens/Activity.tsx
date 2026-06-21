@@ -2,11 +2,13 @@
 // the workspace — behavioural events, email/delivery events, and sends. Filters
 // (datetime range, source, outcome, type) are applied SERVER-SIDE (scoped to the
 // token's workspace). Read-only.
+import { Fragment } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
 import { useStore } from '../store/store.js';
+import { navigate } from '../router.js';
 import { Badge, Button, Card, EmptyState, Field, Input, PageHeader, Select } from '../ui/kit.js';
-import { CollapsibleJson } from '../ui/JsonView.js';
+import { JsonView } from '../ui/JsonView.js';
 
 interface ActivityRow {
   at: string;
@@ -46,6 +48,15 @@ export function Activity() {
   const session = useStore(sessionStore);
   const [rows, setRows] = useState<ActivityRow[] | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  // Master/detail: which row(s) are expanded to show their detail below.
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const toggle = (i: number) =>
+    setOpen((s) => {
+      const n = new Set(s);
+      if (n.has(i)) n.delete(i);
+      else n.add(i);
+      return n;
+    });
 
   const load = async (f: Filters) => {
     if (!session.workspaceId) {
@@ -62,6 +73,7 @@ export function Activity() {
     if (f.type.trim()) query.type = f.type.trim();
     const r = await api.get<{ activity: ActivityRow[] }>('/activity', { query });
     setRows(r.activity);
+    setOpen(new Set()); // collapse all when the result set changes
   };
 
   // Initial load + reload when the active workspace changes (re-scope in place).
@@ -156,31 +168,64 @@ export function Activity() {
           <table class="w-full text-sm">
             <thead class="border-b border-stone-200 bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
               <tr>
+                <th class="w-8 px-4 py-2.5" />
                 <th class="px-4 py-2.5 font-semibold">When</th>
                 <th class="px-4 py-2.5 font-semibold">Source</th>
                 <th class="px-4 py-2.5 font-semibold">Type</th>
                 <th class="px-4 py-2.5 font-semibold">Outcome</th>
                 <th class="px-4 py-2.5 font-semibold">Profile</th>
-                <th class="px-4 py-2.5 font-semibold">Detail</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-stone-100">
-              {rows.map((r, i) => (
-                <tr data-testid="activity-row" key={i} class="hover:bg-stone-50/70">
-                  <td class="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-stone-500">{fmt(r.at)}</td>
-                  <td class="px-4 py-2.5">
-                    <Badge tone="neutral">{r.source}</Badge>
-                  </td>
-                  <td class="px-4 py-2.5 font-medium text-ink-900">{r.type}</td>
-                  <td class="px-4 py-2.5">
-                    <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
-                  </td>
-                  <td class="px-4 py-2.5 text-stone-600">{r.email ?? '—'}</td>
-                  <td class="px-4 py-2.5 align-top font-mono text-xs text-stone-500">
-                    <CollapsibleJson value={r.detail} />
-                  </td>
-                </tr>
-              ))}
+              {rows.map((r, i) => {
+                const expandable = !!r.detail;
+                const isOpen = open.has(i);
+                return (
+                  <Fragment key={i}>
+                    <tr
+                      data-testid="activity-row"
+                      class={`hover:bg-stone-50/70 ${expandable ? 'cursor-pointer' : ''} ${isOpen ? 'bg-stone-50/70' : ''}`}
+                      onClick={expandable ? () => toggle(i) : undefined}
+                    >
+                      <td class="px-4 py-2.5 text-stone-400">
+                        {expandable ? (
+                          <span data-testid="activity-expand" class={`inline-block transition-transform ${isOpen ? 'rotate-90' : ''}`}>▸</span>
+                        ) : null}
+                      </td>
+                      <td class="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-stone-500">{fmt(r.at)}</td>
+                      <td class="px-4 py-2.5">
+                        <Badge tone="neutral">{r.source}</Badge>
+                      </td>
+                      <td class="px-4 py-2.5 font-medium text-ink-900">{r.type}</td>
+                      <td class="px-4 py-2.5">
+                        <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
+                      </td>
+                      <td class="px-4 py-2.5 text-stone-600" onClick={(e: Event) => e.stopPropagation()}>
+                        {r.profile_id ? (
+                          <button
+                            type="button"
+                            data-testid="activity-profile-link"
+                            class="text-brand-600 hover:text-brand-700 hover:underline"
+                            onClick={() => navigate(`/profiles/${r.profile_id}`)}
+                          >
+                            {r.email ?? r.profile_id}
+                          </button>
+                        ) : (
+                          (r.email ?? '—')
+                        )}
+                      </td>
+                    </tr>
+                    {expandable && isOpen ? (
+                      <tr data-testid="activity-detail-row" class="bg-stone-50/40">
+                        <td />
+                        <td colSpan={5} class="px-4 pb-4 pt-1">
+                          <JsonView value={r.detail} />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </Card>
