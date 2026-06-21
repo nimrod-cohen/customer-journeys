@@ -222,6 +222,7 @@ function EventPayloadFilter(props: {
         <span>Match</span>
         <Select
           data-testid="event-filter-match"
+          class="w-40 shrink-0"
           value={form.match}
           onChange={(e: Event) => onChange({ ...form, match: (e.target as HTMLSelectElement).value as 'and' | 'or' })}
         >
@@ -235,7 +236,7 @@ function EventPayloadFilter(props: {
         <div key={i} data-testid="event-filter-row" class="flex items-start gap-2">
           <Suggest
             testId="event-filter-field"
-            wrapperClass="relative flex-1"
+            wrapperClass="relative flex-1 min-w-0"
             placeholder="attribute (e.g. webinar_id)"
             value={row.field}
             onChange={(v) => setRow(i, { field: v })}
@@ -247,6 +248,7 @@ function EventPayloadFilter(props: {
           />
           <Select
             data-testid="event-filter-op"
+            class="w-28 shrink-0"
             value={row.operator}
             onChange={(e: Event) => setRow(i, { operator: (e.target as HTMLSelectElement).value as BuilderOperator })}
           >
@@ -259,7 +261,7 @@ function EventPayloadFilter(props: {
           {row.operator !== 'exists' ? (
             <Input
               data-testid="event-filter-value"
-              class="flex-1"
+              class="flex-1 min-w-0"
               placeholder="value"
               value={row.value}
               onInput={(e: Event) => setRow(i, { value: (e.target as HTMLInputElement).value })}
