@@ -1,0 +1,20 @@
+{
+  "filesModified": [
+    "web/src/campaigns/layout.ts",
+    "web/src/campaigns/layout.test.ts",
+    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "constants": { "BRANCH_HALF_GAP": 120, "colWidth": 240, "cardWidth": 200, "resultingCardGapPx": 40 },
+  "rootCause": "assignColumns computed each arm offset as max(HALF_GAP_COLS, widths[0]/2, widths[1]/2) where widths = children.map(c => subtreeWidth(def, c, memo, new Set())). Calling subtreeWidth with a FRESH visited set per arm counted the SHARED merge join AND the entire downstream continuation/trunk as part of the arm's width, so a single-node arm inflated to width ~3. Top-level arms flew ~360px from center (card gap ~520) while deep nested simple arms read ~120 (gap ~40) - inconsistent and too wide at the top.",
+  "fix": "1) Added exclusiveArmWidth(def, condId, armRoot, otherArmRoot): walks the arm's subtree but STOPS at any node reachable from the SIBLING arm (the merge join + shared downstream), via a forward-reachability set of the other arm. A LINEAR arm = width 1; an arm containing a nested If = the nested branch's exclusive span. 2) assignColumns now uses exclusiveArmWidth for both arms and offsets each arm ASYMMETRICALLY by its own armHalf(w)=HALF_GAP_COLS+max(0,(w-1)/2): a simple sibling arm stays at exactly +/-BRANCH_HALF_GAP, only the arm that holds a nested branch widens (and only its side), so nested branches never overlap. 3) BRANCH_HALF_GAP lowered 140 -> 120 so two 200px cards sit 240px apart => a ~40px gap. Identical at every depth.",
+  "depthConsistency": "A simple If's arm-card columns are exactly center +/- BRANCH_HALF_GAP (240px apart, ~40px card gap) at top-level AND nested depth, because exclusiveArmWidth=1 regardless of how long the shared post-merge trunk is. Only an arm that actually contains a nested If widens, by exactly that nested branch's exclusive half-width.",
+  "testsPass": true,
+  "unit": "web layout.test.ts (44) + branch-invariants.test.ts (33) = 77 pass; full @cdp/web vitest 242 pass + 4 skipped.",
+  "e2eSummary": "Ran SOLO, one at a time, ports freed + pkill before each. campaign-builder.browser.e2e.spec.ts: 23/23 pass (incl. new 'branch arm spacing is FIXED & depth-consistent'). campaign-canvas-pan-zoom + campaign-list-detail + campaign-list-no-overflow + campaign-node-editors: 21/21 pass.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "lintNotes": "pnpm lint (src) shows only the 7 known pre-existing react-hooks 'rule not found' errors; no new errors. The e2e file has 3 PRE-EXISTING lint issues (PLUS_DIAMETER unused @594, let arms @826/936) outside my added range and not covered by the project's src-only lint.",
+  "notes": "Version bumped 0.42.3 -> 0.42.4. CLAUDE.md updated with a v0.42.4 bullet under campaign-canvas geometry. Not committed/pushed (orchestrator commits)."
+}

@@ -336,6 +336,141 @@ test('insert an If → a CONVERGING diamond: both arms rejoin a single exit', as
   await expect(page.getByTestId('toast')).toBeVisible();
 });
 
+test('branch arm spacing is FIXED & depth-consistent: a ~40px gap between the two arm cards, SAME when nested (v0.42.4)', async ({ page }) => {
+  // BRANCH_HALF_GAP = 120 ⇒ arm columns 240px apart ⇒ two 200px cards have a ~40px gap.
+  const FIXED_CARD_GAP = 40;
+  const GAP_TOL = 24; // sub-pixel/scale rounding tolerance
+  const OLD_WIDE_GAP = 200; // the old behavior spread arms FAR wider than this
+
+  /** Screen x-centers of cards matching `selector` below `belowY`, left→right. */
+  const cardCentersBelow = async (selector: string, belowY: number): Promise<number[]> => {
+    const cxs = await page.locator(selector).evaluateAll((els, by) =>
+      els
+        .map((e) => (e as HTMLElement).getBoundingClientRect())
+        .filter((r) => r.top > by)
+        .map((r) => r.left + r.width / 2),
+      belowY,
+    );
+    return cxs.sort((a, b) => a - b);
+  };
+
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Fixed gap');
+
+  // TOP-LEVEL If, then a node in EACH arm (two waits) so the arms have real cards.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+
+  const armsTop = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(armsTop[0]!).click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toHaveCount(1);
+  const armsAfterLeft = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(armsAfterLeft[armsAfterLeft.length - 1]!).click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toHaveCount(2);
+
+  // The two arm wait-cards sit a SMALL, FIXED gap apart — NOT flung wide.
+  const condBottom1 = await conditionBottom(page);
+  const topArmCenters = await cardCentersBelow('[data-testid="node-wait"]', condBottom1);
+  expect(topArmCenters.length).toBe(2);
+  const topGap = topArmCenters[1]! - topArmCenters[0]!;
+  expect(topGap, `top arm gap ${topGap}`).toBeGreaterThan(0);
+  expect(topGap).toBeLessThan(OLD_WIDE_GAP + 120); // well under the old wide spread
+  const cardW = 200;
+  expect(Math.abs(topGap - cardW - FIXED_CARD_GAP)).toBeLessThanOrEqual(GAP_TOL); // ~40px edge gap
+
+  // NEST an If inside the LEFT arm: click the arm insert nearest the left wait's column.
+  const leftWaitX = topArmCenters[0]!;
+  const armInserts = await page.getByTestId('campaign-edge-insert').evaluateAll((els, by) =>
+    els
+      .map((e, i) => ({ r: (e as HTMLElement).getBoundingClientRect(), i }))
+      .filter((o) => o.r.top > by)
+      .map((o) => ({ cx: o.r.left + o.r.width / 2, i: o.i })),
+    condBottom1,
+  );
+  armInserts.sort((a, b) => Math.abs(a.cx - leftWaitX) - Math.abs(b.cx - leftWaitX));
+  await page.getByTestId('campaign-edge-insert').nth(armInserts[0]!.i).click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toHaveCount(2); // outer + nested
+
+  // The NESTED If (the lower condition card) — measure its OWN two arm-insert lanes.
+  // They straddle its column SYMMETRICALLY and DISTINCTLY (no stacking), and nesting
+  // must NOT have blown the top-level gap wide open: it stays the same fixed ~240.
+  const nested = await page.getByTestId('node-condition').evaluateAll((els) => {
+    const lowest = els
+      .map((e) => (e as HTMLElement).getBoundingClientRect())
+      .reduce((a, b) => (b.bottom > a.bottom ? b : a));
+    return { cx: lowest.left + lowest.width / 2, bottom: lowest.bottom };
+  });
+  // The nested condition's two arm inserts: the pair straddling its column just below it.
+  const nestedArmLanes = await page.getByTestId('campaign-edge-insert').evaluateAll((els, c) => {
+    const below = els
+      .map((e) => (e as HTMLElement).getBoundingClientRect())
+      .filter((r) => r.top > c.bottom)
+      .map((r) => r.left + r.width / 2);
+    const left = below.filter((x) => x < c.cx).sort((a, b) => Math.abs(a - c.cx) - Math.abs(b - c.cx))[0];
+    const right = below.filter((x) => x >= c.cx).sort((a, b) => Math.abs(a - c.cx) - Math.abs(b - c.cx))[0];
+    return { left, right };
+  }, { cx: nested.cx, bottom: nested.bottom });
+  expect(nestedArmLanes.left, 'nested left arm lane').toBeDefined();
+  expect(nestedArmLanes.right, 'nested right arm lane').toBeDefined();
+  // DISTINCT lanes (no stacking) and SYMMETRIC about the nested column center.
+  expect(nestedArmLanes.right! - nestedArmLanes.left!).toBeGreaterThan(0);
+  expect(Math.abs((nestedArmLanes.left! + nestedArmLanes.right!) / 2 - nested.cx)).toBeLessThanOrEqual(GAP_TOL);
+
+  // Add a node into EACH nested arm so the nested If has real arm CARDS, then assert
+  // those two cards sit the SAME fixed ~240 gap as the top level (depth-consistent).
+  // Click both nested arm inserts BY their captured lane x (sorted left→right) in one
+  // pass against a snapshot of the current inserts, so each click targets a distinct arm.
+  // Fill ONE side of the nested If, then the OTHER — re-resolving the nested condition's
+  // arm insert on the chosen side each time (the layout re-centers as the first card
+  // appears, so a stale captured x can't pick the wrong control).
+  const fillNestedSide = async (side: 'left' | 'right'): Promise<void> => {
+    const idx = await page.evaluate((s) => {
+      const conds = Array.from(document.querySelectorAll('[data-testid="node-condition"]')).map((e) => e.getBoundingClientRect());
+      const lowest = conds.reduce((a, b) => (b.bottom > a.bottom ? b : a));
+      const cx = lowest.left + lowest.width / 2;
+      const inserts = Array.from(document.querySelectorAll('[data-testid="campaign-edge-insert"]'))
+        .map((e, i) => ({ i, r: e.getBoundingClientRect() }))
+        .filter((o) => o.r.top > lowest.bottom && o.r.top < lowest.bottom + 160) // the arm-insert row just below
+        .map((o) => ({ i: o.i, cx: o.r.left + o.r.width / 2 }));
+      const pick = inserts
+        .filter((o) => (s === 'left' ? o.cx < cx : o.cx >= cx))
+        .sort((a, b) => Math.abs(a.cx - cx) - Math.abs(b.cx - cx))[0];
+      return pick ? pick.i : -1;
+    }, side);
+    expect(idx, `no ${side} nested arm insert in the arm row`).toBeGreaterThanOrEqual(0);
+    await page.getByTestId('campaign-edge-insert').nth(idx).click();
+    await page.getByTestId('palette-wait').click();
+  };
+  await fillNestedSide('left');
+  await expect(page.getByTestId('node-wait')).toHaveCount(3);
+  await fillNestedSide('right');
+  await expect(page.getByTestId('node-wait')).toHaveCount(4);
+
+  // The nested If's two arm wait-cards now sit at EQUAL depth straddling its column.
+  const nestedFinal = await page.getByTestId('node-condition').evaluateAll((els) => {
+    const lowest = els.map((e) => (e as HTMLElement).getBoundingClientRect()).reduce((a, b) => (b.bottom > a.bottom ? b : a));
+    return { cx: lowest.left + lowest.width / 2, bottom: lowest.bottom };
+  });
+  const nestedCards = await page.evaluate((c) => {
+    const waits = Array.from(document.querySelectorAll('[data-testid="node-wait"]'))
+      .map((e) => ({ cx: e.getBoundingClientRect().left + e.getBoundingClientRect().width / 2, top: e.getBoundingClientRect().top }))
+      .filter((w) => w.top > c.bottom);
+    const rowTop = Math.min(...waits.map((w) => w.top));
+    return waits.filter((w) => Math.abs(w.top - rowTop) < 8).map((w) => w.cx).sort((a, b) => a - b);
+  }, nestedFinal);
+  expect(nestedCards.length, 'two nested arm cards at equal depth').toBe(2);
+  const nestedGap = nestedCards[1]! - nestedCards[0]!;
+  expect(Math.abs(nestedGap - topGap), `topGap=${topGap} nestedGap=${nestedGap}`).toBeLessThanOrEqual(GAP_TOL); // SAME fixed gap
+
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast')).toBeVisible();
+});
+
 test('empty If renders as a rectangle: each arm + on its OWN lane (distinct x) + a merge +', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

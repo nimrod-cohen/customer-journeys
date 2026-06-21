@@ -1,7 +1,7 @@
 // Unit: auto-layout (down-only tree, branch fan, diamond once) (§9B phase 5).
 // Pure — positions are computed from edges, never read from the def.
 import { describe, it, expect } from 'vitest';
-import { layoutDefinition, mergeAnchor, subtreeWidth, computeEdges, LAYOUT, BRANCH_HALF_GAP, type CampaignDefinition } from './layout.js';
+import { layoutDefinition, mergeAnchor, subtreeWidth, exclusiveArmWidth, computeEdges, LAYOUT, BRANCH_HALF_GAP, type CampaignDefinition } from './layout.js';
 import { orthogonalPath, verticalAnchor, MIN_SEGMENT } from './orthogonal-path.js';
 
 /** Count the HORIZONTAL jogs (knees) in a path `d` — each H run is one knee. */
@@ -508,6 +508,161 @@ describe('subtreeWidth', () => {
     expect(subtreeWidth(linear, 'exit1')).toBe(1);
     expect(subtreeWidth(branch, 'cond')).toBe(2); // two leaf arms
     expect(subtreeWidth(diamond, 'cond')).toBe(2); // join counted once across arms
+  });
+});
+
+// ── FIXED, DEPTH-CONSISTENT BRANCH ARM SPACING (v0.42.4) ────────────────────
+//
+// The branch arm half-gap is a FIXED pixel BRANCH_HALF_GAP that fits two cardWidth
+// cards side by side with a SMALL (~40px) comfortable gap. It is IDENTICAL at every
+// depth — UNTIL an arm actually CONTAINS a nested If, which widens ONLY that arm by
+// the nested branch's EXCLUSIVE half-width (so nested branches don't overlap).
+//
+// The key fix: an arm's width is its EXCLUSIVE subtree — it STOPS at the merge join
+// (the node both arms reach) and does NOT count the shared continuation/downstream
+// trunk. So a LINEAR arm (single-node chain, no nested branch) has exclusive width 1
+// no matter how long the post-merge trunk is — the trunk no longer inflates spacing.
+describe('exclusiveArmWidth — an arm counts only its OWN subtree, STOPPING at the merge join', () => {
+  // Two single-node arms that REJOIN at `join`, then a LONG downstream trunk.
+  const armsThenLongTrunk: CampaignDefinition = {
+    startNode: 'trigger',
+    nodes: {
+      trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+      cond: { type: 'condition', ast: { field: 'a', operator: '=', value: 'v' }, onTrue: 'sendY', onFalse: 'sendN' },
+      sendY: { type: 'action', kind: 'send', template_id: 'tplY', next: 'join' },
+      sendN: { type: 'action', kind: 'send', template_id: 'tplN', next: 'join' },
+      join: { type: 'action', kind: 'webhook', url: 'https://j', method: 'POST', next: 'w2' },
+      w2: { type: 'wait', delay: { seconds: 1 }, next: 'w3' },
+      w3: { type: 'wait', delay: { seconds: 1 }, next: 'exit1' },
+      exit1: { type: 'exit' },
+    },
+  };
+
+  it('a LINEAR arm has exclusive width 1 (the shared join + downstream trunk are NOT counted)', () => {
+    expect(exclusiveArmWidth(armsThenLongTrunk, 'cond', 'sendY', 'sendN')).toBe(1);
+    expect(exclusiveArmWidth(armsThenLongTrunk, 'cond', 'sendN', 'sendY')).toBe(1);
+  });
+
+  it('an arm CONTAINING a nested If has exclusive width = the nested branch width (2), the other arm stays 1', () => {
+    const nested: CampaignDefinition = {
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+        cond: { type: 'condition', ast: { field: 'a', operator: '=', value: 'v' }, onTrue: 'inner', onFalse: 'sendN' },
+        inner: { type: 'condition', ast: { field: 'x', operator: '=', value: '1' }, onTrue: 'iy', onFalse: 'inJoin' },
+        iy: { type: 'action', kind: 'send', template_id: 'ti', next: 'inJoin' },
+        inJoin: { type: 'action', kind: 'webhook', url: 'https://ij', method: 'POST', next: 'join' },
+        sendN: { type: 'action', kind: 'send', template_id: 'tplN', next: 'join' },
+        join: { type: 'action', kind: 'webhook', url: 'https://j', method: 'POST', next: 'exit1' },
+        exit1: { type: 'exit' },
+      },
+    };
+    // The Yes arm holds a nested If (its two arms iy + inJoin) → exclusive width 2.
+    expect(exclusiveArmWidth(nested, 'cond', 'inner', 'sendN')).toBe(2);
+    // The No arm is a single node → exclusive width 1.
+    expect(exclusiveArmWidth(nested, 'cond', 'sendN', 'inner')).toBe(1);
+  });
+});
+
+describe('branch arm spacing is FIXED at ±BRANCH_HALF_GAP and DEPTH-CONSISTENT (v0.42.4)', () => {
+  const SMALL_GAP_TOL = 60; // a "small comfortable gap" between the two 200px cards
+
+  /** The card gap (px) between a condition's two arm cards. */
+  function armCardGap(positions: ReturnType<typeof layoutDefinition>['positions'], cond: string, def: CampaignDefinition): number {
+    const yx = positions.get(def.nodes[cond]!.onTrue as string)!.x;
+    const nx = positions.get(def.nodes[cond]!.onFalse as string)!.x;
+    return Math.abs(nx - yx) - LAYOUT.cardWidth;
+  }
+
+  it('a TOP-LEVEL simple If: arms at center ± BRANCH_HALF_GAP, ~small gap (NOT ~390px wide)', () => {
+    const { positions } = layoutDefinition(branch); // two leaf arms
+    const cond = positions.get('cond')!;
+    const yesX = positions.get('sendY')!.x;
+    const noX = positions.get('sendN')!.x;
+    expect(Math.abs(yesX - cond.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
+    expect(Math.abs(noX - cond.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
+    const gap = armCardGap(positions, 'cond', branch);
+    expect(gap).toBeGreaterThan(0);
+    expect(gap).toBeLessThanOrEqual(SMALL_GAP_TOL); // small, comfortable — NOT flung apart
+  });
+
+  it('a NESTED simple If has the SAME ±BRANCH_HALF_GAP gap as a top-level one', () => {
+    // cond.onTrue → inner(If, both arms simple) ... ; the nested If is itself simple.
+    const def: CampaignDefinition = {
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+        cond: { type: 'condition', ast: { field: 'a', operator: '=', value: 'v' }, onTrue: 'inner', onFalse: 'sendN' },
+        inner: { type: 'condition', ast: { field: 'x', operator: '=', value: '1' }, onTrue: 'iy', onFalse: 'inn' },
+        iy: { type: 'action', kind: 'send', template_id: 'ti', next: 'join' },
+        inn: { type: 'action', kind: 'send', template_id: 'tn', next: 'join' },
+        sendN: { type: 'action', kind: 'send', template_id: 'tplN', next: 'join' },
+        join: { type: 'action', kind: 'webhook', url: 'https://j', method: 'POST', next: 'exit1' },
+        exit1: { type: 'exit' },
+      },
+    };
+    const { positions } = layoutDefinition(def);
+    // The NESTED simple If: its two arms sit at exactly ±BRANCH_HALF_GAP (same as top-level).
+    const innerC = positions.get('inner')!;
+    expect(Math.abs(positions.get('iy')!.x - innerC.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
+    expect(Math.abs(positions.get('inn')!.x - innerC.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
+    const innerGap = armCardGap(positions, 'inner', def);
+    expect(innerGap).toBeGreaterThan(0);
+    expect(innerGap).toBeLessThanOrEqual(SMALL_GAP_TOL);
+  });
+
+  it('the post-merge downstream trunk does NOT inflate the arm spacing', () => {
+    // Two single-node arms then a LONG trunk — the arms must still sit at ±BRANCH_HALF_GAP.
+    const def: CampaignDefinition = {
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+        cond: { type: 'condition', ast: { field: 'a', operator: '=', value: 'v' }, onTrue: 'sendY', onFalse: 'sendN' },
+        sendY: { type: 'action', kind: 'send', template_id: 'tplY', next: 'join' },
+        sendN: { type: 'action', kind: 'send', template_id: 'tplN', next: 'join' },
+        join: { type: 'action', kind: 'webhook', url: 'https://j', method: 'POST', next: 'w2' },
+        w2: { type: 'wait', delay: { seconds: 1 }, next: 'w3' },
+        w3: { type: 'wait', delay: { seconds: 1 }, next: 'w4' },
+        w4: { type: 'wait', delay: { seconds: 1 }, next: 'exit1' },
+        exit1: { type: 'exit' },
+      },
+    };
+    const { positions } = layoutDefinition(def);
+    const cond = positions.get('cond')!;
+    expect(Math.abs(positions.get('sendY')!.x - cond.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
+    expect(Math.abs(positions.get('sendN')!.x - cond.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
+  });
+
+  it('an arm with a NESTED If is widened ONLY as much as the nested branch needs (no overlap), the other arm stays ±BRANCH_HALF_GAP', () => {
+    const def: CampaignDefinition = {
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+        cond: { type: 'condition', ast: { field: 'a', operator: '=', value: 'v' }, onTrue: 'inner', onFalse: 'sendN' },
+        inner: { type: 'condition', ast: { field: 'x', operator: '=', value: '1' }, onTrue: 'iy', onFalse: 'inn' },
+        iy: { type: 'action', kind: 'send', template_id: 'ti', next: 'innerJoin' },
+        inn: { type: 'action', kind: 'send', template_id: 'tn', next: 'innerJoin' },
+        innerJoin: { type: 'action', kind: 'webhook', url: 'https://ij', method: 'POST', next: 'join' },
+        sendN: { type: 'action', kind: 'send', template_id: 'tplN', next: 'join' },
+        join: { type: 'action', kind: 'webhook', url: 'https://j', method: 'POST', next: 'exit1' },
+        exit1: { type: 'exit' },
+      },
+    };
+    const { positions } = layoutDefinition(def);
+    const cond = positions.get('cond')!;
+    // The Yes arm (the nested If's root) sits FARTHER than BRANCH_HALF_GAP (widened by the
+    // nested branch), but no more than the nested branch's half-extent demands.
+    const yesOffset = Math.abs(positions.get('inner')!.x - cond.x);
+    expect(yesOffset).toBeGreaterThan(BRANCH_HALF_GAP);
+    // The nested If's OWN arms must NOT overlap the OTHER (No) arm: the nested arms stay
+    // left of the outer center, the No card stays clear to the right.
+    const innerRight = Math.max(positions.get('iy')!.x, positions.get('inn')!.x);
+    const noLeft = positions.get('sendN')!.x;
+    expect(noLeft - innerRight).toBeGreaterThanOrEqual(LAYOUT.cardWidth - 1e-6); // no overlap
+    // The nested If itself uses the SAME fixed ±BRANCH_HALF_GAP between its two simple arms.
+    const innerC = positions.get('inner')!;
+    expect(Math.abs(positions.get('iy')!.x - innerC.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
+    expect(Math.abs(positions.get('inn')!.x - innerC.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
   });
 });
 

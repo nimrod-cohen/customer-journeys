@@ -161,6 +161,70 @@ export function subtreeWidth(
   return w;
 }
 
+/** Every node reachable FORWARD from `id` (inclusive), following next/onTrue/onFalse. */
+function reachableForward(def: CampaignDefinition, id: string): Set<string> {
+  const seen = new Set<string>();
+  const stack = [id];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    const node = def.nodes[cur];
+    if (!node) continue;
+    for (const e of outgoingEdges(cur, node)) stack.push(e.to);
+  }
+  return seen;
+}
+
+/**
+ * exclusiveArmWidth(def, condId, armRoot, otherArmRoot) — the horizontal span (in
+ * columns) of ONE condition arm's EXCLUSIVE subtree: everything reachable from
+ * `armRoot` that is NOT also reachable from the SIBLING arm (`otherArmRoot`). The
+ * merge join (the first node both arms reach) AND the entire shared continuation /
+ * downstream trunk are therefore EXCLUDED — they belong to neither arm and must not
+ * inflate the arm's width.
+ *
+ * This is the fix for the wide-top-level / narrow-nested branch bug: previously the
+ * arm offset used `subtreeWidth` with a fresh visited set, which counted the shared
+ * join and the whole post-merge trunk, so a single-node arm could read as width ~3
+ * and fly apart. With the exclusive width a LINEAR arm = 1 (so it sits at exactly
+ * ±BRANCH_HALF_GAP at every depth), and only an arm that genuinely contains a nested
+ * branch widens — by exactly that nested branch's span.
+ */
+export function exclusiveArmWidth(
+  def: CampaignDefinition,
+  _condId: string,
+  armRoot: string,
+  otherArmRoot: string,
+): number {
+  // Nodes the SIBLING arm reaches — the join + shared downstream live here; exclude them.
+  const shared = reachableForward(def, otherArmRoot);
+  const memo = new Map<string, number>();
+  const width = (id: string, visited: Set<string>): number => {
+    if (memo.has(id)) return memo.get(id)!;
+    if (visited.has(id)) return 0; // already counted via another path within this arm
+    visited.add(id);
+    const node = def.nodes[id];
+    if (!node) return 1;
+    const children = outgoingEdges(id, node)
+      .map((e) => e.to)
+      .filter((c) => !shared.has(c)); // STOP at the merge join / shared continuation
+    if (children.length === 0) {
+      memo.set(id, 1);
+      return 1;
+    }
+    let sum = 0;
+    for (const c of children) sum += width(c, visited);
+    const w = Math.max(1, sum);
+    memo.set(id, w);
+    return w;
+  };
+  // The arm root itself may BE in the shared set only if both arms point straight at
+  // the same node (a fully-empty If) — then the arm has no exclusive content (width 1).
+  if (shared.has(armRoot)) return 1;
+  return width(armRoot, new Set());
+}
+
 /**
  * layoutDefinition(def) — compute every node's {depth, col, x, y}. Two passes:
  *   1. depth = longest distance from start along edges (so a diamond join sits
@@ -259,13 +323,16 @@ function computeDepths(def: CampaignDefinition): Map<string, number> {
 
 /**
  * BRANCH_HALF_GAP — half the center-to-center distance (px) between a condition's
- * two arm columns. Picked COMPACT: 140px ⇒ the two columns sit 280px apart, so two
- * 200px cards have an 80px gap between them (close together, NOT spread to the
- * canvas edges). The branch column offset is this in COLUMN units (HALF_GAP_COLS),
- * and a nested branch inside an arm can only WIDEN past it (never narrower), so a
- * simple arm stays at exactly ±BRANCH_HALF_GAP.
+ * two arm columns. Picked COMPACT to fit two `cardWidth` (200px) cards side by side
+ * with a SMALL, comfortable gap: 120px ⇒ the two columns sit 240px apart, so two
+ * 200px cards have a 40px gap between them (close together, NOT spread to the canvas
+ * edges). This is a FIXED PIXEL gap that is IDENTICAL at EVERY depth (top-level and
+ * nested) — the arm offset is NOT scaled by the post-merge trunk. A SIMPLE arm (a
+ * linear chain, exclusive width 1) sits at exactly ±BRANCH_HALF_GAP; only an arm
+ * that itself CONTAINS a nested branch WIDENS past it (never narrower), and only by
+ * that nested branch's own EXCLUSIVE half-width so nested branches don't overlap.
  */
-export const BRANCH_HALF_GAP = 140;
+export const BRANCH_HALF_GAP = 120;
 
 /** The branch half-gap expressed in column units (col → x is c·colWidth). */
 const HALF_GAP_COLS = BRANCH_HALF_GAP / LAYOUT.colWidth;
@@ -300,12 +367,25 @@ function assignColumns(
   // arm's own subtree width) — i.e. a nested branch widens the gap, a leaf keeps it
   // tight. The condition itself centers between the two arm roots.
   if (node?.type === 'condition' && children.length === 2) {
-    const widths = children.map((c) => subtreeWidth(def, c, memo, new Set()));
-    // Half-gap in cols, widened so neither arm's half-subtree overlaps the center.
-    const offset = Math.max(HALF_GAP_COLS, widths[0]! / 2, widths[1]! / 2);
-    const center = left + offset; // place center far enough right for the left arm
-    const armRootTargets = [center - offset, center + offset];
-    let cursor = center - offset; // left band starts here
+    // EXCLUSIVE arm widths — count ONLY each arm's own subtree, STOPPING at the merge
+    // join + shared downstream trunk (which belong to neither arm). A LINEAR arm = 1,
+    // so it sits at exactly ±HALF_GAP_COLS (the fixed BRANCH_HALF_GAP) at every depth;
+    // only an arm CONTAINING a nested branch widens, by that branch's exclusive span.
+    const widths = [
+      exclusiveArmWidth(def, id, children[0]!, children[1]!),
+      exclusiveArmWidth(def, id, children[1]!, children[0]!),
+    ];
+    // Each arm's own half-subtree must clear the center; a nested-branch arm needs
+    // (width − 1)/2 columns of clearance BEYOND its root column, so its half-extent is
+    // HALF_GAP_COLS + (width − 1)/2. A simple arm (width 1) keeps exactly HALF_GAP_COLS.
+    // ASYMMETRIC: each arm is offset by its OWN half-extent, so a nested-branch arm
+    // widens only ITS side — a simple SIBLING arm stays at exactly ±HALF_GAP_COLS.
+    const armHalf = (w: number): number => HALF_GAP_COLS + Math.max(0, (w - 1) / 2);
+    const leftOffset = armHalf(widths[0]!);
+    const rightOffset = armHalf(widths[1]!);
+    const center = left + leftOffset; // place center far enough right for the left arm
+    const armRootTargets = [center - leftOffset, center + rightOffset];
+    let cursor = center - leftOffset; // left band starts here
     for (let i = 0; i < children.length; i++) {
       const c = children[i]!;
       const before = cursor;
