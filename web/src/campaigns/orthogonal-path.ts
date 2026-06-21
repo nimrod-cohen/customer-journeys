@@ -143,13 +143,23 @@ export function orthogonalPath(
     return jog(from, to, radius);
   }
   // Full LANE route: stub down → across to lane → DOWN the lane → across → down.
-  // The two rails sit a FIXED RAIL_INSET in from the drop's ends, so the middle
-  // lane V run = drop − 2·RAIL_INSET stays tall (≥ MIN_SEGMENT for the laid-out
-  // gap) rather than collapsing to a third of a small drop.
-  const { yTop, yBot } = laneRailYs(from.y, to.y);
-  const seg1 = jogTo(from.x, from.y, lane, yTop, radius); // into the lane top
+  // The split (top) shoulder rounds via jogTo (a Q corner) and the close (bottom)
+  // shoulder rounds via jogTail (two Q corners) — NEVER a square corner.
+  //
+  // EMPTY-ARM lane (an empty If arm routed out to a side lane that rejoins the
+  // CENTER join below): when an explicit `crossY` is supplied it is the SHARED
+  // close-y at which BOTH arms knee back to the center (a fixed MERGE_LOWER_RUN
+  // above the join, like a populated close-knee — RULE 2). The lane V then runs
+  // down to `crossY` and the CLOSE happens there, leaving a TALL CENTRAL vertical
+  // run at to.x from the close corner down to the join — the run the merge (+)
+  // anchors on with ≥ PLUS_PAD above AND below (RULE 1). Without a `crossY` the
+  // legacy fixed-inset rails apply (the rails sit RAIL_INSET in from the drop ends).
+  const rails = laneRailYs(from.y, to.y);
+  const yTop = rails.yTop;
+  const yBot = crossY !== undefined ? Math.max(yTop + 1, Math.min(crossY, to.y - 1)) : rails.yBot;
+  const seg1 = jogTo(from.x, from.y, lane, yTop, radius); // into the lane top (rounded)
   const seg2 = `V ${num(yBot)}`; // DOWN the lane (the anchorable vertical run)
-  const seg3 = jogTail(lane, yBot, to.x, to.y, radius); // out of the lane into target
+  const seg3 = jogTail(lane, yBot, to.x, to.y, radius); // out of the lane into target (rounded)
   return `M ${num(from.x)} ${num(from.y)} ${seg1} ${seg2} ${seg3}`.replace(/\s+/g, ' ').trim();
 }
 
@@ -304,6 +314,24 @@ export function closeKneeLowerRun(from: Point, to: Point, crossYOverride?: numbe
 }
 
 /**
+ * emptyLaneMergeRun(from, to, laneX, crossY) — the CENTRAL vertical run at the join
+ * column (to.x) of an EMPTY-arm lane route: the run from just below the CLOSE corner
+ * (where the side lane knees back to center at `crossY`) down to the join card top.
+ * Returned as `{ y0, y1 }` (y0 = top, just below the close corner; y1 = to.y). This is
+ * the run the merge (+) anchors on for a fully-empty diamond — centered in it leaves a
+ * visible line ABOVE it (close corner → +) AND BELOW it (+ → join). Mirrors
+ * closeKneeLowerRun for the lane (jogTail) geometry. Pure.
+ */
+export function emptyLaneMergeRun(from: Point, to: Point, laneX: number, crossY: number): { y0: number; y1: number } {
+  const yTop = laneRailYs(from.y, to.y).yTop;
+  const yBot = Math.max(yTop + 1, Math.min(crossY, to.y - 1));
+  // jogTail clamps the close radius to half the shorter of (lane→to) drop and the
+  // horizontal travel; the central run starts at yBot + r.
+  const r = Math.max(0, Math.min(CORNER_RADIUS, Math.abs(to.y - yBot) / 2, Math.abs(to.x - laneX) / 2));
+  return { y0: yBot + r, y1: to.y };
+}
+
+/**
  * verticalAnchor(from, to, laneX?) — the anchor for the (+) edge-insertion control,
  * GUARANTEED to sit on the SOURCE-SIDE UPPER VERTICAL run of the connector path
  * (never a corner/H run), straight below the source node BEFORE any horizontal turn:
@@ -367,10 +395,16 @@ export function verticalAnchor(
     const upperBot = cross - r; // the upper leg spans [from.y, cross - r]
     return { x: from.x, y: padHigh(from.y, upperBot) };
   }
-  // Full lane route: anchor on the (fixed-inset) lane vertical at laneX, high in the
-  // run but with ≥ PLUS_PAD above and below (RULE 1).
-  const { yTop, yBot } = laneRailYs(from.y, to.y);
-  return { x: lane, y: padHigh(yTop, yBot) };
+  // Full lane route (an EMPTY If arm routed down a side lane). The (+) is CENTERED
+  // on the lane vertical run [yTop, yBot] (padCenter) — for an empty arm there is no
+  // node to sit under, so the + belongs in the MIDDLE of its lane run with ≥ PLUS_PAD
+  // above AND below (RULE 1). When a `crossY` is supplied (the shared close-y) the
+  // lane bottom is that y (the close happens there, leaving the central merge run
+  // below); otherwise the legacy fixed-inset bottom rail applies.
+  const rails = laneRailYs(from.y, to.y);
+  const yTop = rails.yTop;
+  const yBot = crossY !== undefined ? Math.max(yTop + 1, Math.min(crossY, to.y - 1)) : rails.yBot;
+  return { x: lane, y: padCenter(yTop, yBot) };
 }
 
 /**

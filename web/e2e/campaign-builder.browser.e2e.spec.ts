@@ -383,6 +383,101 @@ test('empty If renders as a rectangle: each arm + on its OWN lane (distinct x) +
   expect([...counts.values()].some((c) => c >= 2)).toBe(true);
 });
 
+test('EMPTY If: rounded shoulders, CENTERED arm +s, a PADDED merge + (v0.42.3)', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Empty if quality');
+
+  // Insert an If on trigger→exit_1 → both arms empty, straight to exit_1 (empty diamond).
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+  await expect(page.getByTestId('node-exit')).toHaveCount(1);
+  await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(1);
+
+  // (1) ROUNDED SHOULDERS — every connector path uses Q (or A) corner commands and
+  //     NEVER a straight diagonal L. The two empty-arm paths (which land on the join)
+  //     must each carry ≥ 3 Q corners (the top split + the two close corners).
+  const ds = await page.getByTestId('campaign-connectors').locator('path').evaluateAll((paths) =>
+    paths.map((p) => p.getAttribute('d') ?? ''),
+  );
+  for (const d of ds) {
+    expect(pathIsAxisAligned(d)).toBe(true);
+    expect(d).not.toMatch(/\bL\b/);
+  }
+  // The two arm paths land on the SAME join point with a horizontal close knee.
+  const counts = new Map<string, string[]>();
+  for (const d of ds) {
+    const k = key(pathEndPoint(d));
+    counts.set(k, [...(counts.get(k) ?? []), d]);
+  }
+  const armPaths = [...counts.values()].find((arr) => arr.length >= 2)!;
+  expect(armPaths, 'two converging empty-arm paths').toBeTruthy();
+  for (const d of armPaths) {
+    const corners = d.trim().split(/\s+/).filter((t) => t === 'Q' || t === 'A').length;
+    expect(corners, `empty-arm path lacks rounded shoulders: ${d}`).toBeGreaterThanOrEqual(3);
+  }
+
+  // The +s, in screen coords (center). The button is translate(-50%,-50%).
+  const cb = await conditionBottom(page);
+  const armPluses = await page.getByTestId('campaign-edge-insert').evaluateAll((els, by) =>
+    els
+      .map((e) => (e as HTMLElement).getBoundingClientRect())
+      .filter((r) => r.top + r.height / 2 > by)
+      .map((r) => ({ cx: r.left + r.width / 2, cy: r.top + r.height / 2 })),
+    cb,
+  );
+  expect(armPluses.length).toBe(2);
+  const merge = await page.getByTestId('campaign-merge-insert').evaluate((el) => {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+  });
+
+  // Helper: does the connector stroke pass through the screen point (within tolerance)?
+  const strokeAt = async (sx: number, sy: number): Promise<boolean> =>
+    page.getByTestId('campaign-connectors').evaluate(
+      (svg, ctx) => {
+        const paths = Array.from(svg.querySelectorAll('path')) as SVGPathElement[];
+        const ctm = (svg as SVGSVGElement).getScreenCTM();
+        if (!ctm) return false;
+        const inv = ctm.inverse();
+        const sp = (svg as SVGSVGElement).createSVGPoint();
+        sp.x = ctx.sx;
+        sp.y = ctx.sy;
+        const lp = sp.matrixTransform(inv);
+        for (const [dx, dy] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2]]) {
+          const q = (svg as SVGSVGElement).createSVGPoint();
+          q.x = lp.x + dx;
+          q.y = lp.y + dy;
+          if (paths.some((p) => p.isPointInStroke(q))) return true;
+        }
+        return false;
+      },
+      { sx, sy },
+    );
+
+  const PLUS_DIAMETER = 28; // matches orthogonal-path PLUS_PAD/PLUS_DIAMETER at scale 1
+  const PROBE = 24; // a couple px under the diameter for sub-pixel/scale rounding
+
+  // (2) CENTERED arm +s — each empty-arm + has stroke ABOVE and BELOW it (≥ ~PLUS_DIAMETER),
+  //     and the two are roughly symmetric on their lane (centered, not biased high).
+  for (const p of armPluses) {
+    expect(await strokeAt(p.cx, p.cy - PROBE), `arm + lacks line ABOVE at (${Math.round(p.cx)},${Math.round(p.cy)})`).toBe(true);
+    expect(await strokeAt(p.cx, p.cy + PROBE), `arm + lacks line BELOW at (${Math.round(p.cx)},${Math.round(p.cy)})`).toBe(true);
+  }
+  // Both arm +s sit at (nearly) the same y — they are centered on equal-height lanes.
+  expect(Math.abs(armPluses[0]!.cy - armPluses[1]!.cy)).toBeLessThan(4);
+
+  // (3) PADDED merge + — stroke ABOVE it (a real central run, not the old no-pad rejoin)
+  //     AND below it down to the join. The arm +s sit clearly ABOVE the merge +.
+  expect(await strokeAt(merge.cx, merge.cy - PROBE), 'merge + lacks line ABOVE (padded central run)').toBe(true);
+  expect(await strokeAt(merge.cx, merge.cy + PROBE), 'merge + lacks line BELOW (down to the join)').toBe(true);
+  for (const p of armPluses) expect(p.cy).toBeLessThan(merge.cy - 12);
+
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast')).toBeVisible();
+});
+
 test('insert a step AFTER the branch via the merge +: it lands BETWEEN the join and the exit', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

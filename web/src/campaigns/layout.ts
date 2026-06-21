@@ -20,7 +20,7 @@
 // an arm may widen that arm's extent (subtree-width packing still applies, just
 // with a tighter base) so a SIMPLE arm stays compact.
 import { outgoingEdges, type CampaignDefinition, type DslNode } from './model.js';
-import { closeKneeLowerRun, PLUS_PAD as PLUS_PAD_PX } from './orthogonal-path.js';
+import { closeKneeLowerRun, emptyLaneMergeRun, PLUS_PAD as PLUS_PAD_PX } from './orthogonal-path.js';
 
 // Re-export so layout consumers (canvas + tests) get the single graph type here.
 export type { CampaignDefinition } from './model.js';
@@ -82,9 +82,19 @@ export interface LayoutEdge {
    * to the center. The layout sets it from the join (just below the LONGER arm's last
    * node), so BOTH arms of a condition close at the SAME y: the shorter arm's column
    * extends straight DOWN to it (a plain vertical), and both knee back together at the
-   * longer arm's end, converging on the join below. Present only on close-knee edges.
+   * longer arm's end, converging on the join below. Present also on EMPTY-arm lane
+   * edges (v0.42.3): the shared close-y at which both empty side lanes knee back to the
+   * center, MERGE_LOWER_RUN above the join — so a tall CENTRAL run carries the merge +.
    */
   readonly crossY?: number;
+  /**
+   * TRUE for an EMPTY If arm (both arms straight to the merge/continuation, the child
+   * directly below the If — v0.42.3). Such an arm routes down a ±EMPTY_ARM_LANE side
+   * lane and CLOSES back to the center at the shared `crossY` (rounded shoulders), so a
+   * tall central run remains below the close for the merge (+). Its own (+) is CENTERED
+   * on the lane run. FALSE/absent for populated arms and plain `next` edges.
+   */
+  readonly emptyArm?: boolean;
 }
 
 /**
@@ -581,12 +591,24 @@ export function computeEdges(
         // POPULATED arm — single knee at the TOP, long vertical down the child column.
         kneeTop = true;
       }
-      // RULE 2 — a closing jog into a merge join knees back at a SHARED y, computed from
-      // the JOIN (a fixed MERGE_LOWER_RUN above the join card). Because the join sits one
-      // full row below the LONGER arm's last node, this y lands just below that node —
-      // so BOTH arms close at the SAME y (the shorter arm extends straight down to it).
-      const crossY = closeKnee ? toPoint.y - MERGE_LOWER_RUN : undefined;
-      const base = { from: id, to: e.to, slot: e.slot, fromPoint, toPoint, laneX, kneeTop, closeKnee } as const;
+      // RULE 2 — a closing jog into a merge join (AND an EMPTY arm's side lane) knees
+      // back at a SHARED y, computed from the JOIN (a fixed MERGE_LOWER_RUN above the
+      // join card). For a populated close-knee the join sits one full row below the
+      // LONGER arm's last node, so this y lands just below that node; for an empty arm
+      // the join sits a full row + JOIN_MERGE_DROP below the If, so the close happens
+      // HIGH and a tall central run carries the merge (+). BOTH arms close at the SAME y.
+      const crossY = closeKnee || isEmptyArm ? toPoint.y - MERGE_LOWER_RUN : undefined;
+      const base = {
+        from: id,
+        to: e.to,
+        slot: e.slot,
+        fromPoint,
+        toPoint,
+        laneX,
+        kneeTop,
+        closeKnee,
+        emptyArm: isEmptyArm,
+      } as const;
       const withCross = crossY !== undefined ? { ...base, crossY } : base;
       edges.push(e.label !== undefined ? { ...withCross, label: e.label } : withCross);
     }
@@ -639,7 +661,27 @@ export function mergeAnchor(
     const y = (top + cardTop) / 2;
     return { x: join.x, y, closureCornerY: top };
   }
-  // Fallback (no central close-knee run): just above the join card.
+  // EMPTY DIAMOND (both arms empty → straight to the directly-below join, v0.42.3): the
+  // arms route down side lanes and CLOSE back to the center at the shared crossY, leaving
+  // a tall CENTRAL run at the join column. Anchor the merge (+) CENTERED on it (≥ PLUS_PAD
+  // above + below, RULE 1) — the SAME padded central run as the populated case, NOT the
+  // old no-pad just-above-the-join fallback.
+  const emptyArms = edges.filter(
+    (e) =>
+      e.to === joinId &&
+      e.emptyArm === true &&
+      e.crossY !== undefined &&
+      join !== undefined &&
+      Math.abs(e.toPoint.x - join.x) < 1e-6,
+  );
+  if (emptyArms.length > 0 && join) {
+    const runs = emptyArms.map((c) => emptyLaneMergeRun(c.fromPoint, c.toPoint, c.laneX, c.crossY!));
+    const top = Math.min(...runs.map((r) => r.y0));
+    const cardTop = join.y;
+    const y = (top + cardTop) / 2;
+    return { x: join.x, y, closureCornerY: top };
+  }
+  // Fallback (no central run at all): just above the join card.
   const y = (join?.y ?? 0) - 14;
   return { x: join?.x ?? 0, y, closureCornerY: y };
 }

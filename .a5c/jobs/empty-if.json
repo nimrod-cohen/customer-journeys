@@ -1,0 +1,18 @@
+{
+  "filesModified": [
+    "web/src/campaigns/orthogonal-path.ts",
+    "web/src/campaigns/layout.ts",
+    "web/src/campaigns/branch-invariants.test.ts",
+    "web/src/campaigns/orthogonal-path.test.ts",
+    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "rootCause": "TWO bugs for a fully-empty If diamond. (a) The empty-arm + used padHigh (biased high) instead of being centered on its lane run. (b) mergeAnchor had NO empty-diamond case, so it hit the no-pad fallback (y = join.y - 14) -> the close shoulders rejoined right at the merge + with no padded central run above it. The shoulders themselves were already drawn with Q corners (jogTo/jogTail), but with no central run + the tight rejoin they read as square/cramped; the real fix is the shared close-y + centered/padded anchoring.",
+  "fix": "Empty arms now carry an emptyArm flag + the shared crossY (= join.y - MERGE_LOWER_RUN, RULE 2). orthogonalPath uses crossY as the side-lane bottom (close-y), so the lane knees back to center HIGH (rounded jogTo/jogTail shoulders) leaving a tall central run down to the join. verticalAnchor centers the empty-arm + (padCenter) on the lane run. New emptyLaneMergeRun helper + a new mergeAnchor empty-diamond branch center the merge + on that padded central run (>= PLUS_PAD above AND below). No constant changes needed (the existing JOIN_MERGE_DROP join-row drop gives enough height).",
+  "testsPass": true,
+  "e2eSummary": "campaign-builder (22/22, incl. new 'EMPTY If: rounded shoulders, CENTERED arm +s, a PADDED merge +'), campaign-node-editors, campaign-list-detail, campaign-list-no-overflow, campaign-canvas-pan-zoom all GREEN. Consolidated run: 42 passed, 1 flaky (campaign-list-detail loginAs timeout, passed on retry, unrelated to change). Unit: 180 campaign tests + 236 web tests pass.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "Version bumped 0.42.2 -> 0.42.3; CLAUDE.md updated with the v0.42.3 empty-If diamond bullet. Lint shows ONLY the 7 known pre-existing react-hooks 'rule not found' errors (no new). Not committed/pushed per instructions. One pre-existing orthogonal-path unit test ('full LANE route: anchor sits HIGH') was updated to assert CENTERED (the requested behavior change). The empty-arm close shoulder has a zero-length H between the two close Q corners (lane->center is only EMPTY_ARM_LANE=28px == 2*CORNER_RADIUS) -- still fully rounded, no square corner."
+}

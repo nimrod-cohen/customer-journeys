@@ -3,7 +3,7 @@
 // `d` and asserts every drawn run changes only x OR only y, and that the (+) anchor
 // always lands ON a vertical run of the path. Pure.
 import { describe, it, expect } from 'vitest';
-import { orthogonalPath, verticalAnchor, edgeMidpoint, closeKneeLowerRun, CORNER_RADIUS, MIN_SEGMENT, PLUS_TOP_GAP, PLUS_PAD, type Point } from './orthogonal-path.js';
+import { orthogonalPath, verticalAnchor, edgeMidpoint, closeKneeLowerRun, emptyLaneMergeRun, CORNER_RADIUS, MIN_SEGMENT, PLUS_TOP_GAP, PLUS_PAD, type Point } from './orthogonal-path.js';
 
 /** The tallest vertical run on which `p` (the (+) anchor) lies, if any. */
 function anchorRunHeight(d: string, p: Point): number | null {
@@ -212,15 +212,19 @@ describe('verticalAnchor', () => {
     assertOnVerticalRun(orthogonalPath(from, to), a);
   });
 
-  it('a full LANE route: the anchor sits HIGH on the lane vertical (at laneX), on the path', () => {
+  it('a full LANE route (empty arm): the anchor sits CENTERED on the lane vertical (at laneX), on the path', () => {
+    // v0.42.3: an EMPTY arm has no node to sit under, so its + is CENTERED on the lane
+    // run with ≥ PLUS_PAD line above AND below — not biased HIGH like a node-following +.
     const from = { x: 300, y: 100 };
     const to = { x: 300, y: 400 };
     const laneX = 272;
     const a = verticalAnchor(from, to, laneX);
     expect(a.x).toBe(laneX);
-    // UPPER portion of the lane run — closer to the source than the target.
-    expect(a.y).toBeLessThan((from.y + to.y) / 2);
-    assertOnVerticalRun(orthogonalPath(from, to, laneX), a);
+    const d = orthogonalPath(from, to, laneX);
+    assertOnVerticalRun(d, a);
+    // CENTERED: equal line above and below on its lane run.
+    const run = verticalRuns(d).find((r) => Math.abs(r.x - laneX) < 1e-6 && a.y >= r.y0 - 1e-6 && a.y <= r.y1 + 1e-6)!;
+    expect(a.y - run.y0).toBeCloseTo(run.y1 - a.y, 5);
   });
 
   it('two converging EMPTY arms get DISTINCT lane anchors (no stacking) — each on its lane V', () => {
@@ -339,6 +343,44 @@ describe('close-knee jog into a merge join — the central run the merge + ancho
     expect(armPlus.y - upper.y0).toBeCloseTo(PLUS_TOP_GAP, 5);
     // … and there is still ≥ PLUS_PAD line BELOW it (RULE 1).
     expect(upper.y1 - armPlus.y).toBeGreaterThanOrEqual(PLUS_PAD - 1e-6);
+  });
+});
+
+describe('empty-arm lane route (both arms empty → a tall empty diamond) — v0.42.3', () => {
+  // An empty If arm: source at center, join straight below at center, routed out to a
+  // side lane that knees back to center at a shared crossY (MERGE_LOWER_RUN above join).
+  const from = { x: 320, y: 100 };
+  const to = { x: 320, y: 100 + 220 };
+  const laneX = 292; // a left side lane
+  const crossY = to.y - 100; // join.y − MERGE_LOWER_RUN
+
+  it('its (+) is CENTERED on the lane run (≥ PLUS_PAD each side, line above == line below)', () => {
+    const d = orthogonalPath(from, to, laneX, undefined, false, false, crossY);
+    const p = verticalAnchor(from, to, laneX, false, false, crossY);
+    expect(p.x).toBe(laneX);
+    assertOnVerticalRun(d, p);
+    const run = verticalRuns(d).find((r) => Math.abs(r.x - laneX) < 1e-6)!;
+    const above = p.y - run.y0;
+    const below = run.y1 - p.y;
+    expect(above).toBeCloseTo(below, 5); // CENTERED
+    expect(above).toBeGreaterThanOrEqual(PLUS_PAD - 1e-6);
+    expect(below).toBeGreaterThanOrEqual(PLUS_PAD - 1e-6);
+  });
+
+  it('the close shoulder is ROUNDED (Q corners, no diagonal) and a central run remains', () => {
+    const d = orthogonalPath(from, to, laneX, undefined, false, false, crossY);
+    assertAxisAligned(d);
+    expect(d).not.toMatch(/\bL\b/);
+    // ≥ 3 Q corners (split + the two close corners).
+    expect(d.trim().split(/\s+/).filter((t) => t === 'Q').length).toBeGreaterThanOrEqual(3);
+    // A central vertical run remains at the join column below the close.
+    const run = emptyLaneMergeRun(from, to, laneX, crossY);
+    expect(run.y1).toBe(to.y);
+    expect(run.y0).toBeGreaterThan(crossY); // below the close corner
+    expect(run.y1 - run.y0).toBeGreaterThanOrEqual(MIN_SEGMENT - CORNER_RADIUS);
+    // The path actually contains that run at to.x.
+    const central = verticalRuns(d).find((r) => Math.abs(r.x - to.x) < 1e-6 && r.y1 > crossY)!;
+    expect(central.y1).toBe(to.y);
   });
 });
 

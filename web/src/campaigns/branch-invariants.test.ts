@@ -129,6 +129,19 @@ const equalArms: CampaignDefinition = {
   },
 };
 
+// EMPTY If: BOTH arms empty — straight from the If to the merge/continuation (a tall
+// empty diamond). Routes down side lanes that knee back to the center (rounded shoulders),
+// a centered + on each lane, and a padded central run for the merge + (v0.42.3).
+const emptyIf: CampaignDefinition = {
+  startNode: 'trigger',
+  nodes: {
+    trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+    cond: { type: 'condition', ast: { field: 'attributes.tier', operator: '=', value: 'vip' }, onTrue: 'join', onFalse: 'join' },
+    join: { type: 'action', kind: 'webhook', url: 'https://j', method: 'POST', next: 'exit1' },
+    exit1: { type: 'exit' },
+  },
+};
+
 // Yes=1, No=3: the SHORT arm (Yes) must extend straight down to the LONG arm's end.
 const yes1no3: CampaignDefinition = {
   startNode: 'trigger',
@@ -191,6 +204,7 @@ const mergeThenTrunk: CampaignDefinition = {
 const ALL_FIXTURES: Array<[string, CampaignDefinition]> = [
   ['linear', linear],
   ['equalArms', equalArms],
+  ['emptyIf', emptyIf],
   ['yes1no3', yes1no3],
   ['no1yes3', no1yes3],
   ['nestedInArm', nestedInArm],
@@ -207,14 +221,22 @@ function allPlusAnchors(def: CampaignDefinition): Array<{ label: string; d: stri
     const p = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop, e.closeKnee, e.crossY);
     out.push({ label: `edge-insert ${e.from}->${e.to} (${e.slot})`, d, p });
   }
-  // campaign-merge-insert: one per join that close-knee edges converge on (the central
-  // run the merge + sits on). Mirrors CampaignCanvas's merge-insert anchoring.
-  const joinIds = new Set(edges.filter((e) => e.closeKnee === true).map((e) => e.to));
+  // campaign-merge-insert: one per join that close-knee OR empty-arm edges converge on
+  // (the central run the merge + sits on). Mirrors CampaignCanvas's merge-insert anchoring.
+  const joinIds = new Set(
+    edges.filter((e) => e.closeKnee === true || e.emptyArm === true).map((e) => e.to),
+  );
   for (const joinId of joinIds) {
     const join = positions.get(joinId);
     const anchor = mergeAnchor(edges, positions, joinId);
+    // The closing edge whose path carries the central run (a close-knee leaf, OR an
+    // empty arm's side lane that knees back to center at the shared crossY).
     const closing = edges.find(
-      (e) => e.to === joinId && e.closeKnee === true && join !== undefined && Math.abs(e.toPoint.x - join.x) < 1e-6,
+      (e) =>
+        e.to === joinId &&
+        (e.closeKnee === true || e.emptyArm === true) &&
+        join !== undefined &&
+        Math.abs(e.toPoint.x - join.x) < 1e-6,
     );
     if (!closing) continue;
     const d = orthogonalPath(closing.fromPoint, closing.toPoint, closing.laneX, undefined, closing.kneeTop, closing.closeKnee, closing.crossY);
@@ -375,6 +397,81 @@ describe('RULE 2 — equal arm heights; knee back only at the longer arm’s end
     const closing = edges.find((e) => e.to === 'join' && e.closeKnee === true && Math.abs(e.toPoint.x - join.x) < 1e-6)!;
     const d = orthogonalPath(closing.fromPoint, closing.toPoint, closing.laneX, undefined, closing.kneeTop, closing.closeKnee, closing.crossY);
     assertLineAboveAndBelow(d, { x: anchor.x, y: anchor.y }, 'yes1no3 merge +');
+  });
+});
+
+describe('EMPTY If (both arms empty → straight to the merge) — v0.42.3', () => {
+  /** The two empty-arm lane edges of emptyIf, plus their layout. */
+  function emptyArmEdges(): { positions: ReturnType<typeof layoutDefinition>['positions']; edges: ReturnType<typeof computeEdges>; arms: ReturnType<typeof computeEdges> } {
+    const { positions } = layoutDefinition(emptyIf);
+    const edges = computeEdges(emptyIf, positions);
+    const arms = edges.filter((e) => e.emptyArm === true);
+    return { positions, edges, arms };
+  }
+
+  it('both arms are flagged empty, on DISTINCT side lanes, with a SHARED crossY', () => {
+    const { arms } = emptyArmEdges();
+    expect(arms.length).toBe(2);
+    // Distinct lanes (no stacking of the two +s).
+    expect(arms[0]!.laneX).not.toBe(arms[1]!.laneX);
+    // RULE 2 — both close at the SAME y.
+    expect(arms[0]!.crossY).toBeDefined();
+    expect(arms[0]!.crossY).toBeCloseTo(arms[1]!.crossY!, 5);
+  });
+
+  it('each empty arm + is CENTERED on its lane run (≥ PLUS_PAD above AND below)', () => {
+    const { arms } = emptyArmEdges();
+    for (const e of arms) {
+      const d = orthogonalPath(e.fromPoint, e.toPoint, e.laneX, undefined, e.kneeTop, e.closeKnee, e.crossY);
+      const p = verticalAnchor(e.fromPoint, e.toPoint, e.laneX, e.kneeTop, e.closeKnee, e.crossY);
+      // On its lane (not the center, not the source column).
+      expect(p.x).toBeCloseTo(e.laneX, 5);
+      // RULE 1.
+      assertLineAboveAndBelow(d, p, `emptyIf arm ${e.slot}`);
+      // CENTERED: the line above ≈ the line below (within a corner-radius tolerance).
+      const runs = verticalRuns(d).filter((r) => Math.abs(r.x - p.x) < 1e-6);
+      const hit = runs.find((r) => p.y >= r.y0 - 1e-6 && p.y <= r.y1 + 1e-6)!;
+      const above = p.y - hit.y0;
+      const below = hit.y1 - p.y;
+      expect(Math.abs(above - below)).toBeLessThanOrEqual(1e-6);
+    }
+  });
+
+  it('the merge + sits on a PADDED central run (≥ PLUS_PAD above — NOT the old no-pad fallback)', () => {
+    const { positions, edges } = emptyArmEdges();
+    const join = positions.get('join')!;
+    const anchor = mergeAnchor(edges, positions, 'join');
+    expect(anchor.x).toBeCloseTo(join.x, 5);
+    // The close corner is ABOVE the +; the + is above the join card — a real central run.
+    expect(anchor.closureCornerY).toBeLessThan(anchor.y);
+    expect(anchor.y).toBeLessThan(join.y);
+    // ≥ PLUS_PAD above the + (the old fallback gave only 14px — far less than PLUS_PAD).
+    expect(anchor.y - anchor.closureCornerY).toBeGreaterThanOrEqual(PLUS_PAD - 1e-6);
+    // And it lands ON the central run of an arm's path with line above AND below (RULE 1).
+    const closing = edges.find(
+      (e) => e.to === 'join' && e.emptyArm === true && Math.abs(e.toPoint.x - join.x) < 1e-6,
+    )!;
+    const d = orthogonalPath(closing.fromPoint, closing.toPoint, closing.laneX, undefined, closing.kneeTop, closing.closeKnee, closing.crossY);
+    assertLineAboveAndBelow(d, { x: anchor.x, y: anchor.y }, 'emptyIf merge +');
+  });
+
+  it('both shoulders are ROUNDED (Q corners) — no square L corner at the split or close', () => {
+    const { arms } = emptyArmEdges();
+    for (const e of arms) {
+      const d = orthogonalPath(e.fromPoint, e.toPoint, e.laneX, undefined, e.kneeTop, e.closeKnee, e.crossY);
+      // No straight-diagonal segment anywhere.
+      expect(d).not.toMatch(/\bL\b/);
+      // The route has BOTH a top split AND a bottom close, each rounded with Q corners:
+      // expect at least 3 Q commands (1 at the split, 2 at the close).
+      const qCount = d.trim().split(/\s+/).filter((t) => t === 'Q').length;
+      expect(qCount).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('the empty diamond stays a reasonable height (not absurdly tall)', () => {
+    const { height } = layoutDefinition(emptyIf);
+    // trigger → cond → join → exit is 4 rows; with the merge drop it must stay sane.
+    expect(height).toBeLessThan(1200);
   });
 });
 
