@@ -28,6 +28,18 @@ interface Filters {
   type: string;
 }
 
+/** datetime-local value (local wall-clock, no zone) for a Date. */
+function toLocalInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+/** Default the range to TODAY: 00:00 → 23:59 local. */
+function todayRange(): { from: string; to: string } {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59);
+  return { from: toLocalInput(start), to: toLocalInput(end) };
+}
 const EMPTY_FILTERS: Filters = { from: '', to: '', source: '', outcome: '', type: '' };
 
 function outcomeTone(o: string): 'success' | 'danger' | 'neutral' {
@@ -47,7 +59,8 @@ function toIso(local: string): string | undefined {
 export function Activity() {
   const session = useStore(sessionStore);
   const [rows, setRows] = useState<ActivityRow[] | null>(null);
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  // Default the date range to TODAY (computed at mount so it stays current).
+  const [filters, setFilters] = useState<Filters>(() => ({ ...EMPTY_FILTERS, ...todayRange() }));
   // Master/detail: which row(s) are expanded to show their detail below.
   const [open, setOpen] = useState<Set<number>>(new Set());
   const toggle = (i: number) =>
@@ -85,8 +98,9 @@ export function Activity() {
   const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }));
   const apply = () => void load(filters);
   const reset = () => {
-    setFilters(EMPTY_FILTERS);
-    void load(EMPTY_FILTERS);
+    const next = { ...EMPTY_FILTERS, ...todayRange() };
+    setFilters(next);
+    void load(next);
   };
 
   return (

@@ -766,7 +766,15 @@ export function BroadcastWizard({ id }: { id?: string }) {
               <Select
                 data-testid="schedule-mode"
                 value={scheduleMode}
-                onChange={(e: Event) => setScheduleMode((e.target as HTMLSelectElement).value as 'now' | 'later')}
+                onChange={(e: Event) => {
+                  const mode = (e.target as HTMLSelectElement).value as 'now' | 'later';
+                  setScheduleMode(mode);
+                  // Default the picker to TODAY (now + 1h, a valid ≥5-min lead) when
+                  // switching to scheduling and nothing is set yet.
+                  if (mode === 'later' && !scheduledAt) {
+                    setScheduledAt(utcIsoToZonedInput(new Date(Date.now() + 60 * 60 * 1000).toISOString(), timeZone));
+                  }
+                }}
               >
                 <option value="now">Send now</option>
                 <option value="later">Schedule for a date &amp; time</option>

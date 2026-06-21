@@ -45,8 +45,24 @@
 #     optional resolve-time DNS SSRF check. See .a5c/CAMPAIGN-BUILDER-CARRYFORWARD.txt.
 
 # REMAINING
-* put today's date in as the default in the email schedule date, and today in the from to dates filters
+# [x] put today's date in as the default in the email schedule date, and today in the from/to date filters. v0.49.3
 * show conversion in % between sent, failed, unsubscribed, delivered, opened, clicked in broadcasts list
+* allow sending SMS/WhatsApp in broadcasts and campaigns, not only emails.
+* topics unsubscribe management, instead of single subscribe/unsubscribe, build a list of topics and all the users to
+  subscribe/unsubscribe based on topics and mediums 
+  currently medium options are 
+  1. WhatsApp & SMS
+  2. Email
+  here's an example of how the unsubscribe page should look like with topics: 
+  https://bursa4u.com/manage-subscription/?cid=bcaf0602f82cd98104
+  from now on, a person may unsubscribe from all channels, or just part of them, 
+  he is not taken off the list unless he asked to be completely unsubscribed, 
+  he can be unsubscribed or suppressed in mail but not by SMS/WhatsApp, or the other way around.
+
+* UI should work in mobile as well, make the whole thing responsive.
+* Connect to SMS via provider
+* Connect to  WhatsApp official API
+
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).
