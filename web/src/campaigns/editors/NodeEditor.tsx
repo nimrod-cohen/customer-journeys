@@ -959,7 +959,7 @@ export function nodeEditorTitle(node: CanvasNode): string {
     wait_until: 'Edit wait-until',
     hour_of_day_window: 'Edit hour window',
     condition: 'Edit condition',
-    send: 'Edit send email',
+    send: 'Edit send communication',
     set_attribute: 'Update profile',
     webhook: 'Edit webhook',
     exit: 'Exit step',

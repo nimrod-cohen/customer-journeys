@@ -47,7 +47,7 @@ const TYPE_LABEL: Record<string, string> = {
   wait_until: 'Wait until',
   hour_of_day_window: 'Hour window',
   condition: 'If / branch',
-  send: 'Send email',
+  send: 'Send communication',
   set_attribute: 'Update profile',
   webhook: 'Webhook',
   action: 'Action',

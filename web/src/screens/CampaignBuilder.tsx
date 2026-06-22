@@ -369,7 +369,7 @@ const PALETTE: { type: PaletteType; label: string; testId: string; hint: string 
   { type: 'wait_until', label: 'Wait until', testId: 'palette-wait-until', hint: 'Pause until a date' },
   { type: 'hour_of_day_window', label: 'Hour-of-day window', testId: 'palette-hour-window', hint: 'Only send within hours' },
   { type: 'condition', label: 'If / branch', testId: 'palette-if', hint: 'Split on a profile rule' },
-  { type: 'send', label: 'Send email', testId: 'palette-send', hint: 'Send through the dispatcher' },
+  { type: 'send', label: 'Send communication', testId: 'palette-send', hint: 'Email, SMS, or WhatsApp' },
   { type: 'set_attribute', label: 'Update profile', testId: 'palette-update-profile', hint: 'Set a profile attribute' },
   { type: 'webhook', label: 'Webhook', testId: 'palette-webhook', hint: 'Call an external URL' },
   { type: 'exit', label: 'Exit', testId: 'palette-exit', hint: 'End the journey here' },
