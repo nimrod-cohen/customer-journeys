@@ -18,6 +18,10 @@ test('an owner adds a workspace to their company from Company settings', async (
   await page.getByTestId('company-rename-save').click();
   await expect(page.getByTestId('company-name')).toHaveText('Acme');
 
+  // Workspaces live on their own tab now (Settings = name + logo).
+  await page.getByTestId('company-tab-workspaces').click();
+  await page.getByTestId('company-workspaces').waitFor();
+
   // Owner starts in Acme, which already owns two workspaces (they're owner of both).
   const rows = page.getByTestId('ws-row');
   await expect(rows).toHaveCount(2);

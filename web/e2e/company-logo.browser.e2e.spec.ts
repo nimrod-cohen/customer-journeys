@@ -14,7 +14,7 @@ test('company logo: upload shows the image, then remove clears it', async ({ pag
   await loginAs(page, DEV_OWNER);
   await page.getByTestId('nav-company').click();
   await page.getByTestId('company-settings').waitFor();
-  await page.getByTestId('company-tab-sending').click(); // SES/SMS/logo live on the Sending tab
+  // Logo lives on the Settings tab (the default /company tab) with the company name.
   await page.getByTestId('company-logo').waitFor();
 
   // Starts with no logo.
