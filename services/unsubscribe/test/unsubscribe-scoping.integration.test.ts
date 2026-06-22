@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '@cdp/db';
+import { signUnsubscribeToken } from '@cdp/email';
 import { runUnsubscribeInWorkspaceTx } from '../src/deps.js';
 import { makeUnsubscribeHandler, type UnsubscribeDeps } from '../src/handler.js';
+
+// The links are now TOKENIZED: every successful call carries a valid HMAC token
+// over (workspace_id, email). We use a fixed test secret end-to-end.
+const SECRET = 'integ-unsub-secret';
+const tok = (ws: string, e: string) => signUnsubscribeToken(SECRET, ws, e);
 
 // §10 / AC "Suppression scoping": an unsubscribe in workspace A must NOT
 // suppress the same email in workspace B (suppressions PK = (workspace_id,
@@ -15,7 +21,7 @@ const wsB = 'ab100000-0000-0000-0000-0000000000b2';
 const email = 'optout@ub-scope.example';
 
 function makeDeps(pool: Pool): UnsubscribeDeps {
-  return { runInWorkspaceTx: (w, s) => runUnsubscribeInWorkspaceTx(pool, w, s) };
+  return { runInWorkspaceTx: (w, s) => runUnsubscribeInWorkspaceTx(pool, w, s), linkSecret: SECRET };
 }
 
 async function suppressed(admin: Pool, ws: string): Promise<boolean> {
@@ -71,7 +77,7 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
   });
 
   it('GET shows a re-affirm confirmation page and changes NOTHING (prefetch-safe)', async () => {
-    const res = await handler({ httpMethod: 'GET', rawPath: '/unsubscribe', queryStringParameters: { workspace_id: wsA, email } });
+    const res = await handler({ httpMethod: 'GET', rawPath: '/unsubscribe', queryStringParameters: { workspace_id: wsA, email, token: tok(wsA, email) } });
     expect(res.statusCode).toBe(200);
     expect(res.headers?.['content-type']).toContain('text/html');
     expect(res.body).toContain('confirm-unsubscribe'); // the "Yes, unsubscribe" button
@@ -84,7 +90,7 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
     const res = await handler({
       httpMethod: 'POST',
       rawPath: '/unsubscribe',
-      queryStringParameters: { workspace_id: wsA, email },
+      queryStringParameters: { workspace_id: wsA, email, token: tok(wsA, email) },
       body: 'List-Unsubscribe=One-Click',
     });
     expect(res.statusCode).toBe(200);
@@ -110,7 +116,7 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
   });
 
   it('a replayed unsubscribe is idempotent (ON CONFLICT DO NOTHING → one row)', async () => {
-    await handler({ httpMethod: 'POST', queryStringParameters: { workspace_id: wsA, email }, body: 'List-Unsubscribe=One-Click' });
+    await handler({ httpMethod: 'POST', queryStringParameters: { workspace_id: wsA, email, token: tok(wsA, email) }, body: 'List-Unsubscribe=One-Click' });
     const cnt = await admin.query('SELECT count(*)::int AS n FROM suppressions WHERE workspace_id = $1 AND email = $2', [wsA, email]);
     expect(cnt.rows[0].n).toBe(1);
   });
@@ -118,6 +124,24 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
   it('a request missing workspace_id is a 400 (never a guessed workspace)', async () => {
     const res = await handler({ httpMethod: 'POST', queryStringParameters: { email }, body: 'List-Unsubscribe=One-Click' });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('a link with NO token is 403 (the link must be signed)', async () => {
+    const get = await handler({ httpMethod: 'GET', queryStringParameters: { workspace_id: wsA, email } });
+    expect(get.statusCode).toBe(403);
+    const post = await handler({ httpMethod: 'POST', queryStringParameters: { workspace_id: wsA, email }, body: 'List-Unsubscribe=One-Click' });
+    expect(post.statusCode).toBe(403);
+  });
+
+  it('a forged token (signed for a DIFFERENT email) is 403 — no cross-recipient forgery', async () => {
+    // A token valid for some-other@x but presented for `email` must not verify.
+    const forged = tok(wsA, 'someone-else@x.example');
+    const res = await handler({
+      httpMethod: 'POST',
+      queryStringParameters: { workspace_id: wsA, email, token: forged },
+      body: 'List-Unsubscribe=One-Click',
+    });
+    expect(res.statusCode).toBe(403);
   });
 
   it('a POST carrying a broadcast_id records an email_events unsubscribe attributed to it (funnel)', async () => {
@@ -128,7 +152,7 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
     const res = await handler({
       httpMethod: 'POST',
       rawPath: '/unsubscribe',
-      queryStringParameters: { workspace_id: wsA, email: bemail, broadcast_id: BCAST },
+      queryStringParameters: { workspace_id: wsA, email: bemail, broadcast_id: BCAST, token: tok(wsA, bemail) },
       body: 'List-Unsubscribe=One-Click',
     });
     expect(res.statusCode).toBe(200);
@@ -149,7 +173,7 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
     await admin.query("INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,'p-noattr','noattr@ub-scope.example','{}'::jsonb)", [wsB]);
     const res = await handler({
       httpMethod: 'POST',
-      queryStringParameters: { workspace_id: wsB, email: 'noattr@ub-scope.example' },
+      queryStringParameters: { workspace_id: wsB, email: 'noattr@ub-scope.example', token: tok(wsB, 'noattr@ub-scope.example') },
       body: 'List-Unsubscribe=One-Click',
     });
     expect(res.statusCode).toBe(200);

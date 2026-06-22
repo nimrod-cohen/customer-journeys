@@ -18,6 +18,16 @@ test('open a profile, edit it, add an attribute, view events and segments', asyn
   await page.getByTestId('profile-detail').waitFor();
   await expect(page.getByTestId('profile-email')).toContainText('a1@acme.com');
 
+  // Copy the recipient's subscription-preferences link (the page they see when they
+  // click "manage subscription" in an email).
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.getByTestId('profile-actions').click();
+  await page.getByTestId('copy-subscription-link').click();
+  await expect(page.getByText('Subscription link copied to the clipboard.')).toBeVisible();
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  expect(clip).toContain('/manage-subscription');
+  expect(clip).toContain('a1%40acme.com');
+
   // Details tab: change the email (deliverability) status and save.
   await page.getByTestId('tab-details').click();
   await page.getByTestId('profile-status-select').selectOption('bounced');

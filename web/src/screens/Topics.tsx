@@ -26,6 +26,10 @@ export function TopicsPanel() {
   const [showArchived, setShowArchived] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  // Topic-based subscription management (default ON). When OFF (or no active
+  // topics), the recipient's preference link shows the plain unsubscribe page.
+  const [topicsEnabled, setTopicsEnabled] = useState(true);
+  const [savingEnabled, setSavingEnabled] = useState(false);
 
   const load = async (includeArchived: boolean) => {
     if (!session.workspaceId) {
@@ -45,6 +49,28 @@ export function TopicsPanel() {
   useEffect(() => {
     void load(showArchived);
   }, [session.workspaceId, showArchived]);
+
+  useEffect(() => {
+    void api
+      .get<{ settings: { topics_enabled?: boolean } }>('/workspace/settings')
+      .then((r) => setTopicsEnabled(r.settings.topics_enabled !== false))
+      .catch(() => {});
+  }, [session.workspaceId]);
+
+  const toggleTopicsEnabled = async () => {
+    if (savingEnabled) return;
+    const next = !topicsEnabled;
+    setTopicsEnabled(next); // optimistic
+    setSavingEnabled(true);
+    try {
+      await api.put('/workspace/settings', { body: { topics_enabled: next } });
+    } catch {
+      setTopicsEnabled(!next); // revert
+      showToast('Could not update topic management.', { tone: 'error' });
+    } finally {
+      setSavingEnabled(false);
+    }
+  };
 
   const create = async () => {
     const trimmed = name.trim();
@@ -101,6 +127,33 @@ export function TopicsPanel() {
 
   return (
     <section data-testid="topics-screen">
+      <Card class="mb-4 flex flex-wrap items-center justify-between gap-3 p-5">
+        <div>
+          <h2 class="text-base font-bold text-ink-900">Use topic-based subscription management</h2>
+          <p class="mt-1 text-sm text-stone-500">
+            When on, the recipient's preference link lets them opt out of individual topics &amp; channels. When off (or
+            with no active topics), it shows a plain unsubscribe page.
+          </p>
+        </div>
+        <button
+          data-testid="topics-enabled-toggle"
+          type="button"
+          role="switch"
+          aria-checked={topicsEnabled}
+          disabled={savingEnabled}
+          onClick={toggleTopicsEnabled}
+          class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:opacity-50 ${
+            topicsEnabled ? 'bg-brand-500' : 'bg-stone-300'
+          }`}
+        >
+          <span
+            class={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+              topicsEnabled ? 'translate-x-5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </Card>
+
       <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
         <p class="text-sm text-stone-500">
           Subscription topics recipients can opt out of individually (via the preference center).

@@ -11,7 +11,13 @@
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import type { Pool, PoolClient } from 'pg';
 import { promises as dns } from 'node:dns';
-import { createSesClient, type SesEmailClient } from '@cdp/email';
+import {
+  createSesClient,
+  buildUnsubscribeUrl,
+  signUnsubscribeToken,
+  unsubscribeLinkSecret,
+  type SesEmailClient,
+} from '@cdp/email';
 import { dispatchOutbox, type DispatchDeps } from '@cdp/service-dispatcher';
 import { resolveChannelProvider } from '@cdp/channels';
 import {
@@ -344,6 +350,9 @@ export const getWorkspaceSettings: Handler = async (ctx, pool) => {
       ...settings,
       lowercase_emails: settings.lowercase_emails !== false, // default ON
       link_tracking: settings.link_tracking === true, // default OFF
+      // Topic-based subscription management. Default ON; only explicit false
+      // disables it (then the preference center shows the plain unsubscribe page).
+      topics_enabled: settings.topics_enabled !== false,
       // The workspace clock for all campaign time math (§9B). Default UTC.
       timezone: typeof settings.timezone === 'string' && settings.timezone ? settings.timezone : 'UTC',
     },
@@ -356,6 +365,7 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
   const patch: Record<string, unknown> = {};
   if (b.lowercase_emails !== undefined) patch.lowercase_emails = Boolean(b.lowercase_emails);
   if (b.link_tracking !== undefined) patch.link_tracking = Boolean(b.link_tracking);
+  if (b.topics_enabled !== undefined) patch.topics_enabled = Boolean(b.topics_enabled);
   if (b.timezone !== undefined) {
     // The workspace timezone (§9B clock). Validate against a real IANA zone before
     // it ever drives campaign waits/windows. workspace_id is taken from ctx only —
@@ -3565,6 +3575,33 @@ function enrollDepsOnPool(pool: Pool): EnrollDeps {
  * timeline, and the rolling features (recomputed + segments re-evaluated in one
  * workspace-scoped tx — exactly like ingestion). Scoped to the token's workspace.
  */
+/**
+ * GET /profiles/:id/subscription-link — the TOKENIZED "manage subscription" link
+ * for this profile's email, built with the SAME secret + base the dispatcher uses
+ * so it is byte-identical to what the recipient is emailed (and the
+ * /manage-subscription handler will ACCEPT it). Workspace-scoped: a foreign/missing
+ * id 404s; the email + workspace come from the DB row (never the client). A profile
+ * with no email can't be linked (400).
+ */
+export const getSubscriptionLink: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const sel = scopedQuery(ctx.workspaceId, 'SELECT email FROM profiles WHERE id = $1', [id]);
+  const { rows } = await pool.query<{ email: string | null }>(sel.text, sel.values);
+  if (rows.length === 0) return ok({ error: 'not found' }, 404);
+  const email = rows[0]!.email;
+  if (!email) return ok({ error: 'this profile has no email' }, 400);
+
+  const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
+  const token = signUnsubscribeToken(unsubscribeLinkSecret(), ctx.workspaceId, email);
+  const url = buildUnsubscribeUrl({
+    baseUrl: `${base}/manage-subscription`,
+    workspaceId: ctx.workspaceId,
+    email,
+    token,
+  });
+  return ok({ url });
+};
+
 export const sendProfileEvent: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
@@ -4313,6 +4350,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PATCH /profiles/:id': updateProfile,
   'POST /profiles/:id/merge': mergeProfiles,
   'GET /profiles/:id/events': listProfileEvents,
+  'GET /profiles/:id/subscription-link': getSubscriptionLink,
   'POST /profiles/:id/events': sendProfileEvent,
   'GET /profiles/:id/delivery': getProfileDelivery,
   'GET /profiles/:id/segments': listProfileSegments,

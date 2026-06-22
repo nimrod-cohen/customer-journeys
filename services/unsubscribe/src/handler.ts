@@ -6,6 +6,7 @@
 // performs the opt-out: writes the per-workspace suppression AND sets the
 // profile `unsubscribed = true`, in ONE workspace-scoped tx. The handler NEVER
 // throws; a malformed/unscoped request → 400 (no guessed/default workspace).
+import { verifyUnsubscribeToken, unsubscribeLinkSecret } from '@cdp/email';
 import {
   parseUnsubscribeRequest,
   buildUnsubscribeSuppression,
@@ -37,7 +38,12 @@ function page(title: string, inner: string): string {
   );
 }
 
-function confirmPage(email: string, actionUrl: string): string {
+/**
+ * The SIMPLE unsubscribe confirm page (the one source of truth — the preference
+ * center reuses this when topics are disabled / there are none). Exported so the
+ * preference handler renders the IDENTICAL page.
+ */
+export function confirmPage(email: string, actionUrl: string): string {
   return page(
     'Unsubscribe',
     `<h1>Unsubscribe from these emails?</h1>` +
@@ -47,7 +53,8 @@ function confirmPage(email: string, actionUrl: string): string {
   );
 }
 
-function donePage(email: string): string {
+/** The SIMPLE "you're unsubscribed" page (shared with the preference center). */
+export function donePage(email: string): string {
   return page(
     'Unsubscribed',
     `<h1 class="ok">You're unsubscribed</h1>` +
@@ -77,6 +84,34 @@ export interface UnsubscribeHttpResponse {
 export interface UnsubscribeDeps {
   /** Apply the suppression in ONE workspace-scoped tx. */
   runInWorkspaceTx(workspaceId: string, statements: readonly SqlStatement[]): Promise<void>;
+  /**
+   * The HMAC link secret used to VERIFY the token (the dispatcher signs with the
+   * SAME secret). Defaults to `unsubscribeLinkSecret()` (env or the dev fallback)
+   * so the prod Lambda + local-api resolve it consistently.
+   */
+  readonly linkSecret?: string;
+}
+
+/**
+ * The statements for a SIMPLE (full) opt-out — the per-workspace suppression, the
+ * profile `unsubscribed=true` flag, the activity-log row, and (when the link
+ * carried a source) the attribution email_event. Shared so the preference center,
+ * when topics are disabled, performs the IDENTICAL write as /unsubscribe.
+ */
+export function simpleUnsubscribeStatements(
+  workspaceId: string,
+  email: string,
+  broadcastId: string | null,
+  campaignId: string | null,
+  source: string | null = 'one-click',
+): SqlStatement[] {
+  const attribution = buildUnsubscribeEvent(workspaceId, email, broadcastId, campaignId);
+  return [
+    buildUnsubscribeSuppression(workspaceId, email, source),
+    buildUnsubscribedAttribute(workspaceId, email),
+    buildUnsubscribeActivity(workspaceId, email),
+    ...(attribution ? [attribution] : []),
+  ];
 }
 
 /** Reconstruct a URL string (with query) from an API-Gateway-style event. */
@@ -109,6 +144,19 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
           body: page('Unsubscribe', `<h1>Invalid unsubscribe link</h1><p>${esc(parsed.reason)}</p>`),
         };
       }
+      // TOKEN GATE (security): the link is UNGUESSABLE — a valid HMAC token over
+      // (workspace_id, email) signed with the shared secret is REQUIRED. A
+      // missing/invalid token → 403 (forging a link for someone else's email is
+      // impossible without the secret). Applies to BOTH the GET confirm page and
+      // the POST write — a forged link never even renders the re-affirm page.
+      const secret = deps.linkSecret ?? unsubscribeLinkSecret();
+      if (!verifyUnsubscribeToken(secret, parsed.workspaceId, parsed.email, parsed.token)) {
+        return {
+          statusCode: 403,
+          headers: HTML_HEADERS,
+          body: page('Unsubscribe', `<h1>Invalid or expired link</h1><p>This unsubscribe link could not be verified.</p>`),
+        };
+      }
       // GET = the link click. It is PREFETCHABLE (mail clients/proxies fetch it),
       // so it must NOT opt anyone out — just show the re-affirm page whose form
       // POSTs back to this same URL.
@@ -121,18 +169,10 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
       //   2. the profile `unsubscribed = true` attribute (so it's segmentable).
       //   3. an email_events 'unsubscribe' row attributed to the source
       //      broadcast/campaign (when the link carried one) — feeds the funnel.
-      const attribution = buildUnsubscribeEvent(
+      await deps.runInWorkspaceTx(
         parsed.workspaceId,
-        parsed.email,
-        parsed.broadcastId,
-        parsed.campaignId,
+        simpleUnsubscribeStatements(parsed.workspaceId, parsed.email, parsed.broadcastId, parsed.campaignId),
       );
-      await deps.runInWorkspaceTx(parsed.workspaceId, [
-        buildUnsubscribeSuppression(parsed.workspaceId, parsed.email),
-        buildUnsubscribedAttribute(parsed.workspaceId, parsed.email),
-        buildUnsubscribeActivity(parsed.workspaceId, parsed.email),
-        ...(attribution ? [attribution] : []),
-      ]);
       return { statusCode: 200, headers: HTML_HEADERS, body: donePage(parsed.email) };
     } catch {
       // Never throw out of the handler; surface a 500 the caller can retry.

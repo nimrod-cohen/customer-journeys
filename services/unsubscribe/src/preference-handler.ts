@@ -11,6 +11,7 @@
 //        - "everything" = opt out both groups + all topics + the existing full
 //          suppression + profiles.attributes.unsubscribed=true + activity_log.
 //        A PARTIAL opt-out NEVER sets the global suppression / unsubscribed flag.
+import { verifyUnsubscribeToken, unsubscribeLinkSecret } from '@cdp/email';
 import {
   buildUnsubscribeSuppression,
   buildUnsubscribedAttribute,
@@ -18,6 +19,13 @@ import {
   parseUnsubscribeRequest,
   type SqlStatement,
 } from './core.js';
+import {
+  confirmPage,
+  donePage,
+  simpleUnsubscribeStatements,
+  type UnsubscribeHttpEvent,
+  type UnsubscribeHttpResponse,
+} from './handler.js';
 import {
   parsePreferenceUpdate,
   buildActiveTopicsQuery,
@@ -30,7 +38,6 @@ import {
   MEDIUM_GROUPS,
   type TopicChoice,
 } from './preference-center.js';
-import type { UnsubscribeHttpEvent, UnsubscribeHttpResponse } from './handler.js';
 
 const HTML_HEADERS = { 'content-type': 'text/html; charset=utf-8' } as const;
 
@@ -119,6 +126,26 @@ export interface PreferenceCenterDeps {
   readonly reader: PreferenceReader;
   /** Apply the preference writes in ONE workspace-scoped tx. */
   runInWorkspaceTx(workspaceId: string, statements: readonly SqlStatement[]): Promise<void>;
+  /**
+   * The HMAC link secret used to VERIFY the token (same secret the dispatcher
+   * signs with). Defaults to `unsubscribeLinkSecret()` (env or the dev fallback).
+   */
+  readonly linkSecret?: string;
+}
+
+/**
+ * Whether the workspace's `settings.topics_enabled` flag is on. DEFAULT TRUE: a
+ * workspace that never touched the setting (no key) is topic-managed. Only an
+ * explicit `false` disables it.
+ */
+export async function readTopicsEnabled(reader: PreferenceReader, workspaceId: string): Promise<boolean> {
+  if (!workspaceId) throw new Error('readTopicsEnabled: workspaceId is required (tenant-isolation guard)');
+  const { rows } = await reader.query<{ topics_enabled: boolean | null }>(
+    `SELECT (settings->>'topics_enabled')::boolean AS topics_enabled FROM workspaces WHERE id = $1`,
+    [workspaceId],
+  );
+  // Missing/NULL → default ON; only an explicit false disables.
+  return rows[0]?.topics_enabled !== false;
 }
 
 /** Reconstruct a URL string (with query) from an API-Gateway-style event. */
@@ -153,9 +180,41 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
       }
       const { workspaceId, email } = parsed;
 
+      // TOKEN GATE (security): the link must carry a valid HMAC token over
+      // (workspace_id, email). A missing/invalid token → 403 — a forged manage
+      // link never renders. Same secret + check as /unsubscribe.
+      const secret = deps.linkSecret ?? unsubscribeLinkSecret();
+      if (!verifyUnsubscribeToken(secret, workspaceId, email, parsed.token)) {
+        return {
+          statusCode: 403,
+          headers: HTML_HEADERS,
+          body: shell('Manage your subscription', `<h1>Invalid or expired link</h1><p>This link could not be verified.</p>`),
+        };
+      }
+
       // Load the workspace's active topics + the recipient's current state.
       const topicsQ = buildActiveTopicsQuery(workspaceId);
       const { rows: activeTopics } = await deps.reader.query<{ id: string; name: string }>(topicsQ.text, topicsQ.values);
+
+      // ADAPTIVE page: only show the topics preference center when the workspace
+      // has topic management ENABLED (settings.topics_enabled, default ON) AND it
+      // has ≥1 active topic. Otherwise this falls back to the SIMPLE /unsubscribe
+      // confirm page (one source of truth) — a plain full opt-out.
+      const topicsEnabled = await readTopicsEnabled(deps.reader, workspaceId);
+      const showTopics = topicsEnabled && activeTopics.length > 0;
+
+      if (!showTopics) {
+        // SIMPLE flow — identical page + write as GET/POST /unsubscribe.
+        if (method === 'GET') {
+          return { statusCode: 200, headers: HTML_HEADERS, body: confirmPage(email, url) };
+        }
+        await deps.runInWorkspaceTx(
+          workspaceId,
+          simpleUnsubscribeStatements(workspaceId, email, parsed.broadcastId, parsed.campaignId, 'preference-center'),
+        );
+        return { statusCode: 200, headers: HTML_HEADERS, body: donePage(email) };
+      }
+
       const tStateQ = buildTopicStateQuery(workspaceId, email);
       const { rows: tState } = await deps.reader.query<{ topic_id: string; subscribed: boolean }>(
         tStateQ.text,

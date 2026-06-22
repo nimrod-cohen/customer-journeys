@@ -103,6 +103,12 @@ export interface DispatchContext {
   /** Public base URL of the unsubscribe endpoint (§9 step 5). */
   readonly unsubscribeBaseUrl: string;
   /**
+   * The signed HMAC token for THIS recipient's (workspace_id, email) link. Appended
+   * to both the body {{unsubscribe}} link and the List-Unsubscribe header so the
+   * unsubscribe / manage-subscription handlers can verify the link wasn't forged.
+   */
+  readonly unsubscribeToken?: string | null;
+  /**
    * Optional named-sender override (a domain_senders row chosen on the broadcast
    * or campaign send-node). When present the From becomes `"name" <email>`
    * instead of the no-reply@<domain> fallback. The email must be on a verified
@@ -381,6 +387,7 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
     baseUrl: ctx.unsubscribeBaseUrl,
     workspaceId: ctx.workspace.id,
     email,
+    ...(ctx.unsubscribeToken ? { token: ctx.unsubscribeToken } : {}),
     broadcastId: ctx.broadcastId ?? null,
     campaignId: ctx.campaignId ?? null,
   });

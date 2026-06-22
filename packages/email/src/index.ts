@@ -7,6 +7,10 @@ export { compileMjml, MjmlCompileError } from './mjml.js';
 export {
   buildUnsubscribeUrl,
   buildListUnsubscribeHeaders,
+  signUnsubscribeToken,
+  verifyUnsubscribeToken,
+  unsubscribeLinkSecret,
+  DEV_UNSUBSCRIBE_LINK_SECRET,
   type UnsubscribeLinkParams,
   type ListUnsubscribeHeaders,
 } from './unsubscribe.js';

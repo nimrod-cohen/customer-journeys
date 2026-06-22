@@ -77,7 +77,13 @@
 #     See .a5c/PROVIDERS-SETUP.md.
 # [~] Connect to the REAL WhatsApp official API — same: BLOCKED on a Meta WhatsApp Business account + credentials.
 #     Architecture + mock done; see .a5c/PROVIDERS-SETUP.md.
-
+* add company logo uploading option to show in the unsubscribe page
+* add ability to disable topics (or if its empty) - revert to the normal unsubscribe page.
+* unsubscribe link should be a tokenized link that is unguessable
+* implement SMS integration with 019 - copy code from here: 
+/Users/nimrodcohen/dev/yinon/valueinvesting/wp-content/plugins/wp-otp-login (actual code in /providers/otp_019.php) 
+learn how it authenticates and create tokens, and how to send a message.
+* add WhatsApp/SMS templates like email templates (single templates for both mediums sms and WhatsApp)
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).

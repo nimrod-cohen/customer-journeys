@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '@cdp/db';
 import type { SesEmailClient, SendEmailInput, SendEmailResult } from '@cdp/email';
+import { verifyUnsubscribeToken } from '@cdp/email';
 import { dispatchOutbox, type DispatchDeps, type Reader } from '../src/dispatch.js';
 import { runStatementsInWorkspaceTx } from '../src/deps.js';
 
@@ -14,6 +15,7 @@ const RUN = hasDatabaseUrl();
 
 const ws = 'da000000-0000-0000-0000-0000000000aa';
 const BCAST = 'da000000-0000-0000-0000-0000000000ba';
+const LINK_SECRET = 'dispatch-link-secret';
 
 class CapturingSes implements SesEmailClient {
   public sends: SendEmailInput[] = [];
@@ -95,6 +97,7 @@ describe.skipIf(!RUN)('dispatcher open pixel + unsubscribe attribution (real Pos
       now: () => new Date('2026-06-10T12:00:00.000Z'),
       unsubscribeBaseUrl: 'https://api.cdp.example/unsubscribe',
       linkTrackingBaseUrl: 'https://api.cdp.example',
+      unsubscribeLinkSecret: LINK_SECRET,
     };
   }
 
@@ -125,6 +128,16 @@ describe.skipIf(!RUN)('dispatcher open pixel + unsubscribe attribution (real Pos
     // The List-Unsubscribe header URL carries the source broadcast id.
     expect(ses.sends[0]!.headers!['List-Unsubscribe']).toContain(`broadcast_id=${BCAST}`);
 
+    // The body {{unsubscribe}} link AND the List-Unsubscribe header carry a VALID
+    // signed token over (workspace_id, email) — verifiable with the same secret.
+    const header = ses.sends[0]!.headers!['List-Unsubscribe'];
+    const headerUrl = new URL(header.slice(1, -1)); // strip <>
+    const headerTok = headerUrl.searchParams.get('token');
+    expect(headerTok).toBeTruthy();
+    expect(verifyUnsubscribeToken(LINK_SECRET, ws, 'opx@example.com', headerTok)).toBe(true);
+    // The header points at /unsubscribe (RFC 8058 one-click) carrying the token.
+    expect(headerUrl.pathname).toBe('/unsubscribe');
+
     // A tracked_opens row was pre-created for this recipient, workspace-scoped,
     // attributed to the broadcast + profile, opens=0.
     const o = await admin.query<{ broadcast_id: string; profile_id: string; opens: number }>(
@@ -135,6 +148,28 @@ describe.skipIf(!RUN)('dispatcher open pixel + unsubscribe attribution (real Pos
     expect(o.rows[0]!.broadcast_id).toBe(BCAST);
     expect(o.rows[0]!.profile_id).toBe(profileId);
     expect(o.rows[0]!.opens).toBe(0);
+  });
+
+  it('the body {{unsubscribe}} link points at /manage-subscription and carries a VALID token', async () => {
+    await setLinkTracking(false);
+    // A template that uses the {{unsubscribe}} body token.
+    const t = await admin.query(
+      "INSERT INTO email_templates (workspace_id, name, mjml, compiled_html) VALUES ($1,'tu','<m/>',$2) RETURNING id",
+      [ws, '<html><body><p>Bye {{unsubscribe}}</p></body></html>'],
+    );
+    const o = await admin.query(
+      "INSERT INTO outbox (workspace_id, profile_id, template_id, status, payload) VALUES ($1,$2,$3,'pending',$4::jsonb) RETURNING id",
+      [ws, profileId, t.rows[0].id, JSON.stringify({ broadcast_id: BCAST })],
+    );
+    const ses = new CapturingSes();
+    const out = await dispatchOutbox(makeDeps(ses), o.rows[0].id);
+    expect(out.result).toBe('send');
+    const html = ses.sends[0]!.html;
+    const m = html.match(/href="(https:\/\/api\.cdp\.example\/manage-subscription[^"]*)"/);
+    expect(m).toBeTruthy();
+    const url = new URL(m![1]!.replace(/&amp;/g, '&'));
+    expect(url.pathname).toBe('/manage-subscription');
+    expect(verifyUnsubscribeToken(LINK_SECRET, ws, 'opx@example.com', url.searchParams.get('token'))).toBe(true);
   });
 
   it('with link_tracking OFF: NO open pixel, NO tracked_opens row (opt-in respected)', async () => {

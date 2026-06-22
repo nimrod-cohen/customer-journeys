@@ -11,6 +11,7 @@
 //     id touches nothing). Real Postgres.
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { hasDatabaseUrl, adminPool } from '@cdp/db';
+import { signUnsubscribeToken, unsubscribeLinkSecret } from '@cdp/email';
 import { createApp } from '../src/index.js';
 import type { Pool } from 'pg';
 
@@ -20,13 +21,17 @@ const WS = '0c0d0ec3-0000-4000-8000-000000000a01';
 const WS_B = '0c0d0ec3-0000-4000-8000-000000000a02';
 const EMAIL = 'pref@example.com';
 
+// The links are TOKENIZED: the app verifies with unsubscribeLinkSecret() (the
+// dev fallback in tests). Sign with the SAME resolver the handler uses.
+const tok = (ws: string, e: string) => signUnsubscribeToken(unsubscribeLinkSecret(), ws, e);
+
 describeMaybe('public preference center (real Postgres)', () => {
   let pool: Pool;
   let app: ReturnType<typeof createApp>;
   let profileId: string;
   let topicNews: string;
   let topicDigest: string;
-  const link = `/manage-subscription?workspace_id=${WS}&email=${encodeURIComponent(EMAIL)}`;
+  const link = `/manage-subscription?workspace_id=${WS}&email=${encodeURIComponent(EMAIL)}&token=${tok(WS, EMAIL)}`;
 
   const suppressed = async () =>
     ((await pool.query('SELECT 1 FROM suppressions WHERE workspace_id=$1 AND email=$2', [WS, EMAIL])).rowCount ?? 0) > 0;
@@ -150,10 +155,66 @@ describeMaybe('public preference center (real Postgres)', () => {
     expect(res.status).toBe(400);
   });
 
+  it('a link with NO token is 403 (unguessable, signed link required)', async () => {
+    const noTok = `/manage-subscription?workspace_id=${WS}&email=${encodeURIComponent(EMAIL)}`;
+    expect((await app.request(noTok)).status).toBe(403);
+    const res = await app.request(noTok, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'unsubscribe_all=1',
+    });
+    expect(res.status).toBe(403);
+    expect(await suppressed()).toBe(false); // no write on a 403
+  });
+
+  it('a forged token (signed for another email) is 403', async () => {
+    const bad = `/manage-subscription?workspace_id=${WS}&email=${encodeURIComponent(EMAIL)}&token=${tok(WS, 'someone-else@x.com')}`;
+    expect((await app.request(bad)).status).toBe(403);
+  });
+
+  it('ADAPTIVE: topics_enabled=false → the GET shows the SIMPLE unsubscribe page and POST does a full opt-out', async () => {
+    await pool.query("UPDATE workspaces SET settings='{\"topics_enabled\":false}'::jsonb WHERE id=$1", [WS]);
+    try {
+      const get = await app.request(link);
+      expect(get.status).toBe(200);
+      const html = await get.text();
+      // The SIMPLE confirm page (one source of truth) — not the topic checkboxes.
+      expect(html).toContain('confirm-unsubscribe');
+      expect(html).not.toContain('pref-group-email');
+      // POST behaves like a plain unsubscribe: full suppression + flag.
+      const res = await post('');
+      expect(res.status).toBe(200);
+      expect(await suppressed()).toBe(true);
+      expect(await unsubAttr()).toBe('true');
+    } finally {
+      await pool.query("UPDATE workspaces SET settings='{}'::jsonb WHERE id=$1", [WS]);
+    }
+  });
+
+  it('ADAPTIVE: a workspace with ZERO active topics shows the simple page even when topics_enabled', async () => {
+    // Archive both topics so there are no ACTIVE topics → simple page.
+    await pool.query("UPDATE topics SET archived=true WHERE workspace_id=$1", [WS]);
+    try {
+      const get = await app.request(link);
+      expect(get.status).toBe(200);
+      expect(await get.text()).toContain('confirm-unsubscribe');
+    } finally {
+      await pool.query("UPDATE topics SET archived=false WHERE workspace_id=$1", [WS]);
+    }
+  });
+
+  it('ADAPTIVE: topics_enabled (default) + active topics → the topics center renders', async () => {
+    const get = await app.request(link);
+    expect(get.status).toBe(200);
+    const html = await get.text();
+    expect(html).toContain('Product news');
+    expect(html).toContain('pref-group-email');
+  });
+
   it('SCOPED: a POST for workspace B (forged) writes NOTHING in workspace A', async () => {
     // The link is for WS_B but the profile/email only exists in WS. The writes
     // resolve the profile within WS_B (none) → no WS rows touched.
-    const linkB = `/manage-subscription?workspace_id=${WS_B}&email=${encodeURIComponent(EMAIL)}`;
+    const linkB = `/manage-subscription?workspace_id=${WS_B}&email=${encodeURIComponent(EMAIL)}&token=${tok(WS_B, EMAIL)}`;
     const res = await app.request(linkB, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },

@@ -16,6 +16,9 @@ export {
 } from './core.js';
 export {
   makeUnsubscribeHandler,
+  confirmPage,
+  donePage,
+  simpleUnsubscribeStatements,
   type UnsubscribeHttpEvent,
   type UnsubscribeHttpResponse,
   type UnsubscribeDeps,
@@ -23,6 +26,7 @@ export {
 export { makeProdDeps, runUnsubscribeInWorkspaceTx, type PoolLike } from './deps.js';
 export {
   makePreferenceCenterHandler,
+  readTopicsEnabled,
   type PreferenceCenterDeps,
   type PreferenceReader,
 } from './preference-handler.js';

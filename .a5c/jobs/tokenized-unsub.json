@@ -1,0 +1,25 @@
+{
+  "filesModified": [
+    "packages/email/src/unsubscribe.ts",
+    "packages/email/src/index.ts",
+    "services/unsubscribe/src/core.ts",
+    "services/unsubscribe/src/handler.ts",
+    "services/unsubscribe/src/preference-handler.ts",
+    "services/unsubscribe/src/index.ts",
+    "services/dispatcher/src/core.ts",
+    "services/dispatcher/src/dispatch.ts",
+    "services/dispatcher/src/deps.ts",
+    "services/unsubscribe/test/unsubscribe-scoping.integration.test.ts"
+  ],
+  "filesCreated": [
+    "packages/email/test/unsubscribe-token.test.ts"
+  ],
+  "filesDeleted": [],
+  "approach": "HMAC-SHA256 token over (workspace_id, lower(email)) in @cdp/email (sign/verify, constant-time, DEV fallback secret). Dispatcher signs token onto body {{unsubscribe}} link + List-Unsubscribe header. /unsubscribe + /manage-subscription handlers verify (403 on missing/invalid). Adaptive manage page: showTopics = topics_enabled (settings jsonb, default true) AND active topic count>0; else reuse simple unsubscribe page+write. New GET /profiles/:id/subscription-link returns tokenized url. Topics-enabled toggle in Topics tab.",
+  "unitPass": true,
+  "integrationPass": false,
+  "e2ePass": false,
+  "typecheckOk": false,
+  "lintOk": false,
+  "notes": "Part 1 (tokenization+gate) done: email unit tests (11) green, unsubscribe scoping integration (9, incl 403/forged) green. Next: adaptive page (part 3 topics), profile endpoint (part 2), dispatcher token integration, web wiring, e2e."
+}

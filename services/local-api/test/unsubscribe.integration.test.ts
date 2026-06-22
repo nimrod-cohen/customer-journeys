@@ -4,6 +4,7 @@
 // profile `unsubscribed = true`. Scoped to the workspace carried in the link.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { hasDatabaseUrl, adminPool } from '@cdp/db';
+import { signUnsubscribeToken, unsubscribeLinkSecret } from '@cdp/email';
 import { createApp } from '../src/index.js';
 import type { Pool } from 'pg';
 
@@ -11,11 +12,12 @@ const describeMaybe = hasDatabaseUrl() ? describe : describe.skip;
 
 const WS = '0c0d0e30-0000-4000-8000-000000000a31';
 const EMAIL = 'optout-local@example.com';
+const tok = (ws: string, e: string) => signUnsubscribeToken(unsubscribeLinkSecret(), ws, e);
 
 describeMaybe('public /unsubscribe route (real Postgres)', () => {
   let pool: Pool;
   let app: ReturnType<typeof createApp>;
-  const link = `/unsubscribe?workspace_id=${WS}&email=${encodeURIComponent(EMAIL)}`;
+  const link = `/unsubscribe?workspace_id=${WS}&email=${encodeURIComponent(EMAIL)}&token=${tok(WS, EMAIL)}`;
 
   const suppressed = async () =>
     ((await pool.query('SELECT 1 FROM suppressions WHERE workspace_id=$1 AND email=$2', [WS, EMAIL])).rowCount ?? 0) > 0;
@@ -62,5 +64,11 @@ describeMaybe('public /unsubscribe route (real Postgres)', () => {
   it('a link missing workspace_id is a 400 (never a guessed workspace)', async () => {
     const res = await app.request(`/unsubscribe?email=${encodeURIComponent(EMAIL)}`, { method: 'POST' });
     expect(res.status).toBe(400);
+  });
+
+  it('a link with NO token is 403 (unguessable, signed link required)', async () => {
+    const noTok = `/unsubscribe?workspace_id=${WS}&email=${encodeURIComponent(EMAIL)}`;
+    expect((await app.request(noTok)).status).toBe(403);
+    expect((await app.request(noTok, { method: 'POST' })).status).toBe(403);
   });
 });

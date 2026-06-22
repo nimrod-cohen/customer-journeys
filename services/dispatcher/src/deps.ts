@@ -7,7 +7,7 @@
 // module supplies the pooled reader, the prod SES client, and the tx runner.
 import type { Pool, PoolClient } from 'pg';
 import { getPool } from '@cdp/db';
-import { ProdSesEmailClient } from '@cdp/email';
+import { ProdSesEmailClient, unsubscribeLinkSecret } from '@cdp/email';
 import { resolveChannelProvider } from '@cdp/channels';
 import type { SqlStatement } from './core.js';
 import type { HandlerDeps } from './handler.js';
@@ -77,5 +77,6 @@ export function makeProdDeps(): HandlerDeps {
     unsubscribeBaseUrl:
       process.env.UNSUBSCRIBE_BASE_URL ?? 'https://api.cdp.example/unsubscribe',
     linkTrackingBaseUrl: process.env.LINK_TRACKING_BASE_URL ?? process.env.APP_BASE_URL ?? 'https://api.cdp.example',
+    unsubscribeLinkSecret: unsubscribeLinkSecret(),
   };
 }

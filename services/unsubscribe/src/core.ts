@@ -23,6 +23,8 @@ export interface ParsedUnsubscribe {
   readonly email: string;
   /** Whether this is an RFC 8058 one-click POST confirmation. */
   readonly oneClick: boolean;
+  /** The signed HMAC token from the link (verified by the handler before any write). */
+  readonly token: string | null;
   /** Optional source broadcast (from the link) for per-send attribution. */
   readonly broadcastId: string | null;
   /** Optional source campaign (from the link) for per-send attribution. */
@@ -77,7 +79,11 @@ export function parseUnsubscribeRequest(
   const broadcastId = parsed.searchParams.get('broadcast_id') || null;
   const campaignId = parsed.searchParams.get('campaign_id') || null;
 
-  return { valid: true, workspaceId, email, oneClick, broadcastId, campaignId };
+  // The signed token (proves the link wasn't forged). The handler verifies it
+  // against (workspace_id, email) with the shared secret before any write.
+  const token = parsed.searchParams.get('token') || null;
+
+  return { valid: true, workspaceId, email, oneClick, token, broadcastId, campaignId };
 }
 
 /**

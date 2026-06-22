@@ -6,10 +6,12 @@
 // Matches the workspace design system (ink/brand/stone). data-testid throughout
 // so the Playwright contract can drive the flow.
 import { useEffect, useState } from 'preact/hooks';
-import { api } from '../store/session.js';
+import { api, sessionStore } from '../store/session.js';
+import { useStore } from '../store/store.js';
 import { navigate } from '../router.js';
-import { ActionMenu, Badge, Button, Card, EmptyState, Field, Input, Select, toneFor } from '../ui/kit.js';
+import { ActionMenu, type ActionMenuItem, Badge, Button, Card, EmptyState, Field, Input, Select, toneFor } from '../ui/kit.js';
 import { JsonView } from '../ui/JsonView.js';
+import { showToast } from '../ui/toast.tsx';
 import { MergeProfileDrawer } from './MergeProfileDrawer.js';
 import { SendEventDrawer } from './SendEventDrawer.js';
 
@@ -81,6 +83,7 @@ function fmt(ts: number | string | null | undefined): string {
 }
 
 export function ProfileDetail({ id }: { id: string }) {
+  const session = useStore(sessionStore);
   const [tab, setTab] = useState<TabId>('details');
   const [profile, setProfile] = useState<Profile | null>(null);
   const [features, setFeatures] = useState<Features | null>(null);
@@ -117,6 +120,37 @@ export function ProfileDetail({ id }: { id: string }) {
 
   const initials = (profile?.email ?? profile?.external_id ?? '?').slice(0, 2).toUpperCase();
 
+  // Copy the recipient's subscription-preferences link (the exact, TOKENIZED page
+  // they see when they click "manage subscription" in an email). The token can't be
+  // built client-side, so fetch the server-built link (byte-identical to the emailed
+  // one) and copy it.
+  const copyPrefLink = async (): Promise<void> => {
+    if (!profile?.email || !session.workspaceId) return;
+    let url = '';
+    try {
+      const r = await api.get<{ url: string }>(`/profiles/${id}/subscription-link`);
+      url = r.url;
+    } catch {
+      showToast('Could not build the subscription link.', { tone: 'error' });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Subscription link copied to the clipboard.', { tone: 'success' });
+    } catch {
+      // Clipboard unavailable (e.g. insecure context) — surface the link so it can be copied by hand.
+      showToast(url, { tone: 'info' });
+    }
+  };
+
+  const profileActions: ActionMenuItem[] = [
+    { label: 'Send event', onSelect: () => setSendingEvent(true), 'data-testid': 'send-event-action' },
+    ...(profile?.email && session.workspaceId
+      ? [{ label: 'Copy subscription link', onSelect: copyPrefLink, 'data-testid': 'copy-subscription-link' } satisfies ActionMenuItem]
+      : []),
+    { label: 'Merge…', onSelect: () => setMerging(true), 'data-testid': 'merge-button' },
+  ];
+
   return (
     <section data-testid="profile-detail">
       <div class="mb-4 flex items-center justify-between">
@@ -124,13 +158,7 @@ export function ProfileDetail({ id }: { id: string }) {
           ← Back to profiles
         </button>
         {profile ? (
-          <ActionMenu
-            data-testid="profile-actions"
-            items={[
-              { label: 'Send event', onSelect: () => setSendingEvent(true), 'data-testid': 'send-event-action' },
-              { label: 'Merge…', onSelect: () => setMerging(true), 'data-testid': 'merge-button' },
-            ]}
-          />
+          <ActionMenu data-testid="profile-actions" items={profileActions} />
         ) : null}
       </div>
 

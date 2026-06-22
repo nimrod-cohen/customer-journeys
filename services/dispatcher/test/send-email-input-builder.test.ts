@@ -129,4 +129,9 @@ describe('buildSendEmailInput', () => {
     );
     expect(input.headers?.['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
   });
+
+  it('carries the signed token in the List-Unsubscribe header when present', () => {
+    const input = buildSendEmailInput({ ...ctx(), unsubscribeToken: 'sig-xyz' });
+    expect(input.headers?.['List-Unsubscribe']).toContain('token=sig-xyz');
+  });
 });
