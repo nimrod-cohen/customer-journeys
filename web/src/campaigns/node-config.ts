@@ -353,12 +353,13 @@ export function readSendConfig(node: DslNode): SendForm {
  * (a text send has no template). Edges are re-applied by applyNodeConfig.
  */
 export function writeSendConfig(form: SendForm, keepTemplateId?: string | null): DslNode {
+  // applyNodeConfig MERGES the patch onto the existing node, so to flip channels
+  // cleanly we must explicitly clear the OTHER channel's fields (undefined keys are
+  // dropped on JSON persist) — otherwise a stale template_id/text_body strands.
   if (isTextSendMedium(form.medium)) {
-    return { type: 'action', kind: 'send', medium: form.medium, text_body: form.textBody.trim() };
+    return { type: 'action', kind: 'send', medium: form.medium, text_body: form.textBody.trim(), template_id: undefined } as unknown as DslNode;
   }
-  const node: DslNode = { type: 'action', kind: 'send', medium: 'email' };
-  if (keepTemplateId) (node as { template_id?: string }).template_id = keepTemplateId;
-  return node;
+  return { type: 'action', kind: 'send', medium: 'email', template_id: keepTemplateId ?? undefined, text_body: undefined } as unknown as DslNode;
 }
 
 // ── UPDATE-PROFILE (set_attribute) ──────────────────────────────────────────────

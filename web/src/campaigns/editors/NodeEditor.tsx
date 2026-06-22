@@ -512,14 +512,23 @@ function SendEditor(props: NodeEditorProps) {
       .catch(() => undefined);
   }, []);
 
-  // The medium selector — sits above the per-channel body. Changing it does not
-  // persist on its own; Save (text) or the attach/design flow (email) persists.
+  // The medium selector — sits above the per-channel body. Switching TO email is a
+  // valid draft, so we persist it immediately (otherwise the flip is lost when the
+  // user designs/leaves — the node stayed its old channel). Switching TO a text
+  // channel can't auto-persist (an empty text_body fails draft validation), so the
+  // explicit Save below commits it once a body is entered.
+  const changeMedium = (next: SendMedium): void => {
+    setMedium(next);
+    if (next === 'email') {
+      void props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, attachedId)).catch(() => undefined);
+    }
+  };
   const mediumSelect = (
     <Field label="Channel">
       <Select
         data-testid="send-medium"
         value={medium}
-        onChange={(e: Event) => setMedium((e.target as HTMLSelectElement).value as SendMedium)}
+        onChange={(e: Event) => changeMedium((e.target as HTMLSelectElement).value as SendMedium)}
       >
         <option value="email">Email</option>
         <option value="sms">SMS</option>
@@ -617,8 +626,13 @@ function SendEditor(props: NodeEditorProps) {
 
   // Design the email for this send node. Reuses the broadcast clone/return flow:
   // editorReturn=/campaigns/:id so the editor's Back reads "← Back to campaign".
-  const designEmail = (): void => {
+  // Persist the channel as email FIRST so a just-switched node isn't left on its old
+  // medium when we navigate away (the switch is otherwise lost on the round-trip).
+  const designEmail = async (): Promise<void> => {
     if (!props.campaignId) return;
+    if (medium !== sendNodeMedium(props.node.node)) {
+      await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, attachedId)).catch(() => undefined);
+    }
     if (attachedId) {
       setEditorReturn(`/campaigns/${props.campaignId}`);
       navigate(`/editor/${attachedId}`);
@@ -646,7 +660,11 @@ function SendEditor(props: NodeEditorProps) {
           <Button data-testid="send-design-email" onClick={designEmail}>
             Design email
           </Button>
-          <Button data-testid="send-start-over" variant="secondary" onClick={() => props.onSaveNode({ type: 'action', kind: 'send' }).then(props.onDone)}>
+          <Button
+            data-testid="send-start-over"
+            variant="secondary"
+            onClick={() => props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, null)).then(props.onDone)}
+          >
             Start over
           </Button>
         </div>

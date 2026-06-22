@@ -32,6 +32,8 @@ import {
   readWebhookConfig,
   webhookSecretHeaders,
   sendNodeNeedsEmail,
+  sendNodeMedium,
+  sendNodeTemplateId,
   readSendConfig,
   writeSendConfig,
   readEventPayloadFilter,
@@ -385,6 +387,27 @@ describe('SEND channel (medium + text_body)', () => {
   it('a text send with a blank body is rejected by the runner validator', () => {
     const node = writeSendConfig({ medium: 'whatsapp', textBody: '   ' });
     expect(() => validateCampaignDefinition(wrapSend(node))).toThrow(/text_body/i);
+  });
+
+  it('flipping channels through applyNodeConfig clears the OTHER channel\'s stale field (merge)', () => {
+    // Start with an SMS send that ALSO carries a stale template_id (the inconsistent
+    // state the merge could produce). Flip to email: the body must be gone and the
+    // medium must read email (the bug left medium=sms + the body on the node).
+    let model: CanvasModel = {
+      start: 's',
+      nodes: [{ id: 's', node: { type: 'action', kind: 'send', medium: 'sms', text_body: 'old body', template_id: 'tpl-stale' } as never }],
+      edges: [],
+    };
+    model = applyNodeConfig(model, 's', writeSendConfig({ medium: 'email', textBody: '' }, 'tpl-stale'));
+    expect(sendNodeMedium(model.nodes[0]!.node)).toBe('email');
+    expect((model.nodes[0]!.node as { text_body?: string }).text_body).toBeUndefined();
+    expect(sendNodeTemplateId(model.nodes[0]!.node)).toBe('tpl-stale');
+
+    // Flip back to a text channel: the template_id must be cleared.
+    model = applyNodeConfig(model, 's', writeSendConfig({ medium: 'sms', textBody: 'hi' }, null));
+    expect(sendNodeMedium(model.nodes[0]!.node)).toBe('sms');
+    expect(sendNodeTemplateId(model.nodes[0]!.node)).toBeNull();
+    expect(readSendConfig(model.nodes[0]!.node).textBody).toBe('hi');
   });
 });
 
