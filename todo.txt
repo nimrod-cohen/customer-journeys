@@ -85,6 +85,13 @@
 * add workspace settings - front facing language - to deal with the unsubscribe page language, 
 by default it can be the user's browser's langugage (support english and hebrew for now), but we can force a language.
 if language is hebrew, set the page to RTL.
+* the unsubscribe page is missing the app's favicon                                                                                                                                                           
+* separate company settings about SES, SMS and WhatsApp (when it will be there) to a different tab, 
+and the workspaces to a different tab
+* what happens when a profile is targeted for a broadcast or a campaign but the medium is email and we don't have his
+email address, or the medium is phone and we don't have his phone number?
+* Phones should be formatted for sms/whatsapp providers with country code - if the phone is maintained without the country code, 
+it should be converted to the proper format, with the default country selected from a dropdown at the provider settings.
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).

@@ -18,6 +18,7 @@ import {
   type SesEmailClient,
 } from '@cdp/email';
 import { dispatchOutbox, channelConfigForWorkspace, type DispatchDeps } from '@cdp/service-dispatcher';
+import { isFrontFacingLanguage } from '@cdp/service-unsubscribe';
 import {
   DEV_USERS,
   OPEN_EVENT_TYPES,
@@ -353,6 +354,11 @@ export const getWorkspaceSettings: Handler = async (ctx, pool) => {
       topics_enabled: settings.topics_enabled !== false,
       // The workspace clock for all campaign time math (§9B). Default UTC.
       timezone: typeof settings.timezone === 'string' && settings.timezone ? settings.timezone : 'UTC',
+      // The PUBLIC unsubscribe/preference-center page language. Default 'auto'
+      // (the recipient's browser language); 'en'/'he' force it (Hebrew is RTL).
+      front_facing_language: isFrontFacingLanguage(settings.front_facing_language)
+        ? settings.front_facing_language
+        : 'auto',
     },
   });
 };
@@ -372,6 +378,14 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
       return ok({ error: 'invalid timezone (must be a valid IANA zone)' }, 400);
     }
     patch.timezone = b.timezone;
+  }
+  if (b.front_facing_language !== undefined) {
+    // The public-page language. Only 'auto'|'en'|'he' allowed (Hebrew is RTL).
+    // workspace_id is from ctx only — never the body (inv.2).
+    if (!isFrontFacingLanguage(b.front_facing_language)) {
+      return ok({ error: "invalid front_facing_language (must be 'auto', 'en', or 'he')" }, 400);
+    }
+    patch.front_facing_language = b.front_facing_language;
   }
   if (Object.keys(patch).length === 0) return ok({ error: 'no recognized settings' }, 400);
   const { rows } = await pool.query(

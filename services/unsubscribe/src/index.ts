@@ -18,6 +18,7 @@ export {
   makeUnsubscribeHandler,
   confirmPage,
   donePage,
+  acceptLanguageFromEvent,
   simpleUnsubscribeStatements,
   type UnsubscribeHttpEvent,
   type UnsubscribeHttpResponse,
@@ -27,9 +28,23 @@ export { makeProdDeps, runUnsubscribeInWorkspaceTx, type PoolLike } from './deps
 export {
   makePreferenceCenterHandler,
   readTopicsEnabled,
+  readFrontFacingLanguage,
   type PreferenceCenterDeps,
   type PreferenceReader,
 } from './preference-handler.js';
+export {
+  resolveLanguage,
+  acceptLanguagePrefersHebrew,
+  isFrontFacingLanguage,
+  normalizeFrontFacingLanguage,
+  dirFor,
+  stringsFor,
+  FRONT_FACING_LANGUAGES,
+  DEFAULT_FRONT_FACING_LANGUAGE,
+  type FrontFacingLanguageSetting,
+  type Lang,
+  type Strings,
+} from './i18n.js';
 export { resolveCompanyLogoAssetId, logoImgTag, renderCompanyLogo } from './logo.js';
 export {
   parsePreferenceUpdate,
@@ -49,7 +64,18 @@ export {
 
 let cached: ReturnType<typeof makeUnsubscribeHandler> | undefined;
 
-export async function handler(event: UnsubscribeHttpEvent) {
+/**
+ * Production Lambda entry. The API Gateway event carries `headers` — we forward
+ * the `Accept-Language` header onto the synthetic event so a workspace with
+ * front_facing_language='auto' renders in the recipient's browser language
+ * (`acceptLanguageFromEvent` reads it case-insensitively).
+ */
+export async function handler(
+  event: UnsubscribeHttpEvent & { headers?: Record<string, string | undefined> | null },
+) {
   if (!cached) cached = makeUnsubscribeHandler(makeProdDeps());
-  return cached(event);
+  const acceptLanguage = event.headers
+    ? Object.entries(event.headers).find(([k]) => k.toLowerCase() === 'accept-language')?.[1] ?? null
+    : null;
+  return cached({ ...event, acceptLanguage });
 }

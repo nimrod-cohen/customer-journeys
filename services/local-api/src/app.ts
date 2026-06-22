@@ -153,14 +153,19 @@ export function createApp(opts: CreateAppOptions): Hono {
   // link). The logo URL is `<origin>/assets/<id>` — exactly the public binary
   // route below. Resolved per request so it matches whatever host served the
   // link; the handler is rebuilt per request to carry that origin into the logo.
-  const runUnsubscribe = async (method: 'GET' | 'POST', c: { req: { url: string; text: () => Promise<string> } }) => {
+  const runUnsubscribe = async (
+    method: 'GET' | 'POST',
+    c: { req: { url: string; text: () => Promise<string>; header: (n: string) => string | undefined } },
+  ) => {
     const unsubscribe = makeUnsubscribeHandler({
       runInWorkspaceTx: (workspaceId, statements) => runUnsubscribeInWorkspaceTx(opts.pool, workspaceId, statements),
       reader: opts.pool,
       assetsBaseUrl: new URL(c.req.url).origin,
     });
     const qs = new URL(c.req.url).search.replace(/^\?/, '');
-    const base = { httpMethod: method, path: '/unsubscribe', rawQueryString: qs };
+    // Thread the recipient's browser language through (front_facing_language='auto').
+    const acceptLanguage = c.req.header('accept-language') ?? null;
+    const base = { httpMethod: method, path: '/unsubscribe', rawQueryString: qs, acceptLanguage };
     if (method === 'POST') return unsubscribe({ ...base, body: await c.req.text().catch(() => '') });
     return unsubscribe(base);
   };
@@ -181,7 +186,7 @@ export function createApp(opts: CreateAppOptions): Hono {
   // come ONLY from the scoped link. Reuses the SAME handler the Lambda runs.
   const runPrefCenter = async (
     method: 'GET' | 'POST',
-    c: { req: { url: string; text: () => Promise<string> } },
+    c: { req: { url: string; text: () => Promise<string>; header: (n: string) => string | undefined } },
   ) => {
     const preferenceCenter = makePreferenceCenterHandler({
       reader: opts.pool,
@@ -189,7 +194,9 @@ export function createApp(opts: CreateAppOptions): Hono {
       assetsBaseUrl: new URL(c.req.url).origin,
     });
     const qs = new URL(c.req.url).search.replace(/^\?/, '');
-    const base = { httpMethod: method, path: '/manage-subscription', rawQueryString: qs };
+    // Thread the recipient's browser language through (front_facing_language='auto').
+    const acceptLanguage = c.req.header('accept-language') ?? null;
+    const base = { httpMethod: method, path: '/manage-subscription', rawQueryString: qs, acceptLanguage };
     if (method === 'POST') return preferenceCenter({ ...base, body: await c.req.text().catch(() => '') });
     return preferenceCenter(base);
   };

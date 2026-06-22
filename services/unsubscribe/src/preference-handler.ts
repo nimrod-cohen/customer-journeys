@@ -22,10 +22,12 @@ import {
 import {
   confirmPage,
   donePage,
+  acceptLanguageFromEvent,
   simpleUnsubscribeStatements,
   type UnsubscribeHttpEvent,
   type UnsubscribeHttpResponse,
 } from './handler.js';
+import { resolveLanguage, dirFor, stringsFor, type Lang } from './i18n.js';
 import {
   parsePreferenceUpdate,
   buildActiveTopicsQuery,
@@ -46,16 +48,31 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
-function shell(title: string, inner: string, logoHtml = ''): string {
+/**
+ * `{email}` → an LTR email span so the address reads cleanly inside an RTL
+ * (Hebrew) sentence.
+ */
+function withEmail(template: string, email: string): string {
+  return template.replace('{email}', `<span class="email" dir="ltr">${esc(email)}</span>`);
+}
+
+/**
+ * The preference-center page shell. Language-aware: `<html lang dir>` follows the
+ * resolved language (Hebrew → `dir="rtl"`). The card aligns to the START edge so
+ * RTL reads right; the email span is forced LTR. `lang` default 'en' keeps the
+ * page byte-for-byte as before for unset/English workspaces.
+ */
+function shell(title: string, inner: string, logoHtml = '', lang: Lang = 'en'): string {
+  const dir = dirFor(lang);
   return (
-    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<!doctype html><html lang="${lang}" dir="${dir}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>` +
     `<style>body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:#fafaf9;color:#1c1917;` +
     `display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:24px;box-sizing:border-box}` +
     `.card{background:#fff;border:1px solid #e7e5e4;border-radius:16px;padding:32px;max-width:480px;width:100%;` +
-    `box-shadow:0 8px 24px rgba(0,0,0,.06)}h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;text-transform:uppercase;` +
+    `box-shadow:0 8px 24px rgba(0,0,0,.06);text-align:start}h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;text-transform:uppercase;` +
     `letter-spacing:.04em;color:#78716c;margin:24px 0 8px}p{color:#57534e;font-size:14px;line-height:1.5}` +
-    `.email{font-weight:600;color:#1c1917}label{display:flex;align-items:center;gap:10px;padding:10px 12px;` +
+    `.email{font-weight:600;color:#1c1917;unicode-bidi:isolate}label{display:flex;align-items:center;gap:10px;padding:10px 12px;` +
     `border:1px solid #e7e5e4;border-radius:10px;margin:6px 0;font-size:14px;cursor:pointer}` +
     `input[type=checkbox]{width:18px;height:18px;accent-color:#0f766e}` +
     `.row{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}` +
@@ -73,7 +90,9 @@ function centerPage(
   topics: TopicChoice[],
   groupSubscribed: Record<string, boolean>,
   logoHtml = '',
+  lang: Lang = 'en',
 ): string {
+  const s = stringsFor(lang);
   const topicRows = topics.length
     ? topics
         .map(
@@ -82,10 +101,10 @@ function centerPage(
             `data-testid="pref-topic-${esc(t.id)}"><span>${esc(t.name)}</span></label>`,
         )
         .join('')
-    : '<p class="muted">This sender has no topics.</p>';
+    : `<p class="muted">${esc(s.noTopics)}</p>`;
 
   const groupRows = MEDIUM_GROUPS.map((g) => {
-    const label = g === 'email' ? 'Email' : 'WhatsApp & SMS';
+    const label = g === 'email' ? s.channelEmail : s.channelSmsWhatsapp;
     return (
       `<label><input type="checkbox" name="group.${g}" ${groupSubscribed[g] ? 'checked' : ''} ` +
       `data-testid="pref-group-${g}"><span>${esc(label)}</span></label>`
@@ -93,34 +112,37 @@ function centerPage(
   }).join('');
 
   return shell(
-    'Manage your subscription',
-    `<h1>Manage your subscription</h1>` +
-      `<p><span class="email">${esc(email)}</span> — choose what you'd like to receive.</p>` +
+    s.manageTitle,
+    `<h1>${esc(s.manageHeading)}</h1>` +
+      `<p>${withEmail(s.manageIntro, email)}</p>` +
       `<form method="POST" action="${esc(actionUrl)}" data-testid="pref-form">` +
-      `<h2>Topics</h2>${topicRows}` +
-      `<h2>Channels</h2>${groupRows}` +
+      `<h2>${esc(s.topicsHeading)}</h2>${topicRows}` +
+      `<h2>${esc(s.channelsHeading)}</h2>${groupRows}` +
       `<div class="row">` +
-      `<button type="submit" class="primary" data-testid="pref-save">Save preferences</button>` +
+      `<button type="submit" class="primary" data-testid="pref-save">${esc(s.savePreferences)}</button>` +
       `</div></form>` +
       // A SEPARATE form so "unsubscribe from everything" is an unambiguous action.
       `<form method="POST" action="${esc(actionUrl)}" data-testid="pref-all-form">` +
       `<input type="hidden" name="unsubscribe_all" value="1">` +
       `<div class="row"><button type="submit" class="danger" data-testid="pref-unsub-all">` +
-      `Unsubscribe from everything</button></div></form>`,
+      `${esc(s.unsubscribeFromEverything)}</button></div></form>`,
     logoHtml,
+    lang,
   );
 }
 
-function savedPage(email: string, all: boolean, logoHtml = ''): string {
+function savedPage(email: string, all: boolean, logoHtml = '', lang: Lang = 'en'): string {
+  const s = stringsFor(lang);
+  // "unsubscribe from everything" lands on the SIMPLE unsubscribed page copy; a
+  // partial save lands on the preferences-saved copy.
+  const heading = all ? s.unsubscribedHeading : s.preferencesSavedHeading;
+  const title = all ? s.unsubscribedTitle : s.preferencesSavedTitle;
+  const body = all ? s.unsubscribedBody : s.preferencesSavedBody;
   return shell(
-    'Preferences saved',
-    `<h1 class="ok">${all ? "You're unsubscribed" : 'Preferences saved'}</h1>` +
-      `<p><span class="email">${esc(email)}</span> — ` +
-      (all
-        ? `you won't receive any further messages from this sender.`
-        : `your subscription preferences have been updated.`) +
-      ` You can close this page.</p>`,
+    title,
+    `<h1 class="ok">${esc(heading)}</h1>` + `<p>${withEmail(body, email)}</p>`,
     logoHtml,
+    lang,
   );
 }
 
@@ -163,6 +185,23 @@ export async function readTopicsEnabled(reader: PreferenceReader, workspaceId: s
   return rows[0]?.topics_enabled !== false;
 }
 
+/**
+ * The workspace's persisted `settings.front_facing_language` ('auto'|'en'|'he').
+ * Missing/unknown ⇒ undefined (the caller's resolveLanguage normalizes to 'auto').
+ * Workspace-scoped (tenant-isolation guard).
+ */
+export async function readFrontFacingLanguage(
+  reader: PreferenceReader,
+  workspaceId: string,
+): Promise<string | undefined> {
+  if (!workspaceId) throw new Error('readFrontFacingLanguage: workspaceId is required (tenant-isolation guard)');
+  const { rows } = await reader.query<{ lang: string | null }>(
+    `SELECT settings->>'front_facing_language' AS lang FROM workspaces WHERE id = $1`,
+    [workspaceId],
+  );
+  return rows[0]?.lang ?? undefined;
+}
+
 /** Reconstruct a URL string (with query) from an API-Gateway-style event. */
 function urlFromEvent(event: UnsubscribeHttpEvent): string {
   const path = event.rawPath ?? event.path ?? '/manage-subscription';
@@ -180,6 +219,11 @@ function urlFromEvent(event: UnsubscribeHttpEvent): string {
 /** Build the preference-center handler from its injected dependencies. */
 export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
   return async function handler(event: UnsubscribeHttpEvent): Promise<UnsubscribeHttpResponse> {
+    // The recipient's browser language (for the 'auto' workspace setting).
+    const acceptLanguage = acceptLanguageFromEvent(event);
+    // Error pages render before the workspace is known → browser language only.
+    const fallbackLang = resolveLanguage('auto', acceptLanguage);
+    const errStrings = stringsFor(fallbackLang);
     try {
       const method = (event.httpMethod ?? 'GET').toUpperCase();
       const url = urlFromEvent(event);
@@ -197,13 +241,13 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
           return {
             statusCode: 403,
             headers: HTML_HEADERS,
-            body: shell('Manage your subscription', `<h1>Invalid or expired link</h1><p>This link could not be verified.</p>`),
+            body: shell(errStrings.manageTitle, `<h1>${esc(errStrings.invalidOrExpiredTitle)}</h1><p>${esc(errStrings.couldNotVerify)}</p>`, '', fallbackLang),
           };
         }
         return {
           statusCode: 400,
           headers: HTML_HEADERS,
-          body: shell('Manage your subscription', `<h1>Invalid link</h1><p>${esc(parsed.reason)}</p>`),
+          body: shell(errStrings.manageTitle, `<h1>${esc(errStrings.invalidLinkTitle)}</h1><p>${esc(parsed.reason)}</p>`, '', fallbackLang),
         };
       }
       const { workspaceId, email } = parsed;
@@ -215,9 +259,13 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
         return {
           statusCode: 403,
           headers: HTML_HEADERS,
-          body: shell('Manage your subscription', `<h1>Invalid or expired link</h1><p>This link could not be verified.</p>`),
+          body: shell(errStrings.manageTitle, `<h1>${esc(errStrings.invalidOrExpiredTitle)}</h1><p>${esc(errStrings.couldNotVerify)}</p>`, '', fallbackLang),
         };
       }
+
+      // The workspace is known: resolve its front-facing language (forced en/he,
+      // or browser-derived for 'auto'). Default keeps English/LTR.
+      const lang = resolveLanguage(await readFrontFacingLanguage(deps.reader, workspaceId), acceptLanguage);
 
       // Resolve the sending company's logo (decorative; '' when none/not wired).
       const logoHtml = await renderCompanyLogo(deps.reader, deps.assetsBaseUrl, workspaceId);
@@ -236,13 +284,13 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
       if (!showTopics) {
         // SIMPLE flow — identical page + write as GET/POST /unsubscribe.
         if (method === 'GET') {
-          return { statusCode: 200, headers: HTML_HEADERS, body: confirmPage(email, url, logoHtml) };
+          return { statusCode: 200, headers: HTML_HEADERS, body: confirmPage(email, url, logoHtml, lang) };
         }
         await deps.runInWorkspaceTx(
           workspaceId,
           simpleUnsubscribeStatements(workspaceId, email, parsed.broadcastId, parsed.campaignId, 'preference-center'),
         );
-        return { statusCode: 200, headers: HTML_HEADERS, body: donePage(email, logoHtml) };
+        return { statusCode: 200, headers: HTML_HEADERS, body: donePage(email, logoHtml, lang) };
       }
 
       const tStateQ = buildTopicStateQuery(workspaceId, email);
@@ -262,7 +310,7 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
         return {
           statusCode: 200,
           headers: HTML_HEADERS,
-          body: centerPage(email, url, choices, groupSubscribed, logoHtml),
+          body: centerPage(email, url, choices, groupSubscribed, logoHtml, lang),
         };
       }
 
@@ -280,7 +328,7 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
           buildUnsubscribeActivity(workspaceId, email),
         ];
         await deps.runInWorkspaceTx(workspaceId, statements);
-        return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, true, logoHtml) };
+        return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, true, logoHtml, lang) };
       }
 
       // PARTIAL update: per-topic + per-group writes ONLY. NEVER the global
@@ -294,12 +342,12 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
         statements.push(buildChannelOptOutWrite(workspaceId, email, group, !subscribed));
       }
       if (statements.length) await deps.runInWorkspaceTx(workspaceId, statements);
-      return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, false, logoHtml) };
+      return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, false, logoHtml, lang) };
     } catch {
       return {
         statusCode: 500,
         headers: HTML_HEADERS,
-        body: shell('Manage your subscription', `<h1>Something went wrong</h1><p>Please try again in a moment.</p>`),
+        body: shell(errStrings.manageTitle, `<h1>${esc(errStrings.somethingWrongTitle)}</h1><p>${esc(errStrings.tryAgain)}</p>`, '', fallbackLang),
       };
     }
   };

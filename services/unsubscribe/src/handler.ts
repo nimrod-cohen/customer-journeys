@@ -16,6 +16,7 @@ import {
   type SqlStatement,
 } from './core.js';
 import { renderCompanyLogo } from './logo.js';
+import { resolveLanguage, dirFor, stringsFor, type Lang } from './i18n.js';
 import type { PreferenceReader } from './preference-handler.js';
 
 const HTML_HEADERS = { 'content-type': 'text/html; charset=utf-8' } as const;
@@ -25,19 +26,33 @@ function esc(s: string): string {
 }
 
 /**
+ * Render a body string that embeds the recipient email. `{email}` is replaced by
+ * an `<span class="email" dir="ltr">` so the address stays LEFT-TO-RIGHT even
+ * inside an RTL (Hebrew) sentence — emails/URLs read cleanly that way.
+ */
+function withEmail(template: string, email: string): string {
+  return template.replace('{email}', `<span class="email" dir="ltr">${esc(email)}</span>`);
+}
+
+/**
  * A minimal self-contained HTML page (no external assets except the optional
  * company logo `<img>`, which is served public-by-uuid). `logoHtml` (default '')
  * is emitted at the TOP of the card; with no logo the page renders as before.
+ *
+ * The page is language-aware: `<html lang dir>` follows the resolved language
+ * (Hebrew → `dir="rtl"`). The card text aligns to the START edge so RTL reads
+ * right; the email span is forced LTR so a mixed sentence renders cleanly.
  */
-function page(title: string, inner: string, logoHtml = ''): string {
+function page(lang: Lang, title: string, inner: string, logoHtml = ''): string {
+  const dir = dirFor(lang);
   return (
-    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<!doctype html><html lang="${lang}" dir="${dir}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>` +
     `<style>body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:#fafaf9;color:#1c1917;` +
     `display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}` +
     `.card{background:#fff;border:1px solid #e7e5e4;border-radius:16px;padding:32px;max-width:440px;width:90%;` +
     `box-shadow:0 8px 24px rgba(0,0,0,.06);text-align:center}h1{font-size:20px;margin:0 0 8px}` +
-    `p{color:#57534e;font-size:14px;line-height:1.5}.email{font-weight:600;color:#1c1917}` +
+    `p{color:#57534e;font-size:14px;line-height:1.5}.email{font-weight:600;color:#1c1917;unicode-bidi:isolate}` +
     `button{margin-top:20px;background:#b91c1c;color:#fff;border:0;border-radius:10px;padding:11px 20px;` +
     `font-size:14px;font-weight:600;cursor:pointer}button:hover{background:#991b1b}.ok{color:#0f766e}</style></head>` +
     `<body><div class="card">${logoHtml}${inner}</div></body></html>`
@@ -48,26 +63,29 @@ function page(title: string, inner: string, logoHtml = ''): string {
  * The SIMPLE unsubscribe confirm page (the one source of truth — the preference
  * center reuses this when topics are disabled / there are none). Exported so the
  * preference handler renders the IDENTICAL page. `logoHtml` (optional) renders the
- * company logo atop the card.
+ * company logo atop the card. `lang` selects the rendered language (default 'en'
+ * keeps the page byte-for-byte as before for unset/English workspaces).
  */
-export function confirmPage(email: string, actionUrl: string, logoHtml = ''): string {
+export function confirmPage(email: string, actionUrl: string, logoHtml = '', lang: Lang = 'en'): string {
+  const s = stringsFor(lang);
   return page(
-    'Unsubscribe',
-    `<h1>Unsubscribe from these emails?</h1>` +
-      `<p><span class="email">${esc(email)}</span> will no longer receive emails from this sender.</p>` +
+    lang,
+    s.unsubscribeTitle,
+    `<h1>${esc(s.unsubscribeHeading)}</h1>` +
+      `<p>${withEmail(s.unsubscribeBody, email)}</p>` +
       `<form method="POST" action="${esc(actionUrl)}">` +
-      `<button type="submit" data-testid="confirm-unsubscribe">Yes, unsubscribe me</button></form>`,
+      `<button type="submit" data-testid="confirm-unsubscribe">${esc(s.unsubscribeButton)}</button></form>`,
     logoHtml,
   );
 }
 
 /** The SIMPLE "you're unsubscribed" page (shared with the preference center). */
-export function donePage(email: string, logoHtml = ''): string {
+export function donePage(email: string, logoHtml = '', lang: Lang = 'en'): string {
+  const s = stringsFor(lang);
   return page(
-    'Unsubscribed',
-    `<h1 class="ok">You're unsubscribed</h1>` +
-      `<p><span class="email">${esc(email)}</span> won't receive further emails from this sender. ` +
-      `You can close this page.</p>`,
+    lang,
+    s.unsubscribedTitle,
+    `<h1 class="ok">${esc(s.unsubscribedHeading)}</h1>` + `<p>${withEmail(s.unsubscribedBody, email)}</p>`,
     logoHtml,
   );
 }
@@ -80,6 +98,44 @@ export interface UnsubscribeHttpEvent {
   readonly rawQueryString?: string;
   readonly queryStringParameters?: Record<string, string | undefined> | null;
   readonly body?: string | null;
+  /**
+   * The recipient's `Accept-Language` header — used when the workspace's
+   * front_facing_language is 'auto' to pick Hebrew vs English from the browser.
+   * Threaded in from the API Gateway event headers (local-api passes
+   * `c.req.header('accept-language')`).
+   */
+  readonly acceptLanguage?: string | null;
+}
+
+/**
+ * Read the Accept-Language header off an API-Gateway-style event (case-insensitive)
+ * or the synthetic `acceptLanguage` field the local-api wires in. Null when absent.
+ */
+export function acceptLanguageFromEvent(
+  event: UnsubscribeHttpEvent & { headers?: Record<string, string | undefined> | null },
+): string | null {
+  if (event.acceptLanguage != null) return event.acceptLanguage;
+  const h = event.headers;
+  if (!h) return null;
+  for (const [k, v] of Object.entries(h)) {
+    if (k.toLowerCase() === 'accept-language' && v != null) return v;
+  }
+  return null;
+}
+
+/**
+ * Read the workspace's persisted `settings.front_facing_language`
+ * ('auto'|'en'|'he'). Missing/unknown ⇒ undefined (resolveLanguage normalizes to
+ * 'auto'). Workspace-scoped (tenant-isolation guard). Kept here (not in
+ * preference-handler) to avoid a circular import.
+ */
+async function readWorkspaceLanguage(reader: PreferenceReader, workspaceId: string): Promise<string | undefined> {
+  if (!workspaceId) throw new Error('readWorkspaceLanguage: workspaceId is required (tenant-isolation guard)');
+  const { rows } = await reader.query<{ lang: string | null }>(
+    `SELECT settings->>'front_facing_language' AS lang FROM workspaces WHERE id = $1`,
+    [workspaceId],
+  );
+  return rows[0]?.lang ?? undefined;
 }
 
 /** The HTTP response the handler returns. */
@@ -152,6 +208,12 @@ function urlFromEvent(event: UnsubscribeHttpEvent): string {
 /** Build the unsubscribe handler from its injected dependencies. */
 export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
   return async function handler(event: UnsubscribeHttpEvent): Promise<UnsubscribeHttpResponse> {
+    // The recipient's browser language (for the 'auto' workspace setting).
+    const acceptLanguage = acceptLanguageFromEvent(event);
+    // The error pages are rendered BEFORE we know the workspace, so they fall back
+    // to the recipient's browser language only (no workspace setting available).
+    const fallbackLang = resolveLanguage('auto', acceptLanguage);
+    const errStrings = stringsFor(fallbackLang);
     try {
       const method = (event.httpMethod ?? 'GET').toUpperCase();
       const url = urlFromEvent(event);
@@ -168,13 +230,13 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
           return {
             statusCode: 403,
             headers: HTML_HEADERS,
-            body: page('Unsubscribe', `<h1>Invalid or expired link</h1><p>This unsubscribe link could not be verified.</p>`),
+            body: page(fallbackLang, errStrings.unsubscribeTitle, `<h1>${esc(errStrings.invalidOrExpiredTitle)}</h1><p>${esc(errStrings.couldNotVerify)}</p>`),
           };
         }
         return {
           statusCode: 400,
           headers: HTML_HEADERS,
-          body: page('Unsubscribe', `<h1>Invalid unsubscribe link</h1><p>${esc(parsed.reason)}</p>`),
+          body: page(fallbackLang, errStrings.unsubscribeTitle, `<h1>${esc(errStrings.invalidLinkTitle)}</h1><p>${esc(parsed.reason)}</p>`),
         };
       }
       // TOKEN GATE (security): the link is UNGUESSABLE. The compact `?t=` token
@@ -187,16 +249,22 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
         return {
           statusCode: 403,
           headers: HTML_HEADERS,
-          body: page('Unsubscribe', `<h1>Invalid or expired link</h1><p>This unsubscribe link could not be verified.</p>`),
+          body: page(fallbackLang, errStrings.unsubscribeTitle, `<h1>${esc(errStrings.invalidOrExpiredTitle)}</h1><p>${esc(errStrings.couldNotVerify)}</p>`),
         };
       }
+      // Now the workspace is known: resolve its front-facing language (forced
+      // en/he, or browser-derived for 'auto'). Default keeps English/LTR.
+      const lang = resolveLanguage(
+        deps.reader ? await readWorkspaceLanguage(deps.reader, parsed.workspaceId) : 'auto',
+        acceptLanguage,
+      );
       // Resolve the sending company's logo (decorative; '' when none/not wired).
       const logoHtml = await renderCompanyLogo(deps.reader, deps.assetsBaseUrl, parsed.workspaceId);
       // GET = the link click. It is PREFETCHABLE (mail clients/proxies fetch it),
       // so it must NOT opt anyone out — just show the re-affirm page whose form
       // POSTs back to this same URL.
       if (method === 'GET') {
-        return { statusCode: 200, headers: HTML_HEADERS, body: confirmPage(parsed.email, url, logoHtml) };
+        return { statusCode: 200, headers: HTML_HEADERS, body: confirmPage(parsed.email, url, logoHtml, lang) };
       }
       // POST = the user re-affirmed (Confirm button) OR an RFC 8058 one-click.
       // Workspace-scoped writes in ONE tx — never touches another workspace:
@@ -208,13 +276,13 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
         parsed.workspaceId,
         simpleUnsubscribeStatements(parsed.workspaceId, parsed.email, parsed.broadcastId, parsed.campaignId),
       );
-      return { statusCode: 200, headers: HTML_HEADERS, body: donePage(parsed.email, logoHtml) };
+      return { statusCode: 200, headers: HTML_HEADERS, body: donePage(parsed.email, logoHtml, lang) };
     } catch {
       // Never throw out of the handler; surface a 500 the caller can retry.
       return {
         statusCode: 500,
         headers: HTML_HEADERS,
-        body: page('Unsubscribe', `<h1>Something went wrong</h1><p>Please try again in a moment.</p>`),
+        body: page(fallbackLang, errStrings.unsubscribeTitle, `<h1>${esc(errStrings.somethingWrongTitle)}</h1><p>${esc(errStrings.tryAgain)}</p>`),
       };
     }
   };

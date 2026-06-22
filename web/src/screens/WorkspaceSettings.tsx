@@ -9,7 +9,7 @@ import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader, Select } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { timeZoneList } from '@cdp/shared';
-import { saveWorkspaceTimezone } from './workspaceSettingsLogic.js';
+import { saveWorkspaceTimezone, saveWorkspaceLanguage, type FrontFacingLanguage } from './workspaceSettingsLogic.js';
 import { SendingDomainsPanel } from './SendingDomainsList.tsx';
 import { TopicsPanel } from './Topics.tsx';
 
@@ -32,6 +32,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   const [lowercaseEmails, setLowercaseEmails] = useState(true);
   const [linkTracking, setLinkTracking] = useState(false);
   const [timezone, setTimezone] = useState('UTC');
+  const [language, setLanguage] = useState<FrontFacingLanguage>('auto');
   // Lock the toggles while a settings PUT is in flight (no racing re-toggles).
   const [savingSettings, setSavingSettings] = useState(false);
 
@@ -42,13 +43,19 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   useEffect(() => {
     void reload();
     void api
-      .get<{ settings: { lowercase_emails?: boolean; link_tracking?: boolean; timezone?: string } }>(
-        '/workspace/settings',
-      )
+      .get<{
+        settings: {
+          lowercase_emails?: boolean;
+          link_tracking?: boolean;
+          timezone?: string;
+          front_facing_language?: FrontFacingLanguage;
+        };
+      }>('/workspace/settings')
       .then((r) => {
         setLowercaseEmails(r.settings.lowercase_emails !== false);
         setLinkTracking(r.settings.link_tracking === true);
         setTimezone(r.settings.timezone || 'UTC');
+        setLanguage(r.settings.front_facing_language ?? 'auto');
       });
   }, []);
 
@@ -65,6 +72,14 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
     const list = timeZoneList();
     return list.includes(timezone) ? list : [timezone, ...list];
   })();
+
+  // The PUBLIC unsubscribe/preference-center page language. Optimistic + rollback;
+  // RETURN the promise so the kit Button auto-locks (standing button rule).
+  const saveLanguage = (next: FrontFacingLanguage) => {
+    const previous = language;
+    setLanguage(next); // optimistic
+    return saveWorkspaceLanguage(next, { previous, setLanguage, put: api.put, toast: showToast });
+  };
 
   const toggleLinkTracking = async () => {
     if (savingSettings) return;
@@ -311,6 +326,35 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
             </Select>
           </Field>
           <Button data-testid="workspace-timezone-save" onClick={() => saveTimezone(timezone)}>
+            Save
+          </Button>
+        </div>
+      </Card>
+
+      <Card class="mt-6 flex flex-wrap items-end justify-between gap-3 p-5">
+        <div class="min-w-[16rem] flex-1">
+          <h2 class="text-base font-bold text-ink-900">Front-facing language</h2>
+          <p class="mt-1 text-sm text-stone-500">
+            The language of the public unsubscribe and subscription-preference pages your recipients see. Choose the
+            visitor&rsquo;s browser language, or force English or Hebrew (Hebrew renders right-to-left).
+          </p>
+        </div>
+        <div class="flex items-end gap-2">
+          <Field label="Page language">
+            <Select
+              data-testid="workspace-language-select"
+              class="w-64"
+              value={language}
+              onChange={(e: Event) => {
+                void saveLanguage((e.target as HTMLSelectElement).value as FrontFacingLanguage);
+              }}
+            >
+              <option value="auto">Visitor&rsquo;s browser language (auto)</option>
+              <option value="en">English</option>
+              <option value="he">עברית (Hebrew)</option>
+            </Select>
+          </Field>
+          <Button data-testid="workspace-language-save" onClick={() => saveLanguage(language)}>
             Save
           </Button>
         </div>
