@@ -63,31 +63,44 @@ function withEmail(template: string, email: string): string {
  * RTL reads right; the email span is forced LTR. `lang` default 'en' keeps the
  * page byte-for-byte as before for unset/English workspaces.
  */
-function shell(title: string, inner: string, logoHtml = '', lang: Lang = 'en'): string {
+function shell(title: string, inner: string, logoHtml = '', lang: Lang = 'en', wide = false): string {
   const dir = dirFor(lang);
+  const header = logoHtml ? `<div class="header">${logoHtml}</div>` : '';
   return (
     `<!doctype html><html lang="${lang}" dir="${dir}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>` +
     FAVICON_LINK +
-    `<style>body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:#fafaf9;color:#1c1917;` +
-    `display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:24px;box-sizing:border-box}` +
-    `.card{background:#fff;border:1px solid #e7e5e4;border-radius:16px;padding:32px;max-width:480px;width:100%;` +
-    `box-shadow:0 8px 24px rgba(0,0,0,.06);text-align:start}h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;text-transform:uppercase;` +
-    `letter-spacing:.04em;color:#78716c;margin:24px 0 8px}p{color:#57534e;font-size:14px;line-height:1.5}` +
-    `.email{font-weight:600;color:#1c1917;unicode-bidi:isolate}` +
-    // Each option is a clean row — NO border/card. Checkbox + a name and a light
-    // description stacked; subtle hover only.
-    `.opt{display:flex;align-items:flex-start;gap:12px;padding:12px 6px;margin:2px 0;border-radius:8px;cursor:pointer}` +
-    `.opt:hover{background:#f5f5f4}.opt-text{display:flex;flex-direction:column;gap:2px}` +
-    `.opt-name{font-weight:500;color:#1c1917;font-size:15px;line-height:1.3}` +
-    `.opt-desc{font-weight:300;color:#78716c;font-size:13px;line-height:1.45}` +
-    `input[type=checkbox]{width:20px;height:20px;margin-top:1px;flex:none;accent-color:#047857;cursor:pointer}` +
-    `.row{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap}` +
-    `button{border:0;border-radius:10px;padding:12px 20px;font-size:14px;font-weight:600;cursor:pointer}` +
-    `.primary{background:#047857;color:#fff}.primary:hover{background:#065f46}` +
-    `.danger{background:#fff;color:#b91c1c;border:1px solid #fecaca}.danger:hover{background:#fef2f2}` +
-    `.ok{color:#047857}.muted{color:#78716c;font-size:13px}</style></head>` +
-    `<body><div class="card">${logoHtml}${inner}</div></body></html>`
+    `<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:#f3f4f6;` +
+    `color:#1c1917;display:flex;min-height:100vh;align-items:flex-start;justify-content:center;margin:0;padding:32px 16px}` +
+    `.card{background:#fff;border-radius:18px;max-width:${wide ? '760px' : '460px'};width:100%;` +
+    `box-shadow:0 10px 40px rgba(0,0,0,.08);overflow:hidden}` +
+    `.header{padding:24px;border-bottom:1px solid #eef0f2;text-align:center}.content{padding:28px 32px}` +
+    `h1{font-size:24px;font-weight:800;margin:0 0 6px;text-align:start}` +
+    `.intro{color:#78716c;font-size:14px;line-height:1.5;margin:0 0 24px;text-align:start}` +
+    `.email{font-weight:700;color:#1c1917;unicode-bidi:isolate}` +
+    // Two columns: Topics | divider | Channels — collapses to one column on mobile.
+    `.cols{display:grid;grid-template-columns:1fr 1px 1fr;gap:28px;align-items:start}` +
+    `.vdiv{background:#eef0f2;align-self:stretch}` +
+    `.sec-label{font-size:12px;font-weight:600;letter-spacing:.05em;color:#a8a29e;text-align:start;margin-bottom:6px}` +
+    // Each option: name (bold) + a light description, with a toggle (and an icon for channels).
+    `.opt{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0}` +
+    `.opt-text{display:flex;flex-direction:column;gap:3px;text-align:start;min-width:0}` +
+    `.opt-name{font-weight:700;color:#1c1917;font-size:15px;line-height:1.3}` +
+    `.opt-desc{font-weight:400;color:#9ca3af;font-size:13px;line-height:1.45}` +
+    `.opt-end{display:flex;align-items:center;gap:12px;flex:none}` +
+    `.ch-icon{width:40px;height:40px;border-radius:10px;background:#eef4f0;color:#15803d;display:flex;align-items:center;justify-content:center;flex:none}` +
+    // CSS toggle switch (direction-aware via inset-inline so the knob slides to the END when on).
+    `.switch{position:relative;display:inline-block;width:46px;height:26px;flex:none}` +
+    `.switch input{position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0;cursor:pointer;z-index:2}` +
+    `.switch .track{position:absolute;inset:0;background:#d1d5db;border-radius:999px;transition:.2s}` +
+    `.switch .knob{position:absolute;top:3px;inset-inline-start:3px;width:20px;height:20px;background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:.2s}` +
+    `.switch input:checked~.track{background:#16a34a}.switch input:checked~.knob{inset-inline-start:auto;inset-inline-end:3px}` +
+    `button{border:0;border-radius:12px;padding:15px 20px;font-size:15px;font-weight:700;cursor:pointer;width:100%;display:block}` +
+    `.primary{background:#15803d;color:#fff;margin-top:24px;box-shadow:0 8px 20px rgba(21,128,61,.25)}.primary:hover{background:#166534}` +
+    `.danger{background:#fff;color:#b91c1c;border:1px solid #fecaca;margin-top:12px}.danger:hover{background:#fef2f2}` +
+    `.ok{color:#15803d}.muted{color:#9ca3af;font-size:14px}` +
+    `@media(max-width:640px){.content{padding:24px 20px}.cols{grid-template-columns:1fr;gap:0}.vdiv{height:1px;width:auto;margin:18px 0}}</style></head>` +
+    `<body><div class="card">${header}<div class="content">${inner}</div></div></body></html>`
   );
 }
 
@@ -100,18 +113,23 @@ function centerPage(
   lang: Lang = 'en',
 ): string {
   const s = stringsFor(lang);
-  const optRow = (input: string, name: string, desc: string): string =>
-    `<label class="opt">${input}<span class="opt-text"><span class="opt-name">${esc(name)}</span>` +
+  // A green toggle SWITCH backed by a real checkbox (so the existing POST handling +
+  // testids are unchanged); the input sits on top (clickable, but opacity 0).
+  const toggle = (name: string, checked: boolean, testid: string): string =>
+    `<span class="switch"><input type="checkbox" name="${name}" ${checked ? 'checked' : ''} data-testid="${testid}">` +
+    `<span class="track"></span><span class="knob"></span></span>`;
+  const row = (name: string, desc: string, sw: string, icon = ''): string =>
+    `<label class="opt"><span class="opt-text"><span class="opt-name">${esc(name)}</span>` +
     (desc ? `<span class="opt-desc">${esc(desc)}</span>` : '') +
-    `</span></label>`;
+    `</span><span class="opt-end">${icon}${sw}</span></label>`;
 
   const topicRows = topics.length
     ? topics
         .map((t) =>
-          optRow(
-            `<input type="checkbox" name="topic.${esc(t.id)}" ${t.subscribed ? 'checked' : ''} data-testid="pref-topic-${esc(t.id)}">`,
+          row(
             t.name,
             t.description ?? '',
+            toggle(`topic.${esc(t.id)}`, t.subscribed, `pref-topic-${esc(t.id)}`),
           ),
         )
         .join('')
@@ -120,32 +138,37 @@ function centerPage(
   const groupRows = MEDIUM_GROUPS.map((g) => {
     const label = g === 'email' ? s.channelEmail : s.channelSmsWhatsapp;
     const desc = g === 'email' ? s.channelEmailDesc : s.channelSmsWhatsappDesc;
-    return optRow(
-      `<input type="checkbox" name="group.${g}" ${groupSubscribed[g] ? 'checked' : ''} data-testid="pref-group-${g}">`,
-      label,
-      desc,
-    );
+    const icon = `<span class="ch-icon">${g === 'email' ? ICON_EMAIL : ICON_CHAT}</span>`;
+    return row(label, desc, toggle(`group.${g}`, groupSubscribed[g] ?? false, `pref-group-${g}`), icon);
   }).join('');
+
+  const topicsCol = `<div class="col"><div class="sec-label">${esc(s.topicsHeading)}</div>${topicRows}</div>`;
+  const channelsCol = `<div class="col"><div class="sec-label">${esc(s.channelsHeading)}</div>${groupRows}</div>`;
 
   return shell(
     s.manageTitle,
     `<h1>${esc(s.manageHeading)}</h1>` +
-      `<p>${withEmail(s.manageIntro, email)}</p>` +
+      `<p class="intro">${withEmail(s.manageIntro, email)}</p>` +
       `<form method="POST" action="${esc(actionUrl)}" data-testid="pref-form">` +
-      `<h2>${esc(s.topicsHeading)}</h2>${topicRows}` +
-      `<h2>${esc(s.channelsHeading)}</h2>${groupRows}` +
-      `<div class="row">` +
+      `<div class="cols">${topicsCol}<div class="vdiv"></div>${channelsCol}</div>` +
       `<button type="submit" class="primary" data-testid="pref-save">${esc(s.savePreferences)}</button>` +
-      `</div></form>` +
+      `</form>` +
       // A SEPARATE form so "unsubscribe from everything" is an unambiguous action.
       `<form method="POST" action="${esc(actionUrl)}" data-testid="pref-all-form">` +
       `<input type="hidden" name="unsubscribe_all" value="1">` +
-      `<div class="row"><button type="submit" class="danger" data-testid="pref-unsub-all">` +
-      `${esc(s.unsubscribeFromEverything)}</button></div></form>`,
+      `<button type="submit" class="danger" data-testid="pref-unsub-all">${esc(s.unsubscribeFromEverything)}</button>` +
+      `</form>`,
     logoHtml,
     lang,
+    true, // wide layout (two columns)
   );
 }
+
+/** Inline channel icons (SVG, no emoji) shown in the rounded square per channel group. */
+const ICON_EMAIL =
+  '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>';
+const ICON_CHAT =
+  '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.2 7.6L3 21l1.9-5.8A8.5 8.5 0 1 1 21 11.5z"/></svg>';
 
 function savedPage(email: string, all: boolean, logoHtml = '', lang: Lang = 'en'): string {
   const s = stringsFor(lang);
