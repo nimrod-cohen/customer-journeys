@@ -85,13 +85,16 @@ describe('toTopicChoices', () => {
   it('default-on: a topic with no explicit row is subscribed; an explicit false is opted out', () => {
     const choices = toTopicChoices(
       [
-        { id: T1, name: 'News' },
+        { id: T1, name: 'News', description: 'Weekly headlines' },
         { id: T2, name: 'Digest' },
       ],
       [{ topic_id: T2, subscribed: false }],
     );
     expect(choices.find((c) => c.id === T1)!.subscribed).toBe(true);
     expect(choices.find((c) => c.id === T2)!.subscribed).toBe(false);
+    // The topic description is threaded through for the preference page (light font).
+    expect(choices.find((c) => c.id === T1)!.description).toBe('Weekly headlines');
+    expect(choices.find((c) => c.id === T2)!.description).toBeNull();
   });
 });
 

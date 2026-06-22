@@ -26,6 +26,8 @@ export function isMediumGroup(g: unknown): g is MediumGroup {
 export interface TopicChoice {
   readonly id: string;
   readonly name: string;
+  /** Optional short description shown under the topic name (light font). */
+  readonly description?: string | null;
   /** The recipient's current subscription (default-on: no opt-out row = true). */
   readonly subscribed: boolean;
 }
@@ -82,7 +84,7 @@ export function parsePreferenceUpdate(body: string | null | undefined, topicIds:
 export function buildActiveTopicsQuery(workspaceId: string): SqlStatement {
   if (!workspaceId) throw new Error('buildActiveTopicsQuery: workspaceId is required (tenant-isolation guard)');
   return {
-    text: `SELECT id, name FROM topics
+    text: `SELECT id, name, description FROM topics
            WHERE workspace_id = $1 AND archived = false
            ORDER BY created_at DESC`,
     values: [workspaceId],
@@ -200,9 +202,14 @@ export function buildOptOutAllTopics(workspaceId: string, email: string): SqlSta
  * opt-outs). Pure; combines the two read results.
  */
 export function toTopicChoices(
-  activeTopics: ReadonlyArray<{ id: string; name: string }>,
+  activeTopics: ReadonlyArray<{ id: string; name: string; description?: string | null }>,
   explicitState: ReadonlyArray<{ topic_id: string; subscribed: boolean }>,
 ): TopicChoice[] {
   const optedOut = new Set(explicitState.filter((r) => r.subscribed === false).map((r) => r.topic_id));
-  return activeTopics.map((t) => ({ id: t.id, name: t.name, subscribed: !optedOut.has(t.id) }));
+  return activeTopics.map((t) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description ?? null,
+    subscribed: !optedOut.has(t.id),
+  }));
 }

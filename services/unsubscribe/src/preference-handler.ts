@@ -74,14 +74,19 @@ function shell(title: string, inner: string, logoHtml = '', lang: Lang = 'en'): 
     `.card{background:#fff;border:1px solid #e7e5e4;border-radius:16px;padding:32px;max-width:480px;width:100%;` +
     `box-shadow:0 8px 24px rgba(0,0,0,.06);text-align:start}h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;text-transform:uppercase;` +
     `letter-spacing:.04em;color:#78716c;margin:24px 0 8px}p{color:#57534e;font-size:14px;line-height:1.5}` +
-    `.email{font-weight:600;color:#1c1917;unicode-bidi:isolate}label{display:flex;align-items:center;gap:10px;padding:10px 12px;` +
-    `border:1px solid #e7e5e4;border-radius:10px;margin:6px 0;font-size:14px;cursor:pointer}` +
-    `input[type=checkbox]{width:18px;height:18px;accent-color:#0f766e}` +
-    `.row{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}` +
-    `button{border:0;border-radius:10px;padding:11px 18px;font-size:14px;font-weight:600;cursor:pointer}` +
-    `.primary{background:#0f766e;color:#fff}.primary:hover{background:#115e59}` +
+    `.email{font-weight:600;color:#1c1917;unicode-bidi:isolate}` +
+    // Each option is a clean row — NO border/card. Checkbox + a name and a light
+    // description stacked; subtle hover only.
+    `.opt{display:flex;align-items:flex-start;gap:12px;padding:12px 6px;margin:2px 0;border-radius:8px;cursor:pointer}` +
+    `.opt:hover{background:#f5f5f4}.opt-text{display:flex;flex-direction:column;gap:2px}` +
+    `.opt-name{font-weight:500;color:#1c1917;font-size:15px;line-height:1.3}` +
+    `.opt-desc{font-weight:300;color:#78716c;font-size:13px;line-height:1.45}` +
+    `input[type=checkbox]{width:20px;height:20px;margin-top:1px;flex:none;accent-color:#047857;cursor:pointer}` +
+    `.row{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap}` +
+    `button{border:0;border-radius:10px;padding:12px 20px;font-size:14px;font-weight:600;cursor:pointer}` +
+    `.primary{background:#047857;color:#fff}.primary:hover{background:#065f46}` +
     `.danger{background:#fff;color:#b91c1c;border:1px solid #fecaca}.danger:hover{background:#fef2f2}` +
-    `.ok{color:#0f766e}.muted{color:#78716c;font-size:13px}</style></head>` +
+    `.ok{color:#047857}.muted{color:#78716c;font-size:13px}</style></head>` +
     `<body><div class="card">${logoHtml}${inner}</div></body></html>`
   );
 }
@@ -95,21 +100,30 @@ function centerPage(
   lang: Lang = 'en',
 ): string {
   const s = stringsFor(lang);
+  const optRow = (input: string, name: string, desc: string): string =>
+    `<label class="opt">${input}<span class="opt-text"><span class="opt-name">${esc(name)}</span>` +
+    (desc ? `<span class="opt-desc">${esc(desc)}</span>` : '') +
+    `</span></label>`;
+
   const topicRows = topics.length
     ? topics
-        .map(
-          (t) =>
-            `<label><input type="checkbox" name="topic.${esc(t.id)}" ${t.subscribed ? 'checked' : ''} ` +
-            `data-testid="pref-topic-${esc(t.id)}"><span>${esc(t.name)}</span></label>`,
+        .map((t) =>
+          optRow(
+            `<input type="checkbox" name="topic.${esc(t.id)}" ${t.subscribed ? 'checked' : ''} data-testid="pref-topic-${esc(t.id)}">`,
+            t.name,
+            t.description ?? '',
+          ),
         )
         .join('')
     : `<p class="muted">${esc(s.noTopics)}</p>`;
 
   const groupRows = MEDIUM_GROUPS.map((g) => {
     const label = g === 'email' ? s.channelEmail : s.channelSmsWhatsapp;
-    return (
-      `<label><input type="checkbox" name="group.${g}" ${groupSubscribed[g] ? 'checked' : ''} ` +
-      `data-testid="pref-group-${g}"><span>${esc(label)}</span></label>`
+    const desc = g === 'email' ? s.channelEmailDesc : s.channelSmsWhatsappDesc;
+    return optRow(
+      `<input type="checkbox" name="group.${g}" ${groupSubscribed[g] ? 'checked' : ''} data-testid="pref-group-${g}">`,
+      label,
+      desc,
     );
   }).join('');
 
@@ -274,7 +288,10 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
 
       // Load the workspace's active topics + the recipient's current state.
       const topicsQ = buildActiveTopicsQuery(workspaceId);
-      const { rows: activeTopics } = await deps.reader.query<{ id: string; name: string }>(topicsQ.text, topicsQ.values);
+      const { rows: activeTopics } = await deps.reader.query<{ id: string; name: string; description: string | null }>(
+        topicsQ.text,
+        topicsQ.values,
+      );
 
       // ADAPTIVE page: only show the topics preference center when the workspace
       // has topic management ENABLED (settings.topics_enabled, default ON) AND it

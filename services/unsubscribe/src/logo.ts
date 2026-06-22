@@ -45,7 +45,7 @@ export function logoImgTag(assetId: string | null, assetsBaseUrl: string | undef
   if (!base) return '';
   if (!/^[0-9a-f-]{36}$/i.test(assetId)) return '';
   const src = `${base}/assets/${assetId}`;
-  return `<img src="${escAttr(src)}" alt="" style="max-height:48px;margin:0 auto 16px;display:block" data-testid="page-logo">`;
+  return `<img src="${escAttr(src)}" alt="" style="max-height:72px;margin:0 auto 24px;display:block" data-testid="page-logo">`;
 }
 
 /**

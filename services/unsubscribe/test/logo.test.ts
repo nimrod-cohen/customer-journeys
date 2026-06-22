@@ -18,7 +18,7 @@ describe('logoImgTag', () => {
     const html = logoImgTag(ASSET, 'https://app.example');
     expect(html).toContain(`src="https://app.example/assets/${ASSET}"`);
     expect(html).toContain('data-testid="page-logo"');
-    expect(html).toContain('max-height:48px');
+    expect(html).toContain('max-height:72px');
   });
 
   it('strips trailing slashes on the base', () => {

@@ -85,7 +85,9 @@ export interface Strings {
   readonly channelsHeading: string;
   readonly noTopics: string;
   readonly channelEmail: string;
+  readonly channelEmailDesc: string;
   readonly channelSmsWhatsapp: string;
+  readonly channelSmsWhatsappDesc: string;
   readonly savePreferences: string;
   readonly unsubscribeFromEverything: string;
   readonly preferencesSavedTitle: string;
@@ -116,7 +118,9 @@ const EN: Strings = {
   channelsHeading: 'Channels',
   noTopics: 'This sender has no topics.',
   channelEmail: 'Email',
+  channelEmailDesc: 'Newsletters, updates and announcements by email.',
   channelSmsWhatsapp: 'WhatsApp & SMS',
+  channelSmsWhatsappDesc: 'Messages sent to your phone.',
   savePreferences: 'Save preferences',
   unsubscribeFromEverything: 'Unsubscribe from everything',
   preferencesSavedTitle: 'Preferences saved',
@@ -145,7 +149,9 @@ const HE: Strings = {
   channelsHeading: 'ערוצים',
   noTopics: 'לשולח הזה אין נושאים.',
   channelEmail: 'אימייל',
+  channelEmailDesc: 'ניוזלטרים, עדכונים והודעות במייל.',
   channelSmsWhatsapp: 'וואטסאפ ו-SMS',
+  channelSmsWhatsappDesc: 'הודעות שנשלחות לטלפון שלך.',
   savePreferences: 'שמירת ההעדפות',
   unsubscribeFromEverything: 'ביטול הרשמה מהכול',
   preferencesSavedTitle: 'ההעדפות נשמרו',
