@@ -14,6 +14,15 @@ export interface SqlStatement {
   readonly values: unknown[];
 }
 
+/**
+ * The app favicon as a self-contained data-URI `<link>` for the public pages.
+ * These pages are served by the API (not the SPA), so a relative `/favicon.svg`
+ * wouldn't resolve — the SVG (the same teal mark as web/public/favicon.svg) is
+ * inlined so the browser tab shows the app icon on the unsubscribe/preference pages.
+ */
+export const FAVICON_LINK =
+  '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTYiIGZpbGw9IiMxNGI4YTYiLz48cGF0aCBkPSJNMTMgMzJjNi41LTEwLjUgMzEuNS0xMC41IDM4IDAtNi41IDEwLjUtMzEuNSAxMC41LTM4IDBaIiBmaWxsPSJub25lIiBzdHJva2U9IiMwYzBhMDkiIHN0cm9rZS13aWR0aD0iMy42IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iNiIgZmlsbD0iIzBjMGEwOSIvPjwvc3ZnPg==">';
+
 /** A successfully parsed unsubscribe request. */
 export interface ParsedUnsubscribe {
   readonly valid: true;

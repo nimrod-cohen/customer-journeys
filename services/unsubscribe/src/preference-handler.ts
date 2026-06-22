@@ -17,6 +17,7 @@ import {
   buildUnsubscribedAttribute,
   buildUnsubscribeActivity,
   parseUnsubscribeRequest,
+  FAVICON_LINK,
   type SqlStatement,
 } from './core.js';
 import {
@@ -67,6 +68,7 @@ function shell(title: string, inner: string, logoHtml = '', lang: Lang = 'en'): 
   return (
     `<!doctype html><html lang="${lang}" dir="${dir}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>` +
+    FAVICON_LINK +
     `<style>body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:#fafaf9;color:#1c1917;` +
     `display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:24px;box-sizing:border-box}` +
     `.card{background:#fff;border:1px solid #e7e5e4;border-radius:16px;padding:32px;max-width:480px;width:100%;` +
