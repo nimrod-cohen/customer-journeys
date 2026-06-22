@@ -5,16 +5,19 @@
 // person reachable), and "unsubscribe from everything" works. Real Postgres.
 import { test, expect } from '@playwright/test';
 import { loginAs } from './helpers.js';
-import { DEV_MKT, WS_B, TOPIC_A_NAME, TOPIC_B_NAME, PREF_EMAIL } from './seed.js';
+import { DEV_OWNER, WS_B, TOPIC_A_NAME, TOPIC_B_NAME, PREF_EMAIL } from './seed.js';
 
 const API_BASE = 'http://localhost:8788';
 // The preference center is driven against the WS_B fixture (isolated from WS_A's
 // asserted profile/suppression counts).
 const prefLink = `${API_BASE}/manage-subscription?workspace_id=${WS_B}&email=${encodeURIComponent(PREF_EMAIL)}`;
 
-test('admin creates a topic on the Topics screen', async ({ page }) => {
-  await loginAs(page, DEV_MKT);
-  await page.getByTestId('nav-topics').click();
+test('admin creates a topic on the Topics tab in Workspace settings', async ({ page }) => {
+  // Topics admin lives inside Workspace settings (owner-gated). Marketers still pick
+  // topics in the broadcast/campaign selector, but managing them is an owner task.
+  await loginAs(page, DEV_OWNER);
+  await page.getByTestId('nav-settings').click();
+  await page.getByTestId('settings-tab-topics').click();
   await page.getByTestId('topics-screen').waitFor();
 
   // The seeded topic is listed.

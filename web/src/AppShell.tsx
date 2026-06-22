@@ -23,7 +23,6 @@ import { ProfileDetail } from './screens/ProfileDetail.js';
 import { TemplatesList } from './screens/TemplatesList.js';
 import { Help } from './screens/Help.js';
 import { Activity } from './screens/Activity.js';
-import { Topics } from './screens/Topics.tsx';
 import { TemplateEditor } from './screens/TemplateEditor.tsx';
 import { DialogHost } from './ui/dialog.tsx';
 import { ToastHost } from './ui/toast.tsx';
@@ -64,15 +63,18 @@ function screenFor(path: string): JSX.Element {
     const rest = path.slice('/campaigns/'.length);
     return rest === 'new' ? <CampaignDetail /> : <CampaignDetail id={rest} />;
   }
-  // Workspace settings tabs: /settings (workspace) and /settings/domains (sending
-  // domains, per-workspace). The per-domain setup screen is /settings/domains/new
-  // and /settings/domains/:id.
+  // Workspace settings tabs: /settings (workspace), /settings/domains (sending
+  // domains, per-workspace), and /settings/topics (subscription topics admin). The
+  // per-domain setup screen is /settings/domains/new and /settings/domains/:id.
   if (path === '/settings') return <WorkspaceSettings tab="workspace" />;
   if (path === '/settings/domains') return <WorkspaceSettings tab="domains" />;
+  if (path === '/settings/topics') return <WorkspaceSettings tab="topics" />;
   if (path.startsWith('/settings/domains/')) {
     const rest = path.slice('/settings/domains/'.length);
     return rest === 'new' ? <SendingDomainDetail /> : <SendingDomainDetail id={rest} />;
   }
+  // Legacy /topics → the Topics tab now lives in Workspace settings.
+  if (path === '/topics') return <WorkspaceSettings tab="topics" />;
   // Company settings tabs: /company (company) and /company/billing (billing & usage,
   // moved here from the old top-level /billing).
   if (path === '/company') return <CompanySettings tab="company" />;
@@ -89,8 +91,6 @@ function screenFor(path: string): JSX.Element {
       return <TemplateEditor />;
     case '/profiles':
       return <ProfileExplorer />;
-    case '/topics':
-      return <Topics />;
     case '/suppressions':
       return <SuppressionList />;
     case '/admin':

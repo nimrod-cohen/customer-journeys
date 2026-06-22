@@ -28,14 +28,13 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // The email editor itself (/editor) has no standalone nav item — it is reached
   // from the Templates list and from the "Design email" action on Broadcasts.
   { id: 'profiles', label: 'Profiles', path: '/profiles', capability: 'manage_content' },
-  // Subscription topics recipients can opt out of (the preference center).
-  { id: 'topics', label: 'Topics', path: '/topics', capability: 'manage_content' },
   { id: 'suppressions', label: 'Suppressions', path: '/suppressions', capability: 'manage_content' },
   // Company settings holds the company/workspaces tab AND the Billing & usage tab.
   // Visible to anyone who can manage the company OR view billing (e.g. accounting).
   { id: 'company', label: 'Company settings', path: '/company', capability: ['manage_workspace_users', 'view_billing'] },
-  // Workspace settings holds members/roles AND the per-workspace sending domains
-  // (the "Sending domains" tab at /settings/domains) — no separate nav item.
+  // Workspace settings holds members/roles, the per-workspace sending domains
+  // ("Sending domains" tab at /settings/domains) AND the subscription topics admin
+  // ("Topics" tab at /settings/topics) — no separate nav items.
   { id: 'settings', label: 'Workspace settings', path: '/settings', capability: 'manage_workspace_users' },
   { id: 'admin', label: 'System admin', path: '/admin', capability: 'view_all_workspaces' },
   // Help is reference material — always visible to any authenticated user.

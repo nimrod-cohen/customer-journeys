@@ -1,13 +1,14 @@
 // Topics (CLAUDE.md topic-subscriptions): the workspace's subscription topics.
 // A topic can be attached to a broadcast/campaign; a recipient unsubscribed from
-// it (via the preference center) is skipped at send. This screen is the admin
-// list: create, rename, archive/unarchive, and delete topics. Read + mutate only
-// (no builder sub-route) — small enough to manage inline. Re-fetches on the active
-// workspace so a switch re-scopes in place.
+// it (via the preference center) is skipped at send. This is the admin panel:
+// create, rename, archive/unarchive, and delete topics — it lives as a TAB inside
+// Workspace settings (owner-managed config; marketers still pick topics in the
+// broadcast/campaign selector via the manage_content GET). Re-fetches on the
+// active workspace so a switch re-scopes in place.
 import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
 import { useStore } from '../store/store.js';
-import { Badge, Button, Card, EmptyState, Input, PageHeader, ActionMenu, type ActionMenuItem } from '../ui/kit.js';
+import { Badge, Button, Card, EmptyState, Input, ActionMenu, type ActionMenuItem } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { askConfirm, askText } from '../ui/dialog.tsx';
 
@@ -18,7 +19,8 @@ interface Topic {
   archived: boolean;
 }
 
-export function Topics() {
+/** The topics management panel — rendered inside the Workspace settings "Topics" tab. */
+export function TopicsPanel() {
   const session = useStore(sessionStore);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [showArchived, setShowArchived] = useState(false);
@@ -99,21 +101,20 @@ export function Topics() {
 
   return (
     <section data-testid="topics-screen">
-      <PageHeader
-        title="Topics"
-        subtitle="Subscription topics recipients can opt out of individually (via the preference center)."
-        actions={
-          <label class="flex items-center gap-2 text-sm text-stone-600">
-            <input
-              type="checkbox"
-              data-testid="topics-show-archived"
-              checked={showArchived}
-              onChange={(e) => setShowArchived((e.target as HTMLInputElement).checked)}
-            />
-            Show archived
-          </label>
-        }
-      />
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-stone-500">
+          Subscription topics recipients can opt out of individually (via the preference center).
+        </p>
+        <label class="flex items-center gap-2 text-sm text-stone-600">
+          <input
+            type="checkbox"
+            data-testid="topics-show-archived"
+            checked={showArchived}
+            onChange={(e) => setShowArchived((e.target as HTMLInputElement).checked)}
+          />
+          Show archived
+        </label>
+      </div>
 
       <Card class="mb-4 p-4">
         <div class="flex flex-wrap items-end gap-3">
