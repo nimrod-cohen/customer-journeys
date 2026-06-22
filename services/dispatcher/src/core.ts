@@ -103,9 +103,14 @@ export interface DispatchContext {
   /** Public base URL of the unsubscribe endpoint (§9 step 5). */
   readonly unsubscribeBaseUrl: string;
   /**
-   * The signed HMAC token for THIS recipient's (workspace_id, email) link. Appended
-   * to both the body {{unsubscribe}} link and the List-Unsubscribe header so the
-   * unsubscribe / manage-subscription handlers can verify the link wasn't forged.
+   * The HMAC link secret. When present, the List-Unsubscribe header link carries
+   * the NEW compact self-contained `?t=` token (packed from workspace+email). The
+   * unsubscribe / manage-subscription handlers verify with the SAME secret.
+   */
+  readonly unsubscribeLinkSecret?: string | null;
+  /**
+   * LEGACY: a precomputed signed HMAC token (only used when no secret is supplied)
+   * — emits the old `?token=` form for back-compat.
    */
   readonly unsubscribeToken?: string | null;
   /**
@@ -387,7 +392,13 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
     baseUrl: ctx.unsubscribeBaseUrl,
     workspaceId: ctx.workspace.id,
     email,
-    ...(ctx.unsubscribeToken ? { token: ctx.unsubscribeToken } : {}),
+    // Prefer the secret (emits the compact `?t=` token); fall back to a legacy
+    // precomputed token for back-compat.
+    ...(ctx.unsubscribeLinkSecret
+      ? { secret: ctx.unsubscribeLinkSecret }
+      : ctx.unsubscribeToken
+        ? { token: ctx.unsubscribeToken }
+        : {}),
     broadcastId: ctx.broadcastId ?? null,
     campaignId: ctx.campaignId ?? null,
   });

@@ -62,7 +62,7 @@ describe('buildListUnsubscribeHeaders', () => {
     ).toThrow(/workspaceId/);
   });
 
-  it('carries optional broadcast_id / campaign_id for per-send attribution', () => {
+  it('carries optional broadcast / campaign attribution as the short b/c params', () => {
     const url = buildUnsubscribeUrl({
       baseUrl,
       workspaceId: wsA,
@@ -70,11 +70,26 @@ describe('buildListUnsubscribeHeaders', () => {
       broadcastId: 'bc1',
     });
     const parsed = new URL(url);
-    expect(parsed.searchParams.get('broadcast_id')).toBe('bc1');
-    expect(parsed.searchParams.get('campaign_id')).toBeNull();
+    expect(parsed.searchParams.get('b')).toBe('bc1');
+    expect(parsed.searchParams.get('c')).toBeNull();
 
     const url2 = buildUnsubscribeUrl({ baseUrl, workspaceId: wsA, email: 'a@x.com', campaignId: 'cm1' });
-    expect(new URL(url2).searchParams.get('campaign_id')).toBe('cm1');
-    expect(new URL(url2).searchParams.get('broadcast_id')).toBeNull();
+    expect(new URL(url2).searchParams.get('c')).toBe('cm1');
+    expect(new URL(url2).searchParams.get('b')).toBeNull();
+  });
+
+  it('with a secret emits the compact `?t=` form (b/c attribution still separate)', () => {
+    const url = buildUnsubscribeUrl({
+      baseUrl,
+      workspaceId: wsA,
+      email: 'a@x.com',
+      secret: 'hdr-secret',
+      broadcastId: 'bc1',
+    });
+    const parsed = new URL(url);
+    expect(parsed.searchParams.get('t')).toBeTruthy();
+    expect(parsed.searchParams.get('workspace_id')).toBeNull();
+    expect(parsed.searchParams.get('email')).toBeNull();
+    expect(parsed.searchParams.get('b')).toBe('bc1');
   });
 });

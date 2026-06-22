@@ -82,6 +82,9 @@
   attachable to broadcasts/campaigns.
 # [~] Connect to the REAL WhatsApp official API — BLOCKED on a Meta WhatsApp Business account + credentials.
 #     Architecture + mock done; see .a5c/PROVIDERS-SETUP.md.
+* add workspace settings - front facing language - to deal with the unsubscribe page language, 
+by default it can be the user's browser's langugage (support english and hebrew for now), but we can force a language.
+if language is hebrew, set the page to RTL.
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).

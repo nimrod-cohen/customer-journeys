@@ -11,7 +11,7 @@
 //        - "everything" = opt out both groups + all topics + the existing full
 //          suppression + profiles.attributes.unsubscribed=true + activity_log.
 //        A PARTIAL opt-out NEVER sets the global suppression / unsubscribed flag.
-import { verifyUnsubscribeToken, unsubscribeLinkSecret } from '@cdp/email';
+import { verifyUnsubscribeToken, unpackSubscriptionToken, unsubscribeLinkSecret } from '@cdp/email';
 import {
   buildUnsubscribeSuppression,
   buildUnsubscribedAttribute,
@@ -183,10 +183,23 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
     try {
       const method = (event.httpMethod ?? 'GET').toUpperCase();
       const url = urlFromEvent(event);
-      // Reuse the SAME scoped-link parser as /unsubscribe (workspace_id + email
-      // from the link ONLY — never a body field).
-      const parsed = parseUnsubscribeRequest(method, url, event.body);
+      // The shared HMAC secret (same on the signer + verifier sides).
+      const secret = deps.linkSecret ?? unsubscribeLinkSecret();
+      // Reuse the SAME scoped-link parser as /unsubscribe — workspace_id + email
+      // come ONLY from the verified compact `?t=` token (or the legacy triple),
+      // never a body field.
+      const parsed = parseUnsubscribeRequest(method, url, event.body, (t) =>
+        unpackSubscriptionToken(secret, t),
+      );
       if (!parsed.valid) {
+        // A present-but-forged `t` token → 403; a link with no identity → 400.
+        if (parsed.tokenInvalid) {
+          return {
+            statusCode: 403,
+            headers: HTML_HEADERS,
+            body: shell('Manage your subscription', `<h1>Invalid or expired link</h1><p>This link could not be verified.</p>`),
+          };
+        }
         return {
           statusCode: 400,
           headers: HTML_HEADERS,
@@ -195,11 +208,10 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
       }
       const { workspaceId, email } = parsed;
 
-      // TOKEN GATE (security): the link must carry a valid HMAC token over
-      // (workspace_id, email). A missing/invalid token → 403 — a forged manage
-      // link never renders. Same secret + check as /unsubscribe.
-      const secret = deps.linkSecret ?? unsubscribeLinkSecret();
-      if (!verifyUnsubscribeToken(secret, workspaceId, email, parsed.token)) {
+      // TOKEN GATE (security): the compact `?t=` token is verified during parse
+      // (`compactVerified`); a legacy link needs the separate HMAC check. A
+      // missing/invalid token → 403 — a forged manage link never renders.
+      if (!parsed.compactVerified && !verifyUnsubscribeToken(secret, workspaceId, email, parsed.token)) {
         return {
           statusCode: 403,
           headers: HTML_HEADERS,

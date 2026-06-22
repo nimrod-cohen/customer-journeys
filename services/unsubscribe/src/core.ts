@@ -17,13 +17,19 @@ export interface SqlStatement {
 /** A successfully parsed unsubscribe request. */
 export interface ParsedUnsubscribe {
   readonly valid: true;
-  /** The sending workspace (from the workspace-scoped link). */
+  /** The sending workspace (from the verified `t` token, or the legacy link). */
   readonly workspaceId: string;
-  /** The opting-out recipient, lowercased. */
+  /** The opting-out recipient (verbatim from the `t` token; lowercased for legacy links). */
   readonly email: string;
   /** Whether this is an RFC 8058 one-click POST confirmation. */
   readonly oneClick: boolean;
-  /** The signed HMAC token from the link (verified by the handler before any write). */
+  /**
+   * The NEW compact self-contained token (`?t=`), already verified+decoded by the
+   * parser into `workspaceId`/`email`. When present, the handler does NOT need a
+   * separate HMAC check — the token IS the proof. Null on a legacy link.
+   */
+  readonly compactVerified: boolean;
+  /** The legacy signed HMAC token (`?token=`); verified by the handler on the legacy path. */
   readonly token: string | null;
   /** Optional source broadcast (from the link) for per-send attribution. */
   readonly broadcastId: string | null;
@@ -35,22 +41,37 @@ export interface ParsedUnsubscribe {
 export interface InvalidUnsubscribe {
   readonly valid: false;
   readonly reason: string;
+  /**
+   * True when a compact `?t=` token was PRESENT but failed to decode/verify (a
+   * forged/tampered link) — the handler maps this to 403 (vs 400 for a link that
+   * carried no identity at all).
+   */
+  readonly tokenInvalid?: boolean;
 }
 
 export type UnsubscribeRequest = ParsedUnsubscribe | InvalidUnsubscribe;
 
 /**
- * Parse a one-click unsubscribe request. Extracts `workspace_id` + `email` from
- * the workspace-scoped link's query string (the link is built per-send by
- * @cdp/email). RFC 8058: a POST whose body is `List-Unsubscribe=One-Click` is
- * the mail client's one-click confirmation; we surface that as `oneClick`.
- * Both `workspace_id` and `email` are REQUIRED — a request missing either is
- * invalid (never a guessed/default workspace).
+ * Resolve the recipient identity (workspace + email) from a request URL.
+ *
+ * NEW (v0.60.0): a single compact, self-contained, tamper-proof `t` token
+ * (`packSubscriptionToken`) — the parser is given an unpack closure (it carries
+ * the secret) and tries `t` FIRST. When `t` decodes, the email is VERBATIM (the
+ * exact address we send to / suppress on) and the token IS the forgery proof
+ * (`compactVerified=true`, no separate HMAC needed).
+ *
+ * LEGACY (back-compat for already-sent links): falls back to
+ * `workspace_id`+`email`+`token` (the email is lowercased; the handler verifies
+ * the HMAC `token` separately).
+ *
+ * RFC 8058: a POST whose body is `List-Unsubscribe=One-Click` is the mail
+ * client's one-click confirmation; surfaced as `oneClick`.
  */
 export function parseUnsubscribeRequest(
   method: string,
   url: string,
   body: string | null | undefined,
+  unpackToken?: (t: string) => { workspaceId: string; email: string } | null,
 ): UnsubscribeRequest {
   let parsed: URL;
   try {
@@ -60,6 +81,42 @@ export function parseUnsubscribeRequest(
     return { valid: false, reason: 'malformed url' };
   }
 
+  const oneClick =
+    method.toUpperCase() === 'POST' &&
+    typeof body === 'string' &&
+    /(^|[&\s])List-Unsubscribe=One-Click([&\s]|$)/i.test(body.trim());
+
+  // Optional per-send attribution (the dispatcher puts these on the link). They
+  // are NOT trust-sensitive: they only feed the funnel metric, and the
+  // suppression/profile writes stay scoped to the verified workspace_id. Accept
+  // BOTH the new short `b`/`c` and the legacy `broadcast_id`/`campaign_id`.
+  const broadcastId =
+    parsed.searchParams.get('b') || parsed.searchParams.get('broadcast_id') || null;
+  const campaignId =
+    parsed.searchParams.get('c') || parsed.searchParams.get('campaign_id') || null;
+
+  // NEW: the compact self-contained token. When present + it decodes, it IS the
+  // identity + the forgery proof.
+  const t = parsed.searchParams.get('t');
+  if (t) {
+    const decoded = unpackToken ? unpackToken(t) : null;
+    if (!decoded || !decoded.workspaceId || !decoded.email) {
+      // A `t` was present but didn't verify → forged/tampered → 403 (not 400).
+      return { valid: false, reason: 'invalid token', tokenInvalid: true };
+    }
+    return {
+      valid: true,
+      workspaceId: decoded.workspaceId,
+      email: decoded.email,
+      oneClick,
+      compactVerified: true,
+      token: null,
+      broadcastId,
+      campaignId,
+    };
+  }
+
+  // LEGACY path — the old workspace_id + email + token triple.
   const workspaceId = parsed.searchParams.get('workspace_id');
   const emailRaw = parsed.searchParams.get('email');
   if (!workspaceId) return { valid: false, reason: 'missing workspace_id' };
@@ -68,22 +125,11 @@ export function parseUnsubscribeRequest(
   const email = emailRaw.trim().toLowerCase();
   if (!email) return { valid: false, reason: 'empty email' };
 
-  const oneClick =
-    method.toUpperCase() === 'POST' &&
-    typeof body === 'string' &&
-    /(^|[&\s])List-Unsubscribe=One-Click([&\s]|$)/i.test(body.trim());
-
-  // Optional per-send attribution (the dispatcher puts these on the link). They
-  // are NOT trust-sensitive: they only feed the funnel metric, and the
-  // suppression/profile writes stay scoped to the link's workspace_id.
-  const broadcastId = parsed.searchParams.get('broadcast_id') || null;
-  const campaignId = parsed.searchParams.get('campaign_id') || null;
-
   // The signed token (proves the link wasn't forged). The handler verifies it
   // against (workspace_id, email) with the shared secret before any write.
   const token = parsed.searchParams.get('token') || null;
 
-  return { valid: true, workspaceId, email, oneClick, token, broadcastId, campaignId };
+  return { valid: true, workspaceId, email, oneClick, compactVerified: false, token, broadcastId, campaignId };
 }
 
 /**

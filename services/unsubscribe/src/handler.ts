@@ -6,7 +6,7 @@
 // performs the opt-out: writes the per-workspace suppression AND sets the
 // profile `unsubscribed = true`, in ONE workspace-scoped tx. The handler NEVER
 // throws; a malformed/unscoped request → 400 (no guessed/default workspace).
-import { verifyUnsubscribeToken, unsubscribeLinkSecret } from '@cdp/email';
+import { verifyUnsubscribeToken, unpackSubscriptionToken, unsubscribeLinkSecret } from '@cdp/email';
 import {
   parseUnsubscribeRequest,
   buildUnsubscribeSuppression,
@@ -155,21 +155,35 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
     try {
       const method = (event.httpMethod ?? 'GET').toUpperCase();
       const url = urlFromEvent(event);
-      const parsed = parseUnsubscribeRequest(method, url, event.body);
+      // The shared HMAC secret (same on the signer + verifier sides).
+      const secret = deps.linkSecret ?? unsubscribeLinkSecret();
+      // The parser tries the compact `?t=` token FIRST (unpacked here with the
+      // secret), then falls back to the legacy workspace_id+email+token triple.
+      const parsed = parseUnsubscribeRequest(method, url, event.body, (t) =>
+        unpackSubscriptionToken(secret, t),
+      );
       if (!parsed.valid) {
+        // A present-but-forged `t` token → 403; a link with no identity → 400.
+        if (parsed.tokenInvalid) {
+          return {
+            statusCode: 403,
+            headers: HTML_HEADERS,
+            body: page('Unsubscribe', `<h1>Invalid or expired link</h1><p>This unsubscribe link could not be verified.</p>`),
+          };
+        }
         return {
           statusCode: 400,
           headers: HTML_HEADERS,
           body: page('Unsubscribe', `<h1>Invalid unsubscribe link</h1><p>${esc(parsed.reason)}</p>`),
         };
       }
-      // TOKEN GATE (security): the link is UNGUESSABLE — a valid HMAC token over
-      // (workspace_id, email) signed with the shared secret is REQUIRED. A
-      // missing/invalid token → 403 (forging a link for someone else's email is
-      // impossible without the secret). Applies to BOTH the GET confirm page and
-      // the POST write — a forged link never even renders the re-affirm page.
-      const secret = deps.linkSecret ?? unsubscribeLinkSecret();
-      if (!verifyUnsubscribeToken(secret, parsed.workspaceId, parsed.email, parsed.token)) {
+      // TOKEN GATE (security): the link is UNGUESSABLE. The compact `?t=` token
+      // is verified DURING parse (decode + constant-time MAC) → `compactVerified`.
+      // A legacy link still needs the separate HMAC `token` checked here. Either
+      // way a missing/invalid token → 403 (forging a link for someone else's
+      // email is impossible without the secret). Applies to BOTH the GET confirm
+      // page and the POST write — a forged link never even renders.
+      if (!parsed.compactVerified && !verifyUnsubscribeToken(secret, parsed.workspaceId, parsed.email, parsed.token)) {
         return {
           statusCode: 403,
           headers: HTML_HEADERS,

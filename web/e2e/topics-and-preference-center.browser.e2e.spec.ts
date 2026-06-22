@@ -4,17 +4,18 @@
 // topics + channel-group checkboxes, a PARTIAL opt-out persists (and leaves the
 // person reachable), and "unsubscribe from everything" works. Real Postgres.
 import { test, expect } from '@playwright/test';
-import { signUnsubscribeToken, unsubscribeLinkSecret } from '@cdp/email';
+import { packSubscriptionToken, unsubscribeLinkSecret } from '@cdp/email';
 import { loginAs } from './helpers.js';
 import { DEV_OWNER, WS_B, TOPIC_A_NAME, TOPIC_B_NAME, PREF_EMAIL } from './seed.js';
 
 const API_BASE = 'http://localhost:8788';
 // The preference center is driven against the WS_B fixture (isolated from WS_A's
-// asserted profile/suppression counts). The link is TOKENIZED (unguessable) — the
-// handler 403s a missing/forged token — so sign it with the same dev-fallback secret
-// the local-api uses (no UNSUBSCRIBE_LINK_SECRET env in the e2e stack).
-const prefToken = signUnsubscribeToken(unsubscribeLinkSecret(), WS_B, PREF_EMAIL);
-const prefLink = `${API_BASE}/manage-subscription?workspace_id=${WS_B}&email=${encodeURIComponent(PREF_EMAIL)}&token=${encodeURIComponent(prefToken)}`;
+// asserted profile/suppression counts). The link is the compact, self-contained,
+// unguessable `?t=` token (the handler 403s a missing/forged token) — pack it with
+// the same dev-fallback secret the local-api uses (no UNSUBSCRIBE_LINK_SECRET env
+// in the e2e stack).
+const prefToken = packSubscriptionToken(unsubscribeLinkSecret(), WS_B, PREF_EMAIL);
+const prefLink = `${API_BASE}/manage-subscription?t=${encodeURIComponent(prefToken)}`;
 
 test('admin creates a topic on the Topics tab in Workspace settings', async ({ page }) => {
   // Topics admin lives inside Workspace settings (owner-gated). Marketers still pick

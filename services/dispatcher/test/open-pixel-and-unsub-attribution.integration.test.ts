@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '@cdp/db';
 import type { SesEmailClient, SendEmailInput, SendEmailResult } from '@cdp/email';
-import { verifyUnsubscribeToken } from '@cdp/email';
+import { unpackSubscriptionToken } from '@cdp/email';
 import { dispatchOutbox, type DispatchDeps, type Reader } from '../src/dispatch.js';
 import { runStatementsInWorkspaceTx } from '../src/deps.js';
 
@@ -125,16 +125,20 @@ describe.skipIf(!RUN)('dispatcher open pixel + unsubscribe attribution (real Pos
     // 1x1 open pixel present, pointing at /o/<token>.
     expect(html).toMatch(/https:\/\/api\.cdp\.example\/o\/[a-f0-9]{24}/);
     expect(html).toContain('width="1"');
-    // The List-Unsubscribe header URL carries the source broadcast id.
-    expect(ses.sends[0]!.headers!['List-Unsubscribe']).toContain(`broadcast_id=${BCAST}`);
+    // The List-Unsubscribe header URL carries the source broadcast id as the
+    // short `b` attribution param (NOT inside the token).
+    expect(ses.sends[0]!.headers!['List-Unsubscribe']).toContain(`b=${BCAST}`);
 
-    // The body {{unsubscribe}} link AND the List-Unsubscribe header carry a VALID
-    // signed token over (workspace_id, email) — verifiable with the same secret.
+    // The body {{unsubscribe}} link AND the List-Unsubscribe header carry the
+    // compact self-contained `?t=` token over (workspace_id, email) — it unpacks
+    // to the recipient with the same secret, and there is NO raw uuid/email.
     const header = ses.sends[0]!.headers!['List-Unsubscribe'];
     const headerUrl = new URL(header.slice(1, -1)); // strip <>
-    const headerTok = headerUrl.searchParams.get('token');
+    const headerTok = headerUrl.searchParams.get('t');
     expect(headerTok).toBeTruthy();
-    expect(verifyUnsubscribeToken(LINK_SECRET, ws, 'opx@example.com', headerTok)).toBe(true);
+    expect(headerUrl.searchParams.get('workspace_id')).toBeNull();
+    expect(headerUrl.searchParams.get('email')).toBeNull();
+    expect(unpackSubscriptionToken(LINK_SECRET, headerTok)).toEqual({ workspaceId: ws, email: 'opx@example.com' });
     // The header points at /unsubscribe (RFC 8058 one-click) carrying the token.
     expect(headerUrl.pathname).toBe('/unsubscribe');
 
@@ -169,7 +173,7 @@ describe.skipIf(!RUN)('dispatcher open pixel + unsubscribe attribution (real Pos
     expect(m).toBeTruthy();
     const url = new URL(m![1]!.replace(/&amp;/g, '&'));
     expect(url.pathname).toBe('/manage-subscription');
-    expect(verifyUnsubscribeToken(LINK_SECRET, ws, 'opx@example.com', url.searchParams.get('token'))).toBe(true);
+    expect(unpackSubscriptionToken(LINK_SECRET, url.searchParams.get('t'))).toEqual({ workspaceId: ws, email: 'opx@example.com' });
   });
 
   it('with link_tracking OFF: NO open pixel, NO tracked_opens row (opt-in respected)', async () => {

@@ -11,7 +11,7 @@
 //     id touches nothing). Real Postgres.
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { hasDatabaseUrl, adminPool } from '@cdp/db';
-import { signUnsubscribeToken, unsubscribeLinkSecret } from '@cdp/email';
+import { signUnsubscribeToken, packSubscriptionToken, unsubscribeLinkSecret } from '@cdp/email';
 import { createApp } from '../src/index.js';
 import type { Pool } from 'pg';
 
@@ -227,5 +227,50 @@ describeMaybe('public preference center (real Postgres)', () => {
     // And WS_B has no suppression for a profile that doesn't exist there.
     const bSupp = (await pool.query('SELECT 1 FROM suppressions WHERE workspace_id=$1', [WS_B])).rowCount ?? 0;
     expect(bSupp).toBe(1); // suppression is keyed by email regardless of profile existence
+  });
+
+  // ── NEW: the compact self-contained `?t=` link ──────────────────────────
+  describe('compact `?t=` link', () => {
+    const tLink = () => `/manage-subscription?t=${packSubscriptionToken(unsubscribeLinkSecret(), WS, EMAIL)}`;
+    const tPost = (body: string) =>
+      app.request(tLink(), {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+
+    it('GET renders the topics center', async () => {
+      const res = await app.request(tLink());
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('Product news');
+      expect(html).toContain('pref-group-email');
+    });
+
+    it('PARTIAL opt-out (one group) does NOT set the global suppression', async () => {
+      const res = await tPost(`group.sms_whatsapp=on&topic.${topicNews}=on&topic.${topicDigest}=on`);
+      expect(res.status).toBe(200);
+      expect(await groupOptedOut('email')).toBe(true);
+      expect(await groupOptedOut('sms_whatsapp')).toBe(false);
+      expect(await suppressed()).toBe(false);
+    });
+
+    it('"unsubscribe from everything" sets full suppression + flag', async () => {
+      const res = await tPost('unsubscribe_all=1');
+      expect(res.status).toBe(200);
+      expect(await suppressed()).toBe(true);
+      expect(await unsubAttr()).toBe('true');
+    });
+
+    it('a forged `?t=` token (wrong secret) is 403 and writes NOTHING', async () => {
+      const forged = packSubscriptionToken('a-different-secret', WS, EMAIL);
+      const res = await app.request(`/manage-subscription?t=${forged}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'unsubscribe_all=1',
+      });
+      expect(res.status).toBe(403);
+      expect(await suppressed()).toBe(false);
+    });
   });
 });

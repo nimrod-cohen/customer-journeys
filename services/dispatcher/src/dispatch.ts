@@ -12,7 +12,6 @@
 //     together (one tx) — a forced failure rolls back all three.
 import {
   buildUnsubscribeUrl,
-  signUnsubscribeToken,
   unsubscribeLinkSecret,
   type SendEmailInput,
   type SesEmailClient,
@@ -321,24 +320,23 @@ export async function dispatchOutbox(
     // (for a custom-text link); unsubscribe is a ready-made anchor. The RFC 8058
     // one-click List-Unsubscribe header (built in @cdp/email) still points at
     // /unsubscribe — a full email-group opt-out — for mail-client compliance.
-    // Sign the per-recipient HMAC token over (workspace_id, email) once; it goes
-    // on BOTH the body {{unsubscribe}} link and the List-Unsubscribe header so the
-    // handlers can verify the link wasn't forged (a missing/invalid token → 403).
+    // The whole recipient identity (workspace_id + email) travels inside ONE
+    // compact, tamper-proof `?t=` token (packed by buildUnsubscribeUrl from the
+    // shared secret); it goes on BOTH the body {{unsubscribe}} link and the
+    // List-Unsubscribe header so the handlers can verify the link wasn't forged
+    // (a missing/invalid token → 403).
     const linkSecret = deps.unsubscribeLinkSecret ?? unsubscribeLinkSecret();
-    const unsubscribeToken = profile.email
-      ? signUnsubscribeToken(linkSecret, workspaceId, profile.email)
-      : null;
     if (profile.email) {
       // The preference center shares the scoped-link shape; derive its base from
       // the unsubscribe base (…/unsubscribe → …/manage-subscription).
       const manageBaseUrl = deps.unsubscribeBaseUrl.replace(/\/unsubscribe$/, '/manage-subscription');
-      // Carry the source broadcast/campaign in the link so a full opt-out can be
-      // attributed to the send (per-broadcast funnel metric).
+      // Carry the source broadcast/campaign as SEPARATE short params (b/c) so a
+      // full opt-out can be attributed to the send (per-broadcast funnel metric).
       const unsubUrl = buildUnsubscribeUrl({
         baseUrl: manageBaseUrl,
         workspaceId,
         email: profile.email,
-        ...(unsubscribeToken ? { token: unsubscribeToken } : {}),
+        secret: linkSecret,
         broadcastId,
         campaignId: ob.campaign_id ?? null,
       });
@@ -449,7 +447,7 @@ export async function dispatchOutbox(
       lastSoftBounceAt,
       now,
       unsubscribeBaseUrl: deps.unsubscribeBaseUrl,
-      unsubscribeToken,
+      unsubscribeLinkSecret: linkSecret,
       fromEmail,
       fromName,
       toAddress: effectiveToAddress,

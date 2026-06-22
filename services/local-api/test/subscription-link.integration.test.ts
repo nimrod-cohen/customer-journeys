@@ -53,18 +53,22 @@ describeMaybe('GET /profiles/:id/subscription-link (real Postgres)', () => {
     }
   }
 
-  it('returns a tokenized /manage-subscription url that the public handler ACCEPTS (round-trip)', async () => {
+  it('returns a compact `?t=` /manage-subscription url (no raw uuid/email) that the public handler ACCEPTS (round-trip)', async () => {
     const r = await call(world.env, 'GET', `/profiles/${P_A}/subscription-link`, { token: tokA() });
     expect(r.status).toBe(200);
     const url = (r.body as { url: string }).url;
     expect(url).toContain('/manage-subscription');
     const parsed = new URL(url);
-    expect(parsed.searchParams.get('workspace_id')).toBe(WS_A);
-    expect(parsed.searchParams.get('email')).toBe(EMAIL_A);
-    expect(parsed.searchParams.get('token')).toBeTruthy();
+    // NEW compact form: one opaque `t`, no raw workspace_id/email/token triple.
+    expect(parsed.searchParams.get('t')).toBeTruthy();
+    expect(parsed.searchParams.get('workspace_id')).toBeNull();
+    expect(parsed.searchParams.get('email')).toBeNull();
+    expect(parsed.searchParams.get('token')).toBeNull();
+    expect(url).not.toContain(WS_A);
+    expect(url).not.toContain(EMAIL_A);
 
     // The link round-trips: hitting the public manage-subscription GET with it is
-    // NOT a 403 (the token verifies). Use the path+query the dispatcher emitted.
+    // NOT a 403 (the token verifies). Use the path+query the handler emitted.
     const pathWithQuery = parsed.pathname + parsed.search;
     const pub = await app.request(pathWithQuery);
     expect(pub.status).toBe(200);
@@ -85,11 +89,11 @@ describeMaybe('GET /profiles/:id/subscription-link (real Postgres)', () => {
     expect(r.status).toBe(404);
   });
 
-  it('a tampered token on the returned url is rejected by the public handler (403)', async () => {
+  it('a tampered `t` token on the returned url is rejected by the public handler (403)', async () => {
     const r = await call(world.env, 'GET', `/profiles/${P_A}/subscription-link`, { token: tokA() });
     const parsed = new URL((r.body as { url: string }).url);
-    const tok = parsed.searchParams.get('token')!;
-    parsed.searchParams.set('token', tok.slice(0, -1) + (tok.endsWith('A') ? 'B' : 'A'));
+    const t = parsed.searchParams.get('t')!;
+    parsed.searchParams.set('t', t.slice(0, -1) + (t.endsWith('A') ? 'B' : 'A'));
     const pub = await app.request(parsed.pathname + parsed.search);
     expect(pub.status).toBe(403);
   });

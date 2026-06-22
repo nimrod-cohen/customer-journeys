@@ -14,7 +14,6 @@ import { promises as dns } from 'node:dns';
 import {
   createSesClient,
   buildUnsubscribeUrl,
-  signUnsubscribeToken,
   unsubscribeLinkSecret,
   type SesEmailClient,
 } from '@cdp/email';
@@ -3794,12 +3793,13 @@ export const getSubscriptionLink: Handler = async (ctx, pool, req) => {
   if (!email) return ok({ error: 'this profile has no email' }, 400);
 
   const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
-  const token = signUnsubscribeToken(unsubscribeLinkSecret(), ctx.workspaceId, email);
+  // The compact self-contained `?t=` link — byte-identical to what the recipient
+  // is emailed (so the /manage-subscription handler will ACCEPT it).
   const url = buildUnsubscribeUrl({
     baseUrl: `${base}/manage-subscription`,
     workspaceId: ctx.workspaceId,
     email,
-    token,
+    secret: unsubscribeLinkSecret(),
   });
   return ok({ url });
 };

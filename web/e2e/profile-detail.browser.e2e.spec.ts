@@ -26,7 +26,10 @@ test('open a profile, edit it, add an attribute, view events and segments', asyn
   await expect(page.getByText('Subscription link copied to the clipboard.')).toBeVisible();
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   expect(clip).toContain('/manage-subscription');
-  expect(clip).toContain('a1%40acme.com');
+  // The compact self-contained `?t=` token carries the identity — no raw email.
+  expect(clip).toMatch(/[?&]t=/);
+  expect(clip).not.toContain('a1%40acme.com');
+  expect(clip).not.toContain('a1@acme.com');
 
   // Details tab: change the email (deliverability) status and save.
   await page.getByTestId('tab-details').click();

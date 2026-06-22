@@ -76,7 +76,53 @@ describe('parseUnsubscribeRequest', () => {
     if (r.valid) {
       expect(r.broadcastId).toBeNull();
       expect(r.campaignId).toBeNull();
+      expect(r.compactVerified).toBe(false);
     }
+  });
+
+  // ── NEW: the compact self-contained `?t=` token path ─────────────────────
+  const unpacker = (decoded: { workspaceId: string; email: string } | null) => () => decoded;
+
+  it('resolves identity from the compact `t` token (VERBATIM email, compactVerified)', () => {
+    const r = parseUnsubscribeRequest(
+      'GET',
+      '/manage-subscription?t=OPAQUE',
+      null,
+      unpacker({ workspaceId: 'ws-XYZ', email: 'Mixed.Case@Example.com' }),
+    );
+    expect(r.valid).toBe(true);
+    if (r.valid) {
+      expect(r.workspaceId).toBe('ws-XYZ');
+      expect(r.email).toBe('Mixed.Case@Example.com'); // verbatim, not lowercased
+      expect(r.compactVerified).toBe(true);
+      expect(r.token).toBeNull();
+    }
+  });
+
+  it('rejects an invalid/undecodable `t` token (no fallback to query fields)', () => {
+    const r = parseUnsubscribeRequest('GET', '/manage-subscription?t=BAD', null, unpacker(null));
+    expect(r.valid).toBe(false);
+    if (!r.valid) expect(r.reason).toMatch(/token/i);
+  });
+
+  it('parses attribution via the short b/c params alongside `t`', () => {
+    const r = parseUnsubscribeRequest(
+      'POST',
+      '/unsubscribe?t=OPAQUE&b=bc1&c=cm2',
+      'List-Unsubscribe=One-Click',
+      unpacker({ workspaceId: 'ws-1', email: 'a@b.com' }),
+    );
+    expect(r.valid).toBe(true);
+    if (r.valid) {
+      expect(r.oneClick).toBe(true);
+      expect(r.broadcastId).toBe('bc1');
+      expect(r.campaignId).toBe('cm2');
+    }
+  });
+
+  it('still accepts legacy broadcast_id / campaign_id when no b/c', () => {
+    const r = parseUnsubscribeRequest('GET', '/unsubscribe?workspace_id=ws-1&email=a%40b.com&campaign_id=cmL', null);
+    expect(r.valid && r.campaignId).toBe('cmL');
   });
 });
 

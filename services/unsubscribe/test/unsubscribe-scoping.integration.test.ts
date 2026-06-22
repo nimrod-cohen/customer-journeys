@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import { adminPool, hasDatabaseUrl } from '@cdp/db';
-import { signUnsubscribeToken } from '@cdp/email';
+import { signUnsubscribeToken, packSubscriptionToken } from '@cdp/email';
 import { runUnsubscribeInWorkspaceTx } from '../src/deps.js';
 import { makeUnsubscribeHandler, type UnsubscribeDeps } from '../src/handler.js';
 
@@ -166,6 +166,27 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
     expect(ev.rows[0]!.profile_id).not.toBeNull();
     // The suppression + profile flag still happened (unchanged behavior).
     expect(await suppressed(admin, wsA)).toBe(true);
+  });
+
+  it('a compact `?t=` POST with the short `b` param records the funnel attribution', async () => {
+    const bemail = 'tattr@ub-scope.example';
+    await admin.query("INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,'p-tattr',$2,'{}'::jsonb)", [wsA, bemail]);
+
+    const res = await handler({
+      httpMethod: 'POST',
+      rawPath: '/unsubscribe',
+      // NEW form: one opaque `t` token + the short `b` attribution param.
+      queryStringParameters: { t: packSubscriptionToken(SECRET, wsA, bemail), b: BCAST },
+      body: 'List-Unsubscribe=One-Click',
+    });
+    expect(res.statusCode).toBe(200);
+
+    const ev = await admin.query<{ broadcast_id: string }>(
+      "SELECT broadcast_id FROM email_events WHERE workspace_id = $1 AND type = 'unsubscribe' AND profile_id = (SELECT id FROM profiles WHERE workspace_id=$1 AND email=$2)",
+      [wsA, bemail],
+    );
+    expect(ev.rows).toHaveLength(1);
+    expect(ev.rows[0]!.broadcast_id).toBe(BCAST);
   });
 
   it('a POST with NO broadcast/campaign records NO email_events attribution row', async () => {

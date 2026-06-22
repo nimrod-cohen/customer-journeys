@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { unpackSubscriptionToken } from '@cdp/email';
 import {
   renderTemplateBody,
   buildSendEmailInput,
@@ -130,8 +131,29 @@ describe('buildSendEmailInput', () => {
     expect(input.headers?.['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
   });
 
-  it('carries the signed token in the List-Unsubscribe header when present', () => {
+  it('carries the LEGACY signed token in the List-Unsubscribe header when present (back-compat)', () => {
     const input = buildSendEmailInput({ ...ctx(), unsubscribeToken: 'sig-xyz' });
     expect(input.headers?.['List-Unsubscribe']).toContain('token=sig-xyz');
+  });
+
+  it('emits the compact `?t=` form (no raw uuid/email) and the secret round-trips', () => {
+    const wsId = 'aaaaaaaa-0000-0000-0000-000000000001';
+    const secret = 'hdr-secret';
+    const base = ctx();
+    const input = buildSendEmailInput({
+      ...base,
+      workspace: { ...base.workspace, id: wsId },
+      profile: { ...base.profile, email: 'recipient@example.com' },
+      unsubscribeLinkSecret: secret,
+    });
+    const header = input.headers?.['List-Unsubscribe'] ?? '';
+    const url = new URL(header.replace(/^<|>$/g, ''));
+    const t = url.searchParams.get('t');
+    expect(t).toBeTruthy();
+    expect(url.searchParams.get('workspace_id')).toBeNull();
+    expect(url.searchParams.get('email')).toBeNull();
+    expect(header).not.toContain(wsId);
+    expect(header).not.toContain('recipient@example.com');
+    expect(unpackSubscriptionToken(secret, t)).toEqual({ workspaceId: wsId, email: 'recipient@example.com' });
   });
 });

@@ -115,9 +115,10 @@ describe.skipIf(!RUN)('dispatcher send-gate uses verified sending_domains (real 
     // From falls back to no-reply@<verified domain> (no named sender on the template).
     expect(ses.sends[0]!.from).toBe('no-reply@mail.acme.com');
     // {{unsubscribe}} rendered into this recipient's workspace-scoped PREFERENCE
-    // CENTER link (manage your subscription — topics + channel groups + opt-out-all).
-    expect(ses.sends[0]!.html).toContain('manage-subscription?workspace_id=');
-    expect(ses.sends[0]!.html).toContain('email=vd%40example.com');
+    // CENTER link (manage your subscription) — now the compact, self-contained
+    // `?t=` token (no raw workspace_id/email in the URL).
+    expect(ses.sends[0]!.html).toMatch(/manage-subscription\?t=/);
+    expect(ses.sends[0]!.html).not.toContain('vd%40example.com');
     const ob = await admin.query('SELECT status FROM outbox WHERE id = $1', [outboxId]);
     expect(ob.rows[0].status).toBe('sent');
   });

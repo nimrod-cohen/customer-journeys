@@ -4,7 +4,7 @@
 // profile `unsubscribed = true`. Scoped to the workspace carried in the link.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { hasDatabaseUrl, adminPool } from '@cdp/db';
-import { signUnsubscribeToken, unsubscribeLinkSecret } from '@cdp/email';
+import { signUnsubscribeToken, packSubscriptionToken, unsubscribeLinkSecret } from '@cdp/email';
 import { createApp } from '../src/index.js';
 import type { Pool } from 'pg';
 
@@ -70,5 +70,25 @@ describeMaybe('public /unsubscribe route (real Postgres)', () => {
     const noTok = `/unsubscribe?workspace_id=${WS}&email=${encodeURIComponent(EMAIL)}`;
     expect((await app.request(noTok)).status).toBe(403);
     expect((await app.request(noTok, { method: 'POST' })).status).toBe(403);
+  });
+
+  // ── NEW: the compact self-contained `?t=` link ──────────────────────────
+  it('the compact `?t=` link works end-to-end (GET re-affirm, POST opt-out)', async () => {
+    const tLink = `/unsubscribe?t=${packSubscriptionToken(unsubscribeLinkSecret(), WS, EMAIL)}`;
+    // GET re-affirms, changes nothing.
+    const getRes = await app.request(tLink);
+    expect(getRes.status).toBe(200);
+    expect(await getRes.text()).toContain('confirm-unsubscribe');
+    // POST opts out.
+    const postRes = await app.request(tLink, { method: 'POST' });
+    expect(postRes.status).toBe(200);
+    expect(await suppressed()).toBe(true);
+    expect(await unsubAttr()).toBe('true');
+  });
+
+  it('a forged `?t=` token is 403 (cannot opt out someone else)', async () => {
+    const forged = packSubscriptionToken('a-different-secret', WS, EMAIL);
+    const res = await app.request(`/unsubscribe?t=${forged}`, { method: 'POST' });
+    expect(res.status).toBe(403);
   });
 });

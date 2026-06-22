@@ -9,6 +9,8 @@ export {
   buildListUnsubscribeHeaders,
   signUnsubscribeToken,
   verifyUnsubscribeToken,
+  packSubscriptionToken,
+  unpackSubscriptionToken,
   unsubscribeLinkSecret,
   DEV_UNSUBSCRIBE_LINK_SECRET,
   type UnsubscribeLinkParams,
