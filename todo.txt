@@ -64,26 +64,24 @@
 #     recipients before sending, on every medium. v0.52.0
 # [x] topics admin moved into Workspace settings (Topics tab, owner-gated); marketers still pick topics in the
 #     broadcast/campaign selector via the manage_content GET. v0.55.0
+# [x] profile action "Copy subscription link" — GET /profiles/:id/subscription-link returns the recipient's
+#     exact tokenized manage-subscription URL; the profile ⋮ menu copies it to the clipboard. v0.56.0
+# [x] enable/disable topics: a topics_enabled workspace toggle (Topics tab); when OFF or no active topics, the
+#     manage-subscription page shows the plain unsubscribe page; otherwise the topic options. v0.56.0
+# [x] unsubscribe / manage-subscription links are TOKENIZED + unguessable (HMAC-SHA256 over (workspace_id,email),
+#     UNSUBSCRIBE_LINK_SECRET); the dispatcher signs the body link + List-Unsubscribe header; both handlers 403 a
+#     missing/forged token. v0.56.0
 
 # REMAINING
-* profile action to COPY the recipient's subscription/unsubscribe link (so an admin can preview the page
-  the recipient sees).  [in progress]
-* enable/disable topics: when topics are DISABLED or empty, the recipient sees the original simple
-  "unsubscribe" page; otherwise the topic options (the manage-subscription page adapts).  [in progress]
-* the unsubscribe / manage-subscription URL must be a TOKENIZED, unguessable link (can't unsubscribe someone
-  by editing the email param).  [in progress]
-# [~] Connect to a REAL SMS provider  — BLOCKED on human prerequisites (provider account + credentials, like
-#     SES production access). Architecture + mock done; real adapter slots into resolveChannelProvider (@cdp/channels).
-#     See .a5c/PROVIDERS-SETUP.md.
-# [~] Connect to the REAL WhatsApp official API — same: BLOCKED on a Meta WhatsApp Business account + credentials.
+* add company logo uploading option to show in the unsubscribe / preference page.
+* implement SMS integration with 019 — copy/adapt the auth+token+send logic from
+  /Users/nimrodcohen/dev/yinon/valueinvesting/wp-content/plugins/wp-otp-login (providers/otp_019.php):
+  learn how it authenticates + creates tokens, and how it sends a message. (This is the REAL SMS provider —
+  it replaces the "mock only" SMS adapter; slot it into resolveChannelProvider in @cdp/channels.)
+* add WhatsApp/SMS TEXT templates like email templates — a single template usable for both SMS and WhatsApp,
+  attachable to broadcasts/campaigns.
+# [~] Connect to the REAL WhatsApp official API — BLOCKED on a Meta WhatsApp Business account + credentials.
 #     Architecture + mock done; see .a5c/PROVIDERS-SETUP.md.
-* add company logo uploading option to show in the unsubscribe page
-* add ability to disable topics (or if its empty) - revert to the normal unsubscribe page.
-* unsubscribe link should be a tokenized link that is unguessable
-* implement SMS integration with 019 - copy code from here: 
-/Users/nimrodcohen/dev/yinon/valueinvesting/wp-content/plugins/wp-otp-login (actual code in /providers/otp_019.php) 
-learn how it authenticates and create tokens, and how to send a message.
-* add WhatsApp/SMS templates like email templates (single templates for both mediums sms and WhatsApp)
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).

@@ -46,3 +46,10 @@ timeout; on failure throw so the dispatcher's existing retry/DLQ handling applie
 extend `ChannelProviderConfig` with the provider's fields, and resolve the config from
 `company_channel_config` instead of `DEFAULT_CHANNEL_CONFIG` (`{kind:'mock'}`). Keep the
 mock as the default for local dev + tests.
+
+## Required prod secret (v0.56.0)
+`UNSUBSCRIBE_LINK_SECRET` — the HMAC key that signs/verifies the tokenized
+unsubscribe + manage-subscription links. MUST be set (a strong random value) on
+BOTH the dispatcher (signer) and the unsubscribe/manage handlers (verifier); they
+must share the SAME value. In dev/tests a fixed fallback (`DEV_UNSUBSCRIBE_LINK_SECRET`)
+is used so links verify deterministically — never use it in production.
