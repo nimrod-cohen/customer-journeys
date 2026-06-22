@@ -9,6 +9,7 @@ import { clearEditorReturn } from '../store/editorReturn.js';
 import { Button, Card, PageHeader, EmptyState } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.tsx';
 import { AssetManagerPanel } from '../email-designer/AssetManager.tsx';
+import { TextTemplatesPanel } from './TextTemplates.tsx';
 
 interface Template {
   id: string;
@@ -23,7 +24,7 @@ function fmtDate(ts: string | null): string {
 }
 
 export function TemplatesList() {
-  const [tab, setTab] = useState<'templates' | 'gallery'>('templates');
+  const [tab, setTab] = useState<'templates' | 'text' | 'gallery'>('templates');
   const [templates, setTemplates] = useState<Template[] | null>(null);
   const [error, setError] = useState('');
 
@@ -84,6 +85,16 @@ export function TemplatesList() {
         </button>
         <button
           type="button"
+          data-testid="assets-tab-text"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'text' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => setTab('text')}
+        >
+          Text templates
+        </button>
+        <button
+          type="button"
           data-testid="assets-tab-gallery"
           class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
             tab === 'gallery' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
@@ -100,7 +111,9 @@ export function TemplatesList() {
         </p>
       ) : null}
 
-      {tab === 'gallery' ? (
+      {tab === 'text' ? (
+        <TextTemplatesPanel />
+      ) : tab === 'gallery' ? (
         <Card class="flex h-[70vh] flex-col overflow-hidden p-2">
           <AssetManagerPanel />
         </Card>

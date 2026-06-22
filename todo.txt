@@ -72,12 +72,12 @@
 #     UNSUBSCRIBE_LINK_SECRET); the dispatcher signs the body link + List-Unsubscribe header; both handlers 403 a
 #     missing/forged token. v0.56.0
 
+# [x] implement SMS integration with 019 (real provider): Sms019Provider in @cdp/channels (static-bearer JSON
+#     POST, injected HTTP client) + per-company company_channel_config (mig 0041, encrypted bearer) + dispatcher
+#     resolution (019 when configured, else mock) + Company-settings "Text messaging (019 SMS)" card. v0.57.0
+
 # REMAINING
 * add company logo uploading option to show in the unsubscribe / preference page.
-* implement SMS integration with 019 — copy/adapt the auth+token+send logic from
-  /Users/nimrodcohen/dev/yinon/valueinvesting/wp-content/plugins/wp-otp-login (providers/otp_019.php):
-  learn how it authenticates + creates tokens, and how it sends a message. (This is the REAL SMS provider —
-  it replaces the "mock only" SMS adapter; slot it into resolveChannelProvider in @cdp/channels.)
 * add WhatsApp/SMS TEXT templates like email templates — a single template usable for both SMS and WhatsApp,
   attachable to broadcasts/campaigns.
 # [~] Connect to the REAL WhatsApp official API — BLOCKED on a Meta WhatsApp Business account + credentials.

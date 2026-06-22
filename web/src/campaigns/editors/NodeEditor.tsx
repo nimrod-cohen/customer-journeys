@@ -501,6 +501,16 @@ function SendEditor(props: NodeEditorProps) {
   const [pick, setPick] = useState('');
   const [envelope, setEnvelope] = useState<{ subject: string; sender_id: string | null; to_address: string } | null>(null);
   const [textBody, setTextBody] = useState<string>(() => readSendConfig(props.node.node).textBody);
+  // Reusable text templates (SMS/WhatsApp). Picking one COPIES its body into the
+  // body field (copy-on-select — the user can still edit). No live reference.
+  const [textTemplates, setTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
+
+  useEffect(() => {
+    void api
+      .get<{ templates: { id: string; name: string; body: string }[] }>('/text-templates')
+      .then((r) => setTextTemplates(r.templates))
+      .catch(() => undefined);
+  }, []);
 
   // The medium selector — sits above the per-channel body. Changing it does not
   // persist on its own; Save (text) or the attach/design flow (email) persists.
@@ -531,6 +541,27 @@ function SendEditor(props: NodeEditorProps) {
     return (
       <div class="space-y-4">
         {mediumSelect}
+        {textTemplates.length ? (
+          <Field label="Use a text template (optional)">
+            <Select
+              data-testid="text-template-pick"
+              value=""
+              onChange={(e: Event) => {
+                const tid = (e.target as HTMLSelectElement).value;
+                const tpl = textTemplates.find((t) => t.id === tid);
+                if (tpl) setTextBody(tpl.body);
+                (e.target as HTMLSelectElement).value = '';
+              }}
+            >
+              <option value="">— none —</option>
+              {textTemplates.map((t) => (
+                <option value={t.id} key={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
         <Field label="Message body" hint="Plain text. Merge tags like {{customer.first_name}} render per recipient.">
           <Textarea
             data-testid="send-text-body"

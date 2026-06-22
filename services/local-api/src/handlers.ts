@@ -1235,6 +1235,89 @@ export const deleteTopic: Handler = async (ctx, pool, req) => {
   return ok({ deleted: rowCount });
 };
 
+// ---------------------------------------------------------------------------
+// text templates (a reusable plain-text SMS/WhatsApp body library) — workspace-
+// scoped CRUD (manage_content). A text template is medium-AGNOSTIC: the same body
+// works for SMS or WhatsApp. Picking one COPIES its body into a send's existing
+// text_body (broadcasts.text_body / a campaign send node) — copy-on-select, no
+// live reference. A cross-workspace id 404s (inv.1/2).
+// ---------------------------------------------------------------------------
+
+/** GET /text-templates — the workspace's text templates (newest first). */
+export const listTextTemplates: Handler = async (ctx, pool) => {
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, body, created_at, updated_at FROM text_templates',
+  );
+  const { rows } = await pool.query(`${q.text} ORDER BY updated_at DESC`, q.values);
+  return ok({ templates: rows });
+};
+
+/** GET /text-templates/:id — one text template. Scoped; a foreign id 404s. */
+export const getTextTemplate: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, body, created_at, updated_at FROM text_templates WHERE id = $1',
+    [id],
+  );
+  const { rows } = await pool.query(q.text, q.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  return ok({ template: rows[0] });
+};
+
+/** POST /text-templates — create. name + body required; scoped to the active workspace. */
+export const createTextTemplate: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const name = String(b.name ?? '').trim();
+  if (!name) return ok({ error: 'name required' }, 400);
+  const body = String(b.body ?? '').trim();
+  if (!body) return ok({ error: 'body required' }, 400);
+  const { rows } = await pool.query(
+    `INSERT INTO text_templates (workspace_id, name, body)
+     VALUES ($1, $2, $3) RETURNING id, name, body, created_at, updated_at`,
+    [ctx.workspaceId, name, body],
+  );
+  return ok({ template: rows[0] }, 201);
+};
+
+/** PUT /text-templates/:id — rename / edit body (partial). Scoped; a foreign id 404s. */
+export const updateTextTemplate: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const name = b.name !== undefined ? String(b.name).trim() : null;
+  if (b.name !== undefined && !name) return ok({ error: 'name required' }, 400);
+  const body = b.body !== undefined ? String(b.body).trim() : null;
+  if (b.body !== undefined && !body) return ok({ error: 'body required' }, 400);
+  const q = scopedQuery(
+    ctx.workspaceId,
+    `UPDATE text_templates SET
+       name = COALESCE($1, name),
+       body = COALESCE($2, body),
+       updated_at = now()
+     WHERE id = $3`,
+    [name, body, id],
+  );
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  const sel = scopedQuery(
+    ctx.workspaceId,
+    'SELECT id, name, body, created_at, updated_at FROM text_templates WHERE id = $1',
+    [id],
+  );
+  const { rows } = await pool.query(sel.text, sel.values);
+  return ok({ template: rows[0] });
+};
+
+/** DELETE /text-templates/:id — hard-delete. Scoped; a foreign id 404s. (Sends keep their copied body.) */
+export const deleteTextTemplate: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const q = scopedQuery(ctx.workspaceId, 'DELETE FROM text_templates WHERE id = $1', [id]);
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ deleted: rowCount });
+};
+
 export const listSegments: Handler = async (ctx, pool) => {
   const q = scopedQuery(
     ctx.workspaceId,
@@ -4364,6 +4447,11 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /topics': createTopic,
   'PATCH /topics/:id': updateTopic,
   'DELETE /topics/:id': deleteTopic,
+  'GET /text-templates': listTextTemplates,
+  'GET /text-templates/:id': getTextTemplate,
+  'POST /text-templates': createTextTemplate,
+  'PUT /text-templates/:id': updateTextTemplate,
+  'DELETE /text-templates/:id': deleteTextTemplate,
   'GET /segments': listSegments,
   'GET /segments/:id': getSegment,
   'POST /segments': createSegment,

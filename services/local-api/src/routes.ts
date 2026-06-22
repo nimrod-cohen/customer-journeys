@@ -57,6 +57,13 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'PATCH /topics/:id': 'manage_content',
   'DELETE /topics/:id': 'manage_content',
 
+  // --- text templates (reusable SMS/WhatsApp body library — manage_content) ---
+  'GET /text-templates': 'manage_content',
+  'GET /text-templates/:id': 'manage_content',
+  'POST /text-templates': 'manage_content',
+  'PUT /text-templates/:id': 'manage_content',
+  'DELETE /text-templates/:id': 'manage_content',
+
   // --- segments + audiences (manage_content) ---
   'GET /segments': 'manage_content',
   'GET /segments/:id': 'manage_content',

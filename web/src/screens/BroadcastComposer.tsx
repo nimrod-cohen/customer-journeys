@@ -415,6 +415,9 @@ export function BroadcastWizard({ id }: { id?: string }) {
   // topic is skipped at send. '' = no topic (sends to everyone not opted out).
   const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
   const [topicId, setTopicId] = useState('');
+  // Reusable text templates (SMS/WhatsApp). Picking one COPIES its body into the
+  // text-body field below (copy-on-select — the user can still edit). No live ref.
+  const [textTemplates, setTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
   // The broadcast's WORKING COPY of a template (kind='copy'): picking a library
   // template clones it so this broadcast's content is independently editable and
   // the library original stays pristine.
@@ -444,10 +447,12 @@ export function BroadcastWizard({ id }: { id?: string }) {
       api.get<{ segments: Segment[] }>('/segments'),
       api.get<{ templates: Template[] }>('/templates'),
       api.get<{ topics: { id: string; name: string }[] }>('/topics'),
-    ]).then(([s, t, tp]) => {
+      api.get<{ templates: { id: string; name: string; body: string }[] }>('/text-templates'),
+    ]).then(([s, t, tp, tt]) => {
       setSegments(s.segments);
       setTemplates(t.templates);
       setTopics(tp.topics);
+      setTextTemplates(tt.templates);
     });
   }, []);
 
@@ -792,6 +797,30 @@ export function BroadcastWizard({ id }: { id?: string }) {
               Write the {MEDIUM_LABEL[medium]} message. It's sent as plain text to each recipient's phone. Use merge
               tags like <code class="rounded bg-stone-100 px-1">{'{{customer.first_name}}'}</code> to personalize.
             </p>
+            {textTemplates.length ? (
+              <Field label="Use a text template (optional)">
+                <Select
+                  data-testid="text-template-pick"
+                  value=""
+                  onChange={(e: Event) => {
+                    const tid = (e.target as HTMLSelectElement).value;
+                    const tpl = textTemplates.find((t) => t.id === tid);
+                    if (tpl) setTextBody(tpl.body);
+                    (e.target as HTMLSelectElement).value = '';
+                  }}
+                >
+                  <option value="">— none —</option>
+                  {textTemplates.map((t) => (
+                    <option value={t.id} key={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </Select>
+                <p class="mt-1 text-xs text-stone-500">
+                  Fills the message below with the template's body. You can still edit it.
+                </p>
+              </Field>
+            ) : null}
             <Field label={`${MEDIUM_LABEL[medium]} message`}>
               <Textarea
                 data-testid="broadcast-text-body"

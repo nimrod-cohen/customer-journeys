@@ -304,6 +304,7 @@ export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void>
     await pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM segments WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM email_templates WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM text_templates WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM topics WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
