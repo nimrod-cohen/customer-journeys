@@ -28,6 +28,26 @@ test('the customer.* shorthand resolves like attributes.* in a segment rule (§1
   await expect(page.getByTestId('member-preview-row')).toHaveCount(2);
 });
 
+test('the field autosuggest offers the workspace\'s REAL custom attributes (live, not a static list)', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-segments').click();
+  await page.getByTestId('segments-list').waitFor();
+  await page.getByTestId('new-segment').click();
+  await page.getByTestId('segment-builder').waitFor();
+
+  // The field box's suggestion dropdown is fed live by GET /profiles/attribute-keys.
+  // Type a partial of a seeded custom attribute ("first_name") and it is offered as
+  // `customer.first_name` — it was NOT in the old static list, proving the suggest
+  // reflects the workspace's REAL attributes.
+  const field = page.getByTestId('rule-field').first();
+  await field.click();
+  await field.fill('first_n');
+  const suggestion = page.getByTestId('value-suggestion').filter({ hasText: 'customer.first_name' }).first();
+  await expect(suggestion).toBeVisible();
+  await suggestion.click();
+  await expect(field).toHaveValue('customer.first_name');
+});
+
 test('create a dynamic segment, save, and see its members + the list', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-segments').click();

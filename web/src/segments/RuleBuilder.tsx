@@ -41,19 +41,43 @@ const fetchPayloadKeys = (type: string): Fetcher => (q) =>
 const fetchPayloadValues = (type: string, key: string): Fetcher =>
   key ? (q) => api.get<{ values: string[] }>('/events/payload-values', { query: { type, key, q } }).then((r) => r.values) : null;
 
-/** Common field paths offered as suggestions for a 'field' rule. The
+/** Canonical built-in field paths always offered for a 'field' rule. The
  *  `customer.*` namespace is the same shorthand used in email tags (§11):
- *  `customer.tier` ≡ `attributes.tier`, `customer.email` ≡ `email`. */
+ *  `customer.tier` ≡ `attributes.tier`, `customer.email` ≡ `email`. The
+ *  workspace's REAL custom attribute keys are merged in at runtime (below). */
 const FIELD_SUGGESTIONS = [
   'email_status',
   'total_events',
   'monetary_total',
   'last_event_at',
-  'customer.tier',
-  'customer.source',
-  'attributes.tier',
   'features.counters.purchase_30d',
 ];
+
+/** Suggestions for a field rule: the built-in fields PLUS the workspace's live
+ *  custom attribute keys (offered as `customer.<key>`, the §11 shorthand) so a
+ *  freshly-added attribute like `yp_status` shows up. Filters by `q`
+ *  (case-insensitive substring) and dedupes; never throws (a failed fetch just
+ *  falls back to the built-ins). */
+const fetchFieldSuggestions: Fetcher = async (q) => {
+  let attrFields: string[] = [];
+  try {
+    const r = await api.get<{ keys: string[] }>('/profiles/attribute-keys');
+    // Offer each live attribute key in BOTH §11-equivalent forms so a match is
+    // found whichever prefix the user types (the default row uses `attributes.`,
+    // the email-tag shorthand uses `customer.`).
+    attrFields = r.keys.flatMap((k) => [`customer.${k}`, `attributes.${k}`]);
+  } catch {
+    // ignore — fall back to the built-in list only
+  }
+  const seen = new Set<string>();
+  const all = [...FIELD_SUGGESTIONS, ...attrFields].filter((f) => {
+    if (seen.has(f)) return false;
+    seen.add(f);
+    return true;
+  });
+  const needle = q.trim().toLowerCase();
+  return needle ? all.filter((f) => f.toLowerCase().includes(needle)) : all;
+};
 /** Friendly labels for the event count operator. */
 const EVENT_OP_LABEL: Record<EventCountOp, string> = {
   occurred: 'occurred',
@@ -129,13 +153,14 @@ function RuleListEditor({
 
             {kind === 'field' ? (
               <div class="flex flex-wrap items-center gap-2">
-                <Input
-                  data-testid="rule-field"
-                  list="field-suggestions"
-                  class="min-w-[12rem] flex-1 font-mono text-xs"
-                  placeholder="customer.tier, email_status, features.counters.purchase_30d…"
+                <Suggest
+                  testId="rule-field"
+                  wrapperClass="relative min-w-[12rem] flex-1"
+                  inputClass="font-mono text-xs"
                   value={row.field}
-                  onInput={(e: Event) => update(i, { field: (e.target as HTMLInputElement).value })}
+                  onChange={(v) => update(i, { field: v })}
+                  fetcher={fetchFieldSuggestions}
+                  placeholder="customer.tier, email_status, features.counters.purchase_30d…"
                 />
                 <Select
                   data-testid="rule-operator"
@@ -327,12 +352,6 @@ export function RuleBuilder({
 
   return (
     <div>
-      <datalist id="field-suggestions">
-        {FIELD_SUGGESTIONS.map((f) => (
-          <option key={f} value={f} />
-        ))}
-      </datalist>
-
       <div class="flex items-center gap-2">
         <span class="text-xs font-semibold uppercase tracking-wide text-stone-500">Match</span>
         <Select
