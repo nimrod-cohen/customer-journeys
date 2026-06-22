@@ -72,8 +72,8 @@ describe.skipIf(!RUN)('text-channel broadcast → dispatcher (mock provider, rea
     segmentId = s.rows[0].id;
     // Two recipients WITH a phone, one WITHOUT (must be skipped).
     const people: Array<[string, string | null]> = [
-      ['withphone1@example.com', '+15550000001'],
-      ['withphone2@example.com', '+15550000002'],
+      ['withphone1@example.com', '+972500000001'],
+      ['withphone2@example.com', '+972500000002'],
       ['nophone@example.com', null],
     ];
     for (const [email, phone] of people) {
@@ -157,7 +157,7 @@ describe.skipIf(!RUN)('text-channel broadcast → dispatcher (mock provider, rea
     expect(channel.sends).toHaveLength(2); // only the two recipients with a phone
     // body merge-rendered + sent to the PHONE
     expect(channel.sends[0].body).toBe('Hi Pat — your order is ready.');
-    expect(channel.sends.map((m) => m.to).sort()).toEqual(['+15550000001', '+15550000002']);
+    expect(channel.sends.map((m) => m.to).sort()).toEqual(['+972500000001', '+972500000002']);
 
     const sends = outcomes.filter((o) => o.result === 'send');
     const skips = outcomes.filter((o) => o.result === 'skip');

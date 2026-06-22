@@ -230,11 +230,12 @@ export async function seed(): Promise<void> {
         WHERE workspace_id = $1 AND external_id = 'a2'`,
       [WS_A],
     );
-    // a1 (the manual-segment member) carries a phone so an SMS/WhatsApp broadcast
-    // to that segment has a deliverable recipient (the text channels send to
-    // {{customer.phone}}). first_name lets the body merge tag render.
+    // a1 (the manual-segment member) carries a VALID E.164 phone so an SMS/WhatsApp
+    // broadcast to that segment has a deliverable recipient (the text channels send
+    // to {{customer.phone}}, which is normalized to E.164 — an invalid number is
+    // skipped). first_name lets the body merge tag render.
     await pool.query(
-      `UPDATE profiles SET attributes = attributes || '{"phone": "+15551230001", "first_name": "Ada"}'::jsonb
+      `UPDATE profiles SET attributes = attributes || '{"phone": "+972529461566", "first_name": "Ada"}'::jsonb
         WHERE workspace_id = $1 AND external_id = 'a1'`,
       [WS_A],
     );

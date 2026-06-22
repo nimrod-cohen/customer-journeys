@@ -5,7 +5,7 @@
 // the field shows a "leave blank to keep" placeholder once a bearer is stored.
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
-import { Button, Card, Field, Input } from '../ui/kit.js';
+import { Button, Card, Field, Input, Select } from '../ui/kit.js';
 
 interface ChannelConfig {
   configured: boolean;
@@ -13,13 +13,32 @@ interface ChannelConfig {
   api_url?: string;
   username?: string;
   source?: string;
+  default_country?: string | null;
 }
+
+/** A small, sensible default-country list (ISO 3166-1 alpha-2) for the picker. */
+const COUNTRY_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: 'IL', label: 'Israel (+972)' },
+  { code: 'US', label: 'United States (+1)' },
+  { code: 'GB', label: 'United Kingdom (+44)' },
+  { code: 'CA', label: 'Canada (+1)' },
+  { code: 'AU', label: 'Australia (+61)' },
+  { code: 'DE', label: 'Germany (+49)' },
+  { code: 'FR', label: 'France (+33)' },
+  { code: 'ES', label: 'Spain (+34)' },
+  { code: 'IT', label: 'Italy (+39)' },
+  { code: 'NL', label: 'Netherlands (+31)' },
+  { code: 'IN', label: 'India (+91)' },
+  { code: 'BR', label: 'Brazil (+55)' },
+  { code: 'MX', label: 'Mexico (+52)' },
+];
 
 export function CompanyChannelConfig() {
   const [cfg, setCfg] = useState<ChannelConfig | null>(null);
   const [apiUrl, setApiUrl] = useState('');
   const [username, setUsername] = useState('');
   const [source, setSource] = useState('');
+  const [defaultCountry, setDefaultCountry] = useState('');
   const [secret, setSecret] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -31,6 +50,7 @@ export function CompanyChannelConfig() {
     setApiUrl(r.api_url ?? '');
     setUsername(r.username ?? '');
     setSource(r.source ?? '');
+    setDefaultCountry(r.default_country ?? '');
     setSecret('');
   };
   useEffect(() => {
@@ -43,7 +63,14 @@ export function CompanyChannelConfig() {
     setBusy(true);
     try {
       await api.put('/company/channel-config', {
-        body: { provider: '019', api_url: apiUrl.trim(), username: username.trim(), source: source.trim(), secret },
+        body: {
+          provider: '019',
+          api_url: apiUrl.trim(),
+          username: username.trim(),
+          source: source.trim(),
+          default_country: defaultCountry,
+          secret,
+        },
       });
       setSecret('');
       setSaved(true);
@@ -63,6 +90,7 @@ export function CompanyChannelConfig() {
       setApiUrl('');
       setUsername('');
       setSource('');
+      setDefaultCountry('');
       setSecret('');
       await load();
     } catch (e) {
@@ -124,6 +152,23 @@ export function CompanyChannelConfig() {
             value={source}
             onInput={(e: Event) => setSource((e.target as HTMLInputElement).value)}
           />
+        </Field>
+        <Field label="Default country">
+          <Select
+            data-testid="channel-019-country"
+            value={defaultCountry}
+            onChange={(e: Event) => setDefaultCountry((e.target as HTMLSelectElement).value)}
+          >
+            <option value="">No default (numbers must be in +E.164)</option>
+            {COUNTRY_OPTIONS.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.label}
+              </option>
+            ))}
+          </Select>
+          <p class="mt-1 text-xs text-stone-500">
+            National numbers (a leading 0, no +) are converted to international E.164 using this country before sending.
+          </p>
         </Field>
         <Field label="Bearer token">
           <Input

@@ -32,18 +32,23 @@ export async function channelConfigForWorkspace(
     username: string;
     source: string;
     secret: string;
+    default_country: string | null;
   }>(
-    `SELECT c.provider, c.api_url, c.username, c.source, c.secret
+    `SELECT c.provider, c.api_url, c.username, c.source, c.secret, c.default_country
        FROM company_channel_config c JOIN workspaces w ON w.company_id = c.company_id
       WHERE w.id = $1`,
     [workspaceId],
   );
   const cfg = rows[0];
+  // The default country is used to NORMALIZE national numbers regardless of which
+  // provider sends (it rides BOTH the real-019 config and the mock fallback so a
+  // company can set a default country even before configuring a real gateway).
+  const defaultCountry = cfg?.default_country ?? null;
   if (cfg && cfg.provider === '019') {
     const bearer = isEncryptedSecret(cfg.secret) ? decryptSecret(cfg.secret) : cfg.secret;
-    return { kind: '019', apiUrl: cfg.api_url, username: cfg.username, source: cfg.source, bearer };
+    return { kind: '019', apiUrl: cfg.api_url, username: cfg.username, source: cfg.source, bearer, defaultCountry };
   }
-  return DEFAULT_CHANNEL_CONFIG;
+  return defaultCountry ? { kind: 'mock', defaultCountry } : DEFAULT_CHANNEL_CONFIG;
 }
 
 /** Minimal pool surface so tests can pass an `adminPool()` directly. */

@@ -42,7 +42,7 @@ describeMaybe('multi-channel broadcasts (real Postgres)', () => {
     // One recipient WITH a phone (attributes.phone) + first_name; one WITHOUT.
     await pool.query(
       "INSERT INTO profiles (id, workspace_id, external_id, email, attributes) VALUES ($1,$2,'ph','ph@example.com',$3::jsonb)",
-      [P_PHONE, WS, JSON.stringify({ phone: '+15557654321', first_name: 'Sam' })],
+      [P_PHONE, WS, JSON.stringify({ phone: '+972529461566', first_name: 'Sam' })],
     );
     await pool.query(
       "INSERT INTO profiles (id, workspace_id, external_id, email, attributes) VALUES ($1,$2,'nph','nph@example.com',$3::jsonb)",

@@ -643,10 +643,13 @@ export function buildMessagesLogInsert(
 }
 
 /**
- * A FAILED/SKIPPED send's messages_log row (a text send with no recipient phone,
- * or a provider failure) — recorded so the batch never crashes and the outcome
- * is visible, mirroring how email skips/refusals are handled. `ses_message_id`
- * is null (nothing was sent). workspace_id bound at $1.
+ * A FAILED/SKIPPED send's messages_log row (a text send with no recipient phone /
+ * an invalid phone, a recipient with no email, a guard skip, or a provider
+ * failure) — recorded so the batch never crashes and the outcome is visible,
+ * mirroring how email skips/refusals are handled. `ses_message_id` is null
+ * (nothing was sent). The optional `reason` is the human WHY (e.g. 'recipient has
+ * no phone', 'invalid phone number', 'frequency cap reached', or a captured
+ * provider error) — surfaced in the activity feed. workspace_id bound at $1.
  */
 export function buildMessagesLogFailure(
   workspaceId: string,
@@ -655,12 +658,13 @@ export function buildMessagesLogFailure(
   broadcastId: string | null,
   medium: Medium,
   status: 'failed' | 'skipped',
+  reason: string | null = null,
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildMessagesLogFailure: workspaceId is required');
   return {
-    text: `INSERT INTO messages_log (workspace_id, profile_id, campaign_id, broadcast_id, ses_message_id, status, medium)
-           VALUES ($1, $2, $3, $4, NULL, $5, $6)`,
-    values: [workspaceId, profileId, campaignId, broadcastId, status, medium],
+    text: `INSERT INTO messages_log (workspace_id, profile_id, campaign_id, broadcast_id, ses_message_id, status, medium, reason)
+           VALUES ($1, $2, $3, $4, NULL, $5, $6, $7)`,
+    values: [workspaceId, profileId, campaignId, broadcastId, status, medium, reason],
   };
 }
 

@@ -26,6 +26,7 @@ test('company 019 SMS credentials: save (bearer write-only) then remove', async 
   await page.getByTestId('channel-019-url').fill('https://019sms.co.il/api');
   await page.getByTestId('channel-019-username').fill('acme');
   await page.getByTestId('channel-019-source').fill('MyBrand');
+  await page.getByTestId('channel-019-country').selectOption('IL'); // default country for national-number normalization
   await page.getByTestId('channel-019-secret').fill('super-secret-bearer');
   // The Save button enables only once all four fields are non-blank — wait for it.
   await expect(page.getByTestId('channel-019-save')).toBeEnabled();
@@ -41,6 +42,7 @@ test('company 019 SMS credentials: save (bearer write-only) then remove', async 
   await expect(page.getByTestId('channel-019-url')).toHaveValue('https://019sms.co.il/api');
   await expect(page.getByTestId('channel-019-username')).toHaveValue('acme');
   await expect(page.getByTestId('channel-019-source')).toHaveValue('MyBrand');
+  await expect(page.getByTestId('channel-019-country')).toHaveValue('IL'); // default country persisted
   await expect(page.getByTestId('channel-019-secret')).toHaveValue('');
 
   // Remove → back to unconfigured (resets state so SMS sends use the mock).

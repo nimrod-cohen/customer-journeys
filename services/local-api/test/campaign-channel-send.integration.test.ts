@@ -183,7 +183,7 @@ describeMaybe('multi-channel campaign send node (real Postgres)', () => {
 
   it('SMS send node → outbox(medium=sms,text) → REAL dispatcher(mock) → messages_log(medium=sms) with merged body', async () => {
     const camp = await makeCampaign(WS, smsDef(), null);
-    const profileId = await makeProfile(WS, 'sms@example.com', '+15557654321', 'Sam');
+    const profileId = await makeProfile(WS, 'sms@example.com', '+972529461566', 'Sam');
     await enrollProfileManually(enrollDeps(), { workspaceId: WS, campaignId: camp, profileId });
 
     const now = new Date();
@@ -233,7 +233,7 @@ describeMaybe('multi-channel campaign send node (real Postgres)', () => {
 
   it('idempotent re-tick: a second sweep + dispatch adds no second outbox/send', async () => {
     const camp = await makeCampaign(WS, smsDef(), null);
-    const profileId = await makeProfile(WS, 'idem@example.com', '+15550001111', 'Ida');
+    const profileId = await makeProfile(WS, 'idem@example.com', '+972521112222', 'Ida');
     await enrollProfileManually(enrollDeps(), { workspaceId: WS, campaignId: camp, profileId });
     const now = new Date();
     await sweepAndAdvance(now);
@@ -252,7 +252,7 @@ describeMaybe('multi-channel campaign send node (real Postgres)', () => {
 
   it('topic-gating: a topic-unsubscribed profile is SKIPPED (no provider send)', async () => {
     const camp = await makeCampaign(WS, smsDef(), TOPIC);
-    const profileId = await makeProfile(WS, 'topicoff@example.com', '+15552223333', 'Tom');
+    const profileId = await makeProfile(WS, 'topicoff@example.com', '+972522223333', 'Tom');
     // Explicit opt-out of the topic (default-on otherwise).
     await admin.query(
       "INSERT INTO topic_subscriptions (workspace_id, profile_id, topic_id, subscribed) VALUES ($1,$2,$3,false)",
@@ -310,7 +310,7 @@ describeMaybe('multi-channel campaign send node (real Postgres)', () => {
 
   it('workspace-scoped: a WS_B campaign+enrollment is untouched by WS dispatch', async () => {
     const campB = await makeCampaign(WS_B, smsDef(), null);
-    const pB = await makeProfile(WS_B, 'b@example.com', '+15559998888', 'Bea');
+    const pB = await makeProfile(WS_B, 'b@example.com', '+972529998888', 'Bea');
     await enrollProfileManually(enrollDeps(), { workspaceId: WS_B, campaignId: campB, profileId: pB });
     // Advancing WS_B's enrollment writes only WS_B rows.
     const now = new Date();

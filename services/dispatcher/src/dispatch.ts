@@ -32,6 +32,7 @@ import {
   buildSendEmailInput,
   buildChannelMessage,
   resolveTextRecipient,
+  renderTemplateBody,
   rewriteTrackingLinks,
   buildTrackedLinkInsert,
   injectOpenPixel,
@@ -45,6 +46,7 @@ import {
 import { customerMerge, expandCustomerToken } from '@cdp/shared';
 import {
   resolveChannelProvider,
+  normalizePhone,
   isTextMedium,
   mediumGroupOf,
   DEFAULT_CHANNEL_CONFIG,
@@ -484,6 +486,27 @@ export async function dispatchOutbox(
       });
     }
 
+    // EMAIL: a recipient with NO usable address is SKIPPED cleanly (never a throw
+    // / retry) — mirrors the text no-phone skip. Email is the identity key so
+    // 'no email' is rare, but a CUSTOM To token that renders empty must skip too.
+    const renderedTo = ctx.toAddress ? renderTemplateBody(ctx.toAddress, ctx.merge).trim() : '';
+    const emailTo = renderedTo || profile.email || '';
+    if (!emailTo) {
+      await deps.runInWorkspaceTx(workspaceId, [
+        buildMessagesLogFailure(
+          workspaceId,
+          profile.id,
+          ob.campaign_id ?? null,
+          broadcastId,
+          'email',
+          'skipped',
+          'recipient has no email address',
+        ),
+        buildOutboxMarkSent(workspaceId, outboxId),
+      ]);
+      return { result: 'skip', reason: 'recipient has no email address' };
+    }
+
     // EMAIL: build the SES input and SEND (the only SES call site).
     const input: SendEmailInput = buildSendEmailInput(ctx);
     const { sesMessageId } = await deps.ses.sendEmail(input);
@@ -533,13 +556,32 @@ interface TextSendArgs {
 async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Promise<DispatchOutcome> {
   const { workspaceId, outboxId, ctx, medium, campaignId, broadcastId, profileId, now } = args;
   // No phone → skip (terminal). Record a skipped messages_log row + mark done.
-  const renderedTo = resolveTextRecipient(ctx);
-  if (!renderedTo) {
+  const rawTo = resolveTextRecipient(ctx);
+  if (!rawTo) {
     await deps.runInWorkspaceTx(workspaceId, [
-      buildMessagesLogFailure(workspaceId, profileId, campaignId, broadcastId, medium, 'skipped'),
+      buildMessagesLogFailure(workspaceId, profileId, campaignId, broadcastId, medium, 'skipped', 'recipient has no phone'),
       buildOutboxMarkSent(workspaceId, outboxId),
     ]);
     return { result: 'skip', reason: 'recipient has no phone' };
+  }
+
+  // Resolve the per-company channel config FIRST — it carries both the provider
+  // credentials AND the `defaultCountry` used to normalize national numbers. When
+  // a test injects `resolveChannel` (a counting fake) we still read the config (if
+  // supplied) purely for `defaultCountry`, falling back to the mock config.
+  const cfg = (await deps.resolveChannelConfig?.(workspaceId)) ?? DEFAULT_CHANNEL_CONFIG;
+
+  // Normalize the recipient phone to E.164 using the company default country. An
+  // already-+E.164 number is kept; a national number (leading 0 / no +) is
+  // converted; an unparseable/invalid number → SKIP 'invalid phone number'
+  // (never sent, never crashes the batch). The provider always receives E.164.
+  const e164 = normalizePhone(rawTo, cfg.defaultCountry ?? null);
+  if (!e164) {
+    await deps.runInWorkspaceTx(workspaceId, [
+      buildMessagesLogFailure(workspaceId, profileId, campaignId, broadcastId, medium, 'skipped', 'invalid phone number'),
+      buildOutboxMarkSent(workspaceId, outboxId),
+    ]);
+    return { result: 'skip', reason: 'invalid phone number' };
   }
 
   // Provider resolution, in priority order:
@@ -547,15 +589,25 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
   //  2. else `resolveChannelProvider(medium, <company config>, channelHttp)` — the
   //     per-company config (a real '019' adapter when configured, else the mock).
   //     The bearer was decrypted by `resolveChannelConfig` (at send time only).
-  let provider: ChannelProvider;
-  if (deps.resolveChannel) {
-    provider = deps.resolveChannel(medium);
-  } else {
-    const cfg = (await deps.resolveChannelConfig?.(workspaceId)) ?? DEFAULT_CHANNEL_CONFIG;
-    provider = resolveChannelProvider(medium, cfg, deps.channelHttp);
+  const provider: ChannelProvider = deps.resolveChannel
+    ? deps.resolveChannel(medium)
+    : resolveChannelProvider(medium, cfg, deps.channelHttp);
+  // Send the NORMALIZED E.164 number to the provider (the body is already rendered).
+  const message = { ...buildChannelMessage(ctx), to: e164 };
+  let providerMessageId: string;
+  try {
+    ({ providerMessageId } = await provider.send(message));
+  } catch (err) {
+    // A real provider send FAILURE — record a 'failed' messages_log row carrying
+    // the captured error message as the reason, then mark the outbox row done
+    // (terminal, never crashing the batch / blocking other recipients).
+    const reason = err instanceof Error ? err.message : String(err);
+    await deps.runInWorkspaceTx(workspaceId, [
+      buildMessagesLogFailure(workspaceId, profileId, campaignId, broadcastId, medium, 'failed', reason),
+      buildOutboxMarkSent(workspaceId, outboxId),
+    ]);
+    return { result: 'skip', reason };
   }
-  const message = buildChannelMessage(ctx);
-  const { providerMessageId } = await provider.send(message);
 
   await deps.runInWorkspaceTx(workspaceId, [
     buildMessagesLogInsert(workspaceId, profileId, campaignId, providerMessageId, broadcastId, medium),
@@ -607,6 +659,7 @@ async function finalizeNonSend(
             target.broadcastId,
             target.medium,
             'skipped',
+            decision.reason,
           ),
         ]
       : []),

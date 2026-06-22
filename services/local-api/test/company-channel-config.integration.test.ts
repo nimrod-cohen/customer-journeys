@@ -67,7 +67,7 @@ describeMaybe('company channel config (019 SMS) + dispatcher resolution (real Po
     await pool.query("INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,'S','manual')", [SEG_A, WS_A]);
     await pool.query(
       "INSERT INTO profiles (id, workspace_id, external_id, email, attributes) VALUES ($1,$2,'ph','ph@example.com',$3::jsonb)",
-      [P_PHONE, WS_A, JSON.stringify({ phone: '+15557654321', first_name: 'Sam' })],
+      [P_PHONE, WS_A, JSON.stringify({ phone: '+972529461566', first_name: 'Sam' })],
     );
     await pool.query(
       "INSERT INTO segment_memberships (segment_id, profile_id, workspace_id, source) VALUES ($1,$2,$3,'manual')",
@@ -216,7 +216,7 @@ describeMaybe('company channel config (019 SMS) + dispatcher resolution (real Po
     };
     expect(payload.sms.user.username).toBe('acme');
     expect(payload.sms.source).toBe('MyBrand');
-    expect(payload.sms.destinations.phone).toBe('+15557654321');
+    expect(payload.sms.destinations.phone).toBe('+972529461566');
     expect(payload.sms.message).toBe('Hi Sam!'); // merge rendered
 
     // messages_log records the provider message id returned by 019 (NOT a mock id).

@@ -94,8 +94,9 @@ describeMaybe('activity log (real Postgres)', () => {
 
   it('merges all sources, newest-first, and never shows another tenant', async () => {
     const rows = await activity();
+    // The send row's type is now the MEDIUM (email) — source stays 'send'.
     expect(rows.map((r) => `${r.source}:${r.type}`)).toEqual([
-      'send:send',
+      'send:email',
       'email:bounce',
       'email:delivery',
       'event:page_view',
@@ -109,7 +110,7 @@ describeMaybe('activity log (real Postgres)', () => {
   it('derives outcome (success/failure/info)', async () => {
     const byType = Object.fromEntries((await activity()).map((r) => [r.type, r.outcome]));
     expect(byType['delivery']).toBe('success');
-    expect(byType['send']).toBe('success');
+    expect(byType['email']).toBe('success'); // the send row (medium=email, status=sent)
     expect(byType['bounce']).toBe('failure');
     expect(byType['page_view']).toBe('info');
   });

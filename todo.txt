@@ -86,14 +86,17 @@
 #     from the setting or the recipient's Accept-Language; Workspace-settings language Select. v0.61.0
 # [x] the unsubscribe page shows the app favicon (inlined SVG data-URI, served by the API). v0.61.1
 # [x] separate Company settings into Workspaces / Sending (SES + 019 SMS + logo, +WhatsApp later) / Billing tabs. v0.62.0
+# [x] missing-address handling: a recipient with no usable address for the medium is SKIPPED cleanly (never throws/sends) —
+#     EMAIL with no email (or an empty resolved To) → messages_log 'skipped' reason 'recipient has no email address';
+#     SMS/WhatsApp with no phone → 'skipped' reason 'recipient has no phone'. Skip/failure reasons are recorded in
+#     messages_log.reason and surfaced in the Activity log (type=<medium>, detail=COALESCE(reason,status)). v0.63.0
+# [x] phone formatting: text-channel recipient phones are normalized to E.164 via libphonenumber-js using a per-company
+#     default country (company_channel_config.default_country + a 019 settings dropdown) — an already-+E.164 number is kept,
+#     a national number (leading 0 / no +) is converted; an invalid number → 'skipped' reason 'invalid phone number'. v0.63.0
 
 # REMAINING
 # [~] Connect to the REAL WhatsApp official API — BLOCKED on a Meta WhatsApp Business account + credentials.
 #     Architecture + mock done; see .a5c/PROVIDERS-SETUP.md.
-* what happens when a profile is targeted for a broadcast or a campaign but the medium is email and we don't have his
-  email address, or the medium is phone and we don't have his phone number?
-* Phones should be formatted for sms/whatsapp providers with country code - if the phone is maintained without the country code,
-  it should be converted to the proper format, with the default country selected from a dropdown at the provider settings.
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).

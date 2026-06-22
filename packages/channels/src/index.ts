@@ -11,6 +11,38 @@
 // + mock only"): they are DETERMINISTIC and NEVER touch the network — the exact
 // twin of the local SES mock — so everything works end-to-end in dev/tests.
 import { createHash } from 'node:crypto';
+import { parsePhoneNumberFromString, type CountryCode } from 'libphonenumber-js';
+
+/**
+ * Normalize a raw phone string to E.164 (e.g. '+972529461566'), or `null` when it
+ * is missing / unparseable / invalid. The single point all text-channel recipient
+ * numbers pass through before a provider call.
+ *
+ * - An already-`+E.164` number is validated and returned as-is (the `defaultCountry`
+ *   is irrelevant).
+ * - A NATIONAL number (leading 0 / no `+`) is interpreted in `defaultCountry` (an
+ *   ISO 3166-1 alpha-2 code, e.g. 'IL') and converted to E.164.
+ * - A national number with NO `defaultCountry` (or an unrecognized one) cannot be
+ *   inferred → `null`.
+ * - Formatting noise (spaces, dashes, parens) is tolerated by the parser.
+ * - NEVER throws — any bad input (junk, empty, null, bad country) yields `null`.
+ */
+export function normalizePhone(raw: string, defaultCountry?: string | null): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const country =
+    typeof defaultCountry === 'string' && defaultCountry.trim()
+      ? (defaultCountry.trim().toUpperCase() as CountryCode)
+      : undefined;
+  try {
+    const parsed = parsePhoneNumberFromString(trimmed, country);
+    if (!parsed || !parsed.isValid()) return null;
+    return parsed.number; // E.164
+  } catch {
+    return null;
+  }
+}
 
 /** The sending medium of a broadcast (and a messages_log row). */
 export type Medium = 'email' | 'sms' | 'whatsapp';
@@ -176,13 +208,15 @@ export function fetchChannelHttpClient(): ChannelHttpClient {
  * in `company_channel_config` and are passed in here by the dispatcher.
  */
 export type ChannelProviderConfig =
-  | { readonly kind: 'mock' }
+  | { readonly kind: 'mock'; readonly defaultCountry?: string | null }
   | {
       readonly kind: '019';
       readonly apiUrl: string;
       readonly username: string;
       readonly source: string;
       readonly bearer: string;
+      /** ISO 3166-1 alpha-2 default country for normalizing national numbers (e.g. 'IL'). */
+      readonly defaultCountry?: string | null;
     };
 
 /** The default (mock) config — used everywhere a company has no real credentials. */

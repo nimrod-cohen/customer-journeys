@@ -125,12 +125,12 @@ describe.skipIf(!RUN)('dispatcher topic + medium-group gating (real Postgres)', 
     templateId = tpl.rows[0].id;
 
     const p = await admin.query(
-      "INSERT INTO profiles (workspace_id, email, attributes) VALUES ($1,'r@example.com', '{\"phone\":\"+15551230000\"}'::jsonb) RETURNING id",
+      "INSERT INTO profiles (workspace_id, email, attributes) VALUES ($1,'r@example.com', '{\"phone\":\"+972529461566\"}'::jsonb) RETURNING id",
       [ws],
     );
     profileId = p.rows[0].id;
     const p2 = await admin.query(
-      "INSERT INTO profiles (workspace_id, email, attributes) VALUES ($1,'other@example.com', '{\"phone\":\"+15559990000\"}'::jsonb) RETURNING id",
+      "INSERT INTO profiles (workspace_id, email, attributes) VALUES ($1,'other@example.com', '{\"phone\":\"+447911123456\"}'::jsonb) RETURNING id",
       [ws],
     );
     otherProfileId = p2.rows[0].id;

@@ -768,14 +768,27 @@ export const deleteCompanyLogo: Handler = async (ctx, pool) => {
 export const getCompanyChannelConfig: Handler = async (ctx, pool) => {
   const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
   if (!companyId) return ok({ configured: false });
-  const { rows } = await pool.query<{ provider: string; api_url: string; username: string; source: string }>(
-    'SELECT provider, api_url, username, source FROM company_channel_config WHERE company_id = $1',
+  const { rows } = await pool.query<{
+    provider: string;
+    api_url: string;
+    username: string;
+    source: string;
+    default_country: string | null;
+  }>(
+    'SELECT provider, api_url, username, source, default_country FROM company_channel_config WHERE company_id = $1',
     [companyId],
   );
   const c = rows[0];
   return ok(
     c
-      ? { configured: true, provider: c.provider, api_url: c.api_url, username: c.username, source: c.source }
+      ? {
+          configured: true,
+          provider: c.provider,
+          api_url: c.api_url,
+          username: c.username,
+          source: c.source,
+          default_country: c.default_country,
+        }
       : { configured: false },
   );
 };
@@ -792,6 +805,13 @@ export const putCompanyChannelConfig: Handler = async (ctx, pool, req) => {
   const username = String(b.username ?? '').trim();
   const source = String(b.source ?? '').trim();
   const bearer = typeof b.secret === 'string' ? b.secret.trim() : '';
+  // ISO 3166-1 alpha-2 default country for normalizing national phone numbers
+  // (e.g. 'IL'). Empty → cleared (null). Anything not 2 letters is rejected.
+  const rawCountry = typeof b.default_country === 'string' ? b.default_country.trim().toUpperCase() : '';
+  if (rawCountry && !/^[A-Z]{2}$/.test(rawCountry)) {
+    return ok({ error: 'default_country must be a 2-letter ISO country code' }, 400);
+  }
+  const defaultCountry = rawCountry || null;
   if (!apiUrl || !username || !source) {
     return ok({ error: 'api url, username and source are required' }, 400);
   }
@@ -804,13 +824,13 @@ export const putCompanyChannelConfig: Handler = async (ctx, pool, req) => {
   const effectiveSecret = bearer ? encryptSecret(bearer) : existing.rows[0]?.secret;
   if (!effectiveSecret) return ok({ error: 'a bearer token is required' }, 400);
   await pool.query(
-    `INSERT INTO company_channel_config (company_id, provider, api_url, username, source, secret, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, now())
+    `INSERT INTO company_channel_config (company_id, provider, api_url, username, source, secret, default_country, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, now())
      ON CONFLICT (company_id)
-     DO UPDATE SET provider = $2, api_url = $3, username = $4, source = $5, secret = $6, updated_at = now()`,
-    [companyId, provider, apiUrl, username, source, effectiveSecret],
+     DO UPDATE SET provider = $2, api_url = $3, username = $4, source = $5, secret = $6, default_country = $7, updated_at = now()`,
+    [companyId, provider, apiUrl, username, source, effectiveSecret, defaultCountry],
   );
-  return ok({ configured: true, provider, api_url: apiUrl, username, source });
+  return ok({ configured: true, provider, api_url: apiUrl, username, source, default_country: defaultCountry });
 };
 
 /** DELETE /company/channel-config — clear the company's text-channel credentials. */
@@ -4026,9 +4046,9 @@ export const listActivity: Handler = async (ctx, pool, req) => {
                 profile_id, coalesce(sub_type, '')
            FROM email_events WHERE workspace_id = $1
          UNION ALL
-         SELECT sent_at, 'send', 'send',
+         SELECT sent_at, 'send', medium,
                 CASE WHEN status = 'sent' THEN 'success' ELSE 'failure' END,
-                profile_id, status
+                profile_id, coalesce(reason, status)
            FROM messages_log WHERE workspace_id = $1
          UNION ALL
          SELECT at, source, type, outcome, profile_id, detail
