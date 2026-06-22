@@ -133,18 +133,139 @@ function mockMessageId(medium: TextMedium, msg: ChannelMessage): string {
   return `${prefix}-${hash}`;
 }
 
-/**
- * Provider selection config. Today only `mock` is wired. When real adapters
- * land this grows (`{ kind: 'twilio', accountSid, authToken, ... }` etc.) —
- * see the TODO in `resolveChannelProvider`.
- */
-export interface ChannelProviderConfig {
-  /** The provider implementation to use. Only `mock` is implemented this phase. */
-  readonly kind: 'mock';
+// ── HTTP client seam (for real providers) ───────────────────────────────────
+// Real adapters do ONE HTTP POST. We depend on a narrow injectable client so
+// unit tests assert the exact request + map responses WITHOUT touching the
+// network (mirrors how the dispatcher injects SES / the webhook client).
+
+/** A minimal HTTP response surface a channel adapter needs. */
+export interface ChannelHttpResponse {
+  readonly status: number;
+  readonly body: string;
 }
 
-/** The default (mock) config — used everywhere until real credentials exist. */
+/** A narrow HTTP client (one POST) — injected so tests never hit the network. */
+export interface ChannelHttpClient {
+  post(
+    url: string,
+    headers: Record<string, string>,
+    body: string,
+    timeoutMs: number,
+  ): Promise<ChannelHttpResponse>;
+}
+
+/** The production fetch-based client: a POST bounded by an AbortController timeout. */
+export function fetchChannelHttpClient(): ChannelHttpClient {
+  return {
+    async post(url, headers, body, timeoutMs) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { method: 'POST', headers, body, signal: ctrl.signal });
+        return { status: res.status, body: await res.text() };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
+/**
+ * Provider selection config. `mock` is the dev/test default; `019` is the real
+ * Israeli SMS gateway (a static-bearer JSON POST). Per-company credentials live
+ * in `company_channel_config` and are passed in here by the dispatcher.
+ */
+export type ChannelProviderConfig =
+  | { readonly kind: 'mock' }
+  | {
+      readonly kind: '019';
+      readonly apiUrl: string;
+      readonly username: string;
+      readonly source: string;
+      readonly bearer: string;
+    };
+
+/** The default (mock) config — used everywhere a company has no real credentials. */
 export const DEFAULT_CHANNEL_CONFIG: ChannelProviderConfig = { kind: 'mock' };
+
+/** Tuning for a real adapter's HTTP call. */
+export interface ChannelHttpOptions {
+  readonly timeoutMs: number;
+  /** Extra attempts on 5xx / network error (never on 4xx). */
+  readonly maxRetries: number;
+}
+const DEFAULT_019_HTTP: ChannelHttpOptions = { timeoutMs: 10_000, maxRetries: 1 };
+
+/**
+ * Real SMS provider for the "019" gateway. ONE JSON POST with a static bearer:
+ *   POST <apiUrl>  Authorization: Bearer <bearer>
+ *   { sms: { user:{username}, source, destinations:{phone}, message,
+ *            add_dynamic:'0', add_unsubscribe:'0', response:'0', includes_international:'0' } }
+ * Success = response JSON `status === 0`. A non-2xx, a non-zero status, or a
+ * network error THROWS (the dispatcher's retry/DLQ then applies). Retries ONLY on
+ * 5xx / network (never 4xx). The HTTP client is injected — tests never hit 019.
+ */
+export class Sms019Provider implements ChannelProvider {
+  readonly medium = 'sms' as const;
+  constructor(
+    private readonly cfg: { apiUrl: string; username: string; source: string; bearer: string },
+    private readonly http: ChannelHttpClient = fetchChannelHttpClient(),
+    private readonly opts: ChannelHttpOptions = DEFAULT_019_HTTP,
+  ) {}
+
+  async send(msg: ChannelMessage): Promise<ChannelSendResult> {
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${this.cfg.bearer}`,
+    };
+    const payload = {
+      sms: {
+        user: { username: this.cfg.username },
+        source: this.cfg.source,
+        destinations: { phone: msg.to },
+        message: msg.body,
+        add_dynamic: '0',
+        add_unsubscribe: '0',
+        response: '0',
+        includes_international: '0',
+      },
+    };
+    const body = JSON.stringify(payload);
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= this.opts.maxRetries; attempt++) {
+      let res: ChannelHttpResponse;
+      try {
+        res = await this.http.post(this.cfg.apiUrl, headers, body, this.opts.timeoutMs);
+      } catch (e) {
+        lastErr = e; // network/timeout → retry
+        continue;
+      }
+      if (res.status >= 500) {
+        lastErr = new Error(`019 SMS: HTTP ${res.status}`);
+        continue; // server error → retry
+      }
+      if (res.status < 200 || res.status >= 300) {
+        throw new Error(`019 SMS: HTTP ${res.status} — ${res.body.slice(0, 200)}`); // 4xx → no retry
+      }
+      let json: { status?: unknown; [k: string]: unknown };
+      try {
+        json = JSON.parse(res.body) as typeof json;
+      } catch {
+        throw new Error('019 SMS: response was not JSON');
+      }
+      if (json.status !== 0) {
+        throw new Error(`019 SMS: send rejected — ${res.body.slice(0, 200)}`);
+      }
+      const id =
+        (typeof json.message_id === 'string' && json.message_id) ||
+        (typeof json.unique_id === 'string' && json.unique_id) ||
+        (json.message_id != null && String(json.message_id)) ||
+        `019-${createHash('sha256').update(`${msg.to}|${msg.body}`).digest('hex').slice(0, 16)}`;
+      return { providerMessageId: id };
+    }
+    throw lastErr instanceof Error ? lastErr : new Error('019 SMS: send failed');
+  }
+}
 
 /**
  * Resolve a `ChannelProvider` for a text medium — the SEAM where a real adapter
@@ -166,21 +287,25 @@ export const DEFAULT_CHANNEL_CONFIG: ChannelProviderConfig = { kind: 'mock' };
 export function resolveChannelProvider(
   medium: Medium,
   config: ChannelProviderConfig = DEFAULT_CHANNEL_CONFIG,
+  http?: ChannelHttpClient,
 ): ChannelProvider {
   if (!isTextMedium(medium)) {
     throw new Error(
       `resolveChannelProvider: '${medium}' is not a text channel (email uses the SES pipeline in @cdp/email)`,
     );
   }
+  // WhatsApp has no real adapter yet (Meta Cloud API is a follow-up) — always mock.
+  if (medium === 'whatsapp') return new MockWhatsAppProvider();
+  // SMS: a real 019 adapter when the company configured it, else the mock.
   switch (config.kind) {
+    case '019':
+      return new Sms019Provider(config, http ?? fetchChannelHttpClient());
     case 'mock':
-      return medium === 'sms' ? new MockSmsProvider() : new MockWhatsAppProvider();
-    // TODO(real-providers): case 'twilio': return new TwilioSmsProvider(config);
-    //                       case 'meta':   return new MetaWhatsAppProvider(config);
+      return new MockSmsProvider();
+    // TODO(real-providers): case 'meta': return new MetaWhatsAppProvider(config) for whatsapp.
     default: {
-      // Exhaustiveness guard — a new config kind must be handled above.
-      const exhaustive: never = config.kind;
-      throw new Error(`resolveChannelProvider: unsupported provider kind '${String(exhaustive)}'`);
+      const exhaustive: never = config;
+      throw new Error(`resolveChannelProvider: unsupported provider kind '${String((exhaustive as { kind?: unknown }).kind)}'`);
     }
   }
 }
