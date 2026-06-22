@@ -6,12 +6,45 @@
 // (messages_log + usage_counters + mark-sent) live in the orchestrator; this
 // module supplies the pooled reader, the prod SES client, and the tx runner.
 import type { Pool, PoolClient } from 'pg';
-import { getPool } from '@cdp/db';
+import { getPool, decryptSecret, isEncryptedSecret } from '@cdp/db';
 import { ProdSesEmailClient, unsubscribeLinkSecret } from '@cdp/email';
-import { resolveChannelProvider } from '@cdp/channels';
+import { fetchChannelHttpClient, DEFAULT_CHANNEL_CONFIG, type ChannelProviderConfig } from '@cdp/channels';
 import type { SqlStatement } from './core.js';
 import type { HandlerDeps } from './handler.js';
 import type { Reader } from './dispatch.js';
+
+/**
+ * Resolve the per-COMPANY text-channel provider config for a sending workspace —
+ * the channel twin of local-api's `sesForWorkspace`. Reads the workspace's
+ * company `company_channel_config` row; a '019' row → a real `Sms019Provider`
+ * config with the bearer DECRYPTED at call time only (the wire/log never carry
+ * plaintext, the stored secret stays an envelope). NO row (or an unknown
+ * provider) → the deterministic MOCK config, so dev/tests stay green offline.
+ * Service-role scoping: the lookup binds `workspace_id` and never trusts a body.
+ */
+export async function channelConfigForWorkspace(
+  reader: Reader,
+  workspaceId: string,
+): Promise<ChannelProviderConfig> {
+  const { rows } = await reader.query<{
+    provider: string;
+    api_url: string;
+    username: string;
+    source: string;
+    secret: string;
+  }>(
+    `SELECT c.provider, c.api_url, c.username, c.source, c.secret
+       FROM company_channel_config c JOIN workspaces w ON w.company_id = c.company_id
+      WHERE w.id = $1`,
+    [workspaceId],
+  );
+  const cfg = rows[0];
+  if (cfg && cfg.provider === '019') {
+    const bearer = isEncryptedSecret(cfg.secret) ? decryptSecret(cfg.secret) : cfg.secret;
+    return { kind: '019', apiUrl: cfg.api_url, username: cfg.username, source: cfg.source, bearer };
+  }
+  return DEFAULT_CHANNEL_CONFIG;
+}
 
 /** Minimal pool surface so tests can pass an `adminPool()` directly. */
 export interface PoolLike {
@@ -68,9 +101,10 @@ export function makeProdDeps(): HandlerDeps {
   return {
     reader,
     ses: new ProdSesEmailClient(),
-    // The text-channel resolver (sms/whatsapp). MOCK this phase (deterministic,
-    // offline); a real Twilio/Meta adapter slots in inside @cdp/channels.
-    resolveChannel: resolveChannelProvider,
+    // Per-company text-channel provider config (a real '019' SMS gateway when the
+    // sending workspace's company configured it, else the deterministic MOCK).
+    resolveChannelConfig: (workspaceId) => channelConfigForWorkspace(reader, workspaceId),
+    channelHttp: fetchChannelHttpClient(),
     runInWorkspaceTx: (workspaceId, statements) =>
       runStatementsInWorkspaceTx(pool, workspaceId, statements),
     now: () => new Date(),

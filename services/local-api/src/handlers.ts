@@ -18,8 +18,7 @@ import {
   unsubscribeLinkSecret,
   type SesEmailClient,
 } from '@cdp/email';
-import { dispatchOutbox, type DispatchDeps } from '@cdp/service-dispatcher';
-import { resolveChannelProvider } from '@cdp/channels';
+import { dispatchOutbox, channelConfigForWorkspace, type DispatchDeps } from '@cdp/service-dispatcher';
 import {
   DEV_USERS,
   OPEN_EVENT_TYPES,
@@ -473,16 +472,21 @@ async function dispatchBroadcastNow(
   // using whatever SES client (the dispatcher never calls SES for a text send).
   if (!isText && mode !== 'real') return;
   const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
-  const dispatchDeps: DispatchDeps = {
-    reader: {
-      query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
-        const r = await pool.query(text, values ? [...values] : undefined);
-        return { rows: r.rows as T[] };
-      },
+  const reader = {
+    query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+      const r = await pool.query(text, values ? [...values] : undefined);
+      return { rows: r.rows as T[] };
     },
+  };
+  const dispatchDeps: DispatchDeps = {
+    reader,
     ses,
-    // The mock channel resolver (sms/whatsapp). Deterministic + offline.
-    resolveChannel: resolveChannelProvider,
+    // Per-company text-channel config: a real '019' SMS gateway when the workspace's
+    // company configured it (bearer decrypted at send time), else the deterministic
+    // MOCK (so dev/e2e text sends work offline). The injected channelHttp lets tests
+    // assert the exact 019 request without touching the network.
+    resolveChannelConfig: (ws) => channelConfigForWorkspace(reader, ws),
+    channelHttp: deps.channelHttp,
     runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
     now: () => new Date(),
     unsubscribeBaseUrl: `${base}/unsubscribe`,
@@ -557,18 +561,20 @@ async function dispatchCampaignOutboxNow(pool: Pool, deps: LocalApiDeps): Promis
     let entry = dispatchByWs.get(r.workspace_id);
     if (entry === undefined) {
       const { ses, mode } = await sesForWorkspace(pool, r.workspace_id, deps);
+      const reader = {
+        query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+          const res = await pool.query(text, values ? [...values] : undefined);
+          return { rows: res.rows as T[] };
+        },
+      };
       entry = {
         realSes: mode === 'real',
         deps: {
-          reader: {
-            query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
-              const res = await pool.query(text, values ? [...values] : undefined);
-              return { rows: res.rows as T[] };
-            },
-          },
+          reader,
           ses,
-          // The mock channel resolver (sms/whatsapp) — deterministic + offline.
-          resolveChannel: resolveChannelProvider,
+          // Per-company text-channel config (real '019' when configured, else MOCK).
+          resolveChannelConfig: (ws) => channelConfigForWorkspace(reader, ws),
+          channelHttp: deps.channelHttp,
           runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
           now: () => new Date(),
           unsubscribeBaseUrl: `${base}/unsubscribe`,
@@ -686,6 +692,69 @@ export const deleteCompanySesConfig: Handler = async (ctx, pool) => {
   const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
   if (!companyId) return ok({ deleted: 0 });
   const { rowCount } = await pool.query('DELETE FROM company_ses_config WHERE company_id = $1', [companyId]);
+  return ok({ deleted: rowCount });
+};
+
+// --- per-company text-channel (019 SMS) credentials (§10) ----------------------
+// Each company brings its own SMS gateway account. The bearer is write-only over
+// the API (never returned) and stored encrypted via @cdp/db secret-crypto — the
+// EXACT same posture as company_ses_config. The dispatcher reads this row to build
+// a real `Sms019Provider`; with NO row it falls back to the deterministic mock.
+
+/** GET /company/channel-config — provider + api_url + username + source + whether configured (NEVER the bearer). */
+export const getCompanyChannelConfig: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ configured: false });
+  const { rows } = await pool.query<{ provider: string; api_url: string; username: string; source: string }>(
+    'SELECT provider, api_url, username, source FROM company_channel_config WHERE company_id = $1',
+    [companyId],
+  );
+  const c = rows[0];
+  return ok(
+    c
+      ? { configured: true, provider: c.provider, api_url: c.api_url, username: c.username, source: c.source }
+      : { configured: false },
+  );
+};
+
+/** PUT /company/channel-config — set the company's 019 SMS credentials. A blank
+ *  bearer on update keeps the stored one (so you can change url/username/source
+ *  without re-entering the secret). The bearer is envelope-encrypted at rest. */
+export const putCompanyChannelConfig: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ error: 'no company for this workspace' }, 400);
+  const b = asObject(req.body);
+  const provider = String(b.provider ?? '019').trim() || '019';
+  const apiUrl = String(b.api_url ?? '').trim();
+  const username = String(b.username ?? '').trim();
+  const source = String(b.source ?? '').trim();
+  const bearer = typeof b.secret === 'string' ? b.secret.trim() : '';
+  if (!apiUrl || !username || !source) {
+    return ok({ error: 'api url, username and source are required' }, 400);
+  }
+  const existing = await pool.query<{ secret: string }>(
+    'SELECT secret FROM company_channel_config WHERE company_id = $1',
+    [companyId],
+  );
+  // A new bearer is envelope-encrypted before storage; a blank one keeps the
+  // already-encrypted stored value (so you can change url/username/source alone).
+  const effectiveSecret = bearer ? encryptSecret(bearer) : existing.rows[0]?.secret;
+  if (!effectiveSecret) return ok({ error: 'a bearer token is required' }, 400);
+  await pool.query(
+    `INSERT INTO company_channel_config (company_id, provider, api_url, username, source, secret, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
+     ON CONFLICT (company_id)
+     DO UPDATE SET provider = $2, api_url = $3, username = $4, source = $5, secret = $6, updated_at = now()`,
+    [companyId, provider, apiUrl, username, source, effectiveSecret],
+  );
+  return ok({ configured: true, provider, api_url: apiUrl, username, source });
+};
+
+/** DELETE /company/channel-config — clear the company's text-channel credentials. */
+export const deleteCompanyChannelConfig: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ deleted: 0 });
+  const { rowCount } = await pool.query('DELETE FROM company_channel_config WHERE company_id = $1', [companyId]);
   return ok({ deleted: rowCount });
 };
 
@@ -4280,6 +4349,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /company/ses-config': getCompanySesConfig,
   'PUT /company/ses-config': putCompanySesConfig,
   'DELETE /company/ses-config': deleteCompanySesConfig,
+  'GET /company/channel-config': getCompanyChannelConfig,
+  'PUT /company/channel-config': putCompanyChannelConfig,
+  'DELETE /company/channel-config': deleteCompanyChannelConfig,
   'GET /sending-domains': listSendingDomains,
   'POST /sending-domains': createSendingDomain,
   'GET /sending-domains/:id': getSendingDomain,

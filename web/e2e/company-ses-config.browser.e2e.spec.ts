@@ -7,9 +7,16 @@ import { DEV_OWNER } from './seed.js';
 
 test('company SES credentials: save (secret write-only) then remove', async ({ page }) => {
   await loginAs(page, DEV_OWNER);
+  // The card's initial GET /company/ses-config resets the form fields on resolve;
+  // arm the wait BEFORE navigating so it can't be missed, then await it before
+  // typing so the async load can't clobber what we fill.
+  const initialLoad = page.waitForResponse(
+    (r) => r.url().includes('/company/ses-config') && r.request().method() === 'GET',
+  );
   await page.getByTestId('nav-company').click();
   await page.getByTestId('company-settings').waitFor();
   await page.getByTestId('ses-config').waitFor();
+  await initialLoad;
 
   // Starts unconfigured; can't save without a secret.
   await expect(page.getByTestId('ses-status')).toHaveText('not configured');

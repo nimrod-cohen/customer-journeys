@@ -10,6 +10,7 @@ import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader } from '../ui/kit.js';
 import { can } from '@cdp/tenancy';
 import { CompanySesConfig } from './CompanySesConfig.tsx';
+import { CompanyChannelConfig } from './CompanyChannelConfig.tsx';
 import { BillingUsagePanel } from './SimpleScreens.tsx';
 
 type CompanyTab = 'company' | 'billing';
@@ -166,6 +167,8 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
       </Card>
 
       <CompanySesConfig />
+
+      <CompanyChannelConfig />
 
       <Card data-testid="company-workspaces" class="p-5">
         <h2 class="text-base font-bold text-ink-900">Workspaces</h2>

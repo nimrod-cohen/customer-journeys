@@ -42,7 +42,7 @@ export {
   type SqsRecord,
   type BatchResponse,
 } from './handler.js';
-export { runStatementsInWorkspaceTx, makeProdDeps, type PoolLike } from './deps.js';
+export { runStatementsInWorkspaceTx, makeProdDeps, channelConfigForWorkspace, type PoolLike } from './deps.js';
 
 let cached: ReturnType<typeof makeDispatcherHandler> | undefined;
 

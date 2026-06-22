@@ -23,6 +23,7 @@ import {
   type ProdOnboardingDeps,
 } from '@cdp/service-onboarding';
 import { runStatementsInWorkspaceTx, type BroadcastDeps } from '@cdp/service-broadcast';
+import { fetchChannelHttpClient, type ChannelHttpClient } from '@cdp/channels';
 
 /** The full dependency set the handlers consume. */
 export interface LocalApiDeps {
@@ -33,6 +34,13 @@ export interface LocalApiDeps {
   readonly onboarding: ProdOnboardingDeps;
   /** Broadcast deps (SQS mocked). */
   readonly broadcast: BroadcastDeps;
+  /**
+   * The HTTP client a REAL text-channel adapter (019) POSTs through. Injected so
+   * integration tests assert the exact 019 request WITHOUT touching the network;
+   * defaults to a real fetch-based client. A company with no '019' config never
+   * uses it (the mock provider is offline).
+   */
+  readonly channelHttp: ChannelHttpClient;
 }
 
 /**
@@ -110,7 +118,10 @@ function makeIdentityReader(pool: Pool): ProdOnboardingDeps['identity'] {
  *  Real SES is NOT chosen here — it's PER-COMPANY: when a company has saved SES
  *  credentials, the sending-domain handlers build a real SES client from them
  *  (createSesClient); otherwise they fall back to this mock (dev/tests). */
-export function makeLocalDeps(pool: Pool = getPool()): LocalApiDeps {
+export function makeLocalDeps(
+  pool: Pool = getPool(),
+  channelHttp: ChannelHttpClient = fetchChannelHttpClient(),
+): LocalApiDeps {
   const region = process.env.AWS_REGION ?? 'us-east-1';
   const ses = makeLocalSes();
   const dns = makeLocalDns();
@@ -135,5 +146,5 @@ export function makeLocalDeps(pool: Pool = getPool()): LocalApiDeps {
     now: () => new Date(),
     dispatchQueueUrl: process.env.DISPATCH_QUEUE_URL ?? 'local://dispatch',
   };
-  return { pool, compileMjml, onboarding, broadcast };
+  return { pool, compileMjml, onboarding, broadcast, channelHttp };
 }

@@ -10,12 +10,36 @@ suppression/topic/medium-group, and "send" via the mock.
 
 ## What's already in place
 - `@cdp/channels`: `Medium` (`email|sms|whatsapp`), `ChannelProvider` interface
-  (`send({to, body, from?}) → {providerMessageId}`), the mock providers, and
-  `resolveChannelProvider(medium, config)` — the single seam where a real adapter slots in.
+  (`send({to, body, from?}) → {providerMessageId}`), the mock providers, the **real
+  `Sms019Provider`**, and `resolveChannelProvider(medium, config, http?)` — the single
+  seam where a real adapter slots in.
 - Dispatcher routes `sms`/`whatsapp` outbox rows through the resolved provider; email
   keeps its SES pipeline (`@cdp/email`).
 - `messages_log.medium`, `broadcasts.medium`/`text_body`, campaign send-node
   `medium`/`text_body`, recipient `{{customer.phone}}` resolution.
+
+## SMS via 019 — WIRED (v0.57.0)
+The Israeli **019 SMS gateway** is a fully-connected real SMS provider. Per-company
+credentials live in **`company_channel_config`** (migration `0041`; company-scoped + RLS,
+the twin of `company_ses_config`): `provider='019'`, `api_url`, `username`, `source`, and
+the **bearer** (`secret`, write-only over the API, envelope-encrypted at rest via
+`@cdp/db` secret-crypto, decrypted only at send time). The dispatcher builds an
+`Sms019Provider` from a company's row (`channelConfigForWorkspace`) and falls back to the
+deterministic MOCK when there is no row — so dev/tests/e2e keep working with zero creds.
+
+**What the company admin pastes** (Company settings → "Text messaging (019 SMS)" card):
+- **API URL** — the 019 SMS send endpoint (e.g. `https://019sms.co.il/api`).
+- **Username** — the 019 account username.
+- **Source (sender)** — the registered sender id/name shown to recipients.
+- **Bearer token** — the 019 API bearer (write-only; leave blank on edit to keep the
+  stored one).
+
+A request is `POST <api_url>` with `Authorization: Bearer <bearer>` and JSON body
+`{ sms: { user:{username}, source, destinations:{phone}, message, add_dynamic:'0',
+add_unsubscribe:'0', response:'0', includes_international:'0' } }`; success is response
+`status === 0`. (Human prerequisite: an 019 account + a registered sender — the platform
+cannot create these.) WhatsApp + a real SMS adapter for other gateways (Twilio) are still
+follow-ups below.
 
 ## Human prerequisites
 1. **Pick + open a provider account.**

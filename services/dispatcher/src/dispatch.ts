@@ -48,7 +48,10 @@ import {
   resolveChannelProvider,
   isTextMedium,
   mediumGroupOf,
+  DEFAULT_CHANNEL_CONFIG,
   type ChannelProvider,
+  type ChannelProviderConfig,
+  type ChannelHttpClient,
   type Medium,
 } from '@cdp/channels';
 
@@ -73,6 +76,20 @@ export interface DispatchDeps {
    * Twilio/Meta adapter slots in here without touching the orchestrator.
    */
   readonly resolveChannel?: (medium: Medium) => ChannelProvider;
+  /**
+   * Resolve the SENDING workspace's COMPANY text-channel provider config (e.g. a
+   * real '019' SMS gateway). The dispatcher decrypts the bearer at send time only.
+   * Returns the MOCK config when the company has no credentials (so dev/tests stay
+   * deterministic + offline). Ignored when `resolveChannel` is injected (the test
+   * override takes precedence). The result is fed to `resolveChannelProvider`.
+   */
+  readonly resolveChannelConfig?: (workspaceId: string) => Promise<ChannelProviderConfig>;
+  /**
+   * The injectable HTTP client a REAL channel adapter (019) POSTs through.
+   * Injected so integration tests assert the exact provider request WITHOUT
+   * touching the network; defaults to a real fetch-based client in production.
+   */
+  readonly channelHttp?: ChannelHttpClient;
   /** Apply a list of statements in ONE workspace-scoped tx (atomic write). */
   runInWorkspaceTx(workspaceId: string, statements: readonly SqlStatement[]): Promise<void>;
   /** Injected clock for cap/quiet determinism. */
@@ -527,7 +544,18 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
     return { result: 'skip', reason: 'recipient has no phone' };
   }
 
-  const provider = (deps.resolveChannel ?? resolveChannelProvider)(medium);
+  // Provider resolution, in priority order:
+  //  1. `deps.resolveChannel` — a test override (a counting fake), unchanged.
+  //  2. else `resolveChannelProvider(medium, <company config>, channelHttp)` — the
+  //     per-company config (a real '019' adapter when configured, else the mock).
+  //     The bearer was decrypted by `resolveChannelConfig` (at send time only).
+  let provider: ChannelProvider;
+  if (deps.resolveChannel) {
+    provider = deps.resolveChannel(medium);
+  } else {
+    const cfg = (await deps.resolveChannelConfig?.(workspaceId)) ?? DEFAULT_CHANNEL_CONFIG;
+    provider = resolveChannelProvider(medium, cfg, deps.channelHttp);
+  }
   const message = buildChannelMessage(ctx);
   const { providerMessageId } = await provider.send(message);
 
