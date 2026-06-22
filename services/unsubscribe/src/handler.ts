@@ -56,7 +56,7 @@ function page(lang: Lang, title: string, inner: string, logoHtml = ''): string {
     `box-shadow:0 8px 24px rgba(0,0,0,.06);text-align:center}h1{font-size:20px;margin:0 0 8px}` +
     `p{color:#57534e;font-size:14px;line-height:1.5}.email{font-weight:600;color:#1c1917;unicode-bidi:isolate}` +
     `button{margin-top:20px;background:#b91c1c;color:#fff;border:0;border-radius:10px;padding:11px 20px;` +
-    `font-size:14px;font-weight:600;cursor:pointer}button:hover{background:#991b1b}.ok{color:#047857}</style></head>` +
+    `font-size:14px;font-weight:600;cursor:pointer}button:hover{background:#991b1b}.ok{color:#0f766e}</style></head>` +
     `<body><div class="card">${logoHtml}${inner}</div></body></html>`
   );
 }

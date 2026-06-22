@@ -88,17 +88,17 @@ function shell(title: string, inner: string, logoHtml = '', lang: Lang = 'en', w
     `.opt-name{font-weight:700;color:#1c1917;font-size:15px;line-height:1.3}` +
     `.opt-desc{font-weight:400;color:#9ca3af;font-size:13px;line-height:1.45}` +
     `.opt-end{display:flex;align-items:center;gap:12px;flex:none}` +
-    `.ch-icon{width:40px;height:40px;border-radius:10px;background:#eef4f0;color:#15803d;display:flex;align-items:center;justify-content:center;flex:none}` +
+    `.ch-icon{width:40px;height:40px;border-radius:10px;background:#f0fdfa;color:#0f766e;display:flex;align-items:center;justify-content:center;flex:none}` +
     // CSS toggle switch (direction-aware via inset-inline so the knob slides to the END when on).
     `.switch{position:relative;display:inline-block;width:46px;height:26px;flex:none}` +
     `.switch input{position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0;cursor:pointer;z-index:2}` +
     `.switch .track{position:absolute;inset:0;background:#d1d5db;border-radius:999px;transition:.2s}` +
     `.switch .knob{position:absolute;top:3px;inset-inline-start:3px;width:20px;height:20px;background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:.2s}` +
-    `.switch input:checked~.track{background:#16a34a}.switch input:checked~.knob{inset-inline-start:auto;inset-inline-end:3px}` +
+    `.switch input:checked~.track{background:#0d9488}.switch input:checked~.knob{inset-inline-start:auto;inset-inline-end:3px}` +
     `button{border:0;border-radius:12px;padding:15px 20px;font-size:15px;font-weight:700;cursor:pointer;width:100%;display:block}` +
-    `.primary{background:#15803d;color:#fff;margin-top:24px;box-shadow:0 8px 20px rgba(21,128,61,.25)}.primary:hover{background:#166534}` +
+    `.primary{background:#0d9488;color:#fff;margin-top:24px;box-shadow:0 8px 20px rgba(13,148,136,.30)}.primary:hover{background:#0f766e}` +
     `.danger{background:#fff;color:#b91c1c;border:1px solid #fecaca;margin-top:12px}.danger:hover{background:#fef2f2}` +
-    `.ok{color:#15803d}.muted{color:#9ca3af;font-size:14px}` +
+    `.ok{color:#0f766e}.muted{color:#9ca3af;font-size:14px}` +
     `@media(max-width:640px){.content{padding:24px 20px}.cols{grid-template-columns:1fr;gap:0}.vdiv{height:1px;width:auto;margin:18px 0}}</style></head>` +
     `<body><div class="card">${header}<div class="content">${inner}</div></div></body></html>`
   );
