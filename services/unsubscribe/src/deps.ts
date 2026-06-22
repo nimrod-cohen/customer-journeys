@@ -49,11 +49,26 @@ export async function runUnsubscribeInWorkspaceTx(
   }
 }
 
+/**
+ * The public ORIGIN that serves uploaded assets, for the optional company logo.
+ * Derived from the SAME base the unsubscribe link uses (UNSUBSCRIBE_BASE_URL,
+ * e.g. `https://api.cdp.example/unsubscribe`) by stripping the `/unsubscribe`
+ * path → `https://api.cdp.example`. Returns undefined when unset (⇒ no logo).
+ */
+export function assetsBaseUrlFromEnv(): string | undefined {
+  const base = process.env.UNSUBSCRIBE_BASE_URL;
+  if (!base) return undefined;
+  return base.replace(/\/(unsubscribe|manage-subscription)\/?$/, '');
+}
+
 /** Assemble the production dependency set (pooled pg, service role). */
 export function makeProdDeps(): UnsubscribeDeps {
   const pool: Pool = getPool();
+  const assetsBaseUrl = assetsBaseUrlFromEnv();
   return {
     runInWorkspaceTx: (workspaceId, statements) =>
       runUnsubscribeInWorkspaceTx(pool, workspaceId, statements),
+    reader: pool,
+    ...(assetsBaseUrl ? { assetsBaseUrl } : {}),
   };
 }

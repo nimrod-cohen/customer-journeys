@@ -148,10 +148,17 @@ export function createApp(opts: CreateAppOptions): Hono {
   // prefetchable); POST (the page's Confirm button, or an RFC 8058 one-click)
   // writes the per-workspace suppression + sets the profile `unsubscribed=true`.
   // Reuses the SAME handler the production Lambda runs, bound to the local pool.
-  const unsubscribe = makeUnsubscribeHandler({
-    runInWorkspaceTx: (workspaceId, statements) => runUnsubscribeInWorkspaceTx(opts.pool, workspaceId, statements),
-  });
+  // The public asset ORIGIN for the optional company logo atop the page is the
+  // SAME origin the request arrived on (which is the origin of the unsubscribe
+  // link). The logo URL is `<origin>/assets/<id>` — exactly the public binary
+  // route below. Resolved per request so it matches whatever host served the
+  // link; the handler is rebuilt per request to carry that origin into the logo.
   const runUnsubscribe = async (method: 'GET' | 'POST', c: { req: { url: string; text: () => Promise<string> } }) => {
+    const unsubscribe = makeUnsubscribeHandler({
+      runInWorkspaceTx: (workspaceId, statements) => runUnsubscribeInWorkspaceTx(opts.pool, workspaceId, statements),
+      reader: opts.pool,
+      assetsBaseUrl: new URL(c.req.url).origin,
+    });
     const qs = new URL(c.req.url).search.replace(/^\?/, '');
     const base = { httpMethod: method, path: '/unsubscribe', rawQueryString: qs };
     if (method === 'POST') return unsubscribe({ ...base, body: await c.req.text().catch(() => '') });
@@ -172,14 +179,15 @@ export function createApp(opts: CreateAppOptions): Hono {
   // (a partial opt-out keeps the person reachable on still-subscribed channels;
   // "unsubscribe from everything" sets the full suppression). workspace_id + email
   // come ONLY from the scoped link. Reuses the SAME handler the Lambda runs.
-  const preferenceCenter = makePreferenceCenterHandler({
-    reader: opts.pool,
-    runInWorkspaceTx: (workspaceId, statements) => runUnsubscribeInWorkspaceTx(opts.pool, workspaceId, statements),
-  });
   const runPrefCenter = async (
     method: 'GET' | 'POST',
     c: { req: { url: string; text: () => Promise<string> } },
   ) => {
+    const preferenceCenter = makePreferenceCenterHandler({
+      reader: opts.pool,
+      runInWorkspaceTx: (workspaceId, statements) => runUnsubscribeInWorkspaceTx(opts.pool, workspaceId, statements),
+      assetsBaseUrl: new URL(c.req.url).origin,
+    });
     const qs = new URL(c.req.url).search.replace(/^\?/, '');
     const base = { httpMethod: method, path: '/manage-subscription', rawQueryString: qs };
     if (method === 'POST') return preferenceCenter({ ...base, body: await c.req.text().catch(() => '') });

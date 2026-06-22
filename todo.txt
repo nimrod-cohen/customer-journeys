@@ -88,3 +88,4 @@
   (Skipped on 2026-06-10 — needs a design decision: upload transport + async processing
   + progress/status.
 * retry queues in case of SES/SMS/WhatsApp api failures
+* objects management with campaigns.

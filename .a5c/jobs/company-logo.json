@@ -1,0 +1,29 @@
+{
+  "filesModified": [
+    "services/unsubscribe/src/handler.ts",
+    "services/unsubscribe/src/preference-handler.ts",
+    "services/unsubscribe/src/deps.ts",
+    "services/unsubscribe/src/index.ts",
+    "services/local-api/src/app.ts",
+    "services/local-api/src/handlers.ts",
+    "services/local-api/src/routes.ts",
+    "web/src/screens/CompanySettings.tsx",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "filesCreated": [
+    "packages/db/supabase/migrations/0043_company_logo.sql",
+    "services/unsubscribe/src/logo.ts",
+    "services/unsubscribe/test/logo.test.ts",
+    "services/local-api/test/company-logo.integration.test.ts",
+    "web/src/screens/CompanyLogo.tsx",
+    "web/e2e/company-logo.browser.e2e.spec.ts"
+  ],
+  "migration": "0043_company_logo.sql (companies.logo_asset_id uuid NULL) — applied to BOTH cdp + cdp_e2e",
+  "approach": "Migration 0043 adds companies.logo_asset_id (soft ref; RLS already on companies). API GET/PUT/DELETE /company/logo (cap manage_sending_domain) in local-api handlers.ts + routes.ts; PUT validates the asset belongs to one of the company's workspaces (tenant isolation), workspace->company from ctx. Public pages: optional reader + assetsBaseUrl added to UnsubscribeDeps & PreferenceCenterDeps; shared logo.ts (resolveCompanyLogoAssetId/logoImgTag/renderCompanyLogo, never throws) emits <img ... data-testid=page-logo> at top of card; confirmPage/donePage/centerPage/savedPage/page/shell take optional logoHtml. app.ts injects reader=pool + assetsBaseUrl=request origin per request; prod deps.ts derives assetsBaseUrl from UNSUBSCRIBE_BASE_URL. Rebuilt @cdp/service-unsubscribe (local-api consumes its dist). UI: CompanyLogo card reuses fileToBase64 + POST /assets then PUT /company/logo; kit Button spinner+lock. Logo OPTIONAL; no logo renders exactly as before; not shown on 400/403 pages. Version 0.58.0 -> 0.59.0.",
+  "integrationPass": true,
+  "e2ePass": true,
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "ALL GREEN. unsubscribe vitest 41/41 (incl logo.test.ts 7); local-api company-logo.integration 9/9 + preference-center 12 + company-ses-config 3 (regressions clean); web vitest 268/268; typecheck 45/45 cold; lint = only the 7 known pre-existing react-hooks rule-not-found errors (none in new files); e2e SOLO: company-logo + company-ses-config + topics-and-preference-center = 5/5 passed on cdp_e2e :8788/:5174 (ports freed before+after). NOT committed. Note: cdp-pg docker container was started (had been stopped) and Docker Desktop launched to reach local PG on :5433."
+}

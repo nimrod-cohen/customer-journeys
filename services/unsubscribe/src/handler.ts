@@ -15,6 +15,8 @@ import {
   buildUnsubscribeEvent,
   type SqlStatement,
 } from './core.js';
+import { renderCompanyLogo } from './logo.js';
+import type { PreferenceReader } from './preference-handler.js';
 
 const HTML_HEADERS = { 'content-type': 'text/html; charset=utf-8' } as const;
 
@@ -22,8 +24,12 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
-/** A minimal self-contained HTML page (no external assets — it's opened from email). */
-function page(title: string, inner: string): string {
+/**
+ * A minimal self-contained HTML page (no external assets except the optional
+ * company logo `<img>`, which is served public-by-uuid). `logoHtml` (default '')
+ * is emitted at the TOP of the card; with no logo the page renders as before.
+ */
+function page(title: string, inner: string, logoHtml = ''): string {
   return (
     `<!doctype html><html><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>` +
@@ -34,32 +40,35 @@ function page(title: string, inner: string): string {
     `p{color:#57534e;font-size:14px;line-height:1.5}.email{font-weight:600;color:#1c1917}` +
     `button{margin-top:20px;background:#b91c1c;color:#fff;border:0;border-radius:10px;padding:11px 20px;` +
     `font-size:14px;font-weight:600;cursor:pointer}button:hover{background:#991b1b}.ok{color:#0f766e}</style></head>` +
-    `<body><div class="card">${inner}</div></body></html>`
+    `<body><div class="card">${logoHtml}${inner}</div></body></html>`
   );
 }
 
 /**
  * The SIMPLE unsubscribe confirm page (the one source of truth — the preference
  * center reuses this when topics are disabled / there are none). Exported so the
- * preference handler renders the IDENTICAL page.
+ * preference handler renders the IDENTICAL page. `logoHtml` (optional) renders the
+ * company logo atop the card.
  */
-export function confirmPage(email: string, actionUrl: string): string {
+export function confirmPage(email: string, actionUrl: string, logoHtml = ''): string {
   return page(
     'Unsubscribe',
     `<h1>Unsubscribe from these emails?</h1>` +
       `<p><span class="email">${esc(email)}</span> will no longer receive emails from this sender.</p>` +
       `<form method="POST" action="${esc(actionUrl)}">` +
       `<button type="submit" data-testid="confirm-unsubscribe">Yes, unsubscribe me</button></form>`,
+    logoHtml,
   );
 }
 
 /** The SIMPLE "you're unsubscribed" page (shared with the preference center). */
-export function donePage(email: string): string {
+export function donePage(email: string, logoHtml = ''): string {
   return page(
     'Unsubscribed',
     `<h1 class="ok">You're unsubscribed</h1>` +
       `<p><span class="email">${esc(email)}</span> won't receive further emails from this sender. ` +
       `You can close this page.</p>`,
+    logoHtml,
   );
 }
 
@@ -90,6 +99,16 @@ export interface UnsubscribeDeps {
    * so the prod Lambda + local-api resolve it consistently.
    */
   readonly linkSecret?: string;
+  /**
+   * Optional service-role reader to resolve the sending company's logo (scoped in
+   * code to the link's workspace). Omitted ⇒ no logo (page renders as before).
+   */
+  readonly reader?: PreferenceReader;
+  /**
+   * The public ORIGIN that serves uploaded assets (`<assetsBaseUrl>/assets/<id>`).
+   * Derived from the SAME origin as the unsubscribe link. Omitted ⇒ no logo.
+   */
+  readonly assetsBaseUrl?: string;
 }
 
 /**
@@ -157,11 +176,13 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
           body: page('Unsubscribe', `<h1>Invalid or expired link</h1><p>This unsubscribe link could not be verified.</p>`),
         };
       }
+      // Resolve the sending company's logo (decorative; '' when none/not wired).
+      const logoHtml = await renderCompanyLogo(deps.reader, deps.assetsBaseUrl, parsed.workspaceId);
       // GET = the link click. It is PREFETCHABLE (mail clients/proxies fetch it),
       // so it must NOT opt anyone out — just show the re-affirm page whose form
       // POSTs back to this same URL.
       if (method === 'GET') {
-        return { statusCode: 200, headers: HTML_HEADERS, body: confirmPage(parsed.email, url) };
+        return { statusCode: 200, headers: HTML_HEADERS, body: confirmPage(parsed.email, url, logoHtml) };
       }
       // POST = the user re-affirmed (Confirm button) OR an RFC 8058 one-click.
       // Workspace-scoped writes in ONE tx — never touches another workspace:
@@ -173,7 +194,7 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
         parsed.workspaceId,
         simpleUnsubscribeStatements(parsed.workspaceId, parsed.email, parsed.broadcastId, parsed.campaignId),
       );
-      return { statusCode: 200, headers: HTML_HEADERS, body: donePage(parsed.email) };
+      return { statusCode: 200, headers: HTML_HEADERS, body: donePage(parsed.email, logoHtml) };
     } catch {
       // Never throw out of the handler; surface a 500 the caller can retry.
       return {

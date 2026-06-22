@@ -30,6 +30,7 @@ export {
   type PreferenceCenterDeps,
   type PreferenceReader,
 } from './preference-handler.js';
+export { resolveCompanyLogoAssetId, logoImgTag, renderCompanyLogo } from './logo.js';
 export {
   parsePreferenceUpdate,
   buildActiveTopicsQuery,

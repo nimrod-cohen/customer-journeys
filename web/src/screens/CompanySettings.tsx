@@ -11,6 +11,7 @@ import { Button, Card, Field, Input, PageHeader } from '../ui/kit.js';
 import { can } from '@cdp/tenancy';
 import { CompanySesConfig } from './CompanySesConfig.tsx';
 import { CompanyChannelConfig } from './CompanyChannelConfig.tsx';
+import { CompanyLogo } from './CompanyLogo.tsx';
 import { BillingUsagePanel } from './SimpleScreens.tsx';
 
 type CompanyTab = 'company' | 'billing';
@@ -165,6 +166,8 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
         )}
         {companyErr ? <p data-testid="company-error" class="mt-2 text-sm text-rose-600">{companyErr}</p> : null}
       </Card>
+
+      <CompanyLogo />
 
       <CompanySesConfig />
 

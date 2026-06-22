@@ -38,6 +38,7 @@ import {
   MEDIUM_GROUPS,
   type TopicChoice,
 } from './preference-center.js';
+import { renderCompanyLogo } from './logo.js';
 
 const HTML_HEADERS = { 'content-type': 'text/html; charset=utf-8' } as const;
 
@@ -45,7 +46,7 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
-function shell(title: string, inner: string): string {
+function shell(title: string, inner: string, logoHtml = ''): string {
   return (
     `<!doctype html><html><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>` +
@@ -62,11 +63,17 @@ function shell(title: string, inner: string): string {
     `.primary{background:#0f766e;color:#fff}.primary:hover{background:#115e59}` +
     `.danger{background:#fff;color:#b91c1c;border:1px solid #fecaca}.danger:hover{background:#fef2f2}` +
     `.ok{color:#0f766e}.muted{color:#78716c;font-size:13px}</style></head>` +
-    `<body><div class="card">${inner}</div></body></html>`
+    `<body><div class="card">${logoHtml}${inner}</div></body></html>`
   );
 }
 
-function centerPage(email: string, actionUrl: string, topics: TopicChoice[], groupSubscribed: Record<string, boolean>): string {
+function centerPage(
+  email: string,
+  actionUrl: string,
+  topics: TopicChoice[],
+  groupSubscribed: Record<string, boolean>,
+  logoHtml = '',
+): string {
   const topicRows = topics.length
     ? topics
         .map(
@@ -100,10 +107,11 @@ function centerPage(email: string, actionUrl: string, topics: TopicChoice[], gro
       `<input type="hidden" name="unsubscribe_all" value="1">` +
       `<div class="row"><button type="submit" class="danger" data-testid="pref-unsub-all">` +
       `Unsubscribe from everything</button></div></form>`,
+    logoHtml,
   );
 }
 
-function savedPage(email: string, all: boolean): string {
+function savedPage(email: string, all: boolean, logoHtml = ''): string {
   return shell(
     'Preferences saved',
     `<h1 class="ok">${all ? "You're unsubscribed" : 'Preferences saved'}</h1>` +
@@ -112,6 +120,7 @@ function savedPage(email: string, all: boolean): string {
         ? `you won't receive any further messages from this sender.`
         : `your subscription preferences have been updated.`) +
       ` You can close this page.</p>`,
+    logoHtml,
   );
 }
 
@@ -131,6 +140,12 @@ export interface PreferenceCenterDeps {
    * signs with). Defaults to `unsubscribeLinkSecret()` (env or the dev fallback).
    */
   readonly linkSecret?: string;
+  /**
+   * The public ORIGIN that serves uploaded assets (`<assetsBaseUrl>/assets/<id>`),
+   * for the company logo atop the page. Derived from the SAME origin as the link.
+   * Omitted ⇒ no logo (page renders as before).
+   */
+  readonly assetsBaseUrl?: string;
 }
 
 /**
@@ -192,6 +207,9 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
         };
       }
 
+      // Resolve the sending company's logo (decorative; '' when none/not wired).
+      const logoHtml = await renderCompanyLogo(deps.reader, deps.assetsBaseUrl, workspaceId);
+
       // Load the workspace's active topics + the recipient's current state.
       const topicsQ = buildActiveTopicsQuery(workspaceId);
       const { rows: activeTopics } = await deps.reader.query<{ id: string; name: string }>(topicsQ.text, topicsQ.values);
@@ -206,13 +224,13 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
       if (!showTopics) {
         // SIMPLE flow — identical page + write as GET/POST /unsubscribe.
         if (method === 'GET') {
-          return { statusCode: 200, headers: HTML_HEADERS, body: confirmPage(email, url) };
+          return { statusCode: 200, headers: HTML_HEADERS, body: confirmPage(email, url, logoHtml) };
         }
         await deps.runInWorkspaceTx(
           workspaceId,
           simpleUnsubscribeStatements(workspaceId, email, parsed.broadcastId, parsed.campaignId, 'preference-center'),
         );
-        return { statusCode: 200, headers: HTML_HEADERS, body: donePage(email) };
+        return { statusCode: 200, headers: HTML_HEADERS, body: donePage(email, logoHtml) };
       }
 
       const tStateQ = buildTopicStateQuery(workspaceId, email);
@@ -232,7 +250,7 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
         return {
           statusCode: 200,
           headers: HTML_HEADERS,
-          body: centerPage(email, url, choices, groupSubscribed),
+          body: centerPage(email, url, choices, groupSubscribed, logoHtml),
         };
       }
 
@@ -250,7 +268,7 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
           buildUnsubscribeActivity(workspaceId, email),
         ];
         await deps.runInWorkspaceTx(workspaceId, statements);
-        return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, true) };
+        return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, true, logoHtml) };
       }
 
       // PARTIAL update: per-topic + per-group writes ONLY. NEVER the global
@@ -264,7 +282,7 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
         statements.push(buildChannelOptOutWrite(workspaceId, email, group, !subscribed));
       }
       if (statements.length) await deps.runInWorkspaceTx(workspaceId, statements);
-      return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, false) };
+      return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, false, logoHtml) };
     } catch {
       return {
         statusCode: 500,

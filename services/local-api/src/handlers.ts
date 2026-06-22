@@ -695,6 +695,56 @@ export const deleteCompanySesConfig: Handler = async (ctx, pool) => {
   return ok({ deleted: rowCount });
 };
 
+// --- per-company LOGO (CLAUDE.md company-settings) -----------------------------
+// A company may set ONE logo (a soft reference to an uploaded asset) that renders
+// atop the public unsubscribe + manage-subscription pages. The asset itself is
+// uploaded via the existing POST /assets (workspace-scoped, served public-by-uuid)
+// — these handlers only point the company at one. The logo is OPTIONAL (NULL → no
+// logo, pages render as before). workspace → company from ctx only (inv.2).
+
+/** GET /company/logo — the current logo's public path, or null. */
+export const getCompanyLogo: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ logo_url: null });
+  const { rows } = await pool.query<{ logo_asset_id: string | null }>(
+    'SELECT logo_asset_id FROM companies WHERE id = $1',
+    [companyId],
+  );
+  const id = rows[0]?.logo_asset_id ?? null;
+  // Server-relative path; the SPA absolutizes against its API base (like /assets).
+  return ok({ logo_url: id ? `/assets/${id}` : null, asset_id: id });
+};
+
+/** PUT /company/logo { asset_id } — set the logo. The asset MUST belong to one of
+ *  the company's own workspaces (else 400) — a foreign/missing asset is rejected. */
+export const putCompanyLogo: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ error: 'no company for this workspace' }, 400);
+  const b = asObject(req.body);
+  const assetId = String(b.asset_id ?? '').trim();
+  if (!/^[0-9a-f-]{36}$/i.test(assetId)) return ok({ error: 'a valid asset_id is required' }, 400);
+  // The asset must live in a workspace owned by THIS company (tenant isolation).
+  const owns = await pool.query(
+    `SELECT 1 FROM assets a JOIN workspaces w ON w.id = a.workspace_id
+      WHERE a.id = $1 AND w.company_id = $2 LIMIT 1`,
+    [assetId, companyId],
+  );
+  if (!owns.rowCount) return ok({ error: 'asset not found in this company' }, 400);
+  await pool.query('UPDATE companies SET logo_asset_id = $2 WHERE id = $1', [companyId, assetId]);
+  return ok({ logo_url: `/assets/${assetId}`, asset_id: assetId });
+};
+
+/** DELETE /company/logo — clear the company's logo. */
+export const deleteCompanyLogo: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ deleted: 0 });
+  const { rowCount } = await pool.query(
+    'UPDATE companies SET logo_asset_id = NULL WHERE id = $1 AND logo_asset_id IS NOT NULL',
+    [companyId],
+  );
+  return ok({ deleted: rowCount });
+};
+
 // --- per-company text-channel (019 SMS) credentials (§10) ----------------------
 // Each company brings its own SMS gateway account. The bearer is write-only over
 // the API (never returned) and stored encrypted via @cdp/db secret-crypto — the
@@ -4435,6 +4485,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /company/channel-config': getCompanyChannelConfig,
   'PUT /company/channel-config': putCompanyChannelConfig,
   'DELETE /company/channel-config': deleteCompanyChannelConfig,
+  'GET /company/logo': getCompanyLogo,
+  'PUT /company/logo': putCompanyLogo,
+  'DELETE /company/logo': deleteCompanyLogo,
   'GET /sending-domains': listSendingDomains,
   'POST /sending-domains': createSendingDomain,
   'GET /sending-domains/:id': getSendingDomain,
