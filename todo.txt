@@ -44,7 +44,7 @@
 #     FOLLOW-UP (non-blocking): production webhook client → redirect:'manual' + re-validate (SSRF defense-in-depth);
 #     optional resolve-time DNS SSRF check. See .a5c/CAMPAIGN-BUILDER-CARRYFORWARD.txt.
 
-# REMAINING
+# DONE (2026-06-22)
 # [x] put today's date in as the default in the email schedule date, and today in the from/to date filters. v0.49.3
 # [x] show conversion (count + %) for sent/delivered/failed/opened/clicked/unsubscribed in the broadcasts list.
 #     Added first-party OPEN tracking (1x1 pixel /o/:token + tracked_opens, migration 0038) + per-broadcast
@@ -62,6 +62,16 @@
 # [x] never send to an unsubscribed profile even if it matches the segment — the dispatcher (the single send
 #     point for broadcasts AND campaigns) skips suppressed / medium-group-opted-out / topic-unsubscribed
 #     recipients before sending, on every medium. v0.52.0
+# [x] topics admin moved into Workspace settings (Topics tab, owner-gated); marketers still pick topics in the
+#     broadcast/campaign selector via the manage_content GET. v0.55.0
+
+# REMAINING
+* profile action to COPY the recipient's subscription/unsubscribe link (so an admin can preview the page
+  the recipient sees).  [in progress]
+* enable/disable topics: when topics are DISABLED or empty, the recipient sees the original simple
+  "unsubscribe" page; otherwise the topic options (the manage-subscription page adapts).  [in progress]
+* the unsubscribe / manage-subscription URL must be a TOKENIZED, unguessable link (can't unsubscribe someone
+  by editing the email param).  [in progress]
 # [~] Connect to a REAL SMS provider  — BLOCKED on human prerequisites (provider account + credentials, like
 #     SES production access). Architecture + mock done; real adapter slots into resolveChannelProvider (@cdp/channels).
 #     See .a5c/PROVIDERS-SETUP.md.
