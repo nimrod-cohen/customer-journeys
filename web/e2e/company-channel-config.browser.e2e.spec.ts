@@ -16,6 +16,7 @@ test('company 019 SMS credentials: save (bearer write-only) then remove', async 
   );
   await page.getByTestId('nav-company').click();
   await page.getByTestId('company-settings').waitFor();
+  await page.getByTestId('company-tab-sending').click(); // 019 SMS config lives on the Sending tab
   await page.getByTestId('channel-019-config').waitFor();
   await initialLoad;
 

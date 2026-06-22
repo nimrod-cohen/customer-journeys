@@ -78,6 +78,7 @@ function screenFor(path: string): JSX.Element {
   // Company settings tabs: /company (company) and /company/billing (billing & usage,
   // moved here from the old top-level /billing).
   if (path === '/company') return <CompanySettings tab="company" />;
+  if (path === '/company/sending') return <CompanySettings tab="sending" />;
   if (path === '/company/billing') return <CompanySettings tab="billing" />;
   if (path === '/account') return <AccountSettings />;
   switch (path) {

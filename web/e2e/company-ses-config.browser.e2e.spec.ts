@@ -15,6 +15,7 @@ test('company SES credentials: save (secret write-only) then remove', async ({ p
   );
   await page.getByTestId('nav-company').click();
   await page.getByTestId('company-settings').waitFor();
+  await page.getByTestId('company-tab-sending').click(); // SES config lives on the Sending tab
   await page.getByTestId('ses-config').waitFor();
   await initialLoad;
 

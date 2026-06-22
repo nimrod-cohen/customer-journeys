@@ -14,14 +14,14 @@ import { CompanyChannelConfig } from './CompanyChannelConfig.tsx';
 import { CompanyLogo } from './CompanyLogo.tsx';
 import { BillingUsagePanel } from './SimpleScreens.tsx';
 
-type CompanyTab = 'company' | 'billing';
+type CompanyTab = 'company' | 'sending' | 'billing';
 
 export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
   const session = useStore(sessionStore);
   const canCompany = session.role ? can(session.role, 'manage_workspace_users') : false;
   const canBilling = session.role ? can(session.role, 'view_billing') : false;
   // Clamp the requested tab to one the role can actually see (accounting → billing).
-  const activeTab: CompanyTab = tab === 'company' && !canCompany ? 'billing' : tab;
+  const activeTab: CompanyTab = (tab === 'company' || tab === 'sending') && !canCompany ? 'billing' : tab;
   const [newWsName, setNewWsName] = useState('');
   const [wsError, setWsError] = useState('');
   const [delTarget, setDelTarget] = useState<{ id: string; name: string } | null>(null);
@@ -93,7 +93,7 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
     <section data-testid="company-settings">
       <PageHeader
         title={session.companyName ? `${session.companyName} — company settings` : 'Company settings'}
-        subtitle="Company, workspaces, and billing & usage."
+        subtitle="Workspaces, sending (SES / SMS), and billing & usage."
       />
 
       {/* Tabs (only those the role can see) */}
@@ -107,7 +107,19 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
             }`}
             onClick={() => navigate('/company')}
           >
-            Company
+            Workspaces
+          </button>
+        ) : null}
+        {canCompany ? (
+          <button
+            type="button"
+            data-testid="company-tab-sending"
+            class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+              activeTab === 'sending' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+            }`}
+            onClick={() => navigate('/company/sending')}
+          >
+            Sending
           </button>
         ) : null}
         {canBilling ? (
@@ -166,12 +178,6 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
         )}
         {companyErr ? <p data-testid="company-error" class="mt-2 text-sm text-rose-600">{companyErr}</p> : null}
       </Card>
-
-      <CompanyLogo />
-
-      <CompanySesConfig />
-
-      <CompanyChannelConfig />
 
       <Card data-testid="company-workspaces" class="p-5">
         <h2 class="text-base font-bold text-ink-900">Workspaces</h2>
@@ -320,6 +326,14 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
           )
         : null}
       </>
+      ) : null}
+
+      {activeTab === 'sending' && canCompany ? (
+        <>
+          <CompanyLogo />
+          <CompanySesConfig />
+          <CompanyChannelConfig />
+        </>
       ) : null}
     </section>
   );
