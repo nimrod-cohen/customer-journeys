@@ -1048,6 +1048,8 @@ interface PreviewData {
   name: string;
   status: string;
   sent_at: string | null;
+  medium?: Medium;
+  text_body?: string;
   subject: string;
   from: string;
   to_address: string;
@@ -1055,9 +1057,10 @@ interface PreviewData {
   html: string;
 }
 
-/** A read-only view of a broadcast's email — opened by clicking a sent broadcast
- *  in the list. Shows the resolved envelope + the compiled HTML body, rendered in
- *  a fully sandboxed iframe (the email is static HTML; no scripts run). */
+/** A read-only view of a sent/scheduled broadcast — opened by clicking it in the
+ *  list. For EMAIL it shows the resolved envelope + the compiled HTML body in a
+ *  sandboxed iframe; for SMS/WhatsApp it shows the channel, the recipient phone
+ *  token, and the plain text message that was sent. */
 function BroadcastPreview({ id }: { id: string }) {
   const [data, setData] = useState<PreviewData | null>(null);
   const [error, setError] = useState('');
@@ -1069,6 +1072,9 @@ function BroadcastPreview({ id }: { id: string }) {
       .catch(() => setError('Could not load this broadcast.'));
   }, [id]);
 
+  const medium = (data?.medium ?? 'email') as Medium;
+  const isText = medium !== 'email';
+
   return (
     <section data-testid="broadcast-preview">
       <button data-testid="broadcasts-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/broadcasts')}>
@@ -1076,13 +1082,40 @@ function BroadcastPreview({ id }: { id: string }) {
       </button>
       <PageHeader
         title={data?.name ?? 'Broadcast'}
-        subtitle="A read-only preview of the email for this broadcast."
-        actions={data ? <Badge tone={toneFor(data.status)}>{data.status}</Badge> : undefined}
+        subtitle={`A read-only preview of the ${isText ? `${MEDIUM_LABEL[medium]} message` : 'email'} for this broadcast.`}
+        actions={
+          data ? (
+            <div class="flex items-center gap-2">
+              <Badge data-testid="preview-medium" tone="neutral">{MEDIUM_LABEL[medium]}</Badge>
+              <Badge tone={toneFor(data.status)}>{data.status}</Badge>
+            </div>
+          ) : undefined
+        }
       />
       {error ? (
         <p class="text-sm text-rose-600">{error}</p>
       ) : !data ? (
         <p class="text-sm text-stone-500">Loading…</p>
+      ) : isText ? (
+        <Card class="max-w-3xl overflow-hidden p-0">
+          <dl class="grid grid-cols-[5rem_1fr] gap-y-1.5 border-b border-stone-200 p-4 text-sm">
+            <dt class="text-stone-500">Channel</dt>
+            <dd class="text-ink-900">{MEDIUM_LABEL[medium]}</dd>
+            <dt class="text-stone-500">To</dt>
+            <dd class="font-mono text-ink-900">{data.to_address || '—'}</dd>
+            <dt class="text-stone-500">Audience</dt>
+            <dd class="text-ink-900">{data.audience}</dd>
+          </dl>
+          <div class="p-4">
+            <p class="mb-1.5 text-xs font-medium uppercase tracking-wide text-stone-400">Message</p>
+            <pre
+              data-testid="preview-text-body"
+              class="whitespace-pre-wrap break-words rounded-lg bg-stone-50 p-3 text-sm text-ink-900 ring-1 ring-inset ring-stone-100"
+            >
+              {data.text_body || '—'}
+            </pre>
+          </div>
+        </Card>
       ) : (
         <Card class="max-w-3xl overflow-hidden p-0">
           <dl class="grid grid-cols-[5rem_1fr] gap-y-1.5 border-b border-stone-200 p-4 text-sm">

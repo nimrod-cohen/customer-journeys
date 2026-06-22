@@ -2019,7 +2019,7 @@ export const previewBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const bq = scopedQuery(
     ctx.workspaceId,
-    'SELECT name, status, sent_at, scheduled_at, scheduled_tz, audience_kind, audience_ref, template_id FROM broadcasts WHERE id = $1',
+    'SELECT name, status, sent_at, scheduled_at, scheduled_tz, audience_kind, audience_ref, template_id, medium, text_body FROM broadcasts WHERE id = $1',
     [id],
   );
   const b = (await pool.query(bq.text, bq.values)).rows[0] as
@@ -2032,6 +2032,8 @@ export const previewBroadcast: Handler = async (ctx, pool, req) => {
         audience_kind: string;
         audience_ref: string | null;
         template_id: string | null;
+        medium: string | null;
+        text_body: string | null;
       }
     | undefined;
   if (!b) return ok({ error: 'not found' }, 404);
@@ -2083,15 +2085,20 @@ export const previewBroadcast: Handler = async (ctx, pool, req) => {
     audience = seg?.name ?? '—';
   }
 
+  const medium = b.medium ?? 'email';
+  // For an SMS/WhatsApp broadcast there is no email envelope/HTML — the To is the
+  // recipient phone and the content is the plain text_body (merge-tag enabled).
   return ok({
     name: b.name,
     status: b.status,
     sent_at: b.sent_at,
     scheduled_at: b.scheduled_at,
     scheduled_tz: b.scheduled_tz,
+    medium,
+    text_body: b.text_body ?? '',
     subject,
     from,
-    to_address: toAddress,
+    to_address: medium === 'email' ? toAddress : '{{customer.phone}}',
     audience,
     html,
   });

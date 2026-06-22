@@ -10,6 +10,9 @@ import { loginAs } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
 test('compose + send an SMS broadcast via the wizard (mock provider, no domain needed)', async ({ page }) => {
+  // Unique per run so retries / prior runs can't leave duplicate rows that break a
+  // hasText filter (the list isn't cleared between runs for test-created broadcasts).
+  const name = `SMS blast ${Date.now()}`;
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-broadcasts').click();
   await page.getByTestId('broadcast-composer').waitFor();
@@ -19,7 +22,7 @@ test('compose + send an SMS broadcast via the wizard (mock provider, no domain n
 
   // Step 1 — audience + CHANNEL. Pick SMS (default is Email) and the seeded manual
   // segment (index 1; its member a1 has a phone so the send has a recipient).
-  await page.getByTestId('broadcast-name').fill('SMS blast');
+  await page.getByTestId('broadcast-name').fill(name);
   await page.getByTestId('broadcast-medium').selectOption('sms');
   await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
@@ -44,9 +47,18 @@ test('compose + send an SMS broadcast via the wizard (mock provider, no domain n
   // and the row shows the SMS channel badge.
   await page.getByTestId('broadcast-composer').waitFor();
   await expect(page.getByTestId('toast')).toBeVisible();
-  const item = page.getByTestId('broadcast-item').filter({ hasText: 'SMS blast' });
-  await expect(item.getByTestId('broadcast-status')).toHaveText('sent');
+  const item = page.getByTestId('broadcast-item').filter({ hasText: name });
+  await expect(item.getByTestId('broadcast-status')).toHaveText('sent', { timeout: 15_000 });
   await expect(item.getByTestId('broadcast-medium-badge')).toHaveText('SMS');
+
+  // Opening the SENT SMS broadcast shows a read-only preview of the TEXT message
+  // (channel + recipient phone token + body) — NOT a supposed email.
+  await item.getByTestId('broadcast-open').click();
+  await page.getByTestId('broadcast-preview').waitFor();
+  await expect(page.getByTestId('preview-medium')).toHaveText('SMS');
+  await expect(page.getByTestId('preview-text-body')).toContainText('flash sale today');
+  await expect(page.getByTestId('preview-body')).toHaveCount(0); // no email iframe
+  await expect(page.getByTestId('preview-subject')).toHaveCount(0);
 });
 
 test('compose + send a WhatsApp broadcast (text body, channel badge)', async ({ page }) => {
@@ -57,7 +69,8 @@ test('compose + send a WhatsApp broadcast (text body, channel badge)', async ({ 
   await page.getByTestId('new-broadcast').click();
   await page.getByTestId('broadcast-wizard').waitFor();
 
-  await page.getByTestId('broadcast-name').fill('WA blast');
+  const name = `WA blast ${Date.now()}`;
+  await page.getByTestId('broadcast-name').fill(name);
   await page.getByTestId('broadcast-medium').selectOption('whatsapp');
   await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
@@ -68,7 +81,7 @@ test('compose + send a WhatsApp broadcast (text body, channel badge)', async ({ 
   await page.getByTestId('wizard-save').click();
 
   await page.getByTestId('broadcast-composer').waitFor();
-  const item = page.getByTestId('broadcast-item').filter({ hasText: 'WA blast' });
-  await expect(item.getByTestId('broadcast-status')).toHaveText('sent');
+  const item = page.getByTestId('broadcast-item').filter({ hasText: name });
+  await expect(item.getByTestId('broadcast-status')).toHaveText('sent', { timeout: 15_000 });
   await expect(item.getByTestId('broadcast-medium-badge')).toHaveText('WhatsApp');
 });
