@@ -10,6 +10,7 @@ import type { Pool } from 'pg';
 const WS = '0c0d0e60-0000-4000-8000-000000000a01';
 const OWNER = '0c0d0e60-0000-4000-8000-0000000000b1';
 const BCAST = '0c0d0e60-0000-4000-8000-0000000000e1';
+const BCAST2 = '0c0d0e60-0000-4000-8000-0000000000e2';
 const P1 = '0c0d0e60-0000-4000-8000-0000000000f1';
 const P2 = '0c0d0e60-0000-4000-8000-0000000000f2';
 const P3 = '0c0d0e60-0000-4000-8000-0000000000f3';
@@ -56,6 +57,17 @@ describeMaybe('broadcast metrics via GET /broadcasts (real Postgres)', () => {
     await pool.query("INSERT INTO tracked_opens (token, workspace_id, broadcast_id, profile_id, opens) VALUES ('op3',$1,$2,$3,0)", [WS, BCAST, P3]);
     // 1 unsubscribe attributed to this broadcast.
     await pool.query("INSERT INTO email_events (workspace_id, broadcast_id, profile_id, type) VALUES ($1,$2,$3,'unsubscribe')", [WS, BCAST, P1]);
+
+    // A second broadcast: an SMS that was SKIPPED (e.g. the recipient had no phone).
+    // It must NOT count as Sent, and SHOULD count as Failed (non-delivery).
+    await pool.query(
+      "INSERT INTO broadcasts (id, workspace_id, name, medium, audience_kind, audience_ref, status, sent_at) VALUES ($1,$2,'SMS B','sms','manual',$1,'sent',now())",
+      [BCAST2, WS],
+    );
+    await pool.query(
+      "INSERT INTO messages_log (workspace_id, profile_id, broadcast_id, medium, status, reason) VALUES ($1,$2,$3,'sms','skipped','recipient has no phone')",
+      [WS, P1, BCAST2],
+    );
   });
 
   afterAll(async () => {
@@ -85,6 +97,16 @@ describeMaybe('broadcast metrics via GET /broadcasts (real Postgres)', () => {
     const b = (r.body as { broadcasts: Row[] }).broadcasts.find((x) => x.id === BCAST)!;
     expect(b.updated_at).toBeTruthy();
     expect(b.stats).toEqual({ sent: 3, delivered: 2, failed: 1, clicked: 5, opened: 2, unsubscribed: 1 });
+  });
+
+  it('a SKIPPED SMS counts as Failed, not Sent', async () => {
+    const r = await dispatch(
+      { method: 'GET', path: '/broadcasts', authorization: tokenFor(OWNER, WS), query: {}, body: {} },
+      e(),
+    );
+    const b = (r.body as { broadcasts: Row[] }).broadcasts.find((x) => x.id === BCAST2)!;
+    expect(b.stats.sent).toBe(0); // a skipped recipient is NOT "sent"
+    expect(b.stats.failed).toBe(1); // it shows as a non-delivery (Failed)
   });
 
   it('is cross-workspace isolated (another workspace sees zero for this broadcast)', async () => {

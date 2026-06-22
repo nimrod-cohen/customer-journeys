@@ -1937,10 +1937,14 @@ export const listBroadcasts: Handler = async (ctx, pool) => {
     delivered: number;
     failed: number;
   }>(
+    // Sent counts only TRUE sends (status='sent') — a skipped/failed recipient is NOT
+    // "sent". Failed = email bounces/complaints (SES feedback) OR any messages_log row
+    // that didn't go out (status failed/skipped) — so SMS/WhatsApp non-deliveries
+    // (no phone, invalid phone, suppressed, provider error) show up too, not just email.
     `SELECT m.broadcast_id,
-            count(DISTINCT m.id)::int AS sent,
+            count(DISTINCT m.id) FILTER (WHERE m.status = 'sent')::int AS sent,
             count(DISTINCT m.id) FILTER (WHERE ev.type = 'delivery')::int AS delivered,
-            count(DISTINCT m.id) FILTER (WHERE ev.type IN ('bounce','complaint'))::int AS failed
+            count(DISTINCT m.id) FILTER (WHERE ev.type IN ('bounce','complaint') OR m.status IN ('failed','skipped'))::int AS failed
        FROM messages_log m
        LEFT JOIN email_events ev
          ON ev.workspace_id = m.workspace_id AND ev.ses_message_id = m.ses_message_id
