@@ -6,7 +6,8 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { setEditorReturn, takeReturnedTemplate, takeReturnedTo } from '../store/editorReturn.js';
+import { takeReturnedTemplate, takeReturnedTo } from '../store/editorReturn.js';
+import { openEmailDesigner } from '../store/emailDesignerDrawer.js';
 import { ActionMenu, Badge, Button, Card, Field, Input, PageHeader, Select, Textarea, EmptyState, toneFor } from '../ui/kit.js';
 import type { ActionMenuItem } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
@@ -400,7 +401,12 @@ const BROWSER_TZ = (() => {
 })();
 
 export function BroadcastWizard({ id }: { id?: string }) {
-  const editing = Boolean(id);
+  // When designing an email for a BRAND-NEW broadcast we create the draft up front
+  // and keep its id here (the route prop stays undefined since we don't navigate) —
+  // so the designer drawer + later saves act on that same draft, not a new one.
+  const [createdId, setCreatedId] = useState<string | undefined>(undefined);
+  const effectiveId = id ?? createdId;
+  const editing = Boolean(effectiveId);
   const [step, setStep] = useState(0);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -422,6 +428,9 @@ export function BroadcastWizard({ id }: { id?: string }) {
   // template clones it so this broadcast's content is independently editable and
   // the library original stays pristine.
   const [attachedCopy, setAttachedCopy] = useState<{ id: string; name: string } | null>(null);
+  // Bumped when the designer drawer closes so the envelope re-fetches even when the
+  // copy id is unchanged (re-designing the SAME copy must reflect new From/Subject).
+  const [envelopeTick, setEnvelopeTick] = useState(0);
   // The attached email's envelope (From sender / To / Subject). All three must be
   // filled to leave the Content step — fetched whenever the instance changes.
   const [envelope, setEnvelope] = useState<{ subject: string; sender_id: string | null; to_address: string } | null>(
@@ -524,7 +533,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
         }),
       )
       .catch(() => setEnvelope(null));
-  }, [attachedCopy?.id]);
+  }, [attachedCopy?.id, envelopeTick]);
 
   /**
    * Template picked in the dropdown. A LIBRARY template is CLONED on the spot —
@@ -557,11 +566,22 @@ export function BroadcastWizard({ id }: { id?: string }) {
     setTplId('');
   };
 
+  /** Select a just-designed template and resolve its working copy (mirrors the
+   *  old editor-return handling, now driven by the designer drawer's onClose). */
+  const applyDesignedTemplate = (tid: string): void => {
+    setTplId(tid);
+    void api
+      .get<{ template: { id: string; name: string; kind: string } }>(`/templates/${tid}`)
+      .then((t) => {
+        if (t.template.kind === 'copy') setAttachedCopy({ id: t.template.id, name: t.template.name });
+      })
+      .catch(() => undefined);
+  };
+
   /**
-   * Open the email editor to design content for THIS broadcast. We persist the
-   * broadcast as a draft first (so the wizard state survives the round-trip and
-   * we have a URL to return to), then hand the editor a return path. On save the
-   * editor comes back here with the new template selected.
+   * Design content for THIS broadcast. We persist the broadcast as a draft first
+   * (so the wizard state survives and there's a row to attach the copy to), then
+   * open the email designer in a sliding DRAWER over the wizard (no navigation).
    */
   const designEmail = async () => {
     const scheduledIso = scheduleMode === 'later' && scheduledAt ? zonedInputToUtcIso(scheduledAt, timeZone) : null;
@@ -576,22 +596,28 @@ export function BroadcastWizard({ id }: { id?: string }) {
       scheduled_at: scheduledIso,
       scheduled_tz: scheduledIso ? timeZone : null,
     };
-    let bid = id;
-    if (id) {
-      await api.put(`/broadcasts/${id}`, { body });
+    let bid = effectiveId;
+    if (effectiveId) {
+      await api.put(`/broadcasts/${effectiveId}`, { body });
     } else {
       const r = await api.post<{ broadcast: { id: string } }>('/broadcasts', { body });
       bid = r.broadcast.id;
+      setCreatedId(bid); // keep editing THIS draft (no route nav)
+      history.replaceState(null, '', `#/broadcasts/${bid}`); // so a refresh reloads it
     }
-    if (tplId) {
-      setEditorReturn(`/broadcasts/${bid}`);
-      navigate(`/editor/${tplId}`);
-    } else {
-      // Designing from scratch for this broadcast → the editor saves a working
-      // COPY (not a library template).
-      setEditorReturn(`/broadcasts/${bid}`, { createAs: 'copy' });
-      navigate('/editor');
-    }
+    // Open the email designer in a sliding DRAWER over the wizard (no navigation;
+    // the wizard stays mounted). On close: a blank design created a NEW copy →
+    // select it; an existing copy edited in place → just refresh the Content step.
+    openEmailDesigner({
+      id: tplId || undefined,
+      createAs: tplId ? undefined : 'copy',
+      title: 'Design email',
+      onClose: (savedId) => {
+        if (savedId) applyDesignedTemplate(savedId);
+        setEnvelopeTick((t) => t + 1); // re-fetch the envelope even if the copy id is unchanged
+        setStep(1);
+      },
+    });
   };
 
   const segName = segments.find((s) => s.id === segId)?.name ?? '—';
@@ -656,9 +682,9 @@ export function BroadcastWizard({ id }: { id?: string }) {
         scheduled_at: scheduledIso,
         scheduled_tz: scheduledIso ? timeZone : null,
       };
-      let bid = id;
-      if (editing && id) {
-        await api.put(`/broadcasts/${id}`, { body });
+      let bid = effectiveId;
+      if (effectiveId) {
+        await api.put(`/broadcasts/${effectiveId}`, { body });
       } else {
         const r = await api.post<{ broadcast: { id: string } }>('/broadcasts', { body });
         bid = r.broadcast.id;

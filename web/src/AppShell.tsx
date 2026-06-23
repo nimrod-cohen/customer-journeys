@@ -26,6 +26,7 @@ import { Activity } from './screens/Activity.js';
 import { TemplateEditor } from './screens/TemplateEditor.tsx';
 import { DialogHost } from './ui/dialog.tsx';
 import { ToastHost } from './ui/toast.tsx';
+import { EmailDesignerDrawer } from './components/EmailDesignerDrawer.tsx';
 import type { JSX } from 'preact';
 
 /** True when `route` is `item` or a sub-route of it (e.g. /profiles/<id> under /profiles). */
@@ -246,6 +247,7 @@ export function AppShell(): JSX.Element {
 
       <DialogHost />
       <ToastHost />
+      <EmailDesignerDrawer />
       {/* min-w-0: a flex child's default min-width:auto would let `main` grow past
           the viewport to fit wide content (e.g. the campaigns list row) instead of
           shrinking — causing page-level horizontal overflow. min-w-0 lets it shrink

@@ -43,9 +43,13 @@ test('a send step with no From blocks publish inline (sender reason + node error
   // Design a BLANK email for the send node (a copy with NO sender) and come back.
   await page.getByTestId('node-send').getByTestId(/node-open-/).first().click();
   await page.getByTestId('node-editor-send').getByTestId('send-blank-design').click();
-  await expect(page).toHaveURL(/\/editor/);
-  // Return to the campaign without choosing a sender.
+  // The designer opens in a DRAWER over the campaign (no navigation).
+  await page.getByTestId('email-designer-drawer').waitFor();
+  // Return to the campaign without choosing a sender (Save & close).
   await page.getByTestId('editor-back').click();
+  await expect(page.getByTestId('email-designer-drawer')).toHaveCount(0);
+  // The node editor stays open (no navigation any more) — close it to reach the canvas.
+  await page.getByTestId('node-editor-send').getByTestId('drawer-close').click();
   await page.getByTestId('campaign-canvas').waitFor();
 
   // Publish via the modal → blocked on the missing From, named against the send

@@ -286,7 +286,7 @@ test('TRIGGER editor: a cosmetic name persists and shows on the trigger card', a
   await expect(page.getByTestId('node-editor-trigger').getByTestId('trigger-name')).toHaveValue('New VIPs');
 });
 
-test('SEND editor: attach a template (kind=copy) then Design email sets the campaign return', async ({ page }) => {
+test('SEND editor: attach a template (kind=copy) then Design email opens the designer drawer', async ({ page }) => {
   await openCampaigns(page);
   await openSeeded(page);
 
@@ -307,8 +307,12 @@ test('SEND editor: attach a template (kind=copy) then Design email sets the camp
   await page.getByTestId('node-send').last().getByTestId(/node-open-/).first().click();
   await expect(page.getByTestId('node-editor-send').getByTestId('send-email-instance')).toBeVisible();
 
-  // Design email → navigates to the editor with "← Back to campaign".
+  // Design email → opens the email designer in a DRAWER over the campaign (no
+  // navigation — the canvas + node editor stay mounted). Close via "Save & close".
   await page.getByTestId('node-editor-send').getByTestId('send-design-email').click();
-  await expect(page).toHaveURL(/\/editor/);
-  await expect(page.getByTestId('editor-back')).toContainText(/campaign/i);
+  await page.getByTestId('email-designer-drawer').waitFor();
+  await expect(page.getByTestId('email-editor')).toBeVisible();
+  await expect(page.getByTestId('editor-back')).toContainText('Save & close');
+  await page.getByTestId('editor-back').click();
+  await expect(page.getByTestId('email-designer-drawer')).toHaveCount(0);
 });

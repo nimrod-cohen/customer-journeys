@@ -13,8 +13,7 @@
 // NO native dialogs (inline hints + showToast); every control has a data-testid.
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../../store/session.js';
-import { navigate } from '../../router.js';
-import { setEditorReturn } from '../../store/editorReturn.js';
+import { openEmailDesigner } from '../../store/emailDesignerDrawer.js';
 import { Button, Field, Input, Select, Textarea } from '../../ui/kit.js';
 import { Suggest } from '../../ui/Suggest.js';
 import { showToast } from '../../ui/toast.js';
@@ -504,6 +503,9 @@ function SendEditor(props: NodeEditorProps) {
   // Reusable text templates (SMS/WhatsApp). Picking one COPIES its body into the
   // body field (copy-on-select — the user can still edit). No live reference.
   const [textTemplates, setTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
+  // Bumped when the email-designer drawer closes, so the envelope display re-fetches
+  // (the attached copy's id is unchanged, so it wouldn't otherwise re-run).
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     void api
@@ -608,7 +610,7 @@ function SendEditor(props: NodeEditorProps) {
       .get<{ template: { subject: string | null; sender_id: string | null; to_address: string | null } }>(`/templates/${attachedId}`)
       .then((r) => setEnvelope({ subject: r.template.subject ?? '', sender_id: r.template.sender_id ?? null, to_address: r.template.to_address ?? '' }))
       .catch(() => setEnvelope(null));
-  }, [attachedId]);
+  }, [attachedId, refreshKey]);
 
   // Attach a LIBRARY template: the server clones it into a kind='copy' and repoints
   // the send node (the same instance flow as broadcasts) — NOT the old placeholder.
@@ -624,22 +626,32 @@ function SendEditor(props: NodeEditorProps) {
     props.onDone();
   };
 
-  // Design the email for this send node. Reuses the broadcast clone/return flow:
-  // editorReturn=/campaigns/:id so the editor's Back reads "← Back to campaign".
-  // Persist the channel as email FIRST so a just-switched node isn't left on its old
-  // medium when we navigate away (the switch is otherwise lost on the round-trip).
+  // Design the email for this send node — opens the email designer in a sliding
+  // DRAWER over the campaign (no navigation; the canvas + this node editor stay
+  // mounted). Ensure the node is an email send first (covers a just-switched
+  // channel). On close: a blank design created a NEW copy → attach it to the node;
+  // an existing copy just edited in place → reload + refresh the envelope display.
   const designEmail = async (): Promise<void> => {
     if (!props.campaignId) return;
     if (medium !== sendNodeMedium(props.node.node)) {
       await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, attachedId)).catch(() => undefined);
     }
-    if (attachedId) {
-      setEditorReturn(`/campaigns/${props.campaignId}`);
-      navigate(`/editor/${attachedId}`);
-    } else {
-      setEditorReturn(`/campaigns/${props.campaignId}`, { createAs: 'copy' });
-      navigate('/editor');
-    }
+    openEmailDesigner({
+      id: attachedId ?? undefined,
+      createAs: attachedId ? undefined : 'copy',
+      title: 'Design email',
+      onClose: async (savedId) => {
+        if (!attachedId && savedId) {
+          // Attach the freshly-created copy to this send node, then close the node
+          // editor (the canvas shows the configured node; reopening shows the instance).
+          await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, savedId)).catch(() => undefined);
+          props.onDone();
+        } else {
+          await props.onReloadCampaign();
+          setRefreshKey((k) => k + 1);
+        }
+      },
+    });
   };
 
   const senderName = (id: string | null): string => (id ? 'a named sender' : '—');

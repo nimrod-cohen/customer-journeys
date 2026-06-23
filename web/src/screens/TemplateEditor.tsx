@@ -44,7 +44,20 @@ const DEFAULT_TO = '{{customer.email}}';
 
 const AUTOSAVE_MS = 800;
 
-export function TemplateEditor({ id }: { id?: string }): JSX.Element {
+export function TemplateEditor({
+  id,
+  embedded = false,
+  createAs,
+  onClose,
+}: {
+  id?: string | undefined;
+  /** Embedded in the email-designer DRAWER (no route nav; close via onClose). */
+  embedded?: boolean;
+  /** Embedded mode: how a NEW template is saved (replaces the editorReturn flag). */
+  createAs?: 'copy' | undefined;
+  /** Embedded mode: called on close with the saved template id (or null on load fail). */
+  onClose?: ((savedId: string | null) => void) | undefined;
+}): JSX.Element {
   const editing = Boolean(id);
   const [name, setName] = useState('Untitled');
   const [design, setDesign] = useState<EmailDesign | null>(null);
@@ -109,7 +122,7 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
         }
         setLoadedKey(id);
       })
-      .catch(() => navigate('/templates'));
+      .catch(() => (embedded ? onClose?.(null) : navigate('/templates')));
   }, [id]);
 
   // The From dropdown — verified-domain senders (optional; never blocks editing).
@@ -161,12 +174,13 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
       if (idRef.current) {
         await api.put(`/templates/${idRef.current}`, { body });
       } else {
-        if (peekEditorReturn()?.createAs === 'copy') body.kind = 'copy';
+        const asCopy = embedded ? createAs === 'copy' : peekEditorReturn()?.createAs === 'copy';
+        if (asCopy) body.kind = 'copy';
         const r = await api.post<{ template: { id: string } }>('/templates', { body });
         idRef.current = r.template.id;
-        // Silent URL rewrite (no remount — in-progress edits are kept); a
-        // refresh now reloads the saved template.
-        history.replaceState(null, '', `#/editor/${r.template.id}`);
+        // Route mode: silent URL rewrite (no remount — in-progress edits kept; a
+        // refresh then reloads the saved template). Embedded mode has no route.
+        if (!embedded) history.replaceState(null, '', `#/editor/${r.template.id}`);
       }
       setStatus(dirtyRef.current ? 'dirty' : 'saved');
       return true;
@@ -205,27 +219,34 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
   const returnTarget = peekEditorReturn()?.returnPath ?? '';
   const returnPending = returnTarget !== '';
   // "Instance" = a broadcast/campaign's own copy of an email (reached via the
-  // "Design email" return flow, or a row whose kind is 'copy'). It is NOT a
-  // library template — it reads as an email, and its Back goes to that
-  // broadcast/campaign, not the template library.
-  const instance = returnPending || kind === 'copy';
-  const backLabel = returnTarget.startsWith('/campaigns')
-    ? 'Back to campaign'
-    : returnTarget.startsWith('/broadcasts')
-      ? 'Back to broadcast'
-      : instance
-        ? 'Back'
-        : 'Back to templates';
+  // "Design email" flow, or a row whose kind is 'copy'). It is NOT a library
+  // template — it reads as an email with an envelope. In EMBEDDED mode the
+  // designer is always opened for an instance (a copy).
+  const instance = embedded || returnPending || kind === 'copy';
+  const backLabel = embedded
+    ? 'Save & close'
+    : returnTarget.startsWith('/campaigns')
+      ? 'Back to campaign'
+      : returnTarget.startsWith('/broadcasts')
+        ? 'Back to broadcast'
+        : instance
+          ? 'Back'
+          : 'Back to templates';
 
   /** Leave the editor. Everything autosaves, but a change made within the
    *  debounce window isn't persisted yet — so flush any pending change first
-   *  (staying put if that save fails), then navigate back: to the originating
-   *  broadcast/campaign when opened from there, else to the template library. */
+   *  (staying put if that save fails), then return: in EMBEDDED mode fire
+   *  onClose(savedId) (the drawer closes, the opener wires the copy back); in
+   *  ROUTE mode navigate back to the originating broadcast/campaign or library. */
   const goBack = async (): Promise<void> => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (dirtyRef.current || savingRef.current || queuedRef.current) {
       const okSave = await persist();
       if (!okSave) return;
+    }
+    if (embedded) {
+      onClose?.(idRef.current ?? null);
+      return;
     }
     const ret = takeEditorReturn();
     if (ret) {
@@ -237,57 +258,81 @@ export function TemplateEditor({ id }: { id?: string }): JSX.Element {
     }
   };
 
+  // The name field + autosave status — shared by route and embedded headers.
+  const nameAndStatus = (
+    <div class="flex items-end gap-3">
+      <Field label={instance ? 'Email name' : 'Template name'}>
+        <Input
+          data-testid="template-name"
+          value={name}
+          onInput={(e: Event) => {
+            const v = (e.target as HTMLInputElement).value;
+            setName(v);
+            nameRef.current = v;
+            scheduleAutosave();
+          }}
+        />
+      </Field>
+      {/* No manual save — every change autosaves; this just reflects status. */}
+      <span data-testid="save-status" class="min-w-[5rem] pb-2 text-sm font-medium">
+        {status === 'saving' ? (
+          <span class="text-stone-500">Saving…</span>
+        ) : status === 'saved' ? (
+          <span data-testid="template-saved" class="text-emerald-600">Saved ✓</span>
+        ) : status === 'error' ? (
+          <span class="text-rose-600">Save failed</span>
+        ) : status === 'dirty' ? (
+          <span class="text-stone-400">Unsaved…</span>
+        ) : null}
+      </span>
+    </div>
+  );
+
   return (
     <section data-testid="email-editor">
-      <button
-        data-testid="editor-back"
-        class="btn-ghost mb-4 btn-sm disabled:cursor-default disabled:opacity-50"
-        onClick={() => void goBack()}
-        disabled={status === 'saving'}
-      >
-        ← {backLabel}
-      </button>
-      <PageHeader
-        title={instance ? 'Edit email' : editing ? 'Edit email template' : 'New email template'}
-        subtitle={
-          instance
-            ? "This is this broadcast's own copy of the email — changes here don't affect the template library."
-            : 'Design the email — changes save automatically and compile to cross-client HTML via MJML.'
-        }
-        actions={
-          <div class="flex items-end gap-3">
-            <Field label={instance ? 'Email name' : 'Template name'}>
-              <Input
-                data-testid="template-name"
-                value={name}
-                onInput={(e: Event) => {
-                  const v = (e.target as HTMLInputElement).value;
-                  setName(v);
-                  nameRef.current = v;
-                  scheduleAutosave();
-                }}
-              />
-            </Field>
-            {/* No manual save — every change autosaves; this just reflects status. */}
-            <span data-testid="save-status" class="min-w-[5rem] pb-2 text-sm font-medium">
-              {status === 'saving' ? (
-                <span class="text-stone-500">Saving…</span>
-              ) : status === 'saved' ? (
-                <span data-testid="template-saved" class="text-emerald-600">Saved ✓</span>
-              ) : status === 'error' ? (
-                <span class="text-rose-600">Save failed</span>
-              ) : status === 'dirty' ? (
-                <span class="text-stone-400">Unsaved…</span>
-              ) : null}
-            </span>
-          </div>
-        }
-      />
+      {/* In EMBEDDED mode the drawer supplies the title + an X; we render a compact
+          bar (name + status + Save & close). In ROUTE mode the full PageHeader. */}
+      {embedded ? (
+        <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+          {nameAndStatus}
+          <button
+            data-testid="editor-back"
+            class="btn-primary btn-sm disabled:cursor-default disabled:opacity-50"
+            onClick={() => void goBack()}
+            disabled={status === 'saving'}
+          >
+            {backLabel}
+          </button>
+        </div>
+      ) : (
+        <>
+          <button
+            data-testid="editor-back"
+            class="btn-ghost mb-4 btn-sm disabled:cursor-default disabled:opacity-50"
+            onClick={() => void goBack()}
+            disabled={status === 'saving'}
+          >
+            ← {backLabel}
+          </button>
+          <PageHeader
+            title={instance ? 'Edit email' : editing ? 'Edit email template' : 'New email template'}
+            subtitle={
+              instance
+                ? "This is this broadcast's own copy of the email — changes here don't affect the template library."
+                : 'Design the email — changes save automatically and compile to cross-client HTML via MJML.'
+            }
+            actions={nameAndStatus}
+          />
+        </>
+      )}
 
       {/* From / To / Subject belong to an actual EMAIL — a broadcast/campaign's own
           copy. A library template is just a reusable DESIGN, so it has no envelope;
-          the envelope is filled in on the copy made when it's attached to a send. */}
-      {instance ? (
+          the envelope is filled in on the copy made when it's attached to a send.
+          Gated on `loadedKey` so the inputs only appear AFTER the template's values
+          have loaded — otherwise an instant mount (the drawer) lets the user edit a
+          field before the GET resolves, and the late load would clobber the edit. */}
+      {instance && loadedKey ? (
         <Card class="mb-4 grid gap-3 p-4 sm:grid-cols-2">
           <Field label="From">
             <Select

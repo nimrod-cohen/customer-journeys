@@ -277,41 +277,34 @@ test('design an email from the broadcast wizard and return with it selected', as
   await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
 
-  // Step 2 — no email yet, so choose a starting point. "Start from a blank
-  // design" persists a draft and opens the designer on the broadcast's own copy.
+  // Step 2 — no email yet, so choose a starting point. "Start from a blank design"
+  // persists a draft and opens the designer in a sliding DRAWER over the wizard
+  // (the wizard stays mounted — no navigation away from the broadcast).
   await page.getByTestId('design-email').click();
+  await page.getByTestId('email-designer-drawer').waitFor();
   await page.getByTestId('email-editor').waitFor();
-  // This is the broadcast's OWN email copy, not a library template: it reads as
-  // an email (it HAS a From/To/Subject envelope) and its Back returns to the
-  // broadcast (not the template library).
-  await expect(page.getByRole('heading', { name: 'Edit email', exact: true })).toBeVisible();
-  await expect(page.getByTestId('editor-back')).toContainText('Back to broadcast');
+  // This is the broadcast's OWN email copy, not a library template: it reads as an
+  // email (it HAS a From/To/Subject envelope) and closes via "Save & close".
+  await expect(page.getByRole('heading', { name: 'Design email', exact: true })).toBeVisible();
+  await expect(page.getByTestId('editor-back')).toContainText('Save & close');
   await expect(page.getByTestId('email-subject')).toBeVisible();
   await page.getByTestId('email-subject').fill('Spring promo subject');
   // The From is mandatory — intentionally choose a real named sender (there is no
-  // no-reply fallback). Capture its value so we can assert it survives a refresh.
+  // no-reply fallback).
   await page.getByTestId('email-sender').selectOption({ index: 1 });
   const senderValue = await page.getByTestId('email-sender').inputValue();
   expect(senderValue).not.toBe('');
   await page.getByTestId('toolbox-text').click();
   await expect(page.getByTestId('mjml-output')).toHaveValue(/^<mjml>/);
-  // Wait for the working copy to be saved (it now has its own /editor/:id URL).
+  // The working copy autosaves.
   await expect(page.getByTestId('template-saved')).toBeVisible({ timeout: 10_000 });
-
-  // REGRESSION: a page refresh inside the editor used to lose the return context
-  // and send Back to the template library / asset management. It must still go
-  // back to the broadcast, and the envelope (subject + From) must reload.
-  await page.reload();
-  await page.getByTestId('email-editor').waitFor();
-  await expect(page.getByTestId('editor-back')).toContainText('Back to broadcast');
-  await expect(page.getByTestId('email-subject')).toHaveValue('Spring promo subject');
-  await expect(page.getByTestId('email-sender')).toHaveValue(senderValue);
   await page.getByTestId('template-name').fill('Designed in wizard');
 
-  // No manual save — Back flushes the pending change and returns to the wizard.
-  // The Content step now shows this broadcast's OWN email (the instance) — there's
+  // Save & close flushes the pending change, closes the drawer, and returns to the
+  // wizard. The Content step now shows this broadcast's OWN email (the instance) —
   // no template picker any more, just the copy with Edit/Start over.
   await page.getByTestId('editor-back').click();
+  await expect(page.getByTestId('email-designer-drawer')).toHaveCount(0);
   await page.getByTestId('broadcast-wizard').waitFor();
   await expect(page.getByTestId('email-instance')).toContainText('Designed in wizard');
   await expect(page.getByTestId('broadcast-template')).toHaveCount(0); // no re-choosing a template
