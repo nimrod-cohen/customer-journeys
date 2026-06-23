@@ -49,6 +49,7 @@ export function TemplateEditor({
   embedded = false,
   createAs,
   onClose,
+  bindClose,
 }: {
   id?: string | undefined;
   /** Embedded in the email-designer DRAWER (no route nav; close via onClose). */
@@ -57,6 +58,9 @@ export function TemplateEditor({
   createAs?: 'copy' | undefined;
   /** Embedded mode: called on close with the saved template id (or null on load fail). */
   onClose?: ((savedId: string | null) => void) | undefined;
+  /** Embedded mode: register a "close WITHOUT a forced save" fn (for the drawer X / ESC).
+   *  Changes already autosave, so this just drops any sub-second pending edit and closes. */
+  bindClose?: ((fn: () => void) => void) | undefined;
 }): JSX.Element {
   const editing = Boolean(id);
   const [name, setName] = useState('Untitled');
@@ -257,6 +261,17 @@ export function TemplateEditor({
       navigate('/templates');
     }
   };
+
+  // Close WITHOUT a forced save (the drawer's X / ESC). Edits already autosave, so this
+  // just drops any sub-second pending change and closes — firing onClose with the
+  // last-saved id so the opener still wires up the (autosaved) copy.
+  useEffect(() => {
+    if (!embedded || !bindClose) return;
+    bindClose(() => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      onClose?.(idRef.current ?? null);
+    });
+  }, [embedded]);
 
   // The name field + autosave status — shared by route and embedded headers.
   const nameAndStatus = (

@@ -73,7 +73,9 @@ test('a send step with no From blocks publish inline (sender reason + node error
   const drawer = page.getByTestId('node-editor-send');
   await drawer.getByTestId('send-template-pick').selectOption({ label: 'Welcome' });
   await drawer.getByTestId('send-attach-template').click();
-  await expect(drawer).toBeHidden();
+  // The editor stays open showing the instance — close it to reach the canvas/publish.
+  await expect(drawer.getByTestId('send-email-instance')).toBeVisible();
+  await drawer.getByTestId('drawer-close').click();
 
   await publishCampaign(page, 'Gate v1');
   await expect(page.getByTestId('campaign-status')).toContainText('active');

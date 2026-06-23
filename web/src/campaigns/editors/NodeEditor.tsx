@@ -494,7 +494,12 @@ interface Template {
 }
 
 function SendEditor(props: NodeEditorProps) {
-  const attachedId = sendNodeTemplateId(props.node.node);
+  // The attached copy id. After an attach / blank-design / start-over we hold the new
+  // value LOCALLY (props.node stays stale until the parent reopens the editor) so the
+  // view updates immediately — the editor stays open, it doesn't close on attach.
+  // undefined = use the node's own value; null = explicitly detached; string = attached.
+  const [attachedOverride, setAttachedOverride] = useState<string | null | undefined>(undefined);
+  const attachedId = attachedOverride === undefined ? sendNodeTemplateId(props.node.node) : attachedOverride;
   const [medium, setMedium] = useState<SendMedium>(() => sendNodeMedium(props.node.node));
   const [templates, setTemplates] = useState<Template[]>([]);
   const [pick, setPick] = useState('');
@@ -619,11 +624,15 @@ function SendEditor(props: NodeEditorProps) {
       showToast('Pick a template to start from.', { tone: 'error' });
       return;
     }
-    await api.post(`/campaigns/${props.campaignId}/send-nodes/${props.node.id}/attach-template`, { body: { template_id: pick } });
-    // Pull the server's repointed template_id back into the model BEFORE closing,
-    // so reopening this node shows the instance (and a re-persist can't wipe it).
+    const res = await api.post<{ template: { id: string } }>(
+      `/campaigns/${props.campaignId}/send-nodes/${props.node.id}/attach-template`,
+      { body: { template_id: pick } },
+    );
+    // Reload so the model picks up the server's repointed template_id, then show the
+    // instance view RIGHT HERE (no close) — the editor stays open on the attached copy.
     await props.onReloadCampaign();
-    props.onDone();
+    setAttachedOverride(res.template.id);
+    setRefreshKey((k) => k + 1);
   };
 
   // Design the email for this send node — opens the email designer in a sliding
@@ -642,14 +651,13 @@ function SendEditor(props: NodeEditorProps) {
       title: 'Design email',
       onClose: async (savedId) => {
         if (!attachedId && savedId) {
-          // Attach the freshly-created copy to this send node, then close the node
-          // editor (the canvas shows the configured node; reopening shows the instance).
+          // A blank design created a NEW copy → attach it to this send node and show
+          // the instance RIGHT HERE (the editor stays open, no jarring close).
           await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, savedId)).catch(() => undefined);
-          props.onDone();
-        } else {
-          await props.onReloadCampaign();
-          setRefreshKey((k) => k + 1);
+          setAttachedOverride(savedId);
         }
+        await props.onReloadCampaign();
+        setRefreshKey((k) => k + 1);
       },
     });
   };
@@ -675,7 +683,13 @@ function SendEditor(props: NodeEditorProps) {
           <Button
             data-testid="send-start-over"
             variant="secondary"
-            onClick={() => props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, null)).then(props.onDone)}
+            onClick={async () => {
+              // Detach the copy and stay open showing the template picker (no close).
+              await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, null));
+              setAttachedOverride(null);
+              setEnvelope(null);
+              setPick('');
+            }}
           >
             Start over
           </Button>

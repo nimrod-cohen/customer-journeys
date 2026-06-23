@@ -7,7 +7,7 @@
 // Close is ONLY via the editor's own "Save & close" (which flushes the autosave
 // then fires onClose) — the dim backdrop is intentionally non-closing so a stray
 // click can't drop a half-designed email. Mounted once, app-level, in AppShell.
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import type { JSX } from 'preact';
 import { designerRequest, closeEmailDesigner } from '../store/emailDesignerDrawer.js';
@@ -21,6 +21,9 @@ export function EmailDesignerDrawer(): JSX.Element | null {
   const [mounted, setMounted] = useState(Boolean(req));
   const [visible, setVisible] = useState(false);
   const [shown, setShown] = useState(req);
+  // The editor registers a "close without a forced save" here (drawer X / ESC).
+  // Falls back to a plain close if the editor hasn't registered yet.
+  const discardClose = useRef<() => void>(() => closeEmailDesigner());
 
   useEffect(() => {
     if (req) {
@@ -33,6 +36,19 @@ export function EmailDesignerDrawer(): JSX.Element | null {
     const t = setTimeout(() => setMounted(false), ANIM_MS);
     return () => clearTimeout(t);
   }, [req]);
+
+  // ESC closes the drawer WITHOUT a forced save (changes already autosave).
+  useEffect(() => {
+    if (!mounted) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        discardClose.current();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [mounted]);
 
   if (!mounted || !shown) return null;
 
@@ -56,6 +72,18 @@ export function EmailDesignerDrawer(): JSX.Element | null {
       >
         <header class="flex items-center justify-between gap-3 border-b border-stone-200 bg-white px-5 py-3">
           <h2 class="text-base font-bold text-ink-900">{shown.title ?? 'Design email'}</h2>
+          <button
+            type="button"
+            data-testid="email-designer-close"
+            aria-label="Close without saving"
+            title="Close (Esc) — changes autosave"
+            class="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-ink-700"
+            onClick={() => discardClose.current()}
+          >
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
         </header>
         <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <TemplateEditor
@@ -65,6 +93,9 @@ export function EmailDesignerDrawer(): JSX.Element | null {
             id={shown.id}
             createAs={shown.createAs}
             onClose={handleClose}
+            bindClose={(fn) => {
+              discardClose.current = fn;
+            }}
           />
         </div>
       </aside>

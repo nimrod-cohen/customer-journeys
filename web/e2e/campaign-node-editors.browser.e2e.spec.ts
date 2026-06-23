@@ -302,17 +302,24 @@ test('SEND editor: attach a template (kind=copy) then Design email opens the des
   await drawer.getByTestId('send-template-pick').selectOption({ label: 'Welcome' });
   await drawer.getByTestId('send-attach-template').click();
 
-  // The drawer closes; reopen → the instance view shows (clone attached).
-  await expect(drawer).toBeHidden();
-  await page.getByTestId('node-send').last().getByTestId(/node-open-/).first().click();
-  await expect(page.getByTestId('node-editor-send').getByTestId('send-email-instance')).toBeVisible();
+  // The editor STAYS OPEN and shows the instance view right away (clone attached) —
+  // it no longer closes on attach.
+  await expect(drawer.getByTestId('send-email-instance')).toBeVisible();
 
   // Design email → opens the email designer in a DRAWER over the campaign (no
-  // navigation — the canvas + node editor stay mounted). Close via "Save & close".
+  // navigation — the canvas + node editor stay mounted).
   await page.getByTestId('node-editor-send').getByTestId('send-design-email').click();
   await page.getByTestId('email-designer-drawer').waitFor();
   await expect(page.getByTestId('email-editor')).toBeVisible();
   await expect(page.getByTestId('editor-back')).toContainText('Save & close');
-  await page.getByTestId('editor-back').click();
+  // It can be closed WITHOUT saving via the header X or ESC (changes already autosave).
+  await expect(page.getByTestId('email-designer-close')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('email-designer-drawer')).toHaveCount(0);
+
+  // Reopen and close via the X button.
+  await page.getByTestId('node-editor-send').getByTestId('send-design-email').click();
+  await page.getByTestId('email-designer-drawer').waitFor();
+  await page.getByTestId('email-designer-close').click();
   await expect(page.getByTestId('email-designer-drawer')).toHaveCount(0);
 });
