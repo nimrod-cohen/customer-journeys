@@ -705,7 +705,7 @@ function SendEditor(props: NodeEditorProps) {
       <p class="text-sm text-stone-500">This step sends an email through the dispatcher. Start from a library template (it's cloned into this step's own editable copy) or design a blank one.</p>
       <Field label="Start from a template">
         <div class="flex items-center gap-2">
-          <Select data-testid="send-template-pick" value={pick} onChange={(e: Event) => setPick((e.target as HTMLSelectElement).value)}>
+          <Select class="min-w-0 flex-1" data-testid="send-template-pick" value={pick} onChange={(e: Event) => setPick((e.target as HTMLSelectElement).value)}>
             <option value="">Choose a template…</option>
             {templates.map((t) => (
               <option key={t.id} value={t.id}>
@@ -713,7 +713,7 @@ function SendEditor(props: NodeEditorProps) {
               </option>
             ))}
           </Select>
-          <Button data-testid="send-attach-template" disabled={!pick} onClick={attachTemplate}>
+          <Button class="shrink-0" data-testid="send-attach-template" disabled={!pick} onClick={attachTemplate}>
             Use template
           </Button>
         </div>

@@ -58,7 +58,7 @@
 
   /* Buttons */
   .btn {
-    @apply inline-flex select-none items-center justify-center gap-2 rounded-lg px-3.5 text-sm
+    @apply inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3.5 text-sm
       font-semibold transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50;
     height: 2.5rem;
   }
