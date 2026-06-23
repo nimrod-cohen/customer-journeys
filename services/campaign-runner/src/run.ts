@@ -27,6 +27,7 @@ import {
   buildEnrollmentClaim,
   buildAdvanceEnrollment,
   buildBranchMatchQuery,
+  rewriteTriggerEventLeaves,
   buildCampaignOutboxInsert,
   buildCampaignDedupeKey,
   buildSetAttribute,
@@ -227,9 +228,12 @@ async function chainTick(
     const node: Node = findNode(definition, currentNodeId);
 
     // For a condition node, evaluate the branch against real profile_features.
+    // Trigger-event leaves can't be SQL — evaluate them in-memory against the
+    // enrolling event payload and fold them into the AST as constants first.
     let matchesNow = false;
     if (node.type === 'condition') {
-      const q = buildBranchMatchQuery(workspaceId, node.ast, row.profile_id);
+      const ast = rewriteTriggerEventLeaves(node.ast, row.state?.event?.payload ?? null);
+      const q = buildBranchMatchQuery(workspaceId, ast, row.profile_id);
       const { rows: matchRows } = await read.query<{ id: string }>(q.text, q.values);
       matchesNow = matchRows.length > 0;
     }

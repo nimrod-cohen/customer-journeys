@@ -73,6 +73,9 @@ export interface NodeEditorProps {
   readonly segments: readonly SegmentLite[];
   /** The campaign-row trigger_segment_id (segment_entry trigger). */
   readonly triggerSegmentId: string | null;
+  /** The campaign's TRIGGER node (its startNode) — lets the IF editor offer a
+   *  "Trigger event" condition (only when the trigger is an event) + its type. */
+  readonly triggerNode?: { kind?: string; eventType?: string } | null | undefined;
   /** Persist a node config patch into the model (applyNodeConfig + PUT). */
   readonly onSaveNode: (patch: DslNode) => Promise<void>;
   /** Persist the trigger_segment_id into the DRAFT (PUT /campaigns/:id/draft). */
@@ -470,7 +473,15 @@ function ConditionEditor(props: NodeEditorProps) {
           onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
         />
       </Field>
-      <RuleBuilder group={group} onChange={setGroup} allowEmptyRootRules />
+      <RuleBuilder
+        group={group}
+        onChange={setGroup}
+        allowEmptyRootRules
+        context="campaign"
+        triggerIsEvent={props.triggerNode?.kind === 'event'}
+        triggerEventType={props.triggerNode?.eventType ?? ''}
+        segments={props.segments.map((s) => ({ id: s.id, name: s.name }))}
+      />
       {empty ? (
         <p data-testid="condition-incomplete" class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-200">
           Add at least one rule before saving this branch.

@@ -14,8 +14,15 @@
 export const BUILDER_OPERATORS = ['=', '!=', '>', '>=', '<', '<=', 'in', 'not in', 'exists'] as const;
 export type BuilderOperator = (typeof BUILDER_OPERATORS)[number];
 
-/** A rule row is a profile/attribute field test or an event test. */
-export type RuleKind = 'field' | 'event';
+/**
+ * A rule row's kind:
+ *   - 'field'         → a profile attribute / scalar field / counter condition
+ *   - 'event'         → "did event X" (count + time window + payload attrs)
+ *   - 'segment'       → IS / IS NOT a member of a segment (CAMPAIGN IF only)
+ *   - 'trigger_event' → the ENROLLING event's data — a payload-only filter, NO
+ *                       occurrence/time test (CAMPAIGN IF, event-triggered only)
+ */
+export type RuleKind = 'field' | 'event' | 'segment' | 'trigger_event';
 
 /**
  * The event occurrence test: 'occurred' = at least once (EXISTS), 'not_occurred'
@@ -57,8 +64,15 @@ export interface RuleRow {
   readonly eventWindow?: EventWindow;
   /** Number of days for an 'within' window (raw input string). */
   readonly eventWindowDays?: string;
-  /** Event payload sub-conditions (kind 'event'). */
+  /** Event payload sub-conditions (kind 'event') OR the trigger-event payload
+   *  filter rows (kind 'trigger_event'). */
   readonly conditions?: readonly EventCondition[];
+  /** Segment id (kind 'segment'). */
+  readonly segmentId?: string;
+  /** kind 'segment': true = "is NOT a member"; false/absent = "is a member". */
+  readonly segmentNegate?: boolean;
+  /** kind 'trigger_event': how the payload-filter rows combine (default 'all'). */
+  readonly triggerMatch?: 'all' | 'any';
 }
 
 /** The top-level combinator. */
@@ -87,7 +101,19 @@ export interface GroupNode {
   conditions: AstNode[];
 }
 
-export type AstNode = GroupNode | ConditionNode | EventNode;
+/** An AST segment-membership leaf (matches @cdp/segments SegmentNode). */
+export interface SegmentNode {
+  segment: string;
+  negate?: boolean;
+}
+
+/** An AST trigger-event leaf (matches @cdp/segments TriggerEventNode). */
+export interface TriggerEventNode {
+  triggerEvent: true;
+  filter?: AstNode;
+}
+
+export type AstNode = GroupNode | ConditionNode | EventNode | SegmentNode | TriggerEventNode;
 
 /** A blank field rule for a fresh builder. */
 export function emptyRow(): RuleRow {
@@ -111,6 +137,16 @@ export function emptyEventRow(): RuleRow {
 /** A blank payload sub-condition. */
 export function emptyEventCondition(): EventCondition {
   return { field: '', operator: '=', value: '' };
+}
+
+/** A blank segment-membership rule (CAMPAIGN IF). */
+export function emptySegmentRow(): RuleRow {
+  return { kind: 'segment', field: '', operator: '=', value: '', segmentId: '', segmentNegate: false, conditions: [] };
+}
+
+/** A blank trigger-event rule (CAMPAIGN IF, payload-only filter). */
+export function emptyTriggerEventRow(): RuleRow {
+  return { kind: 'trigger_event', field: '', operator: '=', value: '', triggerMatch: 'all', conditions: [] };
 }
 
 /** Parse a row's raw value into the typed AST value per operator. */
@@ -188,9 +224,31 @@ function rowToEvent(row: RuleRow): EventNode | null {
   return node;
 }
 
+/** Build one segment-membership node from a segment row (null when no segment chosen). */
+function rowToSegment(row: RuleRow): SegmentNode | null {
+  const id = (row.segmentId ?? '').trim();
+  if (!id) return null;
+  return row.segmentNegate ? { segment: id, negate: true } : { segment: id };
+}
+
+/** Build a trigger-event node from a trigger-event row: a payload-only filter over
+ *  the enrolling event's data (no occurrence/time). Empty filter = matches whenever
+ *  a trigger event exists. */
+function rowToTriggerEvent(row: RuleRow): TriggerEventNode {
+  const conds = (row.conditions ?? [])
+    .filter((c) => c.field.trim().length > 0)
+    .map((c) => rowToCondition({ field: `payload.${c.field.trim()}`, operator: c.operator, value: c.value }));
+  if (conds.length === 0) return { triggerEvent: true };
+  if (conds.length === 1) return { triggerEvent: true, filter: conds[0]! };
+  const op: 'and' | 'or' = row.triggerMatch === 'any' ? 'or' : 'and';
+  return { triggerEvent: true, filter: { op, conditions: conds } };
+}
+
 /** Build one AST node from a row (null when the row is empty/invalid). */
 function rowToNode(row: RuleRow): AstNode | null {
   if (row.kind === 'event') return rowToEvent(row);
+  if (row.kind === 'segment') return rowToSegment(row);
+  if (row.kind === 'trigger_event') return rowToTriggerEvent(row);
   if (row.field.trim().length === 0) return null;
   return rowToCondition(row);
 }
@@ -246,6 +304,16 @@ function isCondition(n: AstNode): n is ConditionNode {
 function isEvent(n: AstNode): n is EventNode {
   return typeof (n as EventNode).event === 'string';
 }
+function isSegmentNode(n: AstNode): n is SegmentNode {
+  return typeof (n as SegmentNode).segment === 'string';
+}
+function isTriggerEventNode(n: AstNode): n is TriggerEventNode {
+  return (n as TriggerEventNode).triggerEvent === true;
+}
+/** A GROUP node (the only non-leaf): has a string `op` + a conditions array. */
+function isGroupNode(n: AstNode): n is GroupNode {
+  return typeof (n as GroupNode).op === 'string' && Array.isArray((n as GroupNode).conditions);
+}
 
 /** Stringify an AST condition value back into the row's raw input form. */
 function valueToRaw(operator: string, value: unknown): string {
@@ -284,8 +352,41 @@ function eventToRow(ev: EventNode): RuleRow {
   };
 }
 
+/** Turn one segment-membership node into an editable segment row. */
+function segmentToRow(n: SegmentNode): RuleRow {
+  return { kind: 'segment', field: '', operator: '=', value: '', segmentId: n.segment, segmentNegate: n.negate === true, conditions: [] };
+}
+
+/** Turn one payload condition (`payload.<key>` …) into an editable EventCondition. */
+function payloadCondToEventCondition(c: ConditionNode): EventCondition {
+  return {
+    field: c.field.startsWith('payload.') ? c.field.slice('payload.'.length) : c.field,
+    operator: asBuilderOp(c.operator),
+    value: valueToRaw(c.operator, c.value),
+  };
+}
+
+/** Turn one trigger-event node into an editable trigger-event row (payload filter). */
+function triggerEventToRow(n: TriggerEventNode): RuleRow {
+  const filter = n.filter;
+  let triggerMatch: 'all' | 'any' = 'all';
+  let conditions: EventCondition[] = [];
+  if (filter) {
+    if (isGroupNode(filter)) {
+      triggerMatch = filter.op === 'or' ? 'any' : 'all';
+      conditions = filter.conditions.filter(isCondition).map(payloadCondToEventCondition);
+    } else if (isCondition(filter)) {
+      conditions = [payloadCondToEventCondition(filter)];
+    }
+  }
+  return { kind: 'trigger_event', field: '', operator: '=', value: '', triggerMatch, conditions };
+}
+
 function leafToRow(n: AstNode): RuleRow {
-  return isEvent(n) ? eventToRow(n) : conditionToRow(n as ConditionNode);
+  if (isEvent(n)) return eventToRow(n);
+  if (isSegmentNode(n)) return segmentToRow(n);
+  if (isTriggerEventNode(n)) return triggerEventToRow(n);
+  return conditionToRow(n as ConditionNode);
 }
 
 /**
@@ -299,12 +400,12 @@ export function rowsFromAst(ast: AstNode | null | undefined): {
   combinator: Combinator;
 } {
   if (!ast) return { rows: [emptyRow()], combinator: 'and' };
-  if (isCondition(ast) || isEvent(ast)) return { rows: [leafToRow(ast)], combinator: 'and' };
+  if (!isGroupNode(ast)) return { rows: [leafToRow(ast)], combinator: 'and' };
   const combinator: Combinator = ast.op === 'or' ? 'or' : 'and';
   const leaves: AstNode[] = [];
   const collect = (n: AstNode): void => {
-    if (isCondition(n) || isEvent(n)) leaves.push(n);
-    else n.conditions.forEach(collect);
+    if (isGroupNode(n)) n.conditions.forEach(collect);
+    else leaves.push(n);
   };
   ast.conditions.forEach(collect);
   return {
@@ -322,28 +423,28 @@ export function rowsFromAst(ast: AstNode | null | undefined): {
  */
 export function groupFromAst(ast: AstNode | null | undefined): RuleGroup {
   if (!ast) return emptyGroup();
-  if (isCondition(ast) || isEvent(ast)) return { combinator: 'and', rows: [leafToRow(ast)], groups: [] };
+  if (!isGroupNode(ast)) return { combinator: 'and', rows: [leafToRow(ast)], groups: [] };
   const combinator: Combinator = ast.op === 'or' ? 'or' : 'and';
   const rows: RuleRow[] = [];
   const groups: RuleGroup[] = [];
   const leavesOf = (n: AstNode): AstNode[] => {
     const out: AstNode[] = [];
     const walk = (x: AstNode): void => {
-      if (isCondition(x) || isEvent(x)) out.push(x);
-      else x.conditions.forEach(walk);
+      if (isGroupNode(x)) x.conditions.forEach(walk);
+      else out.push(x);
     };
     walk(n);
     return out;
   };
   for (const c of ast.conditions) {
-    if (isCondition(c) || isEvent(c)) {
-      rows.push(leafToRow(c));
-    } else {
+    if (isGroupNode(c)) {
       groups.push({
         combinator: c.op === 'or' ? 'or' : 'and',
         rows: leavesOf(c).map(leafToRow),
         groups: [],
       });
+    } else {
+      rows.push(leafToRow(c));
     }
   }
   return { combinator, rows, groups };

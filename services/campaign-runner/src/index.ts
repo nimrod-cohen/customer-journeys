@@ -33,6 +33,7 @@ export {
   parseIso8601DurationSeconds,
   isWaitElapsed,
   buildBranchMatchQuery,
+  rewriteTriggerEventLeaves,
   evaluateBranch,
   decideReenrollment,
   DEFAULT_REENROLLMENT_POLICY,

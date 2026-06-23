@@ -977,6 +977,7 @@ export function CampaignDetail({ id }: { id?: string }) {
             timeZone={timeZone}
             segments={segments}
             triggerSegmentId={triggerSegmentId}
+            triggerNode={model.nodes.find((n) => n.node.type === 'trigger')?.node as { kind?: string; eventType?: string } | undefined}
             onSaveNode={(patch) => saveNode(openNode.id, patch)}
             onSaveTriggerSegment={saveTriggerSegment}
             onReloadCampaign={async () => {

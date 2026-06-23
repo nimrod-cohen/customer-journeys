@@ -159,6 +159,76 @@ test('IF editor: embeds the SAME rule builder; an empty group blocks save inline
   await expect(reopened.getByTestId('rule-field').first()).toHaveValue('attributes.tier');
 });
 
+test('IF editor (campaign context): differentiates Profile attribute / Segment / Event; Segment membership persists', async ({ page }) => {
+  await openCampaigns(page);
+  await openSeeded(page);
+  await page.getByTestId('node-condition').getByTestId(/node-open-/).first().click();
+  const drawer = page.getByTestId('node-editor-condition');
+  const kind = drawer.getByTestId('rule-kind').first();
+
+  // The campaign IF distinguishes the data sources a journey can branch on.
+  await expect(kind).toBeVisible();
+  await expect(kind.locator('option')).toContainText(['Profile attribute', 'Segment', 'Event']);
+  // The seeded campaign's trigger is segment_entry (NOT an event) → no Trigger event.
+  await expect(kind.locator('option').filter({ hasText: 'Trigger event' })).toHaveCount(0);
+
+  // Switch the rule to a SEGMENT-membership test, pick the seeded segment, save.
+  await kind.selectOption('segment');
+  await expect(drawer.getByTestId('rule-segment-op').first()).toBeVisible();
+  await drawer.getByTestId('rule-segment').first().selectOption({ index: 1 });
+  const segVal = await drawer.getByTestId('rule-segment').first().inputValue();
+  expect(segVal).not.toBe('');
+  await drawer.getByTestId('node-save').click();
+  await expect(drawer).toBeHidden();
+
+  // Reopen → the segment row re-hydrates with the chosen segment.
+  await page.getByTestId('node-condition').getByTestId(/node-open-/).first().click();
+  const re = page.getByTestId('node-editor-condition');
+  await expect(re.getByTestId('rule-kind').first()).toHaveValue('segment');
+  await expect(re.getByTestId('rule-segment').first()).toHaveValue(segVal);
+});
+
+test('IF editor: Trigger event kind appears for an EVENT-triggered campaign and saves a payload filter', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-builder').waitFor();
+  await page.getByTestId('campaign-name').fill('Event-trig IF');
+
+  // Make the trigger an EVENT trigger with a type.
+  await page.getByTestId('node-trigger').getByTestId(/node-open-/).first().click();
+  const trig = page.getByTestId('node-editor-trigger');
+  await trig.getByTestId('trigger-kind').selectOption('event');
+  await trig.getByTestId('trigger-event-type').fill('purchase');
+  await trig.getByTestId('node-save').click();
+  await expect(trig).toBeHidden();
+
+  // Insert an IF on the trigger→exit edge and open it.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('campaign-palette').waitFor();
+  await page.getByTestId('palette-if').click();
+  await page.getByTestId('node-condition').getByTestId(/node-open-/).first().click();
+  const drawer = page.getByTestId('node-editor-condition');
+
+  // Trigger event is now offered (the trigger is an event).
+  await expect(drawer.getByTestId('rule-kind').first().locator('option').filter({ hasText: 'Trigger event' })).toHaveCount(1);
+
+  // Choose it and add a payload filter (no occurrence/time controls here).
+  await drawer.getByTestId('rule-kind').first().selectOption('trigger_event');
+  await expect(drawer.getByTestId('trigger-match')).toBeVisible();
+  await expect(drawer.getByTestId('event-window')).toHaveCount(0); // no "ever / last N" for a trigger event
+  await drawer.getByTestId('trigger-cond-add').click();
+  await drawer.getByTestId('trigger-cond-field').first().fill('amount');
+  await drawer.getByTestId('trigger-cond-value').first().fill('100');
+  await drawer.getByTestId('node-save').click();
+  await expect(drawer).toBeHidden();
+
+  // Reopen → the trigger-event row + its payload filter re-hydrate.
+  await page.getByTestId('node-condition').getByTestId(/node-open-/).first().click();
+  const re = page.getByTestId('node-editor-condition');
+  await expect(re.getByTestId('rule-kind').first()).toHaveValue('trigger_event');
+  await expect(re.getByTestId('trigger-cond-field').first()).toHaveValue('amount');
+});
+
 test('the workflow map zooms in and out (view-only, 40%–200%)', async ({ page }) => {
   await openCampaigns(page);
   await openSeeded(page);

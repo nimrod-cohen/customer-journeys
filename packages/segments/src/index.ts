@@ -16,6 +16,9 @@ export {
   type GroupNode,
   type ConditionNode,
   type EventNode,
+  type SegmentNode,
+  type ConstNode,
+  type TriggerEventNode,
   type OperatorToken,
   type ResolvedField,
 } from './compile.js';

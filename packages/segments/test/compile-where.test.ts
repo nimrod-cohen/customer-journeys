@@ -438,3 +438,51 @@ describe('SCALAR_FEATURE_FIELDS export is the documented whitelist', () => {
     );
   });
 });
+
+// ── Segment-membership / const / trigger-event leaves (campaign IF, §9B) ────────
+describe('segment-membership leaf', () => {
+  const SEG = 'bbbbbbbb-0000-0000-0000-000000000777';
+  it('compiles "is a member" to a workspace-scoped EXISTS, segment id a bound param', () => {
+    const stmt = compileWhere(WS, { segment: SEG } as AstNode);
+    expect(stmt.text).toContain('EXISTS (SELECT 1 FROM segment_memberships sm');
+    expect(stmt.text).toContain('sm.workspace_id = $1');
+    expect(stmt.text).toContain('sm.profile_id = p.id');
+    expect(stmt.text).toMatch(/sm\.segment_id = \$2/);
+    expect(stmt.text).not.toContain(SEG); // id is a param, not interpolated
+    expect(stmt.values).toEqual([WS, SEG]);
+  });
+  it('compiles "is NOT a member" to NOT EXISTS', () => {
+    const stmt = compileWhere(WS, { segment: SEG, negate: true } as AstNode);
+    expect(stmt.text).toContain('NOT EXISTS (SELECT 1 FROM segment_memberships sm');
+    expect(stmt.values).toEqual([WS, SEG]);
+  });
+  it('combines with other leaves under a group', () => {
+    const ast = { op: 'and', conditions: [{ segment: SEG }, { field: 'attributes.tier', operator: '=', value: 'vip' }] } as AstNode;
+    const stmt = compileWhere(WS, ast);
+    expect(stmt.text).toContain('EXISTS (SELECT 1 FROM segment_memberships');
+    expect(stmt.text).toContain('(p.attributes ->> $3)');
+    expect(stmt.values).toEqual([WS, SEG, 'tier', 'vip']);
+  });
+  it('validateAst rejects a blank segment id', () => {
+    expect(() => validateAst({ segment: '' } as AstNode)).toThrow(/segment/);
+  });
+});
+
+describe('const leaf', () => {
+  it('TRUE / FALSE compile to SQL constants with no params', () => {
+    expect(compileWhere(WS, { const: true } as AstNode).text).toContain('(TRUE)');
+    expect(compileWhere(WS, { const: false } as AstNode).text).toContain('(FALSE)');
+    expect(compileWhere(WS, { const: false } as AstNode).values).toEqual([WS]);
+  });
+});
+
+describe('trigger-event leaf (campaign-only, in-memory)', () => {
+  it('validateAst accepts a payload-only filter; rejects a non-payload field', () => {
+    expect(() => validateAst({ triggerEvent: true, filter: { field: 'payload.amount', operator: '>=', value: 10 } } as AstNode)).not.toThrow();
+    expect(() => validateAst({ triggerEvent: true } as AstNode)).not.toThrow();
+    expect(() => validateAst({ triggerEvent: true, filter: { field: 'attributes.tier', operator: '=', value: 'x' } } as AstNode)).toThrow(/payload/);
+  });
+  it('compiling one DIRECTLY throws — it must be rewritten in-memory first', () => {
+    expect(() => compileWhere(WS, { triggerEvent: true } as AstNode)).toThrow(/in-memory|rewritten/);
+  });
+});

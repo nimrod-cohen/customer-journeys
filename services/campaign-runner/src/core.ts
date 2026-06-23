@@ -224,6 +224,37 @@ export function buildBranchMatchQuery(
 }
 
 /**
+ * Rewrite a branch AST so it can be SQL-compiled: every TRIGGER-EVENT leaf is
+ * evaluated IN-MEMORY against the enrolling event payload (the `event.*` data
+ * persisted on `campaign_enrollments.state.event`) and replaced with a constant
+ * true/false leaf. The other leaves (profile field, behavioral event, segment
+ * membership) pass through untouched for the SQL compiler. A profile enrolled
+ * with NO trigger event (manual / segment / profile trigger) makes every
+ * trigger-event leaf FALSE — the editor only OFFERS trigger-event conditions for
+ * an event-triggered campaign, so in practice the payload is always present.
+ */
+export function rewriteTriggerEventLeaves(
+  node: AstNode,
+  eventPayload: Record<string, unknown> | null,
+): AstNode {
+  if (node && typeof node === 'object') {
+    const g = node as { op?: unknown; conditions?: unknown };
+    if (typeof g.op === 'string' && Array.isArray(g.conditions)) {
+      return {
+        ...(node as object),
+        conditions: (g.conditions as AstNode[]).map((c) => rewriteTriggerEventLeaves(c, eventPayload)),
+      } as unknown as AstNode;
+    }
+    const t = node as { triggerEvent?: unknown; filter?: AstNode };
+    if (t.triggerEvent === true) {
+      const matched = eventPayload ? evaluateEventPayloadFilter(t.filter, eventPayload) : false;
+      return { const: matched } as AstNode;
+    }
+  }
+  return node;
+}
+
+/**
  * Decide the next node for a condition node given whether the branch matched.
  * Pure — the orchestrator runs buildBranchMatchQuery against Postgres and feeds
  * the boolean here.

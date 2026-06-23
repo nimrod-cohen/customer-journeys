@@ -15,6 +15,8 @@ import {
   emptyRow,
   emptyEventRow,
   emptyEventCondition,
+  emptySegmentRow,
+  emptyTriggerEventRow,
   BUILDER_OPERATORS,
   EVENT_COUNT_OPS,
   isCountOp,
@@ -94,22 +96,46 @@ const EVENT_OP_LABEL: Record<EventCountOp, string> = {
  * onChange(rows) and renders the per-rule UI (field/event, operators, payload
  * filters, autosuggest). Reused by the root group and each sub-group.
  */
+/** Campaign-context extras: which rule kinds are available + the data they need. */
+interface RuleBuilderCtx {
+  context: 'segment' | 'campaign';
+  triggerIsEvent: boolean;
+  segments: { id: string; name: string }[];
+  triggerEventType: string;
+}
+
+/** A blank row for a chosen kind. */
+function blankRowForKind(kind: RuleKind): RuleRow {
+  switch (kind) {
+    case 'event':
+      return emptyEventRow();
+    case 'segment':
+      return emptySegmentRow();
+    case 'trigger_event':
+      return emptyTriggerEventRow();
+    default:
+      return emptyRow();
+  }
+}
+
 function RuleListEditor({
   rows,
   onChange,
   allowEmpty = false,
+  ctx,
 }: {
   rows: RuleRow[];
   onChange: (rows: RuleRow[]) => void;
   /** Allow removing the LAST rule (leaving the list empty) — used at the root when
    * a sub-group exists, so criteria can live entirely in groups. */
   allowEmpty?: boolean;
+  ctx: RuleBuilderCtx;
 }) {
   const update = (i: number, patch: Partial<RuleRow>) =>
     onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const removeRow = (i: number) => onChange(rows.filter((_, idx) => idx !== i));
   const setKind = (i: number, kind: RuleKind) =>
-    onChange(rows.map((r, idx) => (idx === i ? (kind === 'event' ? emptyEventRow() : emptyRow()) : r)));
+    onChange(rows.map((r, idx) => (idx === i ? blankRowForKind(kind) : r)));
   const setCond = (i: number, j: number, patch: Partial<EventCondition>) =>
     onChange(
       rows.map((r, idx) =>
@@ -130,11 +156,15 @@ function RuleListEditor({
             <div class="mb-2 flex items-center gap-2">
               <Select
                 data-testid="rule-kind"
-                class="w-48"
+                class="w-52"
                 value={kind}
                 onChange={(e: Event) => setKind(i, (e.target as HTMLSelectElement).value as RuleKind)}
               >
-                <option value="field">Attribute / field</option>
+                <option value="field">Profile attribute</option>
+                {ctx.context === 'campaign' && ctx.triggerIsEvent ? (
+                  <option value="trigger_event">Trigger event</option>
+                ) : null}
+                {ctx.context === 'campaign' ? <option value="segment">Segment</option> : null}
                 <option value="event">Event</option>
               </Select>
               {rows.length > 1 || allowEmpty ? (
@@ -189,6 +219,97 @@ function RuleListEditor({
                     placeholder="value"
                   />
                 ) : null}
+              </div>
+            ) : kind === 'segment' ? (
+              <div class="flex flex-wrap items-center gap-2">
+                <Select
+                  data-testid="rule-segment-op"
+                  class="w-44"
+                  value={row.segmentNegate ? 'not' : 'is'}
+                  onChange={(e: Event) => update(i, { segmentNegate: (e.target as HTMLSelectElement).value === 'not' })}
+                >
+                  <option value="is">is a member of</option>
+                  <option value="not">is NOT a member of</option>
+                </Select>
+                <Select
+                  data-testid="rule-segment"
+                  class="min-w-0 flex-1"
+                  value={row.segmentId ?? ''}
+                  onChange={(e: Event) => update(i, { segmentId: (e.target as HTMLSelectElement).value })}
+                >
+                  <option value="">Choose a segment…</option>
+                  {ctx.segments.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ) : kind === 'trigger_event' ? (
+              <div class="space-y-2">
+                <p class="text-xs text-stone-500">
+                  Refine by the triggering event&apos;s data. The trigger already matched the event, so there&apos;s no
+                  &ldquo;when&rdquo; — only its payload.
+                </p>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm text-stone-500">match</span>
+                  <Select
+                    data-testid="trigger-match"
+                    class="w-24"
+                    value={row.triggerMatch ?? 'all'}
+                    onChange={(e: Event) => update(i, { triggerMatch: (e.target as HTMLSelectElement).value as 'all' | 'any' })}
+                  >
+                    <option value="all">all</option>
+                    <option value="any">any</option>
+                  </Select>
+                  <span class="text-sm text-stone-500">of these event-data filters</span>
+                </div>
+                <div class="rounded-lg border border-stone-200 bg-white p-2.5">
+                  {(row.conditions ?? []).length === 0 ? (
+                    <p class="text-xs text-stone-400">No event-data filters — matches any time this event triggered.</p>
+                  ) : null}
+                  {(row.conditions ?? []).map((c, j) => (
+                    <div data-testid="trigger-cond-row" key={j} class="mt-1.5 flex flex-wrap items-center gap-2">
+                      <Suggest
+                        testId="trigger-cond-field"
+                        wrapperClass="relative min-w-[8rem] flex-1"
+                        inputClass="font-mono text-xs"
+                        placeholder="payload key (e.g. amount)"
+                        value={c.field}
+                        onChange={(v) => setCond(i, j, { field: v })}
+                        fetcher={fetchPayloadKeys(ctx.triggerEventType)}
+                      />
+                      <Select
+                        data-testid="trigger-cond-op"
+                        class="w-24"
+                        value={c.operator}
+                        onChange={(e: Event) => setCond(i, j, { operator: (e.target as HTMLSelectElement).value as BuilderOperator })}
+                      >
+                        {BUILDER_OPERATORS.map((op) => (
+                          <option key={op} value={op}>
+                            {op}
+                          </option>
+                        ))}
+                      </Select>
+                      {c.operator !== 'exists' ? (
+                        <Suggest
+                          testId="trigger-cond-value"
+                          wrapperClass="relative w-36"
+                          placeholder="value"
+                          value={c.value}
+                          onChange={(v) => setCond(i, j, { value: v })}
+                          fetcher={fetchPayloadValues(ctx.triggerEventType, c.field)}
+                        />
+                      ) : null}
+                      <Button data-testid="trigger-cond-remove" variant="ghost" size="sm" aria-label="Remove filter" onClick={() => removeCond(i, j)}>
+                        ✕
+                      </Button>
+                    </div>
+                  ))}
+                  <Button data-testid="trigger-cond-add" variant="ghost" size="sm" class="mt-1.5" onClick={() => addCond(i)}>
+                    + Add event-data filter
+                  </Button>
+                </div>
               </div>
             ) : (
               <div class="space-y-2">
@@ -338,11 +459,24 @@ export function RuleBuilder({
   group,
   onChange,
   allowEmptyRootRules = true,
+  context = 'segment',
+  triggerIsEvent = false,
+  segments = [],
+  triggerEventType = '',
 }: {
   group: RuleGroup;
   onChange: (group: RuleGroup) => void;
   allowEmptyRootRules?: boolean;
+  /** 'campaign' unlocks the Trigger-event + Segment rule kinds (IF nodes only). */
+  context?: 'segment' | 'campaign';
+  /** Campaign IF: the trigger is an EVENT trigger → offer "Trigger event". */
+  triggerIsEvent?: boolean;
+  /** Campaign IF: the workspace segments, for the "Segment" membership picker. */
+  segments?: { id: string; name: string }[];
+  /** Campaign IF event trigger: the trigger event type, for payload autosuggest. */
+  triggerEventType?: string;
 }) {
+  const ctx: RuleBuilderCtx = { context, triggerIsEvent, segments, triggerEventType };
   const setRows = (rows: RuleRow[]) => onChange({ ...group, rows });
   const setCombinator = (combinator: Combinator) => onChange({ ...group, combinator });
   const setGroups = (groups: RuleGroup[]) => onChange({ ...group, groups });
@@ -366,7 +500,7 @@ export function RuleBuilder({
       </div>
 
       <div class="mt-3 space-y-3">
-        <RuleListEditor rows={group.rows} onChange={setRows} allowEmpty={allowEmptyRootRules} />
+        <RuleListEditor rows={group.rows} onChange={setRows} allowEmpty={allowEmptyRootRules} ctx={ctx} />
 
         {group.groups.map((g, gi) => (
           <div data-testid="rule-group" key={gi} class="rounded-xl border border-brand-200 bg-brand-50/30 p-3">
@@ -392,7 +526,7 @@ export function RuleBuilder({
                 ✕
               </Button>
             </div>
-            <RuleListEditor rows={g.rows} onChange={(r) => updateGroup(gi, { rows: r })} />
+            <RuleListEditor rows={g.rows} onChange={(r) => updateGroup(gi, { rows: r })} ctx={ctx} />
           </div>
         ))}
 

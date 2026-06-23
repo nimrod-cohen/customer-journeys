@@ -68,8 +68,42 @@ export interface EventNode {
   readonly negate?: boolean;
 }
 
-/** A rule-AST node — a boolean group, a leaf condition, or an event predicate. */
-export type AstNode = GroupNode | ConditionNode | EventNode;
+/**
+ * A SEGMENT-MEMBERSHIP leaf (§8): "the profile IS (or, with `negate`, is NOT) a
+ * member of segment `segment`". Compiles to an EXISTS over `segment_memberships`
+ * (workspace_id bound at $1, profile keyed to `p.id`, segment id a bound param).
+ */
+export interface SegmentNode {
+  readonly segment: string; // segment id (uuid)
+  readonly negate?: boolean; // true → "is NOT a member"
+}
+
+/**
+ * A CONSTANT leaf — `TRUE`/`FALSE`. The campaign runner pre-evaluates a leaf it
+ * CANNOT express in SQL (a trigger-event condition) in-memory and folds the
+ * boolean result into the AST as a ConstNode before compiling.
+ */
+export interface ConstNode {
+  readonly const: boolean;
+}
+
+/**
+ * A TRIGGER-EVENT leaf (CAMPAIGN IF only): match the ENROLLING event's payload.
+ * It is NOT SQL-compilable (the trigger event lives on `campaign_enrollments.state`,
+ * not a table the segment SQL touches) — the campaign runner evaluates `filter`
+ * in-memory against the persisted trigger event and REWRITES this node to a
+ * ConstNode BEFORE compiling. `filter` is a `payload.*` AstNode (the same closed
+ * grammar as the event TRIGGER's payload filter); omitted = matches whenever a
+ * trigger event exists. Reaching the SQL compiler with one of these is a bug.
+ */
+export interface TriggerEventNode {
+  readonly triggerEvent: true;
+  readonly filter?: AstNode;
+}
+
+/** A rule-AST node — a boolean group, a leaf condition, an event predicate, a
+ *  segment-membership leaf, a constant, or a (campaign-only) trigger-event leaf. */
+export type AstNode = GroupNode | ConditionNode | EventNode | SegmentNode | ConstNode | TriggerEventNode;
 
 /** The count-comparison operators an EventNode may use. */
 const EVENT_COUNT_OPERATORS = new Set(['>', '>=', '=', '<=', '<']);
@@ -155,6 +189,18 @@ function isGroup(node: AstNode): node is GroupNode {
 
 function isEvent(node: AstNode): node is EventNode {
   return typeof (node as EventNode).event === 'string';
+}
+
+function isSegment(node: AstNode): node is SegmentNode {
+  return typeof (node as SegmentNode).segment === 'string';
+}
+
+function isConst(node: AstNode): node is ConstNode {
+  return typeof (node as ConstNode).const === 'boolean';
+}
+
+function isTriggerEvent(node: AstNode): node is TriggerEventNode {
+  return (node as TriggerEventNode).triggerEvent === true;
 }
 
 /**
@@ -260,6 +306,27 @@ export function validateAst(node: AstNode): void {
     }
     return;
   }
+  if (isSegment(node)) {
+    if (typeof node.segment !== 'string' || node.segment.length === 0) {
+      throw new Error('validateAst: segment node needs a non-empty segment id');
+    }
+    if (node.negate !== undefined && typeof node.negate !== 'boolean') {
+      throw new Error('validateAst: segment.negate must be a boolean');
+    }
+    return;
+  }
+  if (isConst(node)) {
+    // `const` already type-narrowed to boolean by isConst — nothing more to check.
+    return;
+  }
+  if (isTriggerEvent(node)) {
+    // The filter (optional) is a payload.* AstNode — same closed grammar as the
+    // event trigger; every leaf field MUST be a `payload.*` path.
+    if (node.filter !== undefined) {
+      assertPayloadOnlyAst(node.filter);
+    }
+    return;
+  }
   // Leaf condition.
   const cond = node as ConditionNode;
   if (typeof cond.field !== 'string' || cond.field.length === 0) {
@@ -267,6 +334,34 @@ export function validateAst(node: AstNode): void {
   }
   if (typeof cond.operator !== 'string' || cond.operator.length === 0) {
     throw new Error('validateAst: condition.operator must be a non-empty string');
+  }
+}
+
+/** Validate a payload-only AST (a trigger-event filter): groups over `payload.*`
+ *  leaf conditions ONLY — no profile-field / event / segment / const leaves. */
+function assertPayloadOnlyAst(node: AstNode): void {
+  if (node === null || typeof node !== 'object') {
+    throw new Error('validateAst: trigger-event filter must be an object');
+  }
+  if (isGroup(node)) {
+    if (node.op !== 'and' && node.op !== 'or' && node.op !== 'not') {
+      throw new Error(`validateAst: trigger-event filter unknown group op "${(node as GroupNode).op}"`);
+    }
+    if (!Array.isArray(node.conditions) || node.conditions.length === 0) {
+      throw new Error('validateAst: trigger-event filter group needs a non-empty conditions array');
+    }
+    if (node.op === 'not' && node.conditions.length !== 1) {
+      throw new Error('validateAst: trigger-event filter "not" wraps exactly one condition');
+    }
+    for (const c of node.conditions) assertPayloadOnlyAst(c);
+    return;
+  }
+  const cond = node as ConditionNode;
+  if (typeof cond.field !== 'string' || !cond.field.startsWith(PAYLOAD_PREFIX)) {
+    throw new Error(`validateAst: trigger-event filter field must start with "${PAYLOAD_PREFIX}"`);
+  }
+  if (typeof cond.operator !== 'string' || cond.operator.length === 0) {
+    throw new Error('validateAst: trigger-event filter condition.operator must be a non-empty string');
   }
 }
 
@@ -455,7 +550,32 @@ function compileNode(node: AstNode, params: ParamBuilder): string {
   if (isEvent(node)) {
     return compileEvent(node, params);
   }
+  if (isSegment(node)) {
+    return compileSegment(node, params);
+  }
+  if (isConst(node)) {
+    return node.const ? 'TRUE' : 'FALSE';
+  }
+  if (isTriggerEvent(node)) {
+    throw new Error(
+      'compileWhere: a trigger-event leaf must be evaluated in-memory and rewritten to a constant before SQL compilation',
+    );
+  }
   return compileCondition(node as ConditionNode, params);
+}
+
+/**
+ * Compile a segment-membership leaf into an EXISTS over `segment_memberships`
+ * (workspace_id bound at $1 — the SAME structural guard; profile keyed to `p.id`;
+ * the segment id is a bound param, never interpolated). `negate` → NOT EXISTS.
+ */
+function compileSegment(node: SegmentNode, params: ParamBuilder): string {
+  if (typeof node.segment !== 'string' || node.segment.length === 0) {
+    throw new Error('compileWhere: segment node needs a segment id');
+  }
+  const idParam = params.bind(node.segment);
+  const exists = `EXISTS (SELECT 1 FROM segment_memberships sm WHERE sm.workspace_id = $1 AND sm.profile_id = p.id AND sm.segment_id = ${idParam})`;
+  return node.negate ? `NOT ${exists}` : exists;
 }
 
 /**
