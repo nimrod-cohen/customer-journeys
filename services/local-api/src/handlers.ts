@@ -1418,6 +1418,104 @@ export const setProfileChannelSubscription: Handler = async (ctx, pool, req) => 
   return ok({ updated: 1 });
 };
 
+/**
+ * PUT /profiles/:id/subscriptions — set the FULL subscription state atomically and
+ * enforce the cross-field invariants (the admin Subscriptions tab uses this so the
+ * rules can't be violated):
+ *   - a topic needs a channel: if any topic is ON but both channels are off, BOTH
+ *     channels are enabled (rule A);
+ *   - everything off (both channels off AND no topic on) is a GLOBAL unsubscribe —
+ *     sets the suppression + attributes.unsubscribed; otherwise both are cleared
+ *     (the profile is reachable again).
+ * Body: { channels: { email: bool, sms_whatsapp: bool }, topics: [{ id, subscribed }] }.
+ * Workspace-scoped (a cross-workspace profile 404s); one tx.
+ */
+export const setProfileSubscriptions: Handler = async (ctx, pool, req) => {
+  const profileId = req.params.id!;
+  const b = asObject(req.body);
+  const chIn = asObject(b.channels);
+  const topicsIn = Array.isArray(b.topics) ? (b.topics as unknown[]) : [];
+
+  const prof = await pool.query<{ email: string }>(
+    'SELECT email FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ctx.workspaceId, profileId],
+  );
+  if (prof.rowCount === 0) return ok({ error: 'profile not found' }, 404);
+  const email = prof.rows[0]!.email;
+
+  // Rule A backstop: a topic with no channel is undeliverable → enable both channels.
+  const anyTopicOn = topicsIn.some((t) => asObject(t).subscribed === true);
+  let emailOn = chIn.email === true;
+  let smsOn = chIn.sms_whatsapp === true;
+  if (anyTopicOn && !emailOn && !smsOn) {
+    emailOn = true;
+    smsOn = true;
+  }
+  // Everything off → a global unsubscribe (which also forces every topic off).
+  const unsubscribed = !emailOn && !smsOn && !anyTopicOn;
+
+  const statements: { text: string; values: unknown[] }[] = [];
+  for (const [group, on] of [['email', emailOn], ['sms_whatsapp', smsOn]] as const) {
+    statements.push(
+      on
+        ? {
+            text: 'DELETE FROM channel_optouts WHERE workspace_id = $1 AND profile_id = $2 AND medium_group = $3',
+            values: [ctx.workspaceId, profileId, group],
+          }
+        : {
+            text: `INSERT INTO channel_optouts (workspace_id, profile_id, medium_group, updated_at)
+                   VALUES ($1, $2, $3, now())
+                   ON CONFLICT (workspace_id, profile_id, medium_group) DO UPDATE SET updated_at = now()`,
+            values: [ctx.workspaceId, profileId, group],
+          },
+    );
+  }
+  for (const t of topicsIn) {
+    const to = asObject(t);
+    const tid = typeof to.id === 'string' ? to.id : '';
+    if (!tid) continue;
+    // A globally-unsubscribed profile has every topic off; otherwise honor the input.
+    const sub = !unsubscribed && to.subscribed === true;
+    statements.push({
+      text: `INSERT INTO topic_subscriptions (workspace_id, profile_id, topic_id, subscribed, updated_at)
+             SELECT $1, $2, $3, $4, now()
+             WHERE EXISTS (SELECT 1 FROM topics WHERE id = $3 AND workspace_id = $1)
+             ON CONFLICT (workspace_id, profile_id, topic_id)
+             DO UPDATE SET subscribed = EXCLUDED.subscribed, updated_at = now()`,
+      values: [ctx.workspaceId, profileId, tid, sub],
+    });
+  }
+  if (unsubscribed) {
+    statements.push(
+      {
+        text: `INSERT INTO suppressions (workspace_id, email, reason, source)
+               VALUES ($1, $2, 'unsubscribe', 'admin') ON CONFLICT (workspace_id, email) DO NOTHING`,
+        values: [ctx.workspaceId, email],
+      },
+      {
+        text: `UPDATE profiles SET attributes = attributes || '{"unsubscribed": true}'::jsonb, updated_at = now()
+               WHERE workspace_id = $1 AND id = $2`,
+        values: [ctx.workspaceId, profileId],
+      },
+    );
+  } else {
+    statements.push(
+      {
+        // Lift ONLY the unsubscribe suppression — never a bounce/complaint.
+        text: `DELETE FROM suppressions WHERE workspace_id = $1 AND email = $2 AND reason = 'unsubscribe'`,
+        values: [ctx.workspaceId, email],
+      },
+      {
+        text: `UPDATE profiles SET attributes = attributes || '{"unsubscribed": false}'::jsonb, updated_at = now()
+               WHERE workspace_id = $1 AND id = $2`,
+        values: [ctx.workspaceId, profileId],
+      },
+    );
+  }
+  await campaignRunnerTx(pool, ctx.workspaceId, statements);
+  return ok({ unsubscribed });
+};
+
 /** DELETE /topics/:id — hard-delete a topic (its subscription rows cascade). Scoped. */
 export const deleteTopic: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
@@ -4649,6 +4747,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PATCH /topics/:id': updateTopic,
   'DELETE /topics/:id': deleteTopic,
   'GET /profiles/:id/subscriptions': listProfileSubscriptions,
+  'PUT /profiles/:id/subscriptions': setProfileSubscriptions,
   'PUT /profiles/:id/topic-subscriptions/:topicId': setProfileTopicSubscription,
   'PUT /profiles/:id/channel-subscriptions/:group': setProfileChannelSubscription,
   'GET /text-templates': listTextTemplates,

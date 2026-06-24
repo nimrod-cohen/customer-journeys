@@ -41,6 +41,7 @@ describeMaybe('per-profile subscriptions (real Postgres)', () => {
   beforeEach(async () => {
     await pool.query('DELETE FROM channel_optouts WHERE workspace_id=$1', [WS]);
     await pool.query('DELETE FROM topic_subscriptions WHERE workspace_id=$1', [WS]);
+    await pool.query('DELETE FROM suppressions WHERE workspace_id=$1', [WS]);
     await pool.query("UPDATE profiles SET attributes='{}'::jsonb WHERE workspace_id=$1", [WS]);
   });
 
@@ -55,6 +56,7 @@ describeMaybe('per-profile subscriptions (real Postgres)', () => {
     for (const w of [WS, WS_B]) {
       await pool.query('DELETE FROM channel_optouts WHERE workspace_id=$1', [w]);
       await pool.query('DELETE FROM topic_subscriptions WHERE workspace_id=$1', [w]);
+      await pool.query('DELETE FROM suppressions WHERE workspace_id=$1', [w]);
       await pool.query('DELETE FROM topics WHERE workspace_id=$1', [w]);
       await pool.query('DELETE FROM profiles WHERE workspace_id=$1', [w]);
       await pool.query('DELETE FROM workspace_users WHERE workspace_id=$1', [w]);
@@ -117,5 +119,62 @@ describeMaybe('per-profile subscriptions (real Postgres)', () => {
     expect(w.status).toBe(404);
     const t = await call('PUT', `/profiles/${profileId}/topic-subscriptions/${topicNews}`, { u: OWNER_B, w: WS_B }, { subscribed: false });
     expect(t.status).toBe(404);
+  });
+
+  // --- the FULL-state endpoint (admin Subscriptions tab) enforces the invariants ---
+  const putSubs = (channels: { email: boolean; sms_whatsapp: boolean }, topics: { id: string; subscribed: boolean }[]) =>
+    call('PUT', `/profiles/${profileId}/subscriptions`, { u: OWNER, w: WS }, { channels, topics });
+  const suppressed = async () =>
+    ((await pool.query("SELECT 1 FROM suppressions WHERE workspace_id=$1 AND email=(SELECT email FROM profiles WHERE id=$2) AND reason='unsubscribe'", [WS, profileId])).rowCount ?? 0) > 0;
+  const attrUnsub = async () =>
+    (await pool.query("SELECT attributes->>'unsubscribed' AS u FROM profiles WHERE id=$1", [profileId])).rows[0]?.u ?? null;
+
+  it('PUT full state: a topic ON with both channels off AUTO-ENABLES both channels (a topic needs a channel)', async () => {
+    const res = await putSubs({ email: false, sms_whatsapp: false }, [{ id: topicNews, subscribed: true }]);
+    expect(res.status).toBe(200);
+    const s = await getSubs();
+    expect(s.channels.find((c) => c.group === 'email')!.subscribed).toBe(true);
+    expect(s.channels.find((c) => c.group === 'sms_whatsapp')!.subscribed).toBe(true);
+    expect(s.topics.find((t) => t.id === topicNews)!.subscribed).toBe(true);
+    expect(s.globalUnsubscribed).toBe(false);
+    expect(await suppressed()).toBe(false);
+  });
+
+  it('PUT full state: EVERYTHING off is a global unsubscribe (suppression + flag, all topics off)', async () => {
+    const res = await putSubs({ email: false, sms_whatsapp: false }, [{ id: topicNews, subscribed: false }]);
+    expect(res.status).toBe(200);
+    const s = await getSubs();
+    expect(s.globalUnsubscribed).toBe(true);
+    expect(s.channels.every((c) => !c.subscribed)).toBe(true);
+    expect(s.topics.every((t) => !t.subscribed)).toBe(true);
+    expect(await suppressed()).toBe(true);
+    expect(await attrUnsub()).toBe('true');
+  });
+
+  it('PUT full state: turning a channel back on LIFTS the global unsubscribe', async () => {
+    await putSubs({ email: false, sms_whatsapp: false }, [{ id: topicNews, subscribed: false }]); // unsubscribe
+    expect(await suppressed()).toBe(true);
+    const res = await putSubs({ email: true, sms_whatsapp: false }, [{ id: topicNews, subscribed: false }]);
+    expect(res.status).toBe(200);
+    expect((await getSubs()).globalUnsubscribed).toBe(false);
+    expect(await suppressed()).toBe(false);
+    expect(await attrUnsub()).toBe('false');
+  });
+
+  it('PUT full state: one channel off with the other on is a partial opt-out (NOT unsubscribed)', async () => {
+    const res = await putSubs({ email: false, sms_whatsapp: true }, [{ id: topicNews, subscribed: true }]);
+    expect(res.status).toBe(200);
+    const s = await getSubs();
+    expect(s.channels.find((c) => c.group === 'email')!.subscribed).toBe(false);
+    expect(s.channels.find((c) => c.group === 'sms_whatsapp')!.subscribed).toBe(true);
+    expect(s.globalUnsubscribed).toBe(false);
+    expect(await suppressed()).toBe(false);
+  });
+
+  it('PUT full state: a re-subscribe never deletes a bounce suppression (only the unsubscribe one)', async () => {
+    await pool.query("INSERT INTO suppressions (workspace_id, email, reason, source) SELECT $1, email, 'bounce', 'ses' FROM profiles WHERE id=$2", [WS, profileId]);
+    await putSubs({ email: true, sms_whatsapp: true }, [{ id: topicNews, subscribed: true }]);
+    const r = await pool.query("SELECT reason FROM suppressions WHERE workspace_id=$1 AND email=(SELECT email FROM profiles WHERE id=$2)", [WS, profileId]);
+    expect(r.rows.map((x) => x.reason)).toEqual(['bounce']); // bounce kept
   });
 });

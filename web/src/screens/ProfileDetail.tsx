@@ -584,52 +584,82 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId]);
 
-  const toggleTopic = async (id: string, next: boolean): Promise<void> => {
+  const channelOn = (group: string): boolean => data?.channels.find((c) => c.group === group)?.subscribed ?? false;
+
+  // Persist the FULL desired state (channels + topics) in one call. The server
+  // enforces the invariants (a topic needs a channel; everything off = a global
+  // unsubscribe) and we re-read to reflect the resolved state.
+  const commit = async (
+    channels: { email: boolean; sms_whatsapp: boolean },
+    topics: SubscriptionsPayload['topics'],
+  ): Promise<void> => {
     if (!data) return;
-    setSavingId(`topic:${id}`);
+    const anyChannelOn = channels.email || channels.sms_whatsapp;
+    const anyTopicOn = topics.some((t) => t.subscribed);
+    const globalUnsubscribed = !anyChannelOn && !anyTopicOn;
     const prev = data;
-    setData({ ...data, topics: data.topics.map((t) => (t.id === id ? { ...t, subscribed: next } : t)) });
+    // Optimistic.
+    setData({
+      ...data,
+      globalUnsubscribed,
+      channels: data.channels.map((c) => ({
+        ...c,
+        subscribed: c.group === 'email' ? channels.email : c.group === 'sms_whatsapp' ? channels.sms_whatsapp : c.subscribed,
+      })),
+      topics,
+    });
+    setSavingId('subs');
     try {
-      await api.put(`/profiles/${profileId}/topic-subscriptions/${id}`, { body: { subscribed: next } });
+      await api.put(`/profiles/${profileId}/subscriptions`, {
+        body: { channels, topics: topics.map((t) => ({ id: t.id, subscribed: t.subscribed })) },
+      });
+      await reload();
     } catch (e) {
       setData(prev);
-      showToast((e as { error?: string })?.error ?? 'Could not update topic preference.', { tone: 'error' });
+      showToast((e as { error?: string })?.error ?? 'Could not update subscriptions.', { tone: 'error' });
     } finally {
       setSavingId(null);
     }
   };
 
-  const toggleChannel = async (group: string, next: boolean): Promise<void> => {
+  const toggleChannel = (group: string, next: boolean): void => {
     if (!data) return;
-    setSavingId(`channel:${group}`);
-    const prev = data;
-    setData({
-      ...data,
-      channels: data.channels.map((c) => (c.group === group ? { ...c, subscribed: next } : c)),
-    });
-    try {
-      await api.put(`/profiles/${profileId}/channel-subscriptions/${group}`, { body: { subscribed: next } });
-    } catch (e) {
-      setData(prev);
-      showToast((e as { error?: string })?.error ?? 'Could not update channel preference.', { tone: 'error' });
-    } finally {
-      setSavingId(null);
+    const channels = { email: channelOn('email'), sms_whatsapp: channelOn('sms_whatsapp') };
+    if (group === 'email') channels.email = next;
+    else channels.sms_whatsapp = next;
+    let topics = data.topics;
+    // Rule: with BOTH channels off a topic can't stay on — opt out of every topic
+    // (everything off then becomes a global unsubscribe, server-side).
+    if (!channels.email && !channels.sms_whatsapp) topics = topics.map((t) => ({ ...t, subscribed: false }));
+    void commit(channels, topics);
+  };
+
+  const toggleTopic = (id: string, next: boolean): void => {
+    if (!data) return;
+    const topics = data.topics.map((t) => (t.id === id ? { ...t, subscribed: next } : t));
+    const channels = { email: channelOn('email'), sms_whatsapp: channelOn('sms_whatsapp') };
+    // Rule: turning a topic ON with both channels off enables both channels (a topic
+    // needs a channel to be delivered).
+    if (next && !channels.email && !channels.sms_whatsapp) {
+      channels.email = true;
+      channels.sms_whatsapp = true;
     }
+    void commit(channels, topics);
   };
 
   if (error) return <Card class="max-w-2xl p-5"><p class="text-sm text-rose-600">{error}</p></Card>;
   if (data === null) return <Card class="max-w-2xl p-5"><p class="text-sm text-stone-500">Loading…</p></Card>;
 
-  const locked = data.globalUnsubscribed;
+  const busy = savingId !== null;
 
   return (
     <Card class="max-w-2xl p-5" data-testid="subscriptions-tab">
-      {locked ? (
+      {data.globalUnsubscribed ? (
         <div data-testid="globally-unsubscribed-banner" class="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-800">
-          <p class="font-semibold">This profile is globally unsubscribed.</p>
+          <p class="font-semibold">This profile is unsubscribed from everything.</p>
           <p class="mt-1 text-xs">
-            All sends are suppressed regardless of channel / topic — the toggles below are
-            read-only. To re-subscribe, switch off <em>Unsubscribed</em> on the Attributes tab.
+            All sends are suppressed. Turn on a channel (and the topics you want) to resume —
+            turning everything off again unsubscribes the profile.
           </p>
         </div>
       ) : null}
@@ -643,7 +673,7 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
         </p>
         <div class="space-y-2">
           {data.channels.map((c) => {
-            const shown = locked ? false : c.subscribed;
+            const shown = c.subscribed;
             return (
               <label
                 key={c.group}
@@ -658,11 +688,11 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
                     type="checkbox"
                     class="peer sr-only disabled:cursor-not-allowed"
                     checked={shown}
-                    disabled={locked || savingId === `channel:${c.group}`}
-                    onChange={(e) => void toggleChannel(c.group, (e.target as HTMLInputElement).checked)}
+                    disabled={busy}
+                    onChange={(e) => toggleChannel(c.group, (e.target as HTMLInputElement).checked)}
                   />
-                  <span class={`h-5 w-9 rounded-full transition-colors peer-checked:bg-emerald-500 ${locked ? 'bg-stone-200' : 'bg-stone-300'}`} />
-                  <span class={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4 ${locked ? 'opacity-70' : ''}`} />
+                  <span class="h-5 w-9 rounded-full bg-stone-300 transition-colors peer-checked:bg-emerald-500" />
+                  <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
                 </span>
               </label>
             );
@@ -679,7 +709,7 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
         </p>
         <div class="space-y-2">
           {data.topics.map((t) => {
-            const shown = locked ? false : t.subscribed;
+            const shown = t.subscribed;
             return (
               <label
                 key={t.id}
@@ -697,11 +727,11 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
                     type="checkbox"
                     class="peer sr-only disabled:cursor-not-allowed"
                     checked={shown}
-                    disabled={locked || savingId === `topic:${t.id}`}
-                    onChange={(e) => void toggleTopic(t.id, (e.target as HTMLInputElement).checked)}
+                    disabled={busy}
+                    onChange={(e) => toggleTopic(t.id, (e.target as HTMLInputElement).checked)}
                   />
-                  <span class={`h-5 w-9 rounded-full transition-colors peer-checked:bg-emerald-500 ${locked ? 'bg-stone-200' : 'bg-stone-300'}`} />
-                  <span class={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4 ${locked ? 'opacity-70' : ''}`} />
+                  <span class="h-5 w-9 rounded-full bg-stone-300 transition-colors peer-checked:bg-emerald-500" />
+                  <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
                 </span>
               </label>
             );
