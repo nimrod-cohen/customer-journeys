@@ -1443,19 +1443,20 @@ export const setProfileSubscriptions: Handler = async (ctx, pool, req) => {
   if (prof.rowCount === 0) return ok({ error: 'profile not found' }, 404);
   const email = prof.rows[0]!.email;
 
-  // Rule A backstop: a topic with no channel is undeliverable → enable both channels.
+  // This endpoint takes the FULL desired state and applies it faithfully. SUBSCRIBED
+  // requires BOTH a channel AND a topic — otherwise nothing can ever be delivered, so
+  // it's a global unsubscribe. Emptying EITHER dimension (both channels off, OR all
+  // topics off) unsubscribes, and the unsubscribed state is uniformly everything-off.
+  //
+  // NOTE: the "topic on with no channel → enable both channels" affordance is a CLIENT
+  // transition applied at a single toggle (where the user's intent is known). The
+  // server must NOT re-enable channels here: {both channels off, topics on} is
+  // ambiguous (it could equally mean "the user just turned off the last channel"), and
+  // re-enabling would bounce the channels back on — so we treat no-channel as
+  // undeliverable → unsubscribe, consistent with the client.
   const anyTopicOn = topicsIn.some((t) => asObject(t).subscribed === true);
   let emailOn = chIn.email === true;
   let smsOn = chIn.sms_whatsapp === true;
-  // Rule A: a topic with no channel is undeliverable → enable both channels.
-  if (anyTopicOn && !emailOn && !smsOn) {
-    emailOn = true;
-    smsOn = true;
-  }
-  // SUBSCRIBED requires BOTH a channel AND a topic — otherwise nothing can ever be
-  // delivered, so it's a global unsubscribe. Emptying EITHER dimension (both channels
-  // off, OR all topics off) unsubscribes, and the unsubscribed state is uniformly
-  // everything-off.
   const unsubscribed = (!emailOn && !smsOn) || !anyTopicOn;
   if (unsubscribed) {
     emailOn = false;

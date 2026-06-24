@@ -630,8 +630,10 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
     });
     setSavingId('subs');
     try {
+      // Send the RESOLVED state (ch/tp), not the raw toggles — so the server applies
+      // exactly what we optimistically showed (no ambiguity, no bounce-back).
       await api.put(`/profiles/${profileId}/subscriptions`, {
-        body: { channels, topics: topics.map((t) => ({ id: t.id, subscribed: t.subscribed })) },
+        body: { channels: ch, topics: tp.map((t) => ({ id: t.id, subscribed: t.subscribed })) },
       });
       await reload();
     } catch (e) {

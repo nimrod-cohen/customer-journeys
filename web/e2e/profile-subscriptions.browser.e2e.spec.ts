@@ -94,6 +94,39 @@ test('Subscriptions rules: turning off the only topic unsubscribes; turning it b
   await expect(page.getByTestId('globally-unsubscribed-banner')).toHaveCount(0);
 });
 
+test('Subscriptions rules: turning off the LAST channel unsubscribes — channels do NOT bounce back on', async ({ page }) => {
+  await openProfile(page, 'a2@acme.com');
+  await resetSubscribed(page);
+  await expect(emailToggle(page)).toBeChecked();
+  await expect(smsToggle(page)).toBeChecked();
+  await expect(topicToggle(page)).toBeChecked();
+
+  // Opt out of email first (partial — sms + topic still on).
+  await emailToggle(page).uncheck({ force: true });
+  await expect(emailToggle(page)).not.toBeChecked();
+  await expect(emailToggle(page)).toBeEnabled();
+  await expect(page.getByTestId('globally-unsubscribed-banner')).toHaveCount(0);
+
+  // Now turn off the LAST channel (sms). With no channel nothing is deliverable, so this
+  // is a global unsubscribe — the banner appears and BOTH channels stay off (regression:
+  // the old server Rule A re-enabled both channels here, snapping them back on).
+  await smsToggle(page).uncheck({ force: true });
+  await expect(page.getByTestId('globally-unsubscribed-banner')).toBeVisible();
+  await expect(emailToggle(page)).not.toBeChecked();
+  await expect(smsToggle(page)).not.toBeChecked();
+  await expect(topicToggle(page)).not.toBeChecked();
+  await expect(smsToggle(page)).toBeEnabled();
+
+  // Persists across reload (still unsubscribed, nothing bounced back on).
+  await page.reload();
+  await page.getByTestId('profile-detail').waitFor();
+  await page.getByTestId('tab-subscriptions').click();
+  await page.getByTestId('subscriptions-tab').waitFor();
+  await expect(page.getByTestId('globally-unsubscribed-banner')).toBeVisible();
+  await expect(emailToggle(page)).not.toBeChecked();
+  await expect(smsToggle(page)).not.toBeChecked();
+});
+
 test('Attributes "Unsubscribed" toggle auto-saves and cascades to the Subscriptions tab', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-profiles').click();

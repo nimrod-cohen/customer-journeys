@@ -129,15 +129,18 @@ describeMaybe('per-profile subscriptions (real Postgres)', () => {
   const attrUnsub = async () =>
     (await pool.query("SELECT attributes->>'unsubscribed' AS u FROM profiles WHERE id=$1", [profileId])).rows[0]?.u ?? null;
 
-  it('PUT full state: a topic ON with both channels off AUTO-ENABLES both channels (a topic needs a channel)', async () => {
+  it('PUT full state: a topic ON with both channels off is UNDELIVERABLE → a global unsubscribe (server does NOT bounce channels back on)', async () => {
+    // The "enable channels when a topic turns on" affordance lives in the CLIENT toggle
+    // (intent known there). A full-state PUT with no channel is treated faithfully: no
+    // channel ⇒ nothing deliverable ⇒ unsubscribe. (Regression: the old Rule A re-enabled
+    // both channels here, which bounced the channels back on after turning off the last one.)
     const res = await putSubs({ email: false, sms_whatsapp: false }, [{ id: topicNews, subscribed: true }]);
     expect(res.status).toBe(200);
     const s = await getSubs();
-    expect(s.channels.find((c) => c.group === 'email')!.subscribed).toBe(true);
-    expect(s.channels.find((c) => c.group === 'sms_whatsapp')!.subscribed).toBe(true);
-    expect(s.topics.find((t) => t.id === topicNews)!.subscribed).toBe(true);
-    expect(s.globalUnsubscribed).toBe(false);
-    expect(await suppressed()).toBe(false);
+    expect(s.channels.every((c) => !c.subscribed)).toBe(true);
+    expect(s.topics.every((t) => !t.subscribed)).toBe(true);
+    expect(s.globalUnsubscribed).toBe(true);
+    expect(await suppressed()).toBe(true);
   });
 
   it('PUT full state: EVERYTHING off is a global unsubscribe (suppression + flag, all topics off)', async () => {
