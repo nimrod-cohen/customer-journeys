@@ -337,6 +337,36 @@ test('UPDATE-PROFILE editor: a LIST of assignments (a literal + a JS value w/ pl
   await expect(r1.getByTestId('assignment-js')).toHaveValue('return "Hi " + {{customer.first_name}}');
 });
 
+test('UPDATE-PROFILE editor: assignment rows can be REORDERED (▲▼) and the new order persists', async ({ page }) => {
+  await openCampaigns(page);
+  await openSeeded(page);
+
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-update-profile').click();
+  await page.getByTestId('node-set_attribute').getByTestId(/node-open-/).first().click();
+  const drawer = page.getByTestId('node-editor-set_attribute');
+
+  // Two rows: alpha (top), beta (below).
+  await drawer.getByTestId('assignment-row').nth(0).getByTestId('assignment-key').fill('alpha');
+  await drawer.getByTestId('assignment-add').click();
+  await drawer.getByTestId('assignment-row').nth(1).getByTestId('assignment-key').fill('beta');
+
+  // The top row can't move up; move the SECOND row up → order becomes beta, alpha.
+  await expect(drawer.getByTestId('assignment-row').nth(0).getByTestId('assignment-move-up')).toBeDisabled();
+  await drawer.getByTestId('assignment-row').nth(1).getByTestId('assignment-move-up').click();
+  await expect(drawer.getByTestId('assignment-row').nth(0).getByTestId('assignment-key')).toHaveValue('beta');
+  await expect(drawer.getByTestId('assignment-row').nth(1).getByTestId('assignment-key')).toHaveValue('alpha');
+
+  await drawer.getByTestId('node-save').click();
+  await expect(drawer).toBeHidden();
+
+  // Reopen → the reordered sequence persisted (beta first, alpha second).
+  await page.getByTestId('node-set_attribute').getByTestId(/node-open-/).first().click();
+  const reopened = page.getByTestId('node-editor-set_attribute');
+  await expect(reopened.getByTestId('assignment-row').nth(0).getByTestId('assignment-key')).toHaveValue('beta');
+  await expect(reopened.getByTestId('assignment-row').nth(1).getByTestId('assignment-key')).toHaveValue('alpha');
+});
+
 test('TRIGGER editor: a cosmetic name persists and shows on the trigger card', async ({ page }) => {
   await openCampaigns(page);
   await openSeeded(page);

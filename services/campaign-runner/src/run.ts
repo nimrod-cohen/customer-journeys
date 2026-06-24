@@ -309,21 +309,34 @@ async function chainTick(
         // bare scalar) against the recipient profile + the IMMUTABLE persisted trigger
         // event. A 'js' spec is evaluated NODE-side in a sandbox (evaluateJsValue);
         // everything else is read-only string substitution (never SQL — invariant 6
-        // untouched). A retry re-resolves identically (the source never changes →
-        // idempotent nested jsonb_set). set_journey shares the resolution path, only
-        // the write target differs (enrollment.state.journey vs profiles.attributes).
-        const valueCtx = {
-          profile: resolveCtx.profile,
-          ...(resolveCtx.event !== undefined ? { event: resolveCtx.event } : {}),
-          ...(resolveCtx.journey !== undefined ? { journey: resolveCtx.journey } : {}),
-        };
-        const resolved = eff.assignments.map((a) => ({
-          key: a.key,
-          value: isJsSpec(a.value)
-            ? evaluateJsValue(a.value.code, valueCtx)
-            : resolveValueSpec(a.value, valueCtx),
-        }));
-        if (eff.kind === 'set_journey') {
+        // untouched). set_journey shares the resolution path, only the write target
+        // differs (enrollment.state.journey vs profiles.attributes).
+        //
+        // SEQUENTIAL within the node: each assignment sees the ones ABOVE it. We
+        // thread a MUTABLE working copy forward — a set_attribute row updates
+        // customer.<key> (so {{customer.<key>}} below resolves to it); a set_journey
+        // row updates journey.<key>. The final SQL write is still one nested jsonb_set,
+        // but the values already incorporate the in-node dependencies. A retry
+        // re-resolves identically from the immutable source (idempotent).
+        const isJourney = eff.kind === 'set_journey';
+        // Mutable working copies threaded forward across rows in THIS node.
+        const workAttrs: Record<string, unknown> = { ...(resolveCtx.profile.attributes ?? {}) };
+        const workJourney: Record<string, unknown> = { ...((resolveCtx.journey as Record<string, unknown>) ?? {}) };
+        const resolved: { key: string; value: unknown }[] = [];
+        for (const a of eff.assignments) {
+          const valueCtx = {
+            profile: { ...resolveCtx.profile, attributes: workAttrs } as CustomerProfile,
+            ...(resolveCtx.event !== undefined ? { event: resolveCtx.event } : {}),
+            journey: workJourney,
+          };
+          const value = isJsSpec(a.value) ? evaluateJsValue(a.value.code, valueCtx) : resolveValueSpec(a.value, valueCtx);
+          resolved.push({ key: a.key, value });
+          // Thread this row's result forward so a LATER row in the SAME node reads it
+          // (a set_attribute row → customer.<key>; a set_journey row → journey.<key>).
+          if (isJourney) workJourney[a.key] = value;
+          else workAttrs[a.key] = value;
+        }
+        if (isJourney) {
           writes.push(buildSetJourney(workspaceId, row.id, resolved));
         } else {
           writes.push(buildSetAttribute(workspaceId, row.profile_id, resolved));

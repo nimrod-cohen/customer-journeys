@@ -337,6 +337,14 @@ export function Help() {
           <em>expression</em> value — e.g. setting <Code>attributes.last_event_type =
           {' {{event.type}}'}</Code>.
         </p>
+
+        <p class="mt-3 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600 ring-1 ring-inset ring-stone-200">
+          <b>Order matters in Update profile / Update journey nodes.</b> The rows apply{' '}
+          <b>top-to-bottom</b>, and a later row can reference a value set by an earlier row in the{' '}
+          <em>same</em> node: set <Code>stage</Code> in the first row, then a second row can use{' '}
+          <Code>{'{{customer.stage}}'}</Code> (or <Code>{'{{journey.<key>}}'}</Code> for a journey
+          variable) and it already sees it. Use the <Code>▲</Code>/<Code>▼</Code> buttons to reorder.
+        </p>
       </Card>
     </section>
   );

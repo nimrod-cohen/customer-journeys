@@ -804,6 +804,15 @@ function UpdateProfileEditor(props: NodeEditorProps & { kind?: 'set_attribute' |
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const addRow = (): void => setRows((rs) => [...rs, emptyAssignmentRow()]);
   const removeRow = (i: number): void => setRows((rs) => (rs.length <= 1 ? rs : rs.filter((_, idx) => idx !== i)));
+  // Reorder: rows apply top-to-bottom (a later row can reference one set above it).
+  const moveRow = (i: number, dir: -1 | 1): void =>
+    setRows((rs) => {
+      const j = i + dir;
+      if (j < 0 || j >= rs.length) return rs;
+      const next = [...rs];
+      [next[i], next[j]] = [next[j]!, next[i]!];
+      return next;
+    });
   // Insert a token at the end of the row's active value field (expression | js).
   const insertToken = (i: number, token: string): void => {
     setRows((rs) =>
@@ -826,8 +835,8 @@ function UpdateProfileEditor(props: NodeEditorProps & { kind?: 'set_attribute' |
     <div class="space-y-4">
       <p class="text-sm text-stone-500">
         {isJourney
-          ? <>Set one or more <strong>journey variables</strong> — scoped to THIS profile's run through THIS campaign (not the global profile). Read in messages as {'{{journey.<key>}}'}.</>
-          : <>Set one or more profile attributes. Each value can be a fixed value, an expression with {'{{customer.*}}'} / {'{{event.*}}'} / {'{{journey.*}}'} tokens, or a small sandboxed JavaScript snippet.</>}
+          ? <>Set one or more <strong>journey variables</strong> — scoped to THIS profile's run through THIS campaign (not the global profile). Read in messages as {'{{journey.<key>}}'}. Rows apply <strong>top-to-bottom</strong> and a later row can use a variable set above it (e.g. set <code>cohort</code> first, then reference {'{{journey.cohort}}'} below) — drag with the ▲▼ to reorder.</>
+          : <>Set one or more profile attributes. Each value can be a fixed value, an expression with {'{{customer.*}}'} / {'{{event.*}}'} / {'{{journey.*}}'} tokens, or a small sandboxed JavaScript snippet. Rows apply <strong>top-to-bottom</strong> and a later row can use an attribute set above it (e.g. set <code>stage</code> first, then reference {'{{customer.stage}}'} below) — use the ▲▼ to reorder.</>}
       </p>
       <div data-testid="assignment-rows" class="space-y-3">
         {rows.map((r, i) => (
@@ -850,6 +859,26 @@ function UpdateProfileEditor(props: NodeEditorProps & { kind?: 'set_attribute' |
                 <option value="expression">An expression / token</option>
                 <option value="js">A JS function</option>
               </Select>
+              <Button
+                data-testid="assignment-move-up"
+                variant="ghost"
+                size="sm"
+                aria-label="Move up"
+                disabled={i === 0}
+                onClick={() => moveRow(i, -1)}
+              >
+                ▲
+              </Button>
+              <Button
+                data-testid="assignment-move-down"
+                variant="ghost"
+                size="sm"
+                aria-label="Move down"
+                disabled={i === rows.length - 1}
+                onClick={() => moveRow(i, 1)}
+              >
+                ▼
+              </Button>
               <Button
                 data-testid="assignment-remove"
                 variant="ghost"
