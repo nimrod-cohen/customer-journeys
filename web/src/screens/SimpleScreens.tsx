@@ -711,7 +711,7 @@ export function ProfileExplorer() {
                 onClick={() => navigate(`/profiles/${p.id}`)}
                 class="cursor-pointer hover:bg-stone-50/70"
               >
-                <td class="px-2 py-2.5 text-center">{p.unsubscribed ? <UnsubscribedIcon /> : null}</td>
+                <td class="px-2 py-2.5 text-center align-middle">{p.unsubscribed ? <UnsubscribedIcon /> : null}</td>
                 <td class="px-4 py-2.5 text-ink-900">{p.email}</td>
                 {cols.order.map((id) =>
                   id === STATUS_COL ? (
