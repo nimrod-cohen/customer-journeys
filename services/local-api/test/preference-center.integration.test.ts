@@ -183,9 +183,10 @@ describeMaybe('public preference center (real Postgres)', () => {
     expect(await groupOptedOut('sms_whatsapp')).toBe(true); // left off
   });
 
-  it('re-enabling only a TOPIC (no channel) while globally unsubscribed STILL lifts the kill switch + saves the topic', async () => {
+  it('a topic-only save (no channel) AUTO-ENABLES both channels + lifts the kill switch (a topic needs a channel)', async () => {
     // The reported bug: turning on a topic (channels left off) saved the topic but
-    // left the profile globally unsubscribed. Now any positive choice resumes them.
+    // left the profile globally unsubscribed + undeliverable. Now the server backstop
+    // enables both channels (mirroring the client auto-enable) and lifts the switch.
     await pool.query("INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1,$2,'unsubscribe','one-click')", [WS, EMAIL]);
     await pool.query("UPDATE profiles SET attributes='{\"unsubscribed\":true}'::jsonb WHERE workspace_id=$1 AND email=$2", [WS, EMAIL]);
 
@@ -193,9 +194,22 @@ describeMaybe('public preference center (real Postgres)', () => {
     const res = await post(`topic.${topicNews}=on`);
     expect(res.status).toBe(200);
     expect(await topicSubscribed(topicNews)).toBe(true); // topic preference saved
-    // The master kill switch is LIFTED (no longer globally unsubscribed).
+    // BOTH channels auto-enabled (a topic with no channel is undeliverable).
+    expect(await groupOptedOut('email')).toBe(false);
+    expect(await groupOptedOut('sms_whatsapp')).toBe(false);
+    // The master kill switch is LIFTED (no longer globally unsubscribed) → deliverable.
     expect(await suppressed()).toBe(false);
     expect(await unsubAttr()).toBe('false');
+  });
+
+  it('a topic-only save when a channel was explicitly off elsewhere still enables both (backstop)', async () => {
+    // Even a fresh (not-globally-unsubscribed) topic-only save must not persist an
+    // undeliverable topic — both channels are enabled.
+    const res = await post(`topic.${topicNews}=on`);
+    expect(res.status).toBe(200);
+    expect(await topicSubscribed(topicNews)).toBe(true);
+    expect(await groupOptedOut('email')).toBe(false);
+    expect(await groupOptedOut('sms_whatsapp')).toBe(false);
   });
 
   it('GET shows the "currently unsubscribed" banner when globally unsubscribed', async () => {

@@ -6,7 +6,7 @@
 import { test, expect } from '@playwright/test';
 import { packSubscriptionToken, unsubscribeLinkSecret } from '@cdp/email';
 import { loginAs } from './helpers.js';
-import { DEV_OWNER, WS_B, TOPIC_A_NAME, TOPIC_B_NAME, PREF_EMAIL } from './seed.js';
+import { DEV_OWNER, WS_B, TOPIC_A_NAME, TOPIC_B_NAME, TOPIC_B, PREF_EMAIL } from './seed.js';
 
 const API_BASE = 'http://localhost:8788';
 // The preference center is driven against the WS_B fixture (isolated from WS_A's
@@ -58,6 +58,34 @@ test('the public preference center renders topics + channels and a PARTIAL opt-o
   await page.goto(prefLink);
   await expect(page.getByTestId('pref-group-email')).not.toBeChecked();
   await expect(page.getByTestId('pref-group-sms_whatsapp')).toBeChecked();
+});
+
+test('a topic needs a channel: turning a topic on auto-enables channels; saving with none is blocked', async ({ page }) => {
+  await page.goto(prefLink);
+  await expect(page.getByTestId('pref-form')).toBeVisible();
+  const topic = page.getByTestId(`pref-topic-${TOPIC_B}`);
+  const email = page.getByTestId('pref-group-email');
+  const sms = page.getByTestId('pref-group-sms_whatsapp');
+
+  // Start from everything off (topic + both channels).
+  await topic.uncheck();
+  await email.uncheck();
+  await sms.uncheck();
+  await expect(email).not.toBeChecked();
+  await expect(sms).not.toBeChecked();
+
+  // Rule A: turning the topic ON while both channels are off auto-enables both.
+  await topic.check();
+  await expect(email).toBeChecked();
+  await expect(sms).toBeChecked();
+
+  // Rule B: turning both channels off again (topic still on) blocks the save.
+  await email.uncheck();
+  await sms.uncheck();
+  await page.getByTestId('pref-save').click();
+  await expect(page.getByTestId('pref-channel-required')).toBeVisible();
+  // Still on the form — the save was prevented (no "preferences saved" page).
+  await expect(page.getByTestId('pref-form')).toBeVisible();
 });
 
 test('"unsubscribe from everything" on the preference center fully opts out', async ({ page }) => {

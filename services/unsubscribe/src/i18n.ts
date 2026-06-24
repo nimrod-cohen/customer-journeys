@@ -83,6 +83,8 @@ export interface Strings {
   readonly manageIntro: string;
   /** Banner shown when the recipient is currently unsubscribed from everything. */
   readonly currentlyUnsubscribed: string;
+  /** Inline error: a topic is selected but no channel is on. */
+  readonly channelRequired: string;
   readonly topicsHeading: string;
   readonly channelsHeading: string;
   readonly noTopics: string;
@@ -118,6 +120,7 @@ const EN: Strings = {
   manageIntro: "{email} — choose what you'd like to receive.",
   currentlyUnsubscribed:
     "You're currently unsubscribed from all messages. Turn on a channel and the topics you'd like, then save to resume.",
+  channelRequired: 'Turn on at least one channel (Email or SMS & WhatsApp) to receive the topics you selected.',
   topicsHeading: 'Topics',
   channelsHeading: 'Channels',
   noTopics: 'This sender has no topics.',
@@ -151,6 +154,7 @@ const HE: Strings = {
   manageIntro: '{email} — בחרו מה תרצו לקבל.',
   currentlyUnsubscribed:
     'כרגע אינכם רשומים לקבלת הודעות כלל. הפעילו ערוץ ואת הנושאים שתרצו, ולאחר מכן שמרו כדי לחדש את ההרשמה.',
+  channelRequired: 'הפעילו לפחות ערוץ אחד (אימייל או SMS ו-וואטסאפ) כדי לקבל את הנושאים שבחרתם.',
   topicsHeading: 'נושאים',
   channelsHeading: 'ערוצים',
   noTopics: 'לשולח הזה אין נושאים.',

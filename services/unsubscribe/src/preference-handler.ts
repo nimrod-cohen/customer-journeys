@@ -81,6 +81,7 @@ function shell(title: string, inner: string, logoHtml = '', lang: Lang = 'en', w
     `h1{font-size:24px;font-weight:800;margin:0 0 6px;text-align:start}` +
     `.intro{color:#78716c;font-size:14px;line-height:1.5;margin:0 0 24px;text-align:start}` +
     `.unsub-banner{background:#fef2f2;border:1px solid #fecaca;color:#9f1239;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5;margin:0 0 22px;text-align:start}` +
+    `.pref-error{color:#b91c1c;font-size:13px;line-height:1.5;margin:8px 0 0;text-align:start}` +
     `.email{font-weight:700;color:#1c1917;unicode-bidi:isolate}` +
     // Two columns: Topics | divider | Channels — collapses to one column on mobile.
     `.cols{display:grid;grid-template-columns:1fr 1px 1fr;gap:28px;align-items:start}` +
@@ -159,8 +160,13 @@ function centerPage(
         : '') +
       `<form method="POST" action="${esc(actionUrl)}" data-testid="pref-form">` +
       `<div class="cols">${topicsCol}<div class="vdiv"></div>${channelsCol}</div>` +
+      `<p class="pref-error" data-testid="pref-channel-required" hidden>${esc(s.channelRequired)}</p>` +
       `<button type="submit" class="primary" data-testid="pref-save">${esc(s.savePreferences)}</button>` +
       `</form>` +
+      // A topic needs a channel to be delivered: turning on a topic with both
+      // channels off auto-enables them, and saving is blocked while any topic is
+      // on but no channel is. (Server backstop in the POST handler too.)
+      CHANNEL_GUARD_SCRIPT +
       // A SEPARATE form so "unsubscribe from everything" is an unambiguous action.
       `<form method="POST" action="${esc(actionUrl)}" data-testid="pref-all-form">` +
       `<input type="hidden" name="unsubscribe_all" value="1">` +
@@ -171,6 +177,27 @@ function centerPage(
     true, // wide layout (two columns)
   );
 }
+
+/**
+ * Client guard for the preference form: (A) turning ON a topic while BOTH channels
+ * are off auto-enables both channels; (B) saving is blocked while any topic is on
+ * but no channel is (an inline error shows). Vanilla JS, no deps; the server
+ * applies the same invariant as a backstop for non-JS clients.
+ */
+const CHANNEL_GUARD_SCRIPT =
+  '<script>(function(){' +
+  'var f=document.querySelector(\'[data-testid="pref-form"]\');if(!f)return;' +
+  'var err=f.querySelector(\'[data-testid="pref-channel-required"]\');' +
+  'var ch=[].slice.call(f.querySelectorAll(\'input[name^="group."]\'));' +
+  'var tp=[].slice.call(f.querySelectorAll(\'input[name^="topic."]\'));' +
+  'function anyCh(){return ch.some(function(c){return c.checked;});}' +
+  'function anyTp(){return tp.some(function(t){return t.checked;});}' +
+  'tp.forEach(function(t){t.addEventListener("change",function(){' +
+  'if(t.checked&&!anyCh()){ch.forEach(function(c){c.checked=true;});}' +
+  '});});' +
+  'ch.forEach(function(c){c.addEventListener("change",function(){if(anyCh()&&err){err.hidden=true;}});});' +
+  'f.addEventListener("submit",function(e){if(anyTp()&&!anyCh()){e.preventDefault();if(err){err.hidden=false;}}});' +
+  '})();</script>';
 
 /** Inline channel icons (SVG, no emoji) shown in the rounded square per channel group. */
 const ICON_EMAIL =
@@ -398,20 +425,27 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
       // master kill switch (delete only the unsubscribe-reason suppression — never
       // a bounce/complaint — and clear the flag) so the choice actually takes
       // effect; otherwise the dispatcher's suppression gate keeps blocking sends.
+      // A topic needs a channel to be delivered: if any topic is ON but BOTH
+      // channels are OFF, enable both channels (mirrors the client auto-enable —
+      // the non-JS backstop, so a topic-only POST can't persist an undeliverable
+      // state). The client also blocks saving in that case.
+      const anyTopicOn = Array.from(update.topics.values()).some((v) => v === true);
+      const anyChannelOn = MEDIUM_GROUPS.some((g) => update.groups.get(g) === true);
+      const forceChannelsOn = anyTopicOn && !anyChannelOn;
+
       const statements: SqlStatement[] = [];
       for (const [topicId, subscribed] of update.topics) {
         statements.push(buildTopicSubscriptionUpsert(workspaceId, email, topicId, subscribed));
       }
       for (const [group, subscribed] of update.groups) {
-        statements.push(buildChannelOptOutWrite(workspaceId, email, group, !subscribed));
+        const on = forceChannelsOn ? true : subscribed;
+        statements.push(buildChannelOptOutWrite(workspaceId, email, group, !on));
       }
       // Re-enabling ANYTHING (a channel OR a topic) while globally unsubscribed is
       // the user RESUMING — lift the master kill switch so the choice takes effect.
       // (A Save with nothing turned on leaves them unsubscribed — no accidental
       // re-subscribe; "unsubscribe from everything" re-applies the switch.)
-      const anyPositive =
-        MEDIUM_GROUPS.some((g) => update.groups.get(g) === true) ||
-        Array.from(update.topics.values()).some((v) => v === true);
+      const anyPositive = anyChannelOn || anyTopicOn;
       if (globallyUnsubscribed && anyPositive) {
         statements.push(
           buildResubscribeSuppressionDelete(workspaceId, email),
