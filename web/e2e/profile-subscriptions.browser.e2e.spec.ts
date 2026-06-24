@@ -24,60 +24,109 @@ const emailToggle = (page: import('@playwright/test').Page) =>
 const smsToggle = (page: import('@playwright/test').Page) =>
   page.locator('[data-channel-group="sms_whatsapp"] [data-testid="channel-toggle"]');
 
-test('profile Subscriptions tab: topics + channels default-on; opting out persists across reload', async ({ page }) => {
-  await openProfile(page);
+/** Reset the open profile to a clean FULLY-SUBSCRIBED baseline (every channel +
+ *  topic on, no suppression) via the Attributes "Unsubscribed" toggle, so the test
+ *  doesn't depend on residual state. Ends on the Subscriptions tab. */
+async function resetSubscribed(page: import('@playwright/test').Page): Promise<void> {
+  await page.getByTestId('tab-attributes').click();
+  const unsub = page.getByTestId('attr-unsubscribed');
+  if (!(await unsub.isChecked())) {
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/global-subscription') && r.request().method() === 'PUT'),
+      unsub.check({ force: true }), // unsubscribe (cascade everything off)
+    ]);
+  }
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/global-subscription') && r.request().method() === 'PUT'),
+    unsub.uncheck({ force: true }), // resume → every channel + topic back on
+  ]);
+  await page.getByTestId('tab-subscriptions').click();
+  await page.getByTestId('subscriptions-tab').waitFor();
+}
 
-  // Default-on: the seeded topic + the email channel start subscribed (checked).
+test('Subscriptions tab: a channel-level partial opt-out persists (keeps a channel + topic)', async ({ page }) => {
+  await openProfile(page);
+  await resetSubscribed(page);
+
+  // Default-on: the seeded topic + both channels start subscribed.
   await expect(topicToggle(page)).toBeChecked();
   await expect(emailToggle(page)).toBeChecked();
+  await expect(smsToggle(page)).toBeChecked();
 
-  // Opt the profile out of the topic, then the email channel (SMS stays on, so this
-  // is a partial opt-out — not a global unsubscribe). Each toggle PUTs the full state
-  // and reloads; the toggle disables while saving, so wait for it to re-enable before
-  // the next change.
-  await topicToggle(page).uncheck({ force: true });
-  await expect(topicToggle(page)).not.toBeChecked();
-  await expect(topicToggle(page)).toBeEnabled();
+  // Opt out of EMAIL only — SMS + the topic stay on, so still subscribed (no banner).
   await emailToggle(page).uncheck({ force: true });
   await expect(emailToggle(page)).not.toBeChecked();
   await expect(emailToggle(page)).toBeEnabled();
+  await expect(page.getByTestId('globally-unsubscribed-banner')).toHaveCount(0);
 
-  // Reload + reopen → the opt-outs persisted (written via the subscription API).
+  // Persists across reload (email off, sms + topic on).
   await page.reload();
   await page.getByTestId('profile-detail').waitFor();
   await page.getByTestId('tab-subscriptions').click();
   await page.getByTestId('subscriptions-tab').waitFor();
-  await expect(topicToggle(page)).not.toBeChecked();
   await expect(emailToggle(page)).not.toBeChecked();
+  await expect(smsToggle(page)).toBeChecked();
+  await expect(topicToggle(page)).toBeChecked();
 
-  // Re-subscribe the channel → back on.
+  // Re-subscribe email.
   await emailToggle(page).check({ force: true });
   await expect(emailToggle(page)).toBeChecked();
 });
 
-test('admin Subscriptions rules: everything off → unsubscribed; turning a topic back on re-enables both channels', async ({ page }) => {
-  // A separate profile so this is independent of the partial-opt-out test above.
+test('Subscriptions rules: turning off the only topic unsubscribes; turning it back on resumes', async ({ page }) => {
   await openProfile(page, 'a2@acme.com');
+  await resetSubscribed(page);
+  await expect(topicToggle(page)).toBeChecked();
 
-  // Drive everything OFF (topic, then both channels). Unchecking the LAST channel
-  // with the topic already off makes the profile globally unsubscribed.
+  // Turn off the only topic (channels still on) → a topic is required, so this is a
+  // global unsubscribe: the banner appears and everything goes off.
   await topicToggle(page).uncheck({ force: true });
-  await expect(topicToggle(page)).toBeEnabled();
-  await emailToggle(page).uncheck({ force: true });
-  await expect(emailToggle(page)).toBeEnabled();
-  await smsToggle(page).uncheck({ force: true });
-  await expect(smsToggle(page)).toBeEnabled();
+  await expect(page.getByTestId('globally-unsubscribed-banner')).toBeVisible();
+  await expect(emailToggle(page)).not.toBeChecked();
+  await expect(smsToggle(page)).not.toBeChecked();
+  await expect(topicToggle(page)).not.toBeChecked();
+  await expect(topicToggle(page)).toBeEnabled(); // wait for the save+reload to settle
 
-  // Everything off ⇒ a global unsubscribe banner; all toggles read off.
+  // Turning the topic back on auto-enables BOTH channels and clears the unsubscribe.
+  await topicToggle(page).check({ force: true });
+  await expect(emailToggle(page)).toBeChecked();
+  await expect(smsToggle(page)).toBeChecked();
+  await expect(page.getByTestId('globally-unsubscribed-banner')).toHaveCount(0);
+});
+
+test('Attributes "Unsubscribed" toggle auto-saves and cascades to the Subscriptions tab', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+  await page.getByTestId('profile-search').fill('a1@acme.com');
+  await page.getByTestId('profile-row').first().click();
+  await page.getByTestId('profile-detail').waitFor();
+
+  // Turn Unsubscribed ON on the Attributes tab — it auto-saves (no Save click) and
+  // cascades server-side (opts out every channel + topic + the suppression).
+  await page.getByTestId('tab-attributes').click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/global-subscription') && r.request().method() === 'PUT'),
+    page.getByTestId('attr-unsubscribed').check({ force: true }),
+  ]);
+
+  // The Subscriptions tab now shows the unsubscribe banner + everything off.
+  await page.getByTestId('tab-subscriptions').click();
+  await page.getByTestId('subscriptions-tab').waitFor();
   await expect(page.getByTestId('globally-unsubscribed-banner')).toBeVisible();
   await expect(emailToggle(page)).not.toBeChecked();
   await expect(smsToggle(page)).not.toBeChecked();
   await expect(topicToggle(page)).not.toBeChecked();
 
-  // Turning a TOPIC back on auto-enables BOTH channels and clears the unsubscribe.
-  await topicToggle(page).check({ force: true });
-  await expect(emailToggle(page)).toBeChecked();
-  await expect(smsToggle(page)).toBeChecked();
-  await expect(topicToggle(page)).toBeChecked();
+  // Toggle it OFF on Attributes → resumes (everything default-on, banner gone).
+  await page.getByTestId('tab-attributes').click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/global-subscription') && r.request().method() === 'PUT'),
+    page.getByTestId('attr-unsubscribed').uncheck({ force: true }),
+  ]);
+  await page.getByTestId('tab-subscriptions').click();
+  await page.getByTestId('subscriptions-tab').waitFor();
   await expect(page.getByTestId('globally-unsubscribed-banner')).toHaveCount(0);
+  await expect(emailToggle(page)).toBeChecked();
+  await expect(topicToggle(page)).toBeChecked();
 });

@@ -64,6 +64,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   // every channel group; per-resource PUTs toggle one at a time.
   'GET /profiles/:id/subscriptions': 'manage_content',
   'PUT /profiles/:id/subscriptions': 'manage_content',
+  'PUT /profiles/:id/global-subscription': 'manage_content',
   'PUT /profiles/:id/topic-subscriptions/:topicId': 'manage_content',
   'PUT /profiles/:id/channel-subscriptions/:group': 'manage_content',
 

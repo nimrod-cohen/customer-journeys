@@ -151,10 +151,23 @@ describeMaybe('per-profile subscriptions (real Postgres)', () => {
     expect(await attrUnsub()).toBe('true');
   });
 
-  it('PUT full state: turning a channel back on LIFTS the global unsubscribe', async () => {
+  it('PUT full state: all topics off with channels ON is a global unsubscribe (a topic is required)', async () => {
+    const res = await putSubs({ email: true, sms_whatsapp: true }, [{ id: topicNews, subscribed: false }]);
+    expect(res.status).toBe(200);
+    const s = await getSubs();
+    expect(s.globalUnsubscribed).toBe(true); // no topic → nothing deliverable → unsubscribed
+    expect(s.channels.every((c) => !c.subscribed)).toBe(true); // uniformly everything-off
+    expect(await suppressed()).toBe(true);
+  });
+
+  it('PUT full state: resuming needs BOTH a channel and a topic — lifts the unsubscribe', async () => {
     await putSubs({ email: false, sms_whatsapp: false }, [{ id: topicNews, subscribed: false }]); // unsubscribe
     expect(await suppressed()).toBe(true);
-    const res = await putSubs({ email: true, sms_whatsapp: false }, [{ id: topicNews, subscribed: false }]);
+    // A channel alone is NOT enough (no topic) → still unsubscribed.
+    await putSubs({ email: true, sms_whatsapp: false }, [{ id: topicNews, subscribed: false }]);
+    expect((await getSubs()).globalUnsubscribed).toBe(true);
+    // A channel + a topic → subscribed.
+    const res = await putSubs({ email: true, sms_whatsapp: false }, [{ id: topicNews, subscribed: true }]);
     expect(res.status).toBe(200);
     expect((await getSubs()).globalUnsubscribed).toBe(false);
     expect(await suppressed()).toBe(false);
@@ -176,5 +189,40 @@ describeMaybe('per-profile subscriptions (real Postgres)', () => {
     await putSubs({ email: true, sms_whatsapp: true }, [{ id: topicNews, subscribed: true }]);
     const r = await pool.query("SELECT reason FROM suppressions WHERE workspace_id=$1 AND email=(SELECT email FROM profiles WHERE id=$2)", [WS, profileId]);
     expect(r.rows.map((x) => x.reason)).toEqual(['bounce']); // bounce kept
+  });
+
+  // --- the GLOBAL (un)subscribe endpoint (the Attributes-tab toggle) ---
+  const setGlobal = (unsubscribed: boolean) =>
+    call('PUT', `/profiles/${profileId}/global-subscription`, { u: OWNER, w: WS }, { unsubscribed });
+
+  it('global-subscription true: opts out EVERY channel + topic + suppression + flag', async () => {
+    // Start subscribed (some explicit on-state).
+    await putSubs({ email: true, sms_whatsapp: true }, [{ id: topicNews, subscribed: true }]);
+    const res = await setGlobal(true);
+    expect(res.status).toBe(200);
+    const s = await getSubs();
+    expect(s.globalUnsubscribed).toBe(true);
+    expect(s.channels.every((c) => !c.subscribed)).toBe(true);
+    expect(s.topics.every((t) => !t.subscribed)).toBe(true);
+    expect(await suppressed()).toBe(true);
+    expect(await attrUnsub()).toBe('true');
+  });
+
+  it('global-subscription false: RESUMES to default-on (no opt-out rows, no suppression, flag false)', async () => {
+    await setGlobal(true); // unsubscribe first
+    expect(await suppressed()).toBe(true);
+    const res = await setGlobal(false);
+    expect(res.status).toBe(200);
+    const s = await getSubs();
+    expect(s.globalUnsubscribed).toBe(false);
+    expect(s.channels.every((c) => c.subscribed)).toBe(true); // default-on (rows deleted)
+    expect(s.topics.every((t) => t.subscribed)).toBe(true);
+    expect(await suppressed()).toBe(false);
+    expect(await attrUnsub()).toBe('false');
+  });
+
+  it('global-subscription: 400 on a non-boolean, 404 cross-workspace', async () => {
+    expect((await call('PUT', `/profiles/${profileId}/global-subscription`, { u: OWNER, w: WS }, { unsubscribed: 'yes' })).status).toBe(400);
+    expect((await call('PUT', `/profiles/${profileId}/global-subscription`, { u: OWNER_B, w: WS_B }, { unsubscribed: true })).status).toBe(404);
   });
 });

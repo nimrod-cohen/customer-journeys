@@ -406,6 +406,22 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
   const used = new Set(pairs.map((p) => p.key.trim()).filter(Boolean));
   const unused = allKeys.filter((k) => !used.has(k) && !PROTECTED_ATTR_KEYS.has(k));
 
+  // The Unsubscribed switch is the GLOBAL (un)subscribe: it auto-saves immediately
+  // and cascades server-side (opt out / resume every channel + topic + the
+  // suppression), so it stays consistent with the Subscriptions tab.
+  const toggleUnsubscribed = async (checked: boolean): Promise<void> => {
+    setUnsubscribed(checked); // optimistic
+    setErr('');
+    try {
+      await api.put(`/profiles/${profile.id}/global-subscription`, { body: { unsubscribed: checked } });
+      await onSaved();
+    } catch (e) {
+      setUnsubscribed(!checked); // revert
+      setErr((e as { error?: string })?.error ?? 'could not update');
+      setState('error');
+    }
+  };
+
   const save = async () => {
     setErr('');
     // GUARD: any free-text row using a protected key is rejected up front — the
@@ -459,7 +475,7 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
             type="checkbox"
             class="peer sr-only"
             checked={unsubscribed}
-            onChange={(e) => setUnsubscribed((e.target as HTMLInputElement).checked)}
+            onChange={(e) => void toggleUnsubscribed((e.target as HTMLInputElement).checked)}
           />
           <span class="h-6 w-11 rounded-full bg-stone-300 transition-colors peer-checked:bg-rose-500 peer-focus:ring-2 peer-focus:ring-brand-400/40" />
           <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
@@ -596,7 +612,11 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
     if (!data) return;
     const anyChannelOn = channels.email || channels.sms_whatsapp;
     const anyTopicOn = topics.some((t) => t.subscribed);
-    const globalUnsubscribed = !anyChannelOn && !anyTopicOn;
+    // SUBSCRIBED needs BOTH a channel AND a topic; emptying EITHER unsubscribes, and
+    // the unsubscribed state is uniformly everything-off (matches the server).
+    const globalUnsubscribed = !anyChannelOn || !anyTopicOn;
+    const ch = globalUnsubscribed ? { email: false, sms_whatsapp: false } : channels;
+    const tp = globalUnsubscribed ? topics.map((t) => ({ ...t, subscribed: false })) : topics;
     const prev = data;
     // Optimistic.
     setData({
@@ -604,9 +624,9 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
       globalUnsubscribed,
       channels: data.channels.map((c) => ({
         ...c,
-        subscribed: c.group === 'email' ? channels.email : c.group === 'sms_whatsapp' ? channels.sms_whatsapp : c.subscribed,
+        subscribed: c.group === 'email' ? ch.email : c.group === 'sms_whatsapp' ? ch.sms_whatsapp : c.subscribed,
       })),
-      topics,
+      topics: tp,
     });
     setSavingId('subs');
     try {
@@ -628,9 +648,9 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
     if (group === 'email') channels.email = next;
     else channels.sms_whatsapp = next;
     let topics = data.topics;
-    // Rule: with BOTH channels off a topic can't stay on — opt out of every topic
-    // (everything off then becomes a global unsubscribe, server-side).
-    if (!channels.email && !channels.sms_whatsapp) topics = topics.map((t) => ({ ...t, subscribed: false }));
+    // Turning a channel ON while NO topic is selected enables every topic (a channel
+    // with nothing to send is pointless) — so the profile actually resumes.
+    if (next && !topics.some((t) => t.subscribed)) topics = topics.map((t) => ({ ...t, subscribed: true }));
     void commit(channels, topics);
   };
 
@@ -638,8 +658,8 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
     if (!data) return;
     const topics = data.topics.map((t) => (t.id === id ? { ...t, subscribed: next } : t));
     const channels = { email: channelOn('email'), sms_whatsapp: channelOn('sms_whatsapp') };
-    // Rule: turning a topic ON with both channels off enables both channels (a topic
-    // needs a channel to be delivered).
+    // Turning a topic ON with both channels off enables both channels (a topic needs
+    // a channel to be delivered).
     if (next && !channels.email && !channels.sms_whatsapp) {
       channels.email = true;
       channels.sms_whatsapp = true;

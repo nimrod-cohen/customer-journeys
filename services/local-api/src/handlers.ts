@@ -1447,12 +1447,20 @@ export const setProfileSubscriptions: Handler = async (ctx, pool, req) => {
   const anyTopicOn = topicsIn.some((t) => asObject(t).subscribed === true);
   let emailOn = chIn.email === true;
   let smsOn = chIn.sms_whatsapp === true;
+  // Rule A: a topic with no channel is undeliverable → enable both channels.
   if (anyTopicOn && !emailOn && !smsOn) {
     emailOn = true;
     smsOn = true;
   }
-  // Everything off → a global unsubscribe (which also forces every topic off).
-  const unsubscribed = !emailOn && !smsOn && !anyTopicOn;
+  // SUBSCRIBED requires BOTH a channel AND a topic — otherwise nothing can ever be
+  // delivered, so it's a global unsubscribe. Emptying EITHER dimension (both channels
+  // off, OR all topics off) unsubscribes, and the unsubscribed state is uniformly
+  // everything-off.
+  const unsubscribed = (!emailOn && !smsOn) || !anyTopicOn;
+  if (unsubscribed) {
+    emailOn = false;
+    smsOn = false;
+  }
 
   const statements: { text: string; values: unknown[] }[] = [];
   for (const [group, on] of [['email', emailOn], ['sms_whatsapp', smsOn]] as const) {
@@ -1514,6 +1522,73 @@ export const setProfileSubscriptions: Handler = async (ctx, pool, req) => {
   }
   await campaignRunnerTx(pool, ctx.workspaceId, statements);
   return ok({ unsubscribed });
+};
+
+/**
+ * PUT /profiles/:id/global-subscription  body: { unsubscribed: boolean }
+ * The single GLOBAL (un)subscribe operation, used by the Attributes-tab toggle so it
+ * stays consistent with the Subscriptions tab. `true` opts the profile out of EVERY
+ * channel + EVERY active topic and writes the suppression + flag; `false` RESUMES it
+ * to the default-on state (deletes the channel/topic opt-out rows + lifts only the
+ * unsubscribe-reason suppression + clears the flag). Workspace-scoped; one tx.
+ */
+export const setProfileGlobalSubscription: Handler = async (ctx, pool, req) => {
+  const profileId = req.params.id!;
+  const b = asObject(req.body);
+  if (typeof b.unsubscribed !== 'boolean') return ok({ error: 'unsubscribed must be a boolean' }, 400);
+  const prof = await pool.query<{ email: string }>(
+    'SELECT email FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ctx.workspaceId, profileId],
+  );
+  if (prof.rowCount === 0) return ok({ error: 'profile not found' }, 404);
+  const email = prof.rows[0]!.email;
+
+  const statements: { text: string; values: unknown[] }[] = [];
+  if (b.unsubscribed) {
+    for (const group of ['email', 'sms_whatsapp'] as const) {
+      statements.push({
+        text: `INSERT INTO channel_optouts (workspace_id, profile_id, medium_group, updated_at)
+               VALUES ($1, $2, $3, now())
+               ON CONFLICT (workspace_id, profile_id, medium_group) DO UPDATE SET updated_at = now()`,
+        values: [ctx.workspaceId, profileId, group],
+      });
+    }
+    statements.push(
+      {
+        // Opt out of EVERY active topic (so the Subscriptions tab reads uniformly off).
+        text: `INSERT INTO topic_subscriptions (workspace_id, profile_id, topic_id, subscribed, updated_at)
+               SELECT $1, $2, t.id, false, now() FROM topics t
+               WHERE t.workspace_id = $1 AND coalesce(t.archived, false) = false
+               ON CONFLICT (workspace_id, profile_id, topic_id) DO UPDATE SET subscribed = false, updated_at = now()`,
+        values: [ctx.workspaceId, profileId],
+      },
+      {
+        text: `INSERT INTO suppressions (workspace_id, email, reason, source)
+               VALUES ($1, $2, 'unsubscribe', 'admin') ON CONFLICT (workspace_id, email) DO NOTHING`,
+        values: [ctx.workspaceId, email],
+      },
+      {
+        text: `UPDATE profiles SET attributes = attributes || '{"unsubscribed": true}'::jsonb, updated_at = now()
+               WHERE workspace_id = $1 AND id = $2`,
+        values: [ctx.workspaceId, profileId],
+      },
+    );
+  } else {
+    // RESUME to default-on: drop every opt-out row + lift only the unsubscribe
+    // suppression (never a bounce) + clear the flag.
+    statements.push(
+      { text: 'DELETE FROM channel_optouts WHERE workspace_id = $1 AND profile_id = $2', values: [ctx.workspaceId, profileId] },
+      { text: 'DELETE FROM topic_subscriptions WHERE workspace_id = $1 AND profile_id = $2', values: [ctx.workspaceId, profileId] },
+      { text: `DELETE FROM suppressions WHERE workspace_id = $1 AND email = $2 AND reason = 'unsubscribe'`, values: [ctx.workspaceId, email] },
+      {
+        text: `UPDATE profiles SET attributes = attributes || '{"unsubscribed": false}'::jsonb, updated_at = now()
+               WHERE workspace_id = $1 AND id = $2`,
+        values: [ctx.workspaceId, profileId],
+      },
+    );
+  }
+  await campaignRunnerTx(pool, ctx.workspaceId, statements);
+  return ok({ unsubscribed: b.unsubscribed });
 };
 
 /** DELETE /topics/:id — hard-delete a topic (its subscription rows cascade). Scoped. */
@@ -4748,6 +4823,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'DELETE /topics/:id': deleteTopic,
   'GET /profiles/:id/subscriptions': listProfileSubscriptions,
   'PUT /profiles/:id/subscriptions': setProfileSubscriptions,
+  'PUT /profiles/:id/global-subscription': setProfileGlobalSubscription,
   'PUT /profiles/:id/topic-subscriptions/:topicId': setProfileTopicSubscription,
   'PUT /profiles/:id/channel-subscriptions/:group': setProfileChannelSubscription,
   'GET /text-templates': listTextTemplates,
