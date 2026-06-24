@@ -38,6 +38,7 @@ import {
   type EventFilterRow,
   readSetAttributeValue,
   writeSetAttributeConfig,
+  writeSetJourneyConfig,
   setAttributeFormHasKey,
   emptyAssignmentRow,
   readWebhookConfig,
@@ -76,6 +77,8 @@ export interface NodeEditorProps {
   /** The campaign's TRIGGER node (its startNode) — lets the IF editor offer a
    *  "Trigger event" condition (only when the trigger is an event) + its type. */
   readonly triggerNode?: { kind?: string; eventType?: string } | null | undefined;
+  /** Topics list (GET /topics) — feeds the per-send-node Topic picker. */
+  readonly topics: readonly { id: string; name: string }[];
   /** Persist a node config patch into the model (applyNodeConfig + PUT). */
   readonly onSaveNode: (patch: DslNode) => Promise<void>;
   /** Persist the trigger_segment_id into the DRAFT (PUT /campaigns/:id/draft). */
@@ -516,6 +519,9 @@ function SendEditor(props: NodeEditorProps) {
   const [pick, setPick] = useState('');
   const [envelope, setEnvelope] = useState<{ subject: string; sender_id: string | null; to_address: string } | null>(null);
   const [textBody, setTextBody] = useState<string>(() => readSendConfig(props.node.node).textBody);
+  // Per-node TOPIC the dispatcher gates this send on. null = no topic, never
+  // gated. Persisted into the node's `topic_id` field on save (writeSendConfig).
+  const [topicId, setTopicId] = useState<string | null>(() => readSendConfig(props.node.node).topicId ?? null);
   // Reusable text templates (SMS/WhatsApp). Picking one COPIES its body into the
   // body field (copy-on-select — the user can still edit). No live reference.
   const [textTemplates, setTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
@@ -538,21 +544,45 @@ function SendEditor(props: NodeEditorProps) {
   const changeMedium = (next: SendMedium): void => {
     setMedium(next);
     if (next === 'email') {
-      void props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, attachedId)).catch(() => undefined);
+      void props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '', topicId }, attachedId)).catch(() => undefined);
+    }
+  };
+  // Persist a topic change immediately for an EMAIL send (the same auto-save
+  // pattern as the medium flip — the explicit Save below covers text sends).
+  const changeTopic = (next: string | null): void => {
+    setTopicId(next);
+    if (medium === 'email') {
+      void props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '', topicId: next }, attachedId)).catch(() => undefined);
     }
   };
   const mediumSelect = (
-    <Field label="Channel">
-      <Select
-        data-testid="send-medium"
-        value={medium}
-        onChange={(e: Event) => changeMedium((e.target as HTMLSelectElement).value as SendMedium)}
-      >
-        <option value="email">Email</option>
-        <option value="sms">SMS</option>
-        <option value="whatsapp">WhatsApp</option>
-      </Select>
-    </Field>
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <Field label="Channel">
+        <Select
+          data-testid="send-medium"
+          value={medium}
+          onChange={(e: Event) => changeMedium((e.target as HTMLSelectElement).value as SendMedium)}
+        >
+          <option value="email">Email</option>
+          <option value="sms">SMS</option>
+          <option value="whatsapp">WhatsApp</option>
+        </Select>
+      </Field>
+      <Field label="Topic" hint="Recipients unsubscribed from this topic are skipped.">
+        <Select
+          data-testid="send-topic"
+          value={topicId ?? ''}
+          onChange={(e: Event) => changeTopic((e.target as HTMLSelectElement).value || null)}
+        >
+          <option value="">No topic</option>
+          {props.topics.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+    </div>
   );
 
   // A TEXT send (sms/whatsapp): a plain merge-tag body, saved into the node config.
@@ -562,7 +592,7 @@ function SendEditor(props: NodeEditorProps) {
         showToast('Add a message body before saving.', { tone: 'error' });
         return;
       }
-      await props.onSaveNode(writeSendConfig({ medium, textBody }));
+      await props.onSaveNode(writeSendConfig({ medium, textBody, topicId }));
       props.onDone();
     };
     return (
@@ -654,7 +684,7 @@ function SendEditor(props: NodeEditorProps) {
   const designEmail = async (): Promise<void> => {
     if (!props.campaignId) return;
     if (medium !== sendNodeMedium(props.node.node)) {
-      await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, attachedId)).catch(() => undefined);
+      await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '', topicId }, attachedId)).catch(() => undefined);
     }
     openEmailDesigner({
       id: attachedId ?? undefined,
@@ -664,7 +694,7 @@ function SendEditor(props: NodeEditorProps) {
         if (!attachedId && savedId) {
           // A blank design created a NEW copy → attach it to this send node and show
           // the instance RIGHT HERE (the editor stays open, no jarring close).
-          await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, savedId)).catch(() => undefined);
+          await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '', topicId }, savedId)).catch(() => undefined);
           setAttachedOverride(savedId);
         }
         await props.onReloadCampaign();
@@ -696,7 +726,7 @@ function SendEditor(props: NodeEditorProps) {
             variant="secondary"
             onClick={async () => {
               // Detach the copy and stay open showing the template picker (no close).
-              await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '' }, null));
+              await props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '', topicId }, null));
               setAttachedOverride(null);
               setEnvelope(null);
               setPick('');
@@ -751,9 +781,19 @@ const PLACEHOLDER_TOKENS: { label: string; token: string }[] = [
   { label: 'event.type', token: '{{event.type}}' },
   { label: 'event.amount', token: '{{event.amount}}' },
   { label: 'event.sku', token: '{{event.sku}}' },
+  { label: 'journey.*', token: '{{journey.}}' },
 ];
 
-function UpdateProfileEditor(props: NodeEditorProps) {
+/** UpdateJourneyEditor reuses the same form as Update Profile — only the emitted
+ *  DSL kind + the help text change. The runner writes resolved assignments to
+ *  `enrollment.state.journey` (per-enrollment, never the global profile). */
+function UpdateJourneyEditor(props: NodeEditorProps) {
+  return <UpdateProfileEditor {...props} kind="set_journey" />;
+}
+
+function UpdateProfileEditor(props: NodeEditorProps & { kind?: 'set_attribute' | 'set_journey' }) {
+  const kind = props.kind ?? 'set_attribute';
+  const isJourney = kind === 'set_journey';
   const init = readSetAttributeValue(props.node.node);
   const [rows, setRows] = useState<AssignmentRow[]>([...init.rows]);
 
@@ -778,13 +818,17 @@ function UpdateProfileEditor(props: NodeEditorProps) {
 
   const save = async (): Promise<void> => {
     if (!hasKey) return; // blocked inline (no native dialog)
-    await props.onSaveNode(writeSetAttributeConfig(form));
+    await props.onSaveNode(isJourney ? writeSetJourneyConfig(form) : writeSetAttributeConfig(form));
     props.onDone();
   };
 
   return (
     <div class="space-y-4">
-      <p class="text-sm text-stone-500">Set one or more profile attributes. Each value can be a fixed value, an expression with {'{{customer.*}}'} / {'{{event.*}}'} tokens, or a small sandboxed JavaScript snippet.</p>
+      <p class="text-sm text-stone-500">
+        {isJourney
+          ? <>Set one or more <strong>journey variables</strong> — scoped to THIS profile's run through THIS campaign (not the global profile). Read in messages as {'{{journey.<key>}}'}.</>
+          : <>Set one or more profile attributes. Each value can be a fixed value, an expression with {'{{customer.*}}'} / {'{{event.*}}'} / {'{{journey.*}}'} tokens, or a small sandboxed JavaScript snippet.</>}
+      </p>
       <div data-testid="assignment-rows" class="space-y-3">
         {rows.map((r, i) => (
           <div key={i} data-testid="assignment-row" class="rounded-xl border border-stone-200 p-3 space-y-2">
@@ -792,7 +836,7 @@ function UpdateProfileEditor(props: NodeEditorProps) {
               <Input
                 data-testid="assignment-key"
                 class="flex-1"
-                placeholder="attribute key (e.g. stage)"
+                placeholder={isJourney ? 'journey variable (e.g. step)' : 'attribute key (e.g. stage)'}
                 value={r.key}
                 onInput={(e: Event) => setRow(i, { key: (e.target as HTMLInputElement).value })}
               />
@@ -857,11 +901,13 @@ function UpdateProfileEditor(props: NodeEditorProps) {
       </div>
 
       <Button data-testid="assignment-add" variant="ghost" size="sm" onClick={addRow}>
-        + Add attribute
+        {isJourney ? '+ Add journey variable' : '+ Add attribute'}
       </Button>
 
       {!hasKey ? (
-        <p data-testid="update-incomplete" class="text-sm text-amber-600">Enter at least one attribute key before saving.</p>
+        <p data-testid="update-incomplete" class="text-sm text-amber-600">
+          {isJourney ? 'Enter at least one journey variable key before saving.' : 'Enter at least one attribute key before saving.'}
+        </p>
       ) : null}
       <div class="flex justify-end">
         <Button data-testid="node-save" disabled={!hasKey} onClick={save}>
@@ -1016,6 +1062,7 @@ export function nodeEditorTitle(node: CanvasNode): string {
     condition: 'Edit condition',
     send: 'Edit send communication',
     set_attribute: 'Update profile',
+    set_journey: 'Update journey',
     webhook: 'Edit webhook',
     exit: 'Exit step',
   };
@@ -1039,6 +1086,8 @@ export function NodeEditorBody(props: NodeEditorProps) {
       return <SendEditor {...props} />;
     case 'set_attribute':
       return <UpdateProfileEditor {...props} />;
+    case 'set_journey':
+      return <UpdateJourneyEditor {...props} />;
     case 'webhook':
       return <WebhookEditor {...props} />;
     case 'exit':

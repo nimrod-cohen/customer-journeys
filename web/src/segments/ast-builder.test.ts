@@ -8,6 +8,11 @@ import {
   groupFromAst,
   emptySegmentRow,
   emptyTriggerEventRow,
+  parseValue,
+  rowToCondition,
+  OPERATOR_CATALOG,
+  OPERATOR_GROUPS,
+  OPERATOR_META,
   type RuleGroup,
   type SegmentNode,
   type TriggerEventNode,
@@ -73,6 +78,58 @@ describe('trigger-event row (payload-only filter)', () => {
     const g = groupFromAst(node);
     expect(g.rows[0]).toMatchObject({ kind: 'trigger_event', triggerMatch: 'any' });
     expect(g.rows[0]!.conditions).toEqual([{ field: 'sku', operator: '=', value: 'X1' }]);
+  });
+});
+
+describe('typed operator catalog', () => {
+  it('every catalog entry is keyed in OPERATOR_META and belongs to exactly one group', () => {
+    for (const m of OPERATOR_CATALOG) {
+      expect(OPERATOR_META[m.value]).toBe(m);
+      expect(OPERATOR_GROUPS.find((g) => g.group === m.group)?.ops.includes(m)).toBe(true);
+    }
+  });
+
+  it('parseValue("between", "5,20") → numeric pair [5, 20]', () => {
+    expect(parseValue('between', '5,20')).toEqual([5, 20]);
+  });
+
+  it('parseValue("contains", "Gold") keeps the string as-is (no numeric coercion)', () => {
+    expect(parseValue('contains', 'Gold')).toBe('Gold');
+  });
+
+  it('parseValue("before duration ago", "30|days") → {amount, unit}', () => {
+    expect(parseValue('before duration ago', '30|days')).toEqual({ amount: 30, unit: 'days' });
+  });
+
+  it('parseValue("before duration ago", "45|minutes") → minutes unit', () => {
+    expect(parseValue('before duration ago', '45|minutes')).toEqual({ amount: 45, unit: 'minutes' });
+  });
+
+  it('parseValue("is in the past", anything) → undefined (no value)', () => {
+    expect(parseValue('is in the past', '')).toBeUndefined();
+  });
+
+  it('parseValue("before duration ago", "7|bogus") → defaults unit to days', () => {
+    expect(parseValue('before duration ago', '7|bogus')).toEqual({ amount: 7, unit: 'days' });
+  });
+
+  it('parseValue("after date", "2026-01-01") → kept as ISO string', () => {
+    expect(parseValue('after date', '2026-01-01')).toBe('2026-01-01');
+  });
+
+  it('rowToCondition for "not exists" drops the value entirely', () => {
+    expect(rowToCondition({ field: 'attributes.tier', operator: 'not exists', value: '' })).toEqual({
+      field: 'attributes.tier',
+      operator: 'not exists',
+    });
+  });
+
+  it('rowToCondition for "contains" emits the operator with the raw string value', () => {
+    expect(rowToCondition({ field: 'email', operator: 'contains', value: 'gmail' })).toEqual({
+      field: 'email',
+      operator: 'contains',
+      value: 'gmail',
+    });
   });
 });
 

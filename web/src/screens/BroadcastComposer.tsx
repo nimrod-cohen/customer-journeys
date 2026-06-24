@@ -706,12 +706,14 @@ export function BroadcastWizard({ id }: { id?: string }) {
 
   return (
     <section data-testid="broadcast-wizard">
-      <button data-testid="broadcasts-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/broadcasts')}>
-        ← Back to broadcasts
-      </button>
       <PageHeader
         title={editing ? 'Edit broadcast' : 'New broadcast'}
         subtitle="Pick an audience and content, then send now or schedule."
+        back={
+          <button data-testid="broadcasts-back" class="btn-ghost btn-sm whitespace-nowrap" onClick={() => navigate('/broadcasts')}>
+            ← Back to broadcasts
+          </button>
+        }
       />
 
       {/* Step indicator — click any reachable step to jump straight to it. */}
@@ -1103,12 +1105,14 @@ function BroadcastPreview({ id }: { id: string }) {
 
   return (
     <section data-testid="broadcast-preview">
-      <button data-testid="broadcasts-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/broadcasts')}>
-        ← Back to broadcasts
-      </button>
       <PageHeader
         title={data?.name ?? 'Broadcast'}
         subtitle={`A read-only preview of the ${isText ? `${MEDIUM_LABEL[medium]} message` : 'email'} for this broadcast.`}
+        back={
+          <button data-testid="broadcasts-back" class="btn-ghost btn-sm whitespace-nowrap" onClick={() => navigate('/broadcasts')}>
+            ← Back to broadcasts
+          </button>
+        }
         actions={
           data ? (
             <div class="flex items-center gap-2">

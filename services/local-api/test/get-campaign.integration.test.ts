@@ -103,32 +103,7 @@ describeMaybe('GET /campaigns/:id — definition round-trip (real Postgres)', ()
     expect(() => validateCampaignDefinition(def)).not.toThrow();
   });
 
-  it('PUT /campaigns/:id sets a workspace topic_id; GET surfaces it; a foreign topic is rejected', async () => {
-    const created = await call(world.env, 'POST', '/campaigns', {
-      token: tok(),
-      body: { name: 'Topiced', definition: linearDef },
-    });
-    const id = (created.body as { campaign: { id: string } }).campaign.id;
-
-    // Set an in-workspace topic.
-    const put = await call(world.env, 'PUT', `/campaigns/${id}`, { token: tok(), body: { topic_id: TOPIC } });
-    expect(put.status).toBe(200);
-    const got = await call(world.env, 'GET', `/campaigns/${id}`, { token: tok() });
-    expect((got.body as { campaign: { topic_id: string | null } }).campaign.topic_id).toBe(TOPIC);
-
-    // A FOREIGN topic id is rejected (inv.2) — the stored topic is unchanged.
-    const bad = await call(world.env, 'PUT', `/campaigns/${id}`, { token: tok(), body: { topic_id: TOPIC_OTHER } });
-    expect(bad.status).toBe(400);
-    expect((bad.body as { error?: string }).error).toMatch(/topic_id not found/i);
-    const after = await call(world.env, 'GET', `/campaigns/${id}`, { token: tok() });
-    expect((after.body as { campaign: { topic_id: string | null } }).campaign.topic_id).toBe(TOPIC);
-
-    // Clearing the topic (null) is allowed.
-    const clear = await call(world.env, 'PUT', `/campaigns/${id}`, { token: tok(), body: { topic_id: null } });
-    expect(clear.status).toBe(200);
-    const cleared = await call(world.env, 'GET', `/campaigns/${id}`, { token: tok() });
-    expect((cleared.body as { campaign: { topic_id: string | null } }).campaign.topic_id).toBeNull();
-  });
+  // (campaign-level topic_id PATCH was removed — topic moved to per-send-node config)
 
   it('404s for a campaign in ANOTHER workspace (token-scoped, inv.2)', async () => {
     const created = await call(world.env, 'POST', '/campaigns', {

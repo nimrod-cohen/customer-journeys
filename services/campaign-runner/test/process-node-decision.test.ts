@@ -47,7 +47,7 @@ describe('processNode', () => {
     const node: Node = { type: 'action', kind: 'send', template_id: 'tpl', next: 'x' };
     const r = processNode(node, state(), false, NOW);
     expect(r.disposition).toBe('advance');
-    expect(r.sideEffects).toEqual([{ kind: 'send', medium: 'email', templateId: 'tpl', textBody: null, nodeId: '' }]);
+    expect(r.sideEffects).toEqual([{ kind: 'send', medium: 'email', templateId: 'tpl', textBody: null, topicId: null, nodeId: '' }]);
   });
 
   it('action send with an sms medium emits a TEXT send side effect (body, no template)', () => {
@@ -55,8 +55,14 @@ describe('processNode', () => {
     const r = processNode(node, state(), false, NOW);
     expect(r.disposition).toBe('advance');
     expect(r.sideEffects).toEqual([
-      { kind: 'send', medium: 'sms', templateId: null, textBody: 'Hi {{customer.first_name}}', nodeId: '' },
+      { kind: 'send', medium: 'sms', templateId: null, textBody: 'Hi {{customer.first_name}}', topicId: null, nodeId: '' },
     ]);
+  });
+
+  it('action send carries a per-node topic_id onto the SendEffect', () => {
+    const node: Node = { type: 'action', kind: 'send', template_id: 'tpl', topic_id: 'tpc-1', next: 'x' };
+    const r = processNode(node, state(), false, NOW);
+    expect(r.sideEffects).toEqual([{ kind: 'send', medium: 'email', templateId: 'tpl', textBody: null, topicId: 'tpc-1', nodeId: '' }]);
   });
 
   it('action set_attribute emits a set_attribute side effect', () => {

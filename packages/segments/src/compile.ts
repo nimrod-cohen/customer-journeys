@@ -148,29 +148,122 @@ const COUNTER_PREFIX = 'features.counters.';
 
 /**
  * The whitelisted operators (§8). Maps the AST operator token to how it renders.
- * `in`/`not in` bind the WHOLE array as ONE param via `= ANY($n)` / `!= ALL($n)`.
- * `exists` takes no value and renders `IS NOT NULL`.
+ * Grouped by the value type each one implies, so the UI can present a typed
+ * comparator picker:
+ *   - "common": works for both strings and numbers (=, !=, >, >=, <, <=, in,
+ *     not in, between, exists, not exists)
+ *   - "string": case-insensitive substring/prefix/suffix (contains, not
+ *     contains, starts with, ends with)
+ *   - "timestamp": time-aware comparisons against a clock (before duration
+ *     ago, within next duration, is in the past, is in the future, after
+ *     date, before date). Duration ops take a {amount, unit} value where unit
+ *     is one of 'days' | 'hours' | 'minutes'. Works against both scalar
+ *     timestamptz columns AND text-jsonb values that hold ISO strings or unix
+ *     seconds/millis — see `tsExpr` for the coercion CASE.
  */
-export type OperatorToken = '=' | '!=' | '>' | '>=' | '<' | '<=' | 'in' | 'not in' | 'exists';
+export type OperatorToken =
+  | '='
+  | '!='
+  | '>'
+  | '>='
+  | '<'
+  | '<='
+  | 'in'
+  | 'not in'
+  | 'between'
+  | 'exists'
+  | 'not exists'
+  // string ops (case-insensitive)
+  | 'contains'
+  | 'not contains'
+  | 'starts with'
+  | 'ends with'
+  // timestamp ops
+  | 'before duration ago'
+  | 'in the last duration'
+  | 'within next duration'
+  | 'is in the past'
+  | 'is in the future'
+  | 'after date'
+  | 'before date';
+
+export type OperatorGroup = 'common' | 'string' | 'timestamp';
 
 interface OperatorSpec {
-  /** Whether the operator consumes a value (exists does not). */
+  /** Whether the operator consumes a value (exists/not exists do not). */
   readonly takesValue: boolean;
   /** Whether the value is an array bound as a single param (in / not in). */
   readonly arrayParam: boolean;
+  /** Whether the value is a 2-tuple [min,max] (between). */
+  readonly pairValue?: boolean;
+  /** Semantic group — used by the UI to render an optgroup'd picker. */
+  readonly group: OperatorGroup;
 }
 
 export const OPERATORS: Readonly<Record<OperatorToken, OperatorSpec>> = {
-  '=': { takesValue: true, arrayParam: false },
-  '!=': { takesValue: true, arrayParam: false },
-  '>': { takesValue: true, arrayParam: false },
-  '>=': { takesValue: true, arrayParam: false },
-  '<': { takesValue: true, arrayParam: false },
-  '<=': { takesValue: true, arrayParam: false },
-  in: { takesValue: true, arrayParam: true },
-  'not in': { takesValue: true, arrayParam: true },
-  exists: { takesValue: false, arrayParam: false },
+  '=': { takesValue: true, arrayParam: false, group: 'common' },
+  '!=': { takesValue: true, arrayParam: false, group: 'common' },
+  '>': { takesValue: true, arrayParam: false, group: 'common' },
+  '>=': { takesValue: true, arrayParam: false, group: 'common' },
+  '<': { takesValue: true, arrayParam: false, group: 'common' },
+  '<=': { takesValue: true, arrayParam: false, group: 'common' },
+  in: { takesValue: true, arrayParam: true, group: 'common' },
+  'not in': { takesValue: true, arrayParam: true, group: 'common' },
+  between: { takesValue: true, arrayParam: false, pairValue: true, group: 'common' },
+  exists: { takesValue: false, arrayParam: false, group: 'common' },
+  'not exists': { takesValue: false, arrayParam: false, group: 'common' },
+  // String — case-insensitive (ILIKE)
+  contains: { takesValue: true, arrayParam: false, group: 'string' },
+  'not contains': { takesValue: true, arrayParam: false, group: 'string' },
+  'starts with': { takesValue: true, arrayParam: false, group: 'string' },
+  'ends with': { takesValue: true, arrayParam: false, group: 'string' },
+  // Timestamp
+  'before duration ago': { takesValue: true, arrayParam: false, group: 'timestamp' },
+  'in the last duration': { takesValue: true, arrayParam: false, group: 'timestamp' },
+  'within next duration': { takesValue: true, arrayParam: false, group: 'timestamp' },
+  'is in the past': { takesValue: false, arrayParam: false, group: 'timestamp' },
+  'is in the future': { takesValue: false, arrayParam: false, group: 'timestamp' },
+  'after date': { takesValue: true, arrayParam: false, group: 'timestamp' },
+  'before date': { takesValue: true, arrayParam: false, group: 'timestamp' },
 };
+
+/** Allowed duration units for the timestamp-duration ops. Whitelisted because
+ *  the unit becomes part of the SQL interval text (never bound as a param). */
+export type DurationUnit = 'days' | 'hours' | 'minutes';
+const DURATION_INTERVAL: Readonly<Record<DurationUnit, string>> = {
+  days: `interval '1 day'`,
+  hours: `interval '1 hour'`,
+  minutes: `interval '1 minute'`,
+};
+function parseDurationValue(value: unknown): { amount: number; unit: DurationUnit } {
+  // Accepts either {amount, unit} (the canonical shape) or a bare number
+  // (legacy/back-compat — defaults to days).
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return { amount: value, unit: 'days' };
+  }
+  if (
+    value &&
+    typeof value === 'object' &&
+    'amount' in value &&
+    'unit' in value &&
+    typeof (value as { amount: unknown }).amount === 'number' &&
+    Number.isFinite((value as { amount: number }).amount)
+  ) {
+    const v = value as { amount: number; unit: unknown };
+    if (v.unit === 'days' || v.unit === 'hours' || v.unit === 'minutes') {
+      return { amount: v.amount, unit: v.unit };
+    }
+  }
+  throw new Error('compileWhere: duration value must be { amount: number, unit: days|hours|minutes }');
+}
+
+/** Scalar profile/feature columns that are already PostgreSQL timestamptz.
+ *  Used by `tsExpr` to skip the text-coercion CASE for these. */
+const KNOWN_TIMESTAMP_COLUMNS: ReadonlySet<string> = new Set([
+  'p.created_at',
+  'pf.last_event_at',
+  'pf.last_email_open_at',
+]);
 
 /** A resolved field: the column expression plus an optional jsonb key to bind. */
 export interface ResolvedField {
@@ -407,6 +500,24 @@ function renderColumn(field: ResolvedField, params: ParamBuilder): string {
 }
 
 /**
+ * Coerce a column expression to a timestamptz for time-aware comparisons.
+ * Scalar timestamptz columns (created_at, last_event_at, last_email_open_at)
+ * pass through unchanged. Text-jsonb extractions get a CASE that recognizes
+ * unix-millis (13 digits), unix-seconds (10 digits), or ISO strings — so a
+ * payload key holding any of those formats compares correctly without the
+ * admin having to pick a "type".
+ */
+function tsExpr(col: string): string {
+  if (KNOWN_TIMESTAMP_COLUMNS.has(col)) return col;
+  return `(CASE
+    WHEN ${col} ~ '^[0-9]{13}$' THEN to_timestamp((${col})::bigint / 1000.0)
+    WHEN ${col} ~ '^[0-9]{10}$' THEN to_timestamp((${col})::bigint)
+    WHEN ${col} IS NOT NULL THEN (${col})::timestamptz
+    ELSE NULL
+  END)`;
+}
+
+/**
  * Render a parameterized predicate for an already-resolved column expression.
  * Shared by profile/feature conditions (`renderColumn`) and event-payload
  * conditions (`e.payload ->> $key`), so operator handling lives in ONE place.
@@ -418,25 +529,79 @@ function compilePredicate(
   params: ParamBuilder,
 ): string {
   const spec = OPERATORS[op];
-  if (op === 'exists') {
-    return `${col} IS NOT NULL`;
-  }
+  if (op === 'exists') return `${col} IS NOT NULL`;
+  if (op === 'not exists') return `${col} IS NULL`;
+  // Valueless timestamp ops — handled before the catch-all !takesValue guard.
+  if (op === 'is in the past') return `${tsExpr(col)} < now()`;
+  if (op === 'is in the future') return `${tsExpr(col)} > now()`;
   if (!spec.takesValue) {
-    // Defensive: only `exists` is valueless and handled above.
     throw new Error(`compileWhere: operator "${op}" has no value handler`);
   }
   if (spec.arrayParam) {
     if (!Array.isArray(value)) {
       throw new Error(`compileWhere: operator "${op}" requires an array value`);
     }
-    // Bind the WHOLE array as ONE param.
     const arrParam = params.bind(value);
     if (op === 'in') return `${col} = ANY(${arrParam})`;
     return `${col} != ALL(${arrParam})`;
   }
+  if (spec.pairValue) {
+    // between: value is [min, max], bound as 2 params.
+    if (!Array.isArray(value) || value.length !== 2) {
+      throw new Error(`compileWhere: operator "${op}" requires a [min, max] tuple`);
+    }
+    const a = params.bind(value[0]);
+    const b = params.bind(value[1]);
+    return `${col} BETWEEN ${a} AND ${b}`;
+  }
+  // String ops — case-insensitive substring/prefix/suffix via ILIKE. Bind the
+  // raw needle so % characters in user input are treated literally.
+  if (op === 'contains' || op === 'not contains' || op === 'starts with' || op === 'ends with') {
+    const needle = String(value ?? '');
+    const pattern =
+      op === 'contains' || op === 'not contains'
+        ? `%${escapeLikePattern(needle)}%`
+        : op === 'starts with'
+          ? `${escapeLikePattern(needle)}%`
+          : `%${escapeLikePattern(needle)}`;
+    const p = params.bind(pattern);
+    const negate = op === 'not contains';
+    return `${col} ${negate ? 'NOT ILIKE' : 'ILIKE'} ${p}`;
+  }
+  // Timestamp ops — coerce the column to timestamptz first.
+  if (op === 'before duration ago') {
+    const { amount, unit } = parseDurationValue(value);
+    const d = params.bind(amount);
+    return `${tsExpr(col)} < now() - (${d}::numeric * ${DURATION_INTERVAL[unit]})`;
+  }
+  if (op === 'in the last duration') {
+    // Recent past: between (now - N) and now, exclusive of older, inclusive of now.
+    const { amount, unit } = parseDurationValue(value);
+    const d = params.bind(amount);
+    const e = tsExpr(col);
+    return `(${e} > now() - (${d}::numeric * ${DURATION_INTERVAL[unit]}) AND ${e} <= now())`;
+  }
+  if (op === 'within next duration') {
+    const { amount, unit } = parseDurationValue(value);
+    const d = params.bind(amount);
+    return `${tsExpr(col)} BETWEEN now() AND now() + (${d}::numeric * ${DURATION_INTERVAL[unit]})`;
+  }
+  if (op === 'after date') {
+    const p = params.bind(String(value));
+    return `${tsExpr(col)} > ${p}::timestamptz`;
+  }
+  if (op === 'before date') {
+    const p = params.bind(String(value));
+    return `${tsExpr(col)} < ${p}::timestamptz`;
+  }
   // Scalar comparison: value is bound as a single $n placeholder.
   const valParam = params.bind(value);
   return `${col} ${op} ${valParam}`;
+}
+
+/** Escape LIKE wildcards (% and _) so user input matches literally. */
+function escapeLikePattern(s: string): string {
+  return s.replace(/[\\%_]/g, (m) => `\\${m}`);
 }
 
 /** Compile a single leaf condition (profile attribute / feature / scalar field). */

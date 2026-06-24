@@ -1,9 +1,10 @@
 // Help (§12): reference material for the data model marketers most often
 // conflate — email deliverability vs. consent vs. the suppression send-gate.
 // Always visible (capability: null). Static content; no API calls.
+import type { ComponentChildren } from 'preact';
 import { Badge, Card, PageHeader } from '../ui/kit.js';
 
-function Code({ children }: { children: string }) {
+function Code({ children }: { children: ComponentChildren }) {
   return <code class="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[0.85em] text-ink-900">{children}</code>;
 }
 
@@ -245,6 +246,96 @@ export function Help() {
           <b>production access</b> (SES console → <b>Account dashboard → Request production access</b>).
           Until your company has saved SES credentials, verification here is <b>simulated</b> (a
           local test mode) so you can explore the flow.
+        </p>
+      </Card>
+
+      {/* ── Merge tags reference ───────────────────────────────────────── */}
+      <Card class="mb-6 p-6" data-testid="help-merge-tags">
+        <h2 class="text-lg font-bold text-ink-950">Personalization tokens <Code>{'{{…}}'}</Code></h2>
+        <p class="mt-1 text-sm text-stone-600">
+          Anywhere inside a campaign communication (email subject, email body, SMS / WhatsApp body,
+          even a webhook body) you can drop a <Code>{'{{token}}'}</Code> placeholder. At send time
+          it's substituted with the recipient's value. Unknown / missing tokens render as the
+          empty string — they never leak the literal braces.
+        </p>
+
+        {/* 1. customer.* */}
+        <div class="mt-6 border-l-2 border-brand-300 pl-4">
+          <h3 class="font-bold text-ink-900">
+            1. <Code>customer.*</Code> — the recipient's profile <span class="text-stone-400">(static identity + saved attributes)</span>
+          </h3>
+          <p class="mt-1 text-sm text-stone-600">
+            Built-ins come from the <b>profile row</b>; everything else reads a <b>custom
+            attribute</b> (<Code>customer.tier</Code> is shorthand for <Code>customer.attributes.tier</Code>
+            — both resolve to the same value).
+          </p>
+          <ul class="mt-2 space-y-1.5 text-sm text-stone-700">
+            <li>• <Code>{'{{customer.email}}'}</Code> — the recipient's email address</li>
+            <li>• <Code>{'{{customer.external_id}}'}</Code> — your system's id for this profile</li>
+            <li>• <Code>{'{{customer.first_name}}'}</Code>, <Code>{'{{customer.last_name}}'}</Code></li>
+            <li>• <Code>{'{{customer.&lt;any_attribute&gt;}}'}</Code> — any key set via the Update profile node, the importer, or your ingest events</li>
+          </ul>
+        </div>
+
+        {/* 2. event.* */}
+        <div class="mt-6 border-l-2 border-violet-300 pl-4">
+          <h3 class="font-bold text-ink-900">
+            2. <Code>event.*</Code> — the <em>triggering</em> event's payload <span class="text-stone-400">(only for event-triggered campaigns)</span>
+          </h3>
+          <p class="mt-1 text-sm text-stone-600">
+            When a campaign is triggered by an event (e.g. <Code>lead</Code>, <Code>webinar_completed</Code>),
+            the <b>whole event payload</b> is frozen on this enrollment. Reach into it with deep
+            dotted paths — the same one the event ingested with.
+          </p>
+          <ul class="mt-2 space-y-1.5 text-sm text-stone-700">
+            <li>• <Code>{'{{event.type}}'}</Code> — the event name</li>
+            <li>• <Code>{'{{event.amount}}'}</Code> — a top-level field on the payload</li>
+            <li>• <Code>{'{{event.webinar_data.link}}'}</Code> — deep paths walk into nested objects</li>
+            <li>• <Code>{'{{event.items.0.sku}}'}</Code> — numeric segments index into arrays</li>
+          </ul>
+          <p class="mt-2 text-xs text-stone-500">
+            For manual / segment-entry triggers there's no event payload, so any{' '}
+            <Code>{'{{event.*}}'}</Code> resolves to empty.
+          </p>
+        </div>
+
+        {/* 3. journey.* */}
+        <div class="mt-6 border-l-2 border-emerald-300 pl-4">
+          <h3 class="font-bold text-ink-900">
+            3. <Code>journey.*</Code> — per-enrollment variables <span class="text-stone-400">(this profile's run, this campaign)</span>
+          </h3>
+          <p class="mt-1 text-sm text-stone-600">
+            Use an <b>Update journey</b> node to set a variable that lives <em>only</em> on this
+            profile's journey through <em>this</em> campaign — it never touches the global profile.
+            Read it back later in the same campaign with <Code>{'{{journey.&lt;key&gt;}}'}</Code>.
+            Keys are <b>freeform</b> — type whatever you want; unset keys read as empty.
+          </p>
+          <p class="mt-2 text-sm text-stone-700">
+            Example: an Update journey node sets <Code>cohort = "launch"</Code> at the start of the
+            flow; a later email body says <em>"Welcome to the <Code>{'{{journey.cohort}}'}</Code> cohort"</em>.
+          </p>
+        </div>
+
+        {/* 4. unsubscribe links */}
+        <div class="mt-6 border-l-2 border-stone-300 pl-4">
+          <h3 class="font-bold text-ink-900">
+            4. Unsubscribe tokens <span class="text-stone-400">(built-ins, email only)</span>
+          </h3>
+          <ul class="mt-2 space-y-1.5 text-sm text-stone-700">
+            <li>• <Code>{'{{unsubscribe_url}}'}</Code> — the raw preference-center URL for this recipient</li>
+            <li>• <Code>{'{{unsubscribe}}'}</Code> — a ready-made anchor (use when you don't want to style your own link)</li>
+          </ul>
+          <p class="mt-2 text-xs text-stone-500">
+            Both carry a tamper-proof token that identifies the recipient — never hand-build the
+            link.
+          </p>
+        </div>
+
+        <p class="mt-5 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600 ring-1 ring-inset ring-stone-200">
+          Whitespace around tokens is tolerated (<Code>{'{{ customer.email }}'}</Code> works the same).
+          The same tokens are also valid in an <b>Update profile</b> / <b>Update journey</b>{' '}
+          <em>expression</em> value — e.g. setting <Code>attributes.last_event_type =
+          {' {{event.type}}'}</Code>.
         </p>
       </Card>
     </section>

@@ -5,7 +5,7 @@
 // renders the body merge tags + {{customer.phone}} To and sends via the mock provider
 // → messages_log(campaign_id, medium='sms') with a mock provider id. Asserts:
 //   - the outbox payload carries medium + text_body for a text send;
-//   - topic-gating skips a topic-unsubscribed profile (campaigns.topic_id);
+//   - topic-gating skips a topic-unsubscribed profile (per-send-node topic_id);
 //   - idempotent re-tick (no second outbox/send);
 //   - an EMAIL campaign send still works (regression — outbox.template_id, SES);
 //   - everything workspace-scoped (a parallel WS_B campaign untouched).
@@ -173,10 +173,22 @@ describeMaybe('multi-channel campaign send node (real Postgres)', () => {
     return p.rows[0]!.id;
   }
 
+  // makeCampaign accepts a topic_id which is INJECTED into every send node of
+  // the definition (per-node topic_id is where the gate now lives).
   async function makeCampaign(ws: string, definition: object, topicId: string | null): Promise<string> {
+    const def = topicId
+      ? (() => {
+          const d = JSON.parse(JSON.stringify(definition)) as { nodes: Record<string, Record<string, unknown>> };
+          for (const k of Object.keys(d.nodes)) {
+            const n = d.nodes[k]!;
+            if (n.type === 'action' && n.kind === 'send') n.topic_id = topicId;
+          }
+          return d;
+        })()
+      : definition;
     const c = await admin.query<{ id: string }>(
-      "INSERT INTO campaigns (workspace_id, name, definition, status, topic_id) VALUES ($1,'C',$2::jsonb,'active',$3) RETURNING id",
-      [ws, JSON.stringify(definition), topicId],
+      "INSERT INTO campaigns (workspace_id, name, definition, status) VALUES ($1,'C',$2::jsonb,'active') RETURNING id",
+      [ws, JSON.stringify(def)],
     );
     return c.rows[0]!.id;
   }

@@ -71,8 +71,7 @@ export function SendingDomainDetail({ id }: { id?: string }) {
   if (isNew) {
     return (
       <section data-testid="domain-detail">
-        <BackLink />
-        <PageHeader title="Add a sending domain" subtitle="Save the domain, then verify it and add senders." />
+        <PageHeader title="Add a sending domain" subtitle="Save the domain, then verify it and add senders." back={<BackLink />} />
         <Card class="max-w-xl p-5">
           <label class="block text-sm font-semibold text-stone-600">Domain</label>
           <div class="mt-2 flex gap-2">
@@ -101,7 +100,7 @@ export function SendingDomainDetail({ id }: { id?: string }) {
 
 function BackLink() {
   return (
-    <button data-testid="domain-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/settings/domains')}>
+    <button data-testid="domain-back" class="btn-ghost btn-sm whitespace-nowrap" onClick={() => navigate('/settings/domains')}>
       ← Back to domains
     </button>
   );
@@ -242,10 +241,10 @@ function DomainEditor({ id }: { id: string }) {
 
   return (
     <section data-testid="domain-detail">
-      <BackLink />
       <PageHeader
         title={domain.domain}
         subtitle="Publish the DNS records, then check to verify. Senders can be added once the domain is verified."
+        back={<BackLink />}
         actions={
           <span class="flex items-center gap-3">
             <Badge data-testid="domain-status" tone={domain.verified ? 'success' : 'warn'}>

@@ -244,18 +244,34 @@ export function PageHeader({
   title,
   subtitle,
   actions,
+  back,
+  compact,
 }: {
   title: string;
   subtitle?: string;
   actions?: ComponentChildren;
+  /** Back link rendered on the right side of the title row, vertically centered. */
+  back?: ComponentChildren;
+  /** Trims the header's bottom margin — for screens (e.g. campaign builder)
+   *  where the content immediately below is tight and the default mb-6 wastes
+   *  too much vertical space. */
+  compact?: boolean;
 }): JSX.Element {
+  // Title (1fr) + right-side controls (max-content) on a single row, vertically
+  // centered. Right side stacks back-link first, then actions. On narrow screens
+  // the whole header reflows into a column.
   return (
-    <header class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between sm:gap-4">
+    <header class={`${compact ? 'mb-3' : 'mb-6'} flex flex-col gap-3 sm:grid sm:[grid-template-columns:minmax(0,1fr)_max-content] sm:items-center sm:gap-4`}>
       <div class="min-w-0">
         <h1 class="text-xl font-bold text-ink-950 sm:text-2xl">{title}</h1>
         {subtitle ? <p class="mt-1 text-sm text-stone-500">{subtitle}</p> : null}
       </div>
-      {actions ? <div class="flex flex-wrap items-center gap-2">{actions}</div> : null}
+      {back || actions ? (
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          {back}
+          {actions}
+        </div>
+      ) : null}
     </header>
   );
 }

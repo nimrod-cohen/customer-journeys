@@ -333,33 +333,49 @@ export function sendNodeMedium(node: DslNode): SendMedium {
   return m === 'sms' || m === 'whatsapp' ? m : 'email';
 }
 
-/** The SEND editor's channel form (medium + the plain text body for sms/whatsapp). */
+/** The SEND editor's channel form: medium + (text body for sms/whatsapp) + the
+ *  per-node TOPIC the dispatcher gates this send on. Missing/null = no gate. */
 export interface SendForm {
   readonly medium: SendMedium;
   readonly textBody: string;
+  /** Optional — defaults to null (no topic). */
+  readonly topicId?: string | null;
 }
 
-/** Read a send node into its channel form (medium + body). Email back-compat. */
+/** A send node's per-node TOPIC id (null when none set). The dispatcher gates the
+ *  send on this — a recipient unsubscribed from this topic is skipped. */
+export function sendNodeTopicId(node: DslNode): string | null {
+  const t = (node as { topic_id?: unknown }).topic_id;
+  return typeof t === 'string' && t.length > 0 ? t : null;
+}
+
+/** Read a send node into its channel form (medium + body + topic). */
 export function readSendConfig(node: DslNode): SendForm {
   const tb = (node as { text_body?: unknown }).text_body;
-  return { medium: sendNodeMedium(node), textBody: typeof tb === 'string' ? tb : '' };
+  return {
+    medium: sendNodeMedium(node),
+    textBody: typeof tb === 'string' ? tb : '',
+    topicId: sendNodeTopicId(node),
+  };
 }
 
 /**
- * Serialize a send node's channel config (medium + body). For EMAIL the body is
- * dropped and the existing template copy id (`keepTemplateId`) is preserved — the
- * email instance is attached/designed through the clone flow, not this editor. For
- * a TEXT send (sms/whatsapp) the trimmed body is carried and NO template_id is set
- * (a text send has no template). Edges are re-applied by applyNodeConfig.
+ * Serialize a send node's channel config (medium + body + topic). For EMAIL the
+ * body is dropped and the existing template copy id (`keepTemplateId`) is
+ * preserved — the email instance is attached/designed through the clone flow,
+ * not this editor. For a TEXT send (sms/whatsapp) the trimmed body is carried
+ * and NO template_id is set. topic_id (per-node) is stamped on either channel.
+ * Edges are re-applied by applyNodeConfig.
  */
 export function writeSendConfig(form: SendForm, keepTemplateId?: string | null): DslNode {
   // applyNodeConfig MERGES the patch onto the existing node, so to flip channels
   // cleanly we must explicitly clear the OTHER channel's fields (undefined keys are
   // dropped on JSON persist) — otherwise a stale template_id/text_body strands.
+  const topic_id = form.topicId ?? undefined;
   if (isTextSendMedium(form.medium)) {
-    return { type: 'action', kind: 'send', medium: form.medium, text_body: form.textBody.trim(), template_id: undefined } as unknown as DslNode;
+    return { type: 'action', kind: 'send', medium: form.medium, text_body: form.textBody.trim(), template_id: undefined, topic_id } as unknown as DslNode;
   }
-  return { type: 'action', kind: 'send', medium: 'email', template_id: keepTemplateId ?? undefined, text_body: undefined } as unknown as DslNode;
+  return { type: 'action', kind: 'send', medium: 'email', template_id: keepTemplateId ?? undefined, text_body: undefined, topic_id } as unknown as DslNode;
 }
 
 // ── UPDATE-PROFILE (set_attribute) ──────────────────────────────────────────────
@@ -444,6 +460,25 @@ export function writeSetAttributeConfig(form: SetAttributeForm): DslNode {
 /** Whether the form has at least one assignment with a non-empty key (the save gate). */
 export function setAttributeFormHasKey(form: SetAttributeForm): boolean {
   return form.rows.some((r) => r.key.trim().length > 0);
+}
+
+// ── UPDATE-JOURNEY (set_journey) ───────────────────────────────────────────────
+// Shares EXACTLY the same form shape, value modes, and validation as
+// set_attribute — only the emitted DSL `kind` differs. The runner writes the
+// resolved assignments to `enrollment.state.journey` (per-enrollment vars) so
+// they're readable via {{journey.<key>}} in this campaign's communications.
+
+/** Read a set_journey node into the shared editor form (same shape as set_attribute). */
+export function readSetJourneyValue(node: DslNode): SetAttributeForm {
+  return readSetAttributeValue(node);
+}
+
+/** Serialize the shared editor form to a set_journey assignments LIST. */
+export function writeSetJourneyConfig(form: SetAttributeForm): DslNode {
+  const assignments = form.rows
+    .filter((r) => r.key.trim().length > 0)
+    .map((r) => ({ key: r.key.trim(), value: rowValueSpec(r) }));
+  return { type: 'action', kind: 'set_journey', assignments };
 }
 
 function scalarToString(v: unknown): string {

@@ -72,8 +72,7 @@ DROP POLICY IF EXISTS tenant_isolation ON channel_optouts;
 CREATE POLICY tenant_isolation ON channel_optouts
   USING (app_is_platform_admin() OR workspace_id = app_current_workspace_id());
 
--- A broadcast/campaign may be tagged with a topic (NULL = untopiced, sends to
--- everyone not hard-suppressed/medium-opted-out). Gating is wired for broadcasts
--- now; the campaigns column is ready for the follow-up.
+-- A broadcast may be tagged with a topic (NULL = untopiced, sends to everyone
+-- not hard-suppressed/medium-opted-out). For campaigns the topic lives per
+-- send-communication node inside the DSL — see ActionNode.topic_id.
 ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS topic_id uuid REFERENCES topics(id);
-ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS topic_id uuid REFERENCES topics(id);

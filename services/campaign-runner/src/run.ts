@@ -19,7 +19,14 @@
 // A legacy reader/runInWorkspaceTx path is retained for the in-memory unit tests
 // (deps without `withTx`); the real concurrency guarantee comes from `withTx`.
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
-import { isValidTimeZone, isJsSpec, resolveValueSpec, type CustomerProfile } from '@cdp/shared';
+import {
+  isValidTimeZone,
+  isJsSpec,
+  resolveValueSpec,
+  eventMerge,
+  journeyMerge,
+  type CustomerProfile,
+} from '@cdp/shared';
 import { evaluateJsValue } from './js-value.js';
 import { executeWebhook, type WebhookHttpClient } from '@cdp/runner-webhook';
 import {
@@ -31,6 +38,7 @@ import {
   buildCampaignOutboxInsert,
   buildCampaignDedupeKey,
   buildSetAttribute,
+  buildSetJourney,
   buildWebhookActivityInsert,
   isEnrollableCampaignStatus,
   DEFAULT_WORKSPACE_TZ,
@@ -132,17 +140,24 @@ interface EnrollmentRow {
   readonly next_run_at: Date | string | null;
   readonly updated_at: Date | string;
   /** The persisted enrollment state jsonb — carries the trigger event (event.*). */
-  readonly state?: { event?: { payload?: Record<string, unknown> } } | null;
+  readonly state?: {
+    event?: { payload?: Record<string, unknown> };
+    /** Per-enrollment journey-vars map (freeform; written by `set_journey`). */
+    journey?: Record<string, unknown>;
+  } | null;
 }
 
 /**
- * The recipient profile + the trigger event payload an in-tick set_attribute
- * resolves its value expression against (customer.* / event.*). Loaded once per
- * tick (the profile post-lock; the event from the immutable enrollment.state).
+ * The recipient profile + the trigger event payload + the per-enrollment
+ * journey vars that an in-tick set_attribute / set_journey resolves its value
+ * expression against (customer.* / event.* / journey.*). Loaded once per tick
+ * (profile post-lock; event + journey from the immutable enrollment.state).
  */
 interface ResolveContext {
   readonly profile: CustomerProfile;
   readonly event?: unknown;
+  /** The persisted per-enrollment journey-vars map (state.journey). */
+  readonly journey?: unknown;
 }
 
 /**
@@ -259,10 +274,22 @@ async function chainTick(
         // PAYLOAD so the Dispatcher (which has no broadcast row for a campaign send)
         // renders {{customer.phone}} → provider via the existing text path. An EMAIL
         // send leaves the payload empty (its content lives on the template copy).
+        // The per-node TOPIC rides the payload too so the dispatcher
+        // can gate the send without an extra SELECT from campaigns.
         const payload: Record<string, unknown> =
           eff.medium !== 'email'
             ? { medium: eff.medium, text_body: eff.textBody ?? '' }
             : {};
+        if (eff.topicId) payload.topic_id = eff.topicId;
+        // Fold event.* + journey.* into payload.merge so the dispatcher's render
+        // pass can substitute {{event.x}} / {{journey.x}} in templates / text
+        // bodies (customer.* is added by the dispatcher from the recipient
+        // profile). Skipped when there's nothing to add — keeps payload tidy.
+        const extraMerge: Record<string, string> = {
+          ...eventMerge(resolveCtx.event),
+          ...journeyMerge(resolveCtx.journey),
+        };
+        if (Object.keys(extraMerge).length > 0) payload.merge = extraMerge;
         writes.push(
           buildCampaignOutboxInsert(
             workspaceId,
@@ -277,16 +304,18 @@ async function chainTick(
         // The HTTP call runs POST-COMMIT (runWebhooks); collect the intent here
         // with the authoritative node id (the per-(campaign,profile,node) dedupe key).
         webhooks.push({ ...eff, nodeId: currentNodeId });
-      } else {
+      } else if (eff.kind === 'set_attribute' || eff.kind === 'set_journey') {
         // Resolve EACH assignment's value spec (literal | expression | js | legacy
         // bare scalar) against the recipient profile + the IMMUTABLE persisted trigger
         // event. A 'js' spec is evaluated NODE-side in a sandbox (evaluateJsValue);
         // everything else is read-only string substitution (never SQL — invariant 6
         // untouched). A retry re-resolves identically (the source never changes →
-        // idempotent nested jsonb_set).
+        // idempotent nested jsonb_set). set_journey shares the resolution path, only
+        // the write target differs (enrollment.state.journey vs profiles.attributes).
         const valueCtx = {
           profile: resolveCtx.profile,
           ...(resolveCtx.event !== undefined ? { event: resolveCtx.event } : {}),
+          ...(resolveCtx.journey !== undefined ? { journey: resolveCtx.journey } : {}),
         };
         const resolved = eff.assignments.map((a) => ({
           key: a.key,
@@ -294,7 +323,11 @@ async function chainTick(
             ? evaluateJsValue(a.value.code, valueCtx)
             : resolveValueSpec(a.value, valueCtx),
         }));
-        writes.push(buildSetAttribute(workspaceId, row.profile_id, resolved));
+        if (eff.kind === 'set_journey') {
+          writes.push(buildSetJourney(workspaceId, row.id, resolved));
+        } else {
+          writes.push(buildSetAttribute(workspaceId, row.profile_id, resolved));
+        }
       }
     }
 
@@ -624,7 +657,13 @@ async function loadResolveContext(
   );
   const profile: CustomerProfile = rows[0] ?? { id: row.profile_id };
   const event = row.state?.event?.payload;
-  return event !== undefined ? { profile, event } : { profile };
+  const journey = row.state?.journey;
+  const ctx: ResolveContext = { profile };
+  return Object.assign(
+    ctx,
+    event !== undefined ? { event } : null,
+    journey !== undefined ? { journey } : null,
+  );
 }
 
 /**

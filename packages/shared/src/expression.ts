@@ -14,6 +14,7 @@
 // event.* expression on a manual/segment enrollment (no state.event) is harmless.
 import { customerMerge, expandCustomerToken, type CustomerProfile } from './customer.js';
 import { eventMerge } from './event.js';
+import { journeyMerge } from './journey.js';
 
 /** A literal value spec — written verbatim (number/string/null/object…). */
 export interface LiteralValueSpec {
@@ -47,12 +48,15 @@ export interface JsValueSpec {
 /** The explicit value spec union (a legacy bare scalar is ALSO an accepted value). */
 export type ValueSpec = LiteralValueSpec | ExpressionValueSpec | JsValueSpec;
 
-/** The context a value expression resolves against: the profile + the trigger event. */
+/** The context a value expression resolves against: profile + trigger event + journey vars. */
 export interface ValueResolveContext {
   readonly profile: CustomerProfile;
   /** The persisted trigger event payload (enrollment.state.event); absent for
    *  manual/segment enrollment → an event.* token resolves safe-empty. */
   readonly event?: unknown;
+  /** Per-enrollment journey variables (enrollment.state.journey); absent on a
+   *  fresh enrollment → a journey.* token resolves safe-empty. */
+  readonly journey?: unknown;
 }
 
 /** True iff `v` is an explicit expression spec object. */
@@ -107,7 +111,11 @@ export function renderExpression(template: string, merge: Readonly<Record<string
  */
 export function resolveValueSpec(spec: unknown, ctx: ValueResolveContext): unknown {
   if (isExpressionSpec(spec)) {
-    const merge = { ...customerMerge(ctx.profile), ...eventMerge(ctx.event) };
+    const merge = {
+      ...customerMerge(ctx.profile),
+      ...eventMerge(ctx.event),
+      ...journeyMerge(ctx.journey),
+    };
     return renderExpression(spec.expression, merge);
   }
   if (isLiteralSpec(spec)) {

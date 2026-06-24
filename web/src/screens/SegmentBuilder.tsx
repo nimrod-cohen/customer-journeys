@@ -233,16 +233,18 @@ export function SegmentBuilder({ id }: { id?: string }) {
 
   return (
     <section data-testid="segment-builder">
-      <button
-        data-testid="segments-back"
-        class="btn-ghost mb-4 btn-sm"
-        onClick={() => navigate('/segments')}
-      >
-        ← Back to segments
-      </button>
       <PageHeader
         title={editing ? 'Edit segment' : 'New segment'}
         subtitle="Build a dynamic rule-based audience or curate a manual list."
+        back={
+          <button
+            data-testid="segments-back"
+            class="btn-ghost btn-sm whitespace-nowrap"
+            onClick={() => navigate('/segments')}
+          >
+            ← Back to segments
+          </button>
+        }
       />
 
       <div class="flex flex-col gap-6 lg:flex-row lg:items-start">

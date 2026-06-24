@@ -59,6 +59,10 @@ export type SideEffect =
       readonly templateId: string | null;
       /** For a TEXT send (sms/whatsapp): the plain-text body (merge-tag enabled). */
       readonly textBody: string | null;
+      /** The per-node TOPIC the dispatcher gates this send on (null = no topic,
+       *  never gated). Stamped on the outbox payload so the dispatcher reads it
+       *  directly instead of querying the campaigns table. */
+      readonly topicId: string | null;
       /** The node id this send originates from (drives the dedupe_key). */
       readonly nodeId: string;
     }
@@ -69,6 +73,17 @@ export type SideEffect =
        * js) per-value, then calls buildSetAttribute with the resolved pairs.
        */
       readonly kind: 'set_attribute';
+      readonly assignments: ReadonlyArray<{ readonly key: string; readonly value: unknown }>;
+    }
+  | {
+      /**
+       * Set one or MORE per-ENROLLMENT journey variables (`set_journey` action)
+       * on `campaign_enrollments.state.journey` — scoped to THIS profile's run
+       * through THIS campaign, NOT the global profile. Read in templates as
+       * {{journey.<key>}}. Resolved + persisted with the same semantics as
+       * set_attribute (literal | expression | js); freeform keys (no schema).
+       */
+      readonly kind: 'set_journey';
       readonly assignments: ReadonlyArray<{ readonly key: string; readonly value: unknown }>;
     }
   | {
@@ -356,16 +371,19 @@ function actionSideEffect(node: ActionNode | WebhookAction): SideEffect | null {
   }
   if (node.kind === 'send') {
     const medium: Medium = node.medium ?? 'email';
+    // Per-node TOPIC: the dispatcher reads it from the outbox
+    // payload and gates the send on the recipient's subscription. null = none.
+    const topicId = typeof node.topic_id === 'string' && node.topic_id.length > 0 ? node.topic_id : null;
     if (isTextMedium(medium)) {
       // A TEXT send carries the plain body (no template). A blank body emits no
       // effect (the publish gate blocks activation; this is defense-in-depth).
       const body = typeof node.text_body === 'string' ? node.text_body : '';
       if (!body.trim()) return null;
-      return { kind: 'send', medium, templateId: null, textBody: body, nodeId: '' };
+      return { kind: 'send', medium, templateId: null, textBody: body, topicId, nodeId: '' };
     }
     // EMAIL: needs an attached template copy (else nothing to send).
     if (!node.template_id) return null;
-    return { kind: 'send', medium: 'email', templateId: node.template_id, textBody: null, nodeId: '' };
+    return { kind: 'send', medium: 'email', templateId: node.template_id, textBody: null, topicId, nodeId: '' };
   }
   if (node.kind === 'set_attribute') {
     // Normalize to a LIST of keyed assignments. An `assignments` array (Feature B)
@@ -384,6 +402,23 @@ function actionSideEffect(node: ActionNode | WebhookAction): SideEffect | null {
     }
     if (assignments.length === 0) return null;
     return { kind: 'set_attribute', assignments };
+  }
+  if (node.kind === 'set_journey') {
+    // Mirrors set_attribute exactly, only the write target changes. Same
+    // assignments[] shape, same blank-key drop, same null-when-empty rule.
+    const assignments: Array<{ key: string; value: unknown }> = [];
+    const list = (node as { assignments?: ReadonlyArray<{ key?: unknown; value?: unknown }> }).assignments;
+    if (Array.isArray(list) && list.length > 0) {
+      for (const a of list) {
+        if (a && typeof a.key === 'string' && a.key.length > 0) {
+          assignments.push({ key: a.key, value: a.value });
+        }
+      }
+    } else if (node.key) {
+      assignments.push({ key: node.key, value: node.value });
+    }
+    if (assignments.length === 0) return null;
+    return { kind: 'set_journey', assignments };
   }
   return null;
 }
@@ -1016,6 +1051,43 @@ export function buildSetAttribute(
   return {
     text: `UPDATE profiles
            SET attributes = ${expr},
+               updated_at = now()
+           WHERE workspace_id = $1 AND id = $2`,
+    values,
+  };
+}
+
+/**
+ * Set one or MORE per-enrollment JOURNEY variables (the set_journey action) in
+ * ONE workspace-scoped UPDATE — the twin of buildSetAttribute, only the target
+ * is `campaign_enrollments.state.journey` (a jsonb subobject), scoped by id +
+ * workspace_id. Same nested jsonb_set pattern: every (path, value) is a bound
+ * param. THROWS on an empty assignments list (callers drop blank-key rows).
+ */
+export function buildSetJourney(
+  workspaceId: string,
+  enrollmentId: string,
+  assignments: ReadonlyArray<{ readonly key: string; readonly value: unknown }>,
+): SqlStatement {
+  if (!workspaceId) throw new Error('buildSetJourney: workspaceId is required');
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    throw new Error('buildSetJourney: at least one assignment is required');
+  }
+  const values: unknown[] = [workspaceId, enrollmentId];
+  // state.journey is a jsonb sub-object; seed an empty object if missing so the
+  // nested jsonb_set chain has something to start from.
+  let expr = `jsonb_set(coalesce(state, '{}'::jsonb), '{journey}', coalesce(state->'journey', '{}'::jsonb), true)`;
+  let p = 3;
+  for (const a of assignments) {
+    const pathParam = `$${p}::text[]`;
+    const valParam = `$${p + 1}::jsonb`;
+    expr = `jsonb_set(${expr}, ${pathParam}, ${valParam}, true)`;
+    values.push(`{journey,${a.key}}`, JSON.stringify(a.value ?? null));
+    p += 2;
+  }
+  return {
+    text: `UPDATE campaign_enrollments
+           SET state = ${expr},
                updated_at = now()
            WHERE workspace_id = $1 AND id = $2`,
     values,

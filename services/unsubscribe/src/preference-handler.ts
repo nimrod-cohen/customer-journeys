@@ -16,6 +16,9 @@ import {
   buildUnsubscribeSuppression,
   buildUnsubscribedAttribute,
   buildUnsubscribeActivity,
+  buildGlobalUnsubscribedQuery,
+  buildResubscribeSuppressionDelete,
+  buildResubscribedAttribute,
   parseUnsubscribeRequest,
   FAVICON_LINK,
   type SqlStatement,
@@ -343,10 +346,20 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
       const gStateQ = buildGroupStateQuery(workspaceId, email);
       const { rows: gState } = await deps.reader.query<{ medium_group: string }>(gStateQ.text, gStateQ.values);
       const optedOutGroups = new Set(gState.map((r) => r.medium_group));
-      const groupSubscribed: Record<string, boolean> = {};
-      for (const g of MEDIUM_GROUPS) groupSubscribed[g] = !optedOutGroups.has(g);
 
-      const choices = toTopicChoices(activeTopics, tState);
+      // The GLOBAL kill switch (a full /unsubscribe sets the suppression + flag but
+      // NO granular rows). When set, the recipient is unsubscribed from EVERYTHING —
+      // so the page must show every toggle OFF, not the default-on granular view.
+      const guQ = buildGlobalUnsubscribedQuery(workspaceId, email);
+      const { rows: guRows } = await deps.reader.query<{ unsubscribed: boolean }>(guQ.text, guQ.values);
+      const globallyUnsubscribed = Boolean(guRows[0]?.unsubscribed);
+
+      const groupSubscribed: Record<string, boolean> = {};
+      for (const g of MEDIUM_GROUPS) groupSubscribed[g] = globallyUnsubscribed ? false : !optedOutGroups.has(g);
+
+      const choices = globallyUnsubscribed
+        ? toTopicChoices(activeTopics, tState).map((c) => ({ ...c, subscribed: false }))
+        : toTopicChoices(activeTopics, tState);
 
       if (method === 'GET') {
         return {
@@ -373,15 +386,26 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
         return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, true, logoHtml, lang) };
       }
 
-      // PARTIAL update: per-topic + per-group writes ONLY. NEVER the global
+      // PARTIAL update: per-topic + per-group writes. NEVER sets the global
       // suppression / unsubscribed flag — the person stays on the list for the
-      // still-subscribed channels (the user's key requirement).
+      // still-subscribed channels (the user's key requirement). BUT if they're
+      // RE-ENABLING a channel while currently globally unsubscribed, LIFT the
+      // master kill switch (delete only the unsubscribe-reason suppression — never
+      // a bounce/complaint — and clear the flag) so the choice actually takes
+      // effect; otherwise the dispatcher's suppression gate keeps blocking sends.
       const statements: SqlStatement[] = [];
       for (const [topicId, subscribed] of update.topics) {
         statements.push(buildTopicSubscriptionUpsert(workspaceId, email, topicId, subscribed));
       }
       for (const [group, subscribed] of update.groups) {
         statements.push(buildChannelOptOutWrite(workspaceId, email, group, !subscribed));
+      }
+      const anyChannelOn = MEDIUM_GROUPS.some((g) => update.groups.get(g) === true);
+      if (globallyUnsubscribed && anyChannelOn) {
+        statements.push(
+          buildResubscribeSuppressionDelete(workspaceId, email),
+          buildResubscribedAttribute(workspaceId, email),
+        );
       }
       if (statements.length) await deps.runInWorkspaceTx(workspaceId, statements);
       return { statusCode: 200, headers: HTML_HEADERS, body: savedPage(email, false, logoHtml, lang) };

@@ -150,6 +150,49 @@ describeMaybe('public preference center (real Postgres)', () => {
     expect(await topicSubscribed(topicDigest)).toBe(false);
   });
 
+  // Whether the rendered checkbox for `testid` carries the `checked` attribute
+  // (markup: `<input ... [checked] data-testid="TESTID">`).
+  const isChecked = (html: string, testid: string): boolean => html.includes(`checked data-testid="${testid}"`);
+
+  it('GET reflects a GLOBAL unsubscribe (suppression + flag, no granular rows) — every toggle is OFF', async () => {
+    // Simulate a full /unsubscribe one-click: suppression + the flag, but NO
+    // channel_optouts / topic_subscriptions rows (the bug repro).
+    await pool.query("INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1,$2,'unsubscribe','one-click')", [WS, EMAIL]);
+    await pool.query("UPDATE profiles SET attributes='{\"unsubscribed\":true}'::jsonb WHERE workspace_id=$1 AND email=$2", [WS, EMAIL]);
+
+    const html = await (await app.request(link)).text();
+    // Bug was: default-on granular view showed everything CHECKED. Now every toggle is OFF.
+    expect(isChecked(html, 'pref-group-email')).toBe(false);
+    expect(isChecked(html, 'pref-group-sms_whatsapp')).toBe(false);
+    expect(isChecked(html, `pref-topic-${topicNews}`)).toBe(false);
+    expect(isChecked(html, `pref-topic-${topicDigest}`)).toBe(false);
+  });
+
+  it('re-enabling a channel while globally unsubscribed LIFTS the master kill switch (so the choice takes effect)', async () => {
+    // Globally unsubscribed (no granular rows).
+    await pool.query("INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1,$2,'unsubscribe','one-click')", [WS, EMAIL]);
+    await pool.query("UPDATE profiles SET attributes='{\"unsubscribed\":true}'::jsonb WHERE workspace_id=$1 AND email=$2", [WS, EMAIL]);
+
+    // Re-enable email only (sms stays off) via the preference center.
+    const res = await post(`group.email=on&topic.${topicNews}=on&topic.${topicDigest}=on`);
+    expect(res.status).toBe(200);
+    // The unsubscribe suppression + the flag are LIFTED → reachable again.
+    expect(await suppressed()).toBe(false);
+    expect(await unsubAttr()).toBe('false');
+    expect(await groupOptedOut('email')).toBe(false); // re-subscribed
+    expect(await groupOptedOut('sms_whatsapp')).toBe(true); // left off
+  });
+
+  it('re-subscribe NEVER deletes a bounce/complaint suppression (only the unsubscribe one)', async () => {
+    // A hard bounce suppression must keep blocking even when the user re-subscribes.
+    await pool.query("INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1,$2,'bounce','ses')", [WS, EMAIL]);
+    await pool.query("UPDATE profiles SET attributes='{\"unsubscribed\":true}'::jsonb WHERE workspace_id=$1 AND email=$2", [WS, EMAIL]);
+    await post(`group.email=on`);
+    // The bounce suppression survives (reason != 'unsubscribe').
+    const r = await pool.query("SELECT reason FROM suppressions WHERE workspace_id=$1 AND email=$2", [WS, EMAIL]);
+    expect(r.rows.map((x) => x.reason)).toEqual(['bounce']);
+  });
+
   it('a link missing workspace_id is a 400 (never a guessed workspace)', async () => {
     const res = await app.request(`/manage-subscription?email=${encodeURIComponent(EMAIL)}`);
     expect(res.status).toBe(400);

@@ -19,7 +19,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { Badge, Button, Card, Field, Input, Select, PageHeader, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
+import { Badge, Button, Card, Input, PageHeader, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
 import type { ActionMenuItem } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.js';
 import { showToast } from '../ui/toast.js';
@@ -371,6 +371,7 @@ const PALETTE: { type: PaletteType; label: string; testId: string; hint: string 
   { type: 'condition', label: 'If / branch', testId: 'palette-if', hint: 'Split on a profile rule' },
   { type: 'send', label: 'Send communication', testId: 'palette-send', hint: 'Email, SMS, or WhatsApp' },
   { type: 'set_attribute', label: 'Update profile', testId: 'palette-update-profile', hint: 'Set a profile attribute' },
+  { type: 'set_journey', label: 'Update journey', testId: 'palette-update-journey', hint: 'Set a per-enrollment journey variable' },
   { type: 'webhook', label: 'Webhook', testId: 'palette-webhook', hint: 'Call an external URL' },
   { type: 'exit', label: 'Exit', testId: 'palette-exit', hint: 'End the journey here' },
 ];
@@ -390,10 +391,10 @@ export function CampaignDetail({ id }: { id?: string }) {
   const [timeZone, setTimeZone] = useState('UTC');
   const [triggerSegmentId, setTriggerSegmentId] = useState<string | null>(null);
   const [segments, setSegments] = useState<SegmentLite[]>([]);
-  // The campaign-level TOPIC (campaigns.topic_id): the dispatcher gates campaign
-  // sends by it (a topic-unsubscribed profile is skipped). "No topic" = null.
+  // Topics list — fed into the per-send-node Topic picker in the node editor.
+  // The dispatcher gates each send on its own node's topic_id (no campaign-level
+  // topic anymore). "No topic" = null = never gated.
   const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
-  const [topicId, setTopicId] = useState<string | null>(null);
   const [paletteEdge, setPaletteEdge] = useState<CanvasEdge | null>(null);
   // When set, the palette is opened to insert a step AFTER this condition's branch
   // (the merge (+)); the chosen type splices in BEFORE the continuation.
@@ -448,7 +449,6 @@ export function CampaignDetail({ id }: { id?: string }) {
         liveDefinition: CampaignDefinition;
         hasDraft: boolean;
         trigger_segment_id: string | null;
-        topic_id: string | null;
       };
       timezone: string;
     }>(`/campaigns/${cid}`);
@@ -457,7 +457,6 @@ export function CampaignDetail({ id }: { id?: string }) {
     setStatus(res.campaign.status);
     setModel(parseDefinition(res.campaign.definition));
     setTriggerSegmentId(res.campaign.trigger_segment_id ?? null);
-    setTopicId(res.campaign.topic_id ?? null);
     setLiveDefinition(res.campaign.liveDefinition);
     // The server resolves trigger_segment_id to the DRAFT trigger when a draft
     // exists; the LIVE trigger equals it only when there's no unsaved draft. We use
@@ -656,23 +655,6 @@ export function CampaignDetail({ id }: { id?: string }) {
     await persist(undefined, segmentId);
   };
 
-  // The campaign-level TOPIC is a campaign-ROW field (not in the definition jsonb),
-  // persisted via PUT /campaigns/:id. A brand-new campaign is created first (persist)
-  // so it has a row to set the topic on. RETURNS the promise so the Select-driven
-  // save can surface failures; optimistic with rollback on error.
-  const saveTopic = async (next: string | null): Promise<void> => {
-    const prev = topicId;
-    setTopicId(next);
-    try {
-      const cid = editingId ?? (await persist());
-      await api.put(`/campaigns/${cid}`, { body: { topic_id: next } });
-      await reloadList();
-    } catch (err) {
-      setTopicId(prev);
-      showToast((err as { error?: string })?.error ?? 'Could not save the topic.', { tone: 'error' });
-    }
-  };
-
   // PUBLISH the draft as a new VERSION (Draft → Live). Persist the draft first so
   // the gate sees the latest copy, then POST /publish {name, scope}. The gate runs
   // BEFORE any mutation: a 400 is a structural reason; a 409 carries {error, node?,
@@ -787,100 +769,84 @@ export function CampaignDetail({ id }: { id?: string }) {
 
   return (
     <section data-testid="campaign-builder">
-      <button data-testid="campaigns-back" class="btn-ghost mb-4 btn-sm" onClick={() => navigate('/campaigns')}>
-        ← Back to campaigns
-      </button>
+      {/* Inline header: title + campaign-name input on a single row, with
+          pause/resume + back link on the right. Saves a whole row of vertical
+          space vs. stacking a PageHeader above the form. */}
+      <header class="mb-3 flex flex-wrap items-center gap-3">
+        <h1 class="text-xl font-bold text-ink-950 sm:text-2xl">{editingId ? 'Edit campaign' : 'New campaign'}</h1>
+        <Input
+          data-testid="campaign-name"
+          placeholder="Welcome series"
+          value={name}
+          onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
+          class="max-w-sm flex-1"
+        />
+        <div class="ml-auto flex items-center gap-2">
+          {editingId && status === 'active' ? (
+            <Button data-testid="campaign-pause" variant="secondary" size="sm" onClick={() => lifecycle('pause')}>
+              Pause
+            </Button>
+          ) : null}
+          {editingId && status === 'paused' ? (
+            <Button data-testid="campaign-resume" variant="secondary" size="sm" onClick={() => lifecycle('resume')}>
+              Resume
+            </Button>
+          ) : null}
+          <button data-testid="campaigns-back" class="btn-ghost btn-sm whitespace-nowrap" onClick={() => navigate('/campaigns')}>
+            ← Back to campaigns
+          </button>
+        </div>
+      </header>
 
-      <PageHeader
-        title={editingId ? 'Edit campaign' : 'New campaign'}
-        subtitle="Design a multi-step journey: it flows downward, branches fan sideways."
-        actions={
-          editingId ? (
-            <div class="flex items-center gap-2">
-              {status === 'active' ? (
-                <Button data-testid="campaign-pause" variant="secondary" size="sm" onClick={() => lifecycle('pause')}>
-                  Pause
-                </Button>
-              ) : null}
-              {status === 'paused' ? (
-                <Button data-testid="campaign-resume" variant="secondary" size="sm" onClick={() => lifecycle('resume')}>
-                  Resume
-                </Button>
-              ) : null}
-            </div>
-          ) : undefined
-        }
-      />
-
-      {/* Builder / History tabs — the canvas is the default. */}
+      {/* Builder / History tabs — the canvas is the default. Status badges
+          (draft indicator + campaign status) sit on the right of this row, so
+          the form area above doesn't need to host them. */}
       {editingId ? (
-        <div role="tablist" class="mb-4 flex gap-1 border-b border-stone-200">
-          {(
-            [
-              { key: 'builder', label: 'Builder', testId: 'campaign-tab-builder', onSelect: () => setTab('builder') },
-              { key: 'journeys', label: 'Journeys', testId: 'campaign-tab-journeys', onSelect: openJourneys },
-              { key: 'history', label: 'History', testId: 'campaign-tab-history', onSelect: openHistory },
-            ] as const
-          ).map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              data-testid={t.testId}
-              aria-selected={tab === t.key}
-              onClick={t.onSelect}
-              class={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-                tab === t.key
-                  ? 'border-brand-600 text-brand-700'
-                  : 'border-transparent text-stone-500 hover:text-stone-700'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+        <div role="tablist" class="mb-3 flex items-end justify-between gap-3 border-b border-stone-200">
+          <div class="flex gap-1">
+            {(
+              [
+                { key: 'builder', label: 'Builder', testId: 'campaign-tab-builder', onSelect: () => setTab('builder') },
+                { key: 'journeys', label: 'Journeys', testId: 'campaign-tab-journeys', onSelect: openJourneys },
+                { key: 'history', label: 'History', testId: 'campaign-tab-history', onSelect: openHistory },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                data-testid={t.testId}
+                aria-selected={tab === t.key}
+                onClick={t.onSelect}
+                class={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                  tab === t.key
+                    ? 'border-brand-600 text-brand-700'
+                    : 'border-transparent text-stone-500 hover:text-stone-700'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div class="mb-1.5 flex items-center gap-2">
+            {isDirty ? (
+              <Badge data-testid="draft-indicator" tone="warn">
+                Unsaved draft — not yet published
+              </Badge>
+            ) : null}
+            <Badge data-testid="campaign-status" tone={toneFor(status)}>
+              {status}
+            </Badge>
+          </div>
         </div>
       ) : null}
 
       {tab === 'builder' ? (
-        <Card class="p-5">
-          <div class="flex flex-wrap items-end justify-between gap-3">
-            <Field label="Campaign name" class="max-w-sm flex-1">
-              <Input
-                data-testid="campaign-name"
-                placeholder="Welcome series"
-                value={name}
-                onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
-              />
-            </Field>
-            <Field label="Topic" class="max-w-xs flex-1" hint="Recipients unsubscribed from this topic are skipped.">
-              <Select
-                data-testid="campaign-topic"
-                value={topicId ?? ''}
-                onChange={(e: Event) => void saveTopic((e.target as HTMLSelectElement).value || null)}
-              >
-                <option value="">No topic</option>
-                {topics.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <div class="flex items-center gap-2">
-              {isDirty ? (
-                <Badge data-testid="draft-indicator" tone="warn">
-                  Unsaved draft — not yet published
-                </Badge>
-              ) : null}
-              {editingId ? (
-                <Badge data-testid="campaign-status" tone={toneFor(status)}>
-                  {status}
-                </Badge>
-              ) : null}
-            </div>
-          </div>
-
-          <span class="label mt-5">Workflow</span>
+        // No Card wrapper — the canvas grid wants the full page width. The
+        // surrounding controls (action buttons, errors) keep their own spacing
+        // so they don't visually collapse against the page chrome.
+        <div data-testid="campaign-builder-panel">
+          <span class="label">Workflow</span>
           <CampaignCanvas
             model={model}
             onInsert={(edge) => setPaletteEdge(edge)}
@@ -918,7 +884,7 @@ export function CampaignDetail({ id }: { id?: string }) {
               {error}
             </p>
           ) : null}
-        </Card>
+        </div>
       ) : tab === 'journeys' ? (
         <CampaignJourneys enrollments={enrollments} nodeLabel={nodeLabel} />
       ) : (
@@ -976,6 +942,7 @@ export function CampaignDetail({ id }: { id?: string }) {
             node={openNode}
             timeZone={timeZone}
             segments={segments}
+            topics={topics}
             triggerSegmentId={triggerSegmentId}
             triggerNode={model.nodes.find((n) => n.node.type === 'trigger')?.node as { kind?: string; eventType?: string } | undefined}
             onSaveNode={(patch) => saveNode(openNode.id, patch)}

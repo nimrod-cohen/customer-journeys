@@ -100,9 +100,9 @@
     @apply badge bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200;
   }
 
-  /* Sidebar nav link */
+  /* Sidebar nav link — full-width, flush to the sidebar edges (no rounded corners). */
   .nav-link {
-    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-stone-300
+    @apply flex items-center gap-3 px-3 py-2 text-sm font-medium text-stone-300
       transition hover:bg-white/5 hover:text-white;
   }
   .nav-link-active {

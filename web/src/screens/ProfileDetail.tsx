@@ -49,14 +49,17 @@ interface AttrPair {
   value: string;
 }
 
-const TABS = [
+// `subscriptions` is conditional — only shown when the workspace has at least
+// one active topic (a channel-only screen on its own doesn't justify the tab).
+const ALL_TABS = [
   { id: 'details', label: 'Details' },
   { id: 'attributes', label: 'Attributes' },
+  { id: 'subscriptions', label: 'Subscriptions' },
   { id: 'delivery', label: 'Delivery' },
   { id: 'events', label: 'Events' },
   { id: 'segments', label: 'Segments' },
 ] as const;
-type TabId = (typeof TABS)[number]['id'];
+type TabId = (typeof ALL_TABS)[number]['id'];
 
 // Deliverability state only (NOT consent). "unsubscribed" is the separate
 // boolean attribute, which can be true alongside any of these.
@@ -85,6 +88,16 @@ function fmt(ts: number | string | null | undefined): string {
 export function ProfileDetail({ id }: { id: string }) {
   const session = useStore(sessionStore);
   const [tab, setTab] = useState<TabId>('details');
+  const [hasTopics, setHasTopics] = useState<boolean>(false);
+  // Probe once on mount — if the workspace has any topic, the Subscriptions tab
+  // appears in the header. Channel-only management isn't worth its own tab.
+  useEffect(() => {
+    void api
+      .get<{ topics: unknown[] }>('/topics')
+      .then((r) => setHasTopics(Array.isArray(r.topics) && r.topics.length > 0))
+      .catch(() => setHasTopics(false));
+  }, []);
+  const TABS = ALL_TABS.filter((t) => t.id !== 'subscriptions' || hasTopics);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [features, setFeatures] = useState<Features | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -259,6 +272,8 @@ export function ProfileDetail({ id }: { id: string }) {
         <DetailsTab profile={profile} onSaved={load} />
       ) : tab === 'attributes' ? (
         <AttributesTab profile={profile} onSaved={load} />
+      ) : tab === 'subscriptions' ? (
+        <SubscriptionsTab profileId={profile.id} />
       ) : tab === 'delivery' ? (
         <DeliveryTab id={id} />
       ) : tab === 'events' ? (
@@ -348,13 +363,24 @@ function DetailsTab({ profile, onSaved }: { profile: Profile; onSaved: () => Pro
 
 // --- Attributes tab: add/edit/remove the jsonb bag -------------------------
 
+/** System-managed attribute keys — render as their own widgets (a switch for
+ *  unsubscribed) and BLOCKED from being added as a free-text row. The user
+ *  toggles them via the dedicated UI; the value the user types in a generic
+ *  row never overrides the toggle's state. */
+const PROTECTED_ATTR_KEYS = new Set(['unsubscribed']);
+
 function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => Promise<void> }) {
-  const initial = (): AttrPair[] =>
-    Object.entries(profile.attributes ?? {}).map(([key, value]) => ({
-      key,
-      value: valueToString(value),
-    }));
-  const [pairs, setPairs] = useState<AttrPair[]>(initial);
+  // Split protected keys off into their own state. The user-editable `pairs`
+  // list NEVER contains them, so they can't be renamed or removed from the
+  // free-text editor — only toggled via the dedicated switch row.
+  const initialPairs = (): AttrPair[] =>
+    Object.entries(profile.attributes ?? {})
+      .filter(([k]) => !PROTECTED_ATTR_KEYS.has(k))
+      .map(([key, value]) => ({ key, value: valueToString(value) }));
+  const [pairs, setPairs] = useState<AttrPair[]>(initialPairs);
+  const [unsubscribed, setUnsubscribed] = useState<boolean>(
+    Boolean(profile.attributes?.unsubscribed),
+  );
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [err, setErr] = useState('');
 
@@ -363,11 +389,13 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
   const remove = (i: number) => setPairs((ps) => ps.filter((_, j) => j !== i));
   const add = () => setPairs((ps) => [...ps, { key: '', value: '' }]);
   // Quick-add: append a row pre-filled with an existing workspace attribute key.
-  const addKey = (k: string) =>
+  const addKey = (k: string) => {
+    if (PROTECTED_ATTR_KEYS.has(k)) return; // belt-and-braces; chip is already filtered
     setPairs((ps) => (ps.some((p) => p.key === k) ? ps : [...ps, { key: k, value: '' }]));
+  };
 
   // The exhaustive set of attribute keys used across the workspace, minus the
-  // ones already on this profile — offered as one-click chips.
+  // ones already on this profile AND the system-managed protected keys.
   const [allKeys, setAllKeys] = useState<string[]>([]);
   useEffect(() => {
     void api
@@ -376,17 +404,31 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
       .catch(() => setAllKeys([]));
   }, []);
   const used = new Set(pairs.map((p) => p.key.trim()).filter(Boolean));
-  const unused = allKeys.filter((k) => !used.has(k));
+  const unused = allKeys.filter((k) => !used.has(k) && !PROTECTED_ATTR_KEYS.has(k));
 
   const save = async () => {
-    setState('saving');
     setErr('');
-    // Build the object from non-empty keys (last write wins on dup keys).
+    // GUARD: any free-text row using a protected key is rejected up front — the
+    // user is told why and the save aborts. (System-managed keys live in their
+    // own widgets: `unsubscribed` is the switch above.)
+    const offending = pairs
+      .map((p) => p.key.trim())
+      .filter((k) => k.length > 0 && PROTECTED_ATTR_KEYS.has(k));
+    if (offending.length > 0) {
+      const [first] = offending;
+      setErr(`"${first}" is a protected attribute — use the dedicated switch above instead of an attribute row.`);
+      setState('error');
+      return;
+    }
+    setState('saving');
+    // Build from non-empty user-typed pairs; ALWAYS stamp the toggle's
+    // authoritative value last so the switch is the source of truth.
     const attributes: Record<string, unknown> = {};
     for (const p of pairs) {
       const k = p.key.trim();
       if (k) attributes[k] = stringToValue(p.value);
     }
+    attributes.unsubscribed = unsubscribed;
     try {
       await api.patch(`/profiles/${profile.id}`, { body: { attributes } });
       await onSaved();
@@ -400,9 +442,32 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
   return (
     <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
     <Card class="max-w-2xl flex-1 p-5">
+      {/* Protected: unsubscribed lives in its own switch row at the top — it's
+          a SYSTEM attribute (gates every send), so users can't add/rename/free-
+          text it via the generic editor below. */}
+      <div data-testid="protected-attr-unsubscribed" class="mb-4 flex items-start justify-between gap-3 rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2.5">
+        <div class="min-w-0">
+          <p class="text-sm font-semibold text-ink-900">Unsubscribed</p>
+          <p class="text-xs text-stone-500">
+            Toggling on opts this profile out of <em>all</em> sends from this workspace —
+            broadcasts, campaign sends, and topic-gated messages.
+          </p>
+        </div>
+        <label class="relative inline-flex shrink-0 cursor-pointer items-center" title={unsubscribed ? 'Unsubscribed' : 'Subscribed'}>
+          <input
+            data-testid="attr-unsubscribed"
+            type="checkbox"
+            class="peer sr-only"
+            checked={unsubscribed}
+            onChange={(e) => setUnsubscribed((e.target as HTMLInputElement).checked)}
+          />
+          <span class="h-6 w-11 rounded-full bg-stone-300 transition-colors peer-checked:bg-rose-500 peer-focus:ring-2 peer-focus:ring-brand-400/40" />
+          <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
+        </label>
+      </div>
       <div class="space-y-2.5">
         {pairs.length === 0 ? (
-          <p class="text-sm text-stone-500">No attributes yet — add one below.</p>
+          <p class="text-sm text-stone-500">No additional attributes yet — add one below.</p>
         ) : null}
         {pairs.map((p, i) => (
           <div data-testid="attr-row" key={i} class="flex items-center gap-2.5">
@@ -456,33 +521,194 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
       </div>
     </Card>
 
-      {/* Quick-add: existing workspace attribute keys not yet on this profile. */}
-      <Card data-testid="unused-attrs" class="w-full p-4 lg:w-64 lg:shrink-0">
-        <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-stone-500">Add attribute</p>
-        <p class="mb-3 text-xs text-stone-400">Existing keys in this workspace — click to add.</p>
-        {unused.length === 0 ? (
-          <p class="text-xs text-stone-400">
-            {allKeys.length === 0 ? 'No attributes in this workspace yet.' : 'All keys are already on this profile.'}
-          </p>
-        ) : (
-          <div class="flex flex-wrap gap-1.5">
-            {unused.map((k) => (
-              <button
-                key={k}
-                data-testid="unused-attr"
-                data-key={k}
-                onClick={() => addKey(k)}
-                aria-label={`Add attribute ${k}`}
-                class="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-white px-2.5 py-1 font-mono text-xs text-ink-800 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-400/40"
-              >
-                <span class="text-stone-400">+</span>
-                {k}
-              </button>
-            ))}
-          </div>
-        )}
-      </Card>
+      <div class="flex w-full flex-col gap-4 lg:w-64 lg:shrink-0">
+        {/* Quick-add: existing workspace attribute keys not yet on this profile. */}
+        <Card data-testid="unused-attrs" class="p-4">
+          <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-stone-500">Add attribute</p>
+          <p class="mb-3 text-xs text-stone-400">Existing keys in this workspace — click to add.</p>
+          {unused.length === 0 ? (
+            <p class="text-xs text-stone-400">
+              {allKeys.length === 0 ? 'No attributes in this workspace yet.' : 'All keys are already on this profile.'}
+            </p>
+          ) : (
+            <div class="flex flex-wrap gap-1.5">
+              {unused.map((k) => (
+                <button
+                  key={k}
+                  data-testid="unused-attr"
+                  data-key={k}
+                  onClick={() => addKey(k)}
+                  aria-label={`Add attribute ${k}`}
+                  class="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-white px-2.5 py-1 font-mono text-xs text-ink-800 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-400/40"
+                >
+                  <span class="text-stone-400">+</span>
+                  {k}
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
     </div>
+  );
+}
+
+// --- Subscriptions tab --------------------------------------------------------
+// One-stop view for every send-gating dimension on this profile: the GLOBAL
+// unsubscribed flag (read-only here — the master switch lives in Attributes
+// since it's a profile attribute), the medium-group channels (email +
+// sms_whatsapp), and every workspace topic. When globally unsubscribed, every
+// switch below cascades to OFF + disabled so the UI matches the wire state.
+
+interface SubscriptionsPayload {
+  globalUnsubscribed: boolean;
+  topics: { id: string; name: string; description: string | null; subscribed: boolean }[];
+  channels: { group: string; label: string; subscribed: boolean }[];
+}
+
+function SubscriptionsTab({ profileId }: { profileId: string }) {
+  const [data, setData] = useState<SubscriptionsPayload | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  const reload = async (): Promise<void> => {
+    try {
+      const r = await api.get<SubscriptionsPayload>(`/profiles/${profileId}/subscriptions`);
+      setData(r);
+    } catch (e) {
+      setError((e as { error?: string })?.error ?? 'could not load subscriptions');
+    }
+  };
+  useEffect(() => {
+    void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
+
+  const toggleTopic = async (id: string, next: boolean): Promise<void> => {
+    if (!data) return;
+    setSavingId(`topic:${id}`);
+    const prev = data;
+    setData({ ...data, topics: data.topics.map((t) => (t.id === id ? { ...t, subscribed: next } : t)) });
+    try {
+      await api.put(`/profiles/${profileId}/topic-subscriptions/${id}`, { body: { subscribed: next } });
+    } catch (e) {
+      setData(prev);
+      showToast((e as { error?: string })?.error ?? 'Could not update topic preference.', { tone: 'error' });
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const toggleChannel = async (group: string, next: boolean): Promise<void> => {
+    if (!data) return;
+    setSavingId(`channel:${group}`);
+    const prev = data;
+    setData({
+      ...data,
+      channels: data.channels.map((c) => (c.group === group ? { ...c, subscribed: next } : c)),
+    });
+    try {
+      await api.put(`/profiles/${profileId}/channel-subscriptions/${group}`, { body: { subscribed: next } });
+    } catch (e) {
+      setData(prev);
+      showToast((e as { error?: string })?.error ?? 'Could not update channel preference.', { tone: 'error' });
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  if (error) return <Card class="max-w-2xl p-5"><p class="text-sm text-rose-600">{error}</p></Card>;
+  if (data === null) return <Card class="max-w-2xl p-5"><p class="text-sm text-stone-500">Loading…</p></Card>;
+
+  const locked = data.globalUnsubscribed;
+
+  return (
+    <Card class="max-w-2xl p-5" data-testid="subscriptions-tab">
+      {locked ? (
+        <div data-testid="globally-unsubscribed-banner" class="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-800">
+          <p class="font-semibold">This profile is globally unsubscribed.</p>
+          <p class="mt-1 text-xs">
+            All sends are suppressed regardless of channel / topic — the toggles below are
+            read-only. To re-subscribe, switch off <em>Unsubscribed</em> on the Attributes tab.
+          </p>
+        </div>
+      ) : null}
+
+      {/* Channels — medium-group opt-outs. Always shown (both groups). */}
+      <section class="mb-6">
+        <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-stone-500">Channels</p>
+        <p class="mb-3 text-xs text-stone-400">
+          Opting out of a channel skips every send through that medium for this profile,
+          regardless of topic.
+        </p>
+        <div class="space-y-2">
+          {data.channels.map((c) => {
+            const shown = locked ? false : c.subscribed;
+            return (
+              <label
+                key={c.group}
+                data-testid="channel-subscription-row"
+                data-channel-group={c.group}
+                class="flex items-center justify-between gap-3 rounded-md border border-stone-200 bg-white px-3 py-2"
+              >
+                <p class="text-sm font-medium text-ink-900">{c.label}</p>
+                <span class="relative inline-flex shrink-0 cursor-pointer items-center" title={shown ? 'Subscribed' : 'Opted out'}>
+                  <input
+                    data-testid="channel-toggle"
+                    type="checkbox"
+                    class="peer sr-only disabled:cursor-not-allowed"
+                    checked={shown}
+                    disabled={locked || savingId === `channel:${c.group}`}
+                    onChange={(e) => void toggleChannel(c.group, (e.target as HTMLInputElement).checked)}
+                  />
+                  <span class={`h-5 w-9 rounded-full transition-colors peer-checked:bg-emerald-500 ${locked ? 'bg-stone-200' : 'bg-stone-300'}`} />
+                  <span class={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4 ${locked ? 'opacity-70' : ''}`} />
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Topics — every active workspace topic. The tab itself only renders
+          when at least one topic exists, so we always have rows here. */}
+      <section>
+        <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-stone-500">Topics</p>
+        <p class="mb-3 text-xs text-stone-400">
+          Toggle off to opt this profile out of one topic. Sends tagged with the topic skip them.
+        </p>
+        <div class="space-y-2">
+          {data.topics.map((t) => {
+            const shown = locked ? false : t.subscribed;
+            return (
+              <label
+                key={t.id}
+                data-testid="topic-subscription-row"
+                data-topic-id={t.id}
+                class="flex items-start justify-between gap-3 rounded-md border border-stone-200 bg-white px-3 py-2"
+              >
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-ink-900">{t.name}</p>
+                  {t.description ? <p class="mt-0.5 text-xs text-stone-500">{t.description}</p> : null}
+                </div>
+                <span class="relative inline-flex shrink-0 cursor-pointer items-center" title={shown ? 'Subscribed' : 'Opted out'}>
+                  <input
+                    data-testid="topic-toggle"
+                    type="checkbox"
+                    class="peer sr-only disabled:cursor-not-allowed"
+                    checked={shown}
+                    disabled={locked || savingId === `topic:${t.id}`}
+                    onChange={(e) => void toggleTopic(t.id, (e.target as HTMLInputElement).checked)}
+                  />
+                  <span class={`h-5 w-9 rounded-full transition-colors peer-checked:bg-emerald-500 ${locked ? 'bg-stone-200' : 'bg-stone-300'}`} />
+                  <span class={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4 ${locked ? 'opacity-70' : ''}`} />
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </section>
+    </Card>
   );
 }
 

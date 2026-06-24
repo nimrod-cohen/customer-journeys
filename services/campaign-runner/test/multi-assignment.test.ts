@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateCampaignDefinition } from '../src/dsl.js';
-import { processNode, buildSetAttribute, type EnrollmentState } from '../src/core.js';
+import { processNode, buildSetAttribute, buildSetJourney, type EnrollmentState } from '../src/core.js';
 import type { Node } from '../src/dsl.js';
 
 // PURE unit tests for the MULTI-ASSIGNMENT set_attribute (Feature B) + the js value
@@ -131,5 +131,35 @@ describe('buildSetAttribute — MULTIPLE assignments in ONE parameterized UPDATE
 
   it('THROWS on a falsy workspaceId (tenant-isolation guard)', () => {
     expect(() => buildSetAttribute('', 'p1', [{ key: 'tier', value: 'gold' }])).toThrow(/workspaceId/);
+  });
+});
+
+describe('buildSetJourney — writes to campaign_enrollments.state.journey (per-enrollment)', () => {
+  it('seeds state.journey then nested jsonb_set with bound (path, value) params', () => {
+    const stmt = buildSetJourney('w1', 'e1', [
+      { key: 'cohort', value: 'launch' },
+      { key: 'step', value: 3 },
+    ]);
+    expect(stmt.values[0]).toBe('w1');
+    expect(stmt.values[1]).toBe('e1');
+    // path params include the `journey` prefix; value params are jsonb-stringified.
+    expect(stmt.values).toEqual([
+      'w1', 'e1',
+      '{journey,cohort}', JSON.stringify('launch'),
+      '{journey,step}', JSON.stringify(3),
+    ]);
+    // Three jsonb_set calls — one seeds state.journey, two write the assignments.
+    expect((stmt.text.match(/jsonb_set/g) ?? []).length).toBe(3);
+    expect(stmt.text).toMatch(/UPDATE campaign_enrollments/);
+    expect(stmt.text).toMatch(/workspace_id = \$1/);
+    expect(stmt.text).not.toContain('launch'); // value never interpolated
+  });
+
+  it('THROWS on a falsy workspaceId (tenant-isolation guard)', () => {
+    expect(() => buildSetJourney('', 'e1', [{ key: 'k', value: 1 }])).toThrow(/workspaceId/);
+  });
+
+  it('THROWS on an empty assignments list', () => {
+    expect(() => buildSetJourney('w1', 'e1', [])).toThrow(/at least one assignment/);
   });
 });

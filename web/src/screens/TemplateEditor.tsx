@@ -320,25 +320,25 @@ export function TemplateEditor({
           </button>
         </div>
       ) : (
-        <>
-          <button
-            data-testid="editor-back"
-            class="btn-ghost mb-4 btn-sm disabled:cursor-default disabled:opacity-50"
-            onClick={() => void goBack()}
-            disabled={status === 'saving'}
-          >
-            ← {backLabel}
-          </button>
-          <PageHeader
-            title={instance ? 'Edit email' : editing ? 'Edit email template' : 'New email template'}
-            subtitle={
-              instance
-                ? "This is this broadcast's own copy of the email — changes here don't affect the template library."
-                : 'Design the email — changes save automatically and compile to cross-client HTML via MJML.'
-            }
-            actions={nameAndStatus}
-          />
-        </>
+        <PageHeader
+          title={instance ? 'Edit email' : editing ? 'Edit email template' : 'New email template'}
+          subtitle={
+            instance
+              ? "This is this broadcast's own copy of the email — changes here don't affect the template library."
+              : 'Design the email — changes save automatically and compile to cross-client HTML via MJML.'
+          }
+          back={
+            <button
+              data-testid="editor-back"
+              class="btn-ghost btn-sm whitespace-nowrap disabled:cursor-default disabled:opacity-50"
+              onClick={() => void goBack()}
+              disabled={status === 'saving'}
+            >
+              ← {backLabel}
+            </button>
+          }
+          actions={nameAndStatus}
+        />
       )}
 
       {/* From / To / Subject belong to an actual EMAIL — a broadcast/campaign's own

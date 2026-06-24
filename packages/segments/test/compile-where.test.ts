@@ -175,6 +175,151 @@ describe('compileWhere — operators render correctly', () => {
     expect(q.text).toBe('p.workspace_id = $1 AND (pf.total_events >= $2)');
     expect(q.values).toEqual([WS, 10]);
   });
+
+  it('not exists → IS NULL (no value param)', () => {
+    const q = compileWhere(WS, { field: 'last_email_open_at', operator: 'not exists' });
+    expect(q.text).toBe('p.workspace_id = $1 AND (pf.last_email_open_at IS NULL)');
+    expect(q.values).toEqual([WS]);
+  });
+
+  it('between → BETWEEN with min and max as separate params', () => {
+    const q = compileWhere(WS, { field: 'total_events', operator: 'between', value: [5, 20] });
+    expect(q.text).toBe('p.workspace_id = $1 AND (pf.total_events BETWEEN $2 AND $3)');
+    expect(q.values).toEqual([WS, 5, 20]);
+  });
+
+  it('string contains → ILIKE %needle% with LIKE wildcards escaped', () => {
+    const q = compileWhere(WS, { field: 'attributes.tier', operator: 'contains', value: 'go%ld' });
+    expect(q.text).toBe('p.workspace_id = $1 AND ((p.attributes ->> $2) ILIKE $3)');
+    expect(q.values).toEqual([WS, 'tier', '%go\\%ld%']);
+  });
+
+  it('string not contains → NOT ILIKE', () => {
+    const q = compileWhere(WS, { field: 'attributes.tier', operator: 'not contains', value: 'gold' });
+    expect(q.text).toBe('p.workspace_id = $1 AND ((p.attributes ->> $2) NOT ILIKE $3)');
+    expect(q.values).toEqual([WS, 'tier', '%gold%']);
+  });
+
+  it('starts with → ILIKE needle%', () => {
+    const q = compileWhere(WS, { field: 'attributes.tier', operator: 'starts with', value: 'gold' });
+    expect(q.values).toEqual([WS, 'tier', 'gold%']);
+  });
+
+  it('ends with → ILIKE %needle', () => {
+    const q = compileWhere(WS, { field: 'attributes.tier', operator: 'ends with', value: 'gold' });
+    expect(q.values).toEqual([WS, 'tier', '%gold']);
+  });
+
+  it('is in the past → < now() (no value)', () => {
+    const q = compileWhere(WS, { field: 'created_at', operator: 'is in the past' });
+    expect(q.text).toBe('p.workspace_id = $1 AND (p.created_at < now())');
+    expect(q.values).toEqual([WS]);
+  });
+
+  it('is in the future → > now() (no value)', () => {
+    const q = compileWhere(WS, { field: 'created_at', operator: 'is in the future' });
+    expect(q.text).toBe('p.workspace_id = $1 AND (p.created_at > now())');
+    expect(q.values).toEqual([WS]);
+  });
+
+  it('before duration ago → < now() - N units (unit picked, never interpolated)', () => {
+    const q = compileWhere(WS, {
+      field: 'created_at',
+      operator: 'before duration ago',
+      value: { amount: 30, unit: 'days' },
+    });
+    expect(q.text).toBe(
+      `p.workspace_id = $1 AND (p.created_at < now() - ($2::numeric * interval '1 day'))`,
+    );
+    expect(q.values).toEqual([WS, 30]);
+  });
+
+  it('before duration ago with minutes unit', () => {
+    const q = compileWhere(WS, {
+      field: 'created_at',
+      operator: 'before duration ago',
+      value: { amount: 45, unit: 'minutes' },
+    });
+    expect(q.text).toBe(
+      `p.workspace_id = $1 AND (p.created_at < now() - ($2::numeric * interval '1 minute'))`,
+    );
+    expect(q.values).toEqual([WS, 45]);
+  });
+
+  it('before duration ago with hours unit', () => {
+    const q = compileWhere(WS, {
+      field: 'created_at',
+      operator: 'before duration ago',
+      value: { amount: 12, unit: 'hours' },
+    });
+    expect(q.text).toBe(
+      `p.workspace_id = $1 AND (p.created_at < now() - ($2::numeric * interval '1 hour'))`,
+    );
+  });
+
+  it('in the last duration → > now() - N AND <= now() (recent past)', () => {
+    const q = compileWhere(WS, {
+      field: 'created_at',
+      operator: 'in the last duration',
+      value: { amount: 30, unit: 'minutes' },
+    });
+    expect(q.text).toBe(
+      `p.workspace_id = $1 AND ((p.created_at > now() - ($2::numeric * interval '1 minute') AND p.created_at <= now()))`,
+    );
+    expect(q.values).toEqual([WS, 30]);
+  });
+
+  it('within next duration with hours', () => {
+    const q = compileWhere(WS, {
+      field: 'created_at',
+      operator: 'within next duration',
+      value: { amount: 2, unit: 'hours' },
+    });
+    expect(q.text).toBe(
+      `p.workspace_id = $1 AND (p.created_at BETWEEN now() AND now() + ($2::numeric * interval '1 hour'))`,
+    );
+  });
+
+  it('duration value accepts a bare number for back-compat (defaults to days)', () => {
+    const q = compileWhere(WS, { field: 'created_at', operator: 'before duration ago', value: 7 });
+    expect(q.text).toContain(`interval '1 day'`);
+    expect(q.values).toEqual([WS, 7]);
+  });
+
+  it('timestamp on a text-jsonb attribute wraps the column in a coercion CASE', () => {
+    // Text-jsonb values can hold ISO strings OR unix seconds/millis — the CASE
+    // recognizes both formats so the same operator works for either.
+    const q = compileWhere(WS, {
+      field: 'attributes.webinar_at',
+      operator: 'before duration ago',
+      value: { amount: 14, unit: 'days' },
+    });
+    expect(q.text).toContain(`CASE`);
+    expect(q.text).toContain(`to_timestamp`);
+    expect(q.text).toContain(`::timestamptz`);
+    expect(q.text).toContain(`now() - ($3::numeric * interval '1 day')`);
+    expect(q.values).toEqual([WS, 'webinar_at', 14]);
+  });
+
+  it('is in the past on a payload (unix ts) → coercion CASE before < now()', () => {
+    // The "webinar_data.timestamp is in the past" case — pass a unix ts as a
+    // text jsonb value; the CASE coerces and then compares.
+    const q = compileWhere(WS, {
+      field: 'attributes.webinar_at',
+      operator: 'is in the past',
+    });
+    expect(q.text).toContain(`CASE`);
+    expect(q.text).toContain(`< now()`);
+    expect(q.values).toEqual([WS, 'webinar_at']);
+  });
+
+  it('after date / before date cast a bound string as timestamptz', () => {
+    const a = compileWhere(WS, { field: 'created_at', operator: 'after date', value: '2026-01-01' });
+    expect(a.text).toBe('p.workspace_id = $1 AND (p.created_at > $2::timestamptz)');
+    expect(a.values).toEqual([WS, '2026-01-01']);
+    const b = compileWhere(WS, { field: 'created_at', operator: 'before date', value: '2026-01-01' });
+    expect(b.text).toBe('p.workspace_id = $1 AND (p.created_at < $2::timestamptz)');
+  });
 });
 
 describe('compileWhere — injection in a VALUE only appears in values[]', () => {

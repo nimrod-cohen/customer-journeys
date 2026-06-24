@@ -36,6 +36,7 @@ const NODE_STYLE: Record<string, string> = {
   condition: 'bg-violet-50 text-violet-700 ring-violet-200',
   send: 'bg-sky-50 text-sky-700 ring-sky-200',
   set_attribute: 'bg-teal-50 text-teal-700 ring-teal-200',
+  set_journey: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   webhook: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
   action: 'bg-sky-50 text-sky-700 ring-sky-200',
   exit: 'bg-stone-100 text-stone-600 ring-stone-200',
@@ -49,6 +50,7 @@ const TYPE_LABEL: Record<string, string> = {
   condition: 'If / branch',
   send: 'Send communication',
   set_attribute: 'Update profile',
+  set_journey: 'Update journey',
   webhook: 'Webhook',
   action: 'Action',
   exit: 'Exit',
@@ -284,7 +286,11 @@ export function CampaignCanvas({
           panning ? 'cursor-grabbing select-none' : 'cursor-grab'
         }`}
         style={{
-          maxHeight: '60vh',
+          // Fill the available viewport: subtract the header / tabs / action-
+          // button rows above & below (≈220px) so the canvas eats the empty
+          // footer space instead of capping at a fixed 60vh.
+          maxHeight: 'calc(100vh - 220px)',
+          minHeight: '320px',
           // Light grid dots blanket the WHOLE canvas (constant density, independent
           // of zoom). `local` attachment tiles across the full scrollable area and
           // scrolls with the content rather than sticking to the viewport box.

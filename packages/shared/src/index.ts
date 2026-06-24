@@ -7,6 +7,10 @@ export * from './customer.js';
 // The `event.*` personalization namespace (the trigger-event payload twin of
 // customer.*, §9B) + the set_attribute value spec + resolver (literal | expression).
 export * from './event.js';
+// The `journey.*` personalization namespace — per-enrollment variables stamped
+// onto campaign_enrollments.state.journey by a `set_journey` action; read in
+// merge tags + set_attribute/set_journey expressions.
+export * from './journey.js';
 export * from './expression.js';
 
 // DST-correct zoned↔UTC time helpers + IANA validator (broadcast scheduler +

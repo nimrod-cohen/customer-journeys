@@ -10,9 +10,78 @@
 //                ("event attribute") sub-conditions (e.g. did `lead` WHERE
 //                payload.interest = strategies-webinar).
 
-/** The operators the builder UI exposes (a subset matching the §8 whitelist). */
-export const BUILDER_OPERATORS = ['=', '!=', '>', '>=', '<', '<=', 'in', 'not in', 'exists'] as const;
+/** The operators the builder UI exposes (matches the §8 compiler whitelist).
+ *  Order is the display order inside each group. */
+export const BUILDER_OPERATORS = [
+  // Cross-type
+  '=', '!=', '>', '>=', '<', '<=', 'in', 'not in', 'between', 'exists', 'not exists',
+  // String (case-insensitive)
+  'contains', 'not contains', 'starts with', 'ends with',
+  // Timestamp
+  'is in the past', 'is in the future',
+  'before duration ago', 'in the last duration', 'within next duration',
+  'after date', 'before date',
+] as const;
 export type BuilderOperator = (typeof BUILDER_OPERATORS)[number];
+
+/** Semantic group for the comparator picker UI. */
+export type OperatorGroup = 'common' | 'string' | 'timestamp';
+
+/** Whitelist of duration units accepted by the duration-based timestamp ops. */
+export const DURATION_UNITS = ['days', 'hours', 'minutes'] as const;
+export type DurationUnit = (typeof DURATION_UNITS)[number];
+
+/** What kind of input widget the value column should render for an operator. */
+export type ValueShape = 'text' | 'number' | 'duration' | 'date' | 'list' | 'pair' | 'none';
+
+/** Per-operator UI metadata — drives the grouped dropdown + value-input shape. */
+export interface OperatorMeta {
+  readonly value: BuilderOperator;
+  readonly label: string;
+  readonly group: OperatorGroup;
+  readonly groupLabel: string;
+  readonly valueShape: ValueShape;
+}
+
+export const OPERATOR_CATALOG: readonly OperatorMeta[] = [
+  // String or number
+  { value: '=',           label: 'is equal to',     group: 'common', groupLabel: 'String or number', valueShape: 'text' },
+  { value: '!=',          label: 'is not equal to', group: 'common', groupLabel: 'String or number', valueShape: 'text' },
+  { value: '>',           label: 'is greater than', group: 'common', groupLabel: 'String or number', valueShape: 'number' },
+  { value: '>=',          label: 'is at least',     group: 'common', groupLabel: 'String or number', valueShape: 'number' },
+  { value: '<',           label: 'is less than',    group: 'common', groupLabel: 'String or number', valueShape: 'number' },
+  { value: '<=',          label: 'is at most',      group: 'common', groupLabel: 'String or number', valueShape: 'number' },
+  { value: 'between',     label: 'is between',      group: 'common', groupLabel: 'String or number', valueShape: 'pair' },
+  { value: 'in',          label: 'is one of',       group: 'common', groupLabel: 'String or number', valueShape: 'list' },
+  { value: 'not in',      label: 'is not one of',   group: 'common', groupLabel: 'String or number', valueShape: 'list' },
+  { value: 'exists',      label: 'exists',          group: 'common', groupLabel: 'String or number', valueShape: 'none' },
+  { value: 'not exists',  label: 'does not exist',  group: 'common', groupLabel: 'String or number', valueShape: 'none' },
+  // String
+  { value: 'contains',     label: 'contains',          group: 'string', groupLabel: 'String', valueShape: 'text' },
+  { value: 'not contains', label: 'does not contain',  group: 'string', groupLabel: 'String', valueShape: 'text' },
+  { value: 'starts with',  label: 'starts with',       group: 'string', groupLabel: 'String', valueShape: 'text' },
+  { value: 'ends with',    label: 'ends with',         group: 'string', groupLabel: 'String', valueShape: 'text' },
+  // Timestamp
+  { value: 'is in the past',       label: 'is in the past',       group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'none' },
+  { value: 'is in the future',     label: 'is in the future',     group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'none' },
+  { value: 'before duration ago',  label: 'is before N ago',      group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'duration' },
+  { value: 'in the last duration', label: 'is in the last N',     group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'duration' },
+  { value: 'within next duration', label: 'is within the next N', group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'duration' },
+  { value: 'after date',           label: 'is after specific date',  group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'date' },
+  { value: 'before date',          label: 'is before specific date', group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'date' },
+];
+
+/** Lookup map keyed by operator token. */
+export const OPERATOR_META: Readonly<Record<BuilderOperator, OperatorMeta>> = Object.freeze(
+  Object.fromEntries(OPERATOR_CATALOG.map((m) => [m.value, m])) as Record<BuilderOperator, OperatorMeta>,
+);
+
+/** Operator groups in display order, with their member operators. */
+export const OPERATOR_GROUPS: ReadonlyArray<{ group: OperatorGroup; label: string; ops: readonly OperatorMeta[] }> = [
+  { group: 'common',    label: 'String or number', ops: OPERATOR_CATALOG.filter((m) => m.group === 'common') },
+  { group: 'string',    label: 'String',           ops: OPERATOR_CATALOG.filter((m) => m.group === 'string') },
+  { group: 'timestamp', label: 'Timestamp',        ops: OPERATOR_CATALOG.filter((m) => m.group === 'timestamp') },
+];
 
 /**
  * A rule row's kind:
@@ -151,14 +220,43 @@ export function emptyTriggerEventRow(): RuleRow {
 
 /** Parse a row's raw value into the typed AST value per operator. */
 export function parseValue(operator: BuilderOperator, raw: string): unknown {
-  if (operator === 'exists') return undefined;
-  if (operator === 'in' || operator === 'not in') {
+  const meta = OPERATOR_META[operator];
+  const shape = meta?.valueShape ?? 'text';
+  if (shape === 'none') return undefined;
+  if (shape === 'list') {
     return raw
       .split(',')
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
   }
-  // Numeric coercion when the whole string is a number; else keep as string.
+  if (shape === 'pair') {
+    // "min,max" — coerce each half numerically when possible.
+    const [a = '', b = ''] = raw.split(',').map((s) => s.trim());
+    const an = Number(a);
+    const bn = Number(b);
+    return [
+      a !== '' && !Number.isNaN(an) ? an : a,
+      b !== '' && !Number.isNaN(bn) ? bn : b,
+    ];
+  }
+  if (shape === 'duration') {
+    // Stored as "amount|unit", e.g. "7|days" or "30|minutes". Unit defaults to
+    // days when missing or invalid (the UI's initial select picks 'days').
+    const [amtRaw = '', unitRaw = 'days'] = raw.split('|');
+    const amount = Number(amtRaw);
+    const unit = (DURATION_UNITS as readonly string[]).includes(unitRaw) ? (unitRaw as DurationUnit) : 'days';
+    return { amount: Number.isNaN(amount) ? 0 : amount, unit };
+  }
+  if (shape === 'number') {
+    const n = Number(raw);
+    return Number.isNaN(n) ? raw : n;
+  }
+  if (shape === 'date') {
+    // Pass through as-is; the compiler casts to timestamptz.
+    return raw;
+  }
+  // text — fall back to numeric coercion when the whole string parses cleanly
+  // (legacy behavior so equality with numeric attributes still type-matches).
   const n = Number(raw);
   if (raw.trim() !== '' && !Number.isNaN(n)) return n;
   return raw;
@@ -193,8 +291,9 @@ export function normalizeFieldPath(field: string): string {
 /** Build one condition node from a field/payload row. */
 export function rowToCondition(row: { field: string; operator: BuilderOperator; value: string }): ConditionNode {
   const field = normalizeFieldPath(row.field);
-  if (row.operator === 'exists') {
-    return { field, operator: 'exists' };
+  const shape = OPERATOR_META[row.operator]?.valueShape ?? 'text';
+  if (shape === 'none') {
+    return { field, operator: row.operator };
   }
   return { field, operator: row.operator, value: parseValue(row.operator, row.value) };
 }
@@ -317,7 +416,20 @@ function isGroupNode(n: AstNode): n is GroupNode {
 
 /** Stringify an AST condition value back into the row's raw input form. */
 function valueToRaw(operator: string, value: unknown): string {
-  if (operator === 'exists' || value === undefined || value === null) return '';
+  if (operator === 'exists' || operator === 'not exists') return '';
+  if (operator === 'is in the past' || operator === 'is in the future') return '';
+  if (value === undefined || value === null) return '';
+  // Duration value: {amount, unit} → "amount|unit"
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    'amount' in value &&
+    'unit' in value
+  ) {
+    const v = value as { amount: unknown; unit: unknown };
+    return `${v.amount}|${v.unit}`;
+  }
   if (Array.isArray(value)) return value.join(', ');
   return String(value);
 }

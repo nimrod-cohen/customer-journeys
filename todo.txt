@@ -97,6 +97,7 @@
 # REMAINING
 # [~] Connect to the REAL WhatsApp official API — BLOCKED on a Meta WhatsApp Business account + credentials.
 #     Architecture + mock done; see .a5c/PROVIDERS-SETUP.md.
+* make the campaign editor grid use the full space, not wrapped in a bordered container
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).
@@ -104,3 +105,7 @@
   + progress/status.
 * retry queues in case of SES/SMS/WhatsApp api failures
 * objects management with campaigns.
+* basic CRM features - add sales role? alternatively send events to the CRM.
+* integration with sales system? 
+* rate limits for SMS/WhatsApp/Email/webhooks
+* failure-retry planning for SMS/WhatsApp/Email/webhooks

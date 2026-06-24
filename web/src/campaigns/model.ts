@@ -18,6 +18,7 @@ export type PaletteType =
   | 'condition'
   | 'send'
   | 'set_attribute'
+  | 'set_journey'
   | 'webhook'
   | 'exit';
 
@@ -64,6 +65,7 @@ export type DisplayType =
   | 'condition'
   | 'send'
   | 'set_attribute'
+  | 'set_journey'
   | 'webhook'
   | 'exit'
   | 'action';
@@ -103,11 +105,11 @@ function edgeIf(
   return [label !== undefined ? { from, to, slot, label } : { from, to, slot }];
 }
 
-/** The display type of a DSL node (refines actions to send/set_attribute/webhook). */
+/** The display type of a DSL node (refines actions to send/set_attribute/set_journey/webhook). */
 export function displayType(node: DslNode): DisplayType {
   if (node.type === 'action') {
     const kind = (node as { kind?: unknown }).kind;
-    if (kind === 'send' || kind === 'set_attribute' || kind === 'webhook') return kind;
+    if (kind === 'send' || kind === 'set_attribute' || kind === 'set_journey' || kind === 'webhook') return kind;
     return 'action';
   }
   return node.type as DisplayType;
@@ -214,6 +216,13 @@ export function defaultNodeConfig(type: PaletteType, now: Date = new Date()): Ds
         type: 'action',
         kind: 'set_attribute',
         assignments: [{ key: 'stage', value: { kind: 'literal', value: '' } }],
+        next: '',
+      };
+    case 'set_journey':
+      return {
+        type: 'action',
+        kind: 'set_journey',
+        assignments: [{ key: 'step', value: { kind: 'literal', value: '' } }],
         next: '',
       };
     case 'webhook':

@@ -50,6 +50,7 @@ export {
   buildCampaignDedupeKey,
   buildCampaignOutboxInsert,
   buildSetAttribute,
+  buildSetJourney,
   isEnrollableCampaignStatus,
   nextLifecycle,
   campaignCountsShape,

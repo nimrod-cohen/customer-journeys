@@ -741,7 +741,7 @@ function paletteTypeOf(node: DslNode): PaletteType {
       return 'condition';
     case 'action': {
       const kind = (node as { kind?: unknown }).kind;
-      if (kind === 'send' || kind === 'set_attribute' || kind === 'webhook') return kind;
+      if (kind === 'send' || kind === 'set_attribute' || kind === 'set_journey' || kind === 'webhook') return kind;
       return 'send';
     }
     case 'exit':
@@ -796,16 +796,18 @@ export function nodeSummary(canvasNode: CanvasNode): string {
         if (medium === 'whatsapp') return 'Send WhatsApp';
         return 'Send email';
       }
-      if (kind === 'set_attribute') {
-        // Prefer the assignments LIST (Feature B): 1 → "Set <key>", N → "Set N attributes".
+      if (kind === 'set_attribute' || kind === 'set_journey') {
+        const isJourney = kind === 'set_journey';
+        const noun = isJourney ? 'journey vars' : 'attributes';
+        const fallback = isJourney ? 'Update journey' : 'Update profile';
         const list = (node as { assignments?: ReadonlyArray<{ key?: unknown }> }).assignments;
         if (Array.isArray(list)) {
           const keyed = list.filter((a) => typeof a?.key === 'string' && (a.key as string).trim().length > 0);
           if (keyed.length === 1) return `Set ${(keyed[0]!.key as string).trim()}`;
-          if (keyed.length > 1) return `Set ${keyed.length} attributes`;
+          if (keyed.length > 1) return `Set ${keyed.length} ${noun}`;
         }
         const key = String((node as { key?: unknown }).key ?? '');
-        return key ? `Set ${key}` : 'Update profile';
+        return key ? `Set ${key}` : fallback;
       }
       if (kind === 'webhook') {
         const method = String((node as { method?: unknown }).method ?? 'POST');

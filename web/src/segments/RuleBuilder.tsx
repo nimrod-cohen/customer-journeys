@@ -6,6 +6,7 @@
 // add-rule/add-event-rule/rule-group/group-combinator/…) so the existing segment
 // e2e contract is unchanged. This component is presentation + the rule rows/groups
 // state shape (RuleGroup); the OWNER holds the group and compiles it.
+import type { JSX } from 'preact';
 import { api } from '../store/session.js';
 import { resolveCustomerField } from '@cdp/shared';
 import { Button, Input, Select } from '../ui/kit.js';
@@ -17,7 +18,8 @@ import {
   emptyEventCondition,
   emptySegmentRow,
   emptyTriggerEventRow,
-  BUILDER_OPERATORS,
+  OPERATOR_GROUPS,
+  OPERATOR_META,
   EVENT_COUNT_OPS,
   isCountOp,
   type RuleRow,
@@ -80,6 +82,151 @@ const fetchFieldSuggestions: Fetcher = async (q) => {
   const needle = q.trim().toLowerCase();
   return needle ? all.filter((f) => f.toLowerCase().includes(needle)) : all;
 };
+/**
+ * Grouped operator dropdown. Renders an `<optgroup>` per semantic group
+ * (string-or-number, string-only, timestamp) so the comparator is typed.
+ * Shared by all 3 condition sites: profile/feature rows, event-payload
+ * filters, and trigger-event payload filters.
+ */
+function OperatorSelect({
+  value, onChange, testId, className,
+}: {
+  value: BuilderOperator;
+  onChange: (op: BuilderOperator) => void;
+  testId: string;
+  className?: string;
+}): JSX.Element {
+  return (
+    <Select
+      data-testid={testId}
+      class={className ?? 'w-48'}
+      value={value}
+      onChange={(e: Event) => onChange((e.target as HTMLSelectElement).value as BuilderOperator)}
+    >
+      {OPERATOR_GROUPS.map((g) => (
+        <optgroup key={g.group} label={g.label}>
+          {g.ops.map((op) => (
+            <option key={op.value} value={op.value}>
+              {op.label}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </Select>
+  );
+}
+
+/**
+ * Value-side input that swaps widget by operator shape.
+ *   - none: nothing (exists / not exists)
+ *   - pair: "min,max" → two boxes, joined back into row.value as "min,max"
+ *   - days: <input type=number> placeholder "days"
+ *   - date: <input type=date>
+ *   - number: <input type=number>
+ *   - list:  text box (comma-separated)
+ *   - text:  Suggest (with optional autocomplete fetcher)
+ */
+function ValueInputs({
+  operator, value, onChange, fetcher, testId,
+}: {
+  operator: BuilderOperator;
+  value: string;
+  onChange: (v: string) => void;
+  fetcher: Fetcher;
+  testId: string;
+}): JSX.Element | null {
+  const meta = OPERATOR_META[operator];
+  const shape = meta?.valueShape ?? 'text';
+  if (shape === 'none') return null;
+  if (shape === 'pair') {
+    const [a = '', b = ''] = value.split(',').map((s) => s.trim());
+    const set = (na: string, nb: string) => onChange(`${na},${nb}`);
+    return (
+      <span class="flex items-center gap-1">
+        <input
+          data-testid={`${testId}-min`}
+          class="input w-20"
+          value={a}
+          placeholder="min"
+          onInput={(e) => set((e.target as HTMLInputElement).value, b)}
+        />
+        <span class="text-stone-500">–</span>
+        <input
+          data-testid={`${testId}-max`}
+          class="input w-20"
+          value={b}
+          placeholder="max"
+          onInput={(e) => set(a, (e.target as HTMLInputElement).value)}
+        />
+      </span>
+    );
+  }
+  if (shape === 'duration') {
+    // Value encoded as "amount|unit" (e.g. "7|days"). The unit select is part
+    // of the value column itself, not a separate attribute on the operator.
+    const [amtRaw = '', unitRaw = 'days'] = value.split('|');
+    const setAmount = (n: string) => onChange(`${n}|${unitRaw}`);
+    const setUnit = (u: string) => onChange(`${amtRaw}|${u}`);
+    return (
+      <span class="flex items-center gap-1">
+        <input
+          data-testid={`${testId}-amount`}
+          type="number"
+          min="1"
+          class="input w-24"
+          value={amtRaw}
+          placeholder="N"
+          onInput={(e) => setAmount((e.target as HTMLInputElement).value)}
+        />
+        <Select
+          data-testid={`${testId}-unit`}
+          class="w-28"
+          value={unitRaw}
+          onChange={(e: Event) => setUnit((e.target as HTMLSelectElement).value)}
+        >
+          <option value="minutes">minutes</option>
+          <option value="hours">hours</option>
+          <option value="days">days</option>
+        </Select>
+      </span>
+    );
+  }
+  if (shape === 'date') {
+    return (
+      <input
+        data-testid={testId}
+        type="date"
+        class="input w-44"
+        value={value}
+        onInput={(e) => onChange((e.target as HTMLInputElement).value)}
+      />
+    );
+  }
+  if (shape === 'number') {
+    return (
+      <input
+        data-testid={testId}
+        type="number"
+        class="input w-32"
+        value={value}
+        placeholder="value"
+        onInput={(e) => onChange((e.target as HTMLInputElement).value)}
+      />
+    );
+  }
+  // text + list — Suggest, with optional autocomplete fetcher.
+  return (
+    <Suggest
+      testId={testId}
+      wrapperClass="relative w-40"
+      value={value}
+      onChange={onChange}
+      fetcher={fetcher}
+      placeholder={shape === 'list' ? 'value1, value2, …' : 'value'}
+    />
+  );
+}
+
 /** Friendly labels for the event count operator. */
 const EVENT_OP_LABEL: Record<EventCountOp, string> = {
   occurred: 'occurred',
@@ -192,33 +339,23 @@ function RuleListEditor({
                   fetcher={fetchFieldSuggestions}
                   placeholder="customer.tier, email_status, features.counters.purchase_30d…"
                 />
-                <Select
-                  data-testid="rule-operator"
-                  class="w-28"
+                <OperatorSelect
+                  testId="rule-operator"
                   value={row.operator}
-                  onChange={(e: Event) => update(i, { operator: (e.target as HTMLSelectElement).value as BuilderOperator })}
-                >
-                  {BUILDER_OPERATORS.map((op) => (
-                    <option key={op} value={op}>
-                      {op}
-                    </option>
-                  ))}
-                </Select>
-                {row.operator !== 'exists' ? (
-                  <Suggest
-                    testId="rule-value"
-                    wrapperClass="relative w-40"
-                    value={row.value}
-                    onChange={(v) => update(i, { value: v })}
-                    fetcher={(() => {
-                      // Resolve the customer.* shorthand too: customer.tier and
-                      // attributes.tier both autocomplete the attribute's values.
-                      const canon = resolveCustomerField(row.field);
-                      return canon.startsWith('attributes.') ? fetchAttrValues(canon.slice('attributes.'.length)) : null;
-                    })()}
-                    placeholder="value"
-                  />
-                ) : null}
+                  onChange={(op) => update(i, { operator: op })}
+                />
+                <ValueInputs
+                  testId="rule-value"
+                  operator={row.operator}
+                  value={row.value}
+                  onChange={(v) => update(i, { value: v })}
+                  fetcher={(() => {
+                    // Resolve the customer.* shorthand too: customer.tier and
+                    // attributes.tier both autocomplete the attribute's values.
+                    const canon = resolveCustomerField(row.field);
+                    return canon.startsWith('attributes.') ? fetchAttrValues(canon.slice('attributes.'.length)) : null;
+                  })()}
+                />
               </div>
             ) : kind === 'segment' ? (
               <div class="flex flex-wrap items-center gap-2">
@@ -279,28 +416,18 @@ function RuleListEditor({
                         onChange={(v) => setCond(i, j, { field: v })}
                         fetcher={fetchPayloadKeys(ctx.triggerEventType)}
                       />
-                      <Select
-                        data-testid="trigger-cond-op"
-                        class="w-24"
+                      <OperatorSelect
+                        testId="trigger-cond-op"
                         value={c.operator}
-                        onChange={(e: Event) => setCond(i, j, { operator: (e.target as HTMLSelectElement).value as BuilderOperator })}
-                      >
-                        {BUILDER_OPERATORS.map((op) => (
-                          <option key={op} value={op}>
-                            {op}
-                          </option>
-                        ))}
-                      </Select>
-                      {c.operator !== 'exists' ? (
-                        <Suggest
-                          testId="trigger-cond-value"
-                          wrapperClass="relative w-36"
-                          placeholder="value"
-                          value={c.value}
-                          onChange={(v) => setCond(i, j, { value: v })}
-                          fetcher={fetchPayloadValues(ctx.triggerEventType, c.field)}
-                        />
-                      ) : null}
+                        onChange={(op) => setCond(i, j, { operator: op })}
+                      />
+                      <ValueInputs
+                        testId="trigger-cond-value"
+                        operator={c.operator}
+                        value={c.value}
+                        onChange={(v) => setCond(i, j, { value: v })}
+                        fetcher={fetchPayloadValues(ctx.triggerEventType, c.field)}
+                      />
                       <Button data-testid="trigger-cond-remove" variant="ghost" size="sm" aria-label="Remove filter" onClick={() => removeCond(i, j)}>
                         ✕
                       </Button>
@@ -392,30 +519,18 @@ function RuleListEditor({
                         onChange={(v) => setCond(i, j, { field: v })}
                         fetcher={fetchPayloadKeys(row.field)}
                       />
-                      <Select
-                        data-testid="event-cond-op"
-                        class="w-24"
+                      <OperatorSelect
+                        testId="event-cond-op"
                         value={c.operator}
-                        onChange={(e: Event) =>
-                          setCond(i, j, { operator: (e.target as HTMLSelectElement).value as BuilderOperator })
-                        }
-                      >
-                        {BUILDER_OPERATORS.map((op) => (
-                          <option key={op} value={op}>
-                            {op}
-                          </option>
-                        ))}
-                      </Select>
-                      {c.operator !== 'exists' ? (
-                        <Suggest
-                          testId="event-cond-value"
-                          wrapperClass="relative w-36"
-                          placeholder="value"
-                          value={c.value}
-                          onChange={(v) => setCond(i, j, { value: v })}
-                          fetcher={fetchPayloadValues(row.field, c.field)}
-                        />
-                      ) : null}
+                        onChange={(op) => setCond(i, j, { operator: op })}
+                      />
+                      <ValueInputs
+                        testId="event-cond-value"
+                        operator={c.operator}
+                        value={c.value}
+                        onChange={(v) => setCond(i, j, { value: v })}
+                        fetcher={fetchPayloadValues(row.field, c.field)}
+                      />
                       <Button
                         data-testid="event-cond-remove"
                         variant="ghost"

@@ -184,6 +184,58 @@ export function buildUnsubscribedAttribute(workspaceId: string, email: string): 
 }
 
 /**
+ * Whether this recipient is GLOBALLY unsubscribed (the master kill switch): a
+ * `reason='unsubscribe'` suppression row OR `profiles.attributes.unsubscribed=true`
+ * for this email. The preference center reads this so the page reflects the real
+ * state (toggles OFF) instead of the default-on granular view. Workspace-scoped.
+ */
+export function buildGlobalUnsubscribedQuery(workspaceId: string, email: string): SqlStatement {
+  if (!workspaceId) {
+    throw new Error('buildGlobalUnsubscribedQuery: workspaceId is required (tenant-isolation guard)');
+  }
+  return {
+    text: `SELECT (
+             EXISTS (SELECT 1 FROM suppressions s
+                      WHERE s.workspace_id = $1 AND s.email = $2 AND s.reason = 'unsubscribe')
+             OR EXISTS (SELECT 1 FROM profiles p
+                         WHERE p.workspace_id = $1 AND p.email = $2
+                           AND (p.attributes ->> 'unsubscribed')::boolean IS TRUE)
+           ) AS unsubscribed`,
+    values: [workspaceId, email],
+  };
+}
+
+/**
+ * RE-SUBSCRIBE: delete ONLY the `reason='unsubscribe'` suppression for this email
+ * (NEVER a bounce/complaint suppression — those must keep blocking sends). The
+ * inverse of buildUnsubscribeSuppression. Idempotent; workspace-scoped.
+ */
+export function buildResubscribeSuppressionDelete(workspaceId: string, email: string): SqlStatement {
+  if (!workspaceId) {
+    throw new Error('buildResubscribeSuppressionDelete: workspaceId is required (tenant-isolation guard)');
+  }
+  return {
+    text: `DELETE FROM suppressions
+           WHERE workspace_id = $1 AND email = $2 AND reason = 'unsubscribe'`,
+    values: [workspaceId, email],
+  };
+}
+
+/** Clear the marketing flag: set `attributes.unsubscribed = false` for this email
+ *  (the inverse of buildUnsubscribedAttribute). Workspace-scoped; idempotent. */
+export function buildResubscribedAttribute(workspaceId: string, email: string): SqlStatement {
+  if (!workspaceId) {
+    throw new Error('buildResubscribedAttribute: workspaceId is required (tenant-isolation guard)');
+  }
+  return {
+    text: `UPDATE profiles
+           SET attributes = attributes || '{"unsubscribed": false}'::jsonb, updated_at = now()
+           WHERE workspace_id = $1 AND email = $2`,
+    values: [workspaceId, email],
+  };
+}
+
+/**
  * Record the opt-out as an `email_events` row (type='unsubscribe') attributed to
  * the SOURCE broadcast/campaign (from the link) + the recipient's profile, so the
  * broadcasts funnel can count unsubscribes per send. Returns NULL when there is

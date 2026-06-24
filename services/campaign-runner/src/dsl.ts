@@ -117,7 +117,7 @@ export interface WebhookAction {
  *  actions use the {@link WebhookAction} shape (also part of the Node union). */
 export interface ActionNode {
   readonly type: 'action';
-  readonly kind: 'send' | 'set_attribute';
+  readonly kind: 'send' | 'set_attribute' | 'set_journey';
   /**
    * For kind='send': the sending MEDIUM (CLAUDE.md multi-channel). Default 'email'
    * when absent (every legacy send is email). 'email' uses the template_id email
@@ -134,6 +134,10 @@ export interface ActionNode {
   /** For kind='send' (email): the email template to enqueue through the Dispatcher.
    * The envelope (subject / From / To) lives ON that template, not here. */
   readonly template_id?: string;
+  /** For kind='send': the per-node TOPIC the dispatcher gates the send on. A
+   *  recipient unsubscribed from this topic is skipped. Absent/null = no gate.
+   *  (Post-0045: topic moved off the campaign row onto the send node.) */
+  readonly topic_id?: string;
   /** For kind='set_attribute' (SINGLE assignment, back-compat): the attribute key. */
   readonly key?: string;
   /**
@@ -370,14 +374,16 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
         requireEdge(hook.next, 'next');
         return;
       }
-      if (kind !== 'send' && kind !== 'set_attribute') {
+      if (kind !== 'send' && kind !== 'set_attribute' && kind !== 'set_journey') {
         throw new Error(`validateCampaignDefinition: action "${id}" has an invalid kind`);
       }
       const act = node as ActionNode;
       if (kind === 'send') {
         validateSendNode(id, act);
       }
-      if (kind === 'set_attribute') {
+      // set_journey shares set_attribute's keyed-assignments + value-spec shape;
+      // the only difference is the WRITE TARGET (enrollment.state.journey).
+      if (kind === 'set_attribute' || kind === 'set_journey') {
         validateSetAttributeNode(id, act);
       }
       requireEdge(act.next, 'next');

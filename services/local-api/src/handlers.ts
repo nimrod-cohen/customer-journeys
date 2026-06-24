@@ -1305,13 +1305,127 @@ export const updateTopic: Handler = async (ctx, pool, req) => {
   return ok({ topic: rows[0] });
 };
 
+/**
+ * GET /profiles/:id/subscriptions — every subscription dimension for one profile:
+ *   - globalUnsubscribed: the `attributes.unsubscribed` boolean (the master kill
+ *     switch — when true, every send is suppressed regardless of topic/channel)
+ *   - topics: every active workspace topic + this profile's opt-in state
+ *     (default-on: an absent `topic_subscriptions` row = subscribed)
+ *   - channels: each medium group (email, sms_whatsapp) + opt-in state
+ *     (default-on: an absent `channel_optouts` row = subscribed)
+ * 404 when the profile isn't in this workspace.
+ */
+export const listProfileSubscriptions: Handler = async (ctx, pool, req) => {
+  const profileId = req.params.id!;
+  const profRow = await pool.query<{ attributes: Record<string, unknown> | null }>(
+    'SELECT attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ctx.workspaceId, profileId],
+  );
+  if (profRow.rowCount === 0) return ok({ error: 'profile not found' }, 404);
+  const globalUnsubscribed = Boolean(profRow.rows[0]?.attributes?.['unsubscribed']);
+
+  const { rows: topicRows } = await pool.query<{
+    id: string; name: string; description: string | null; subscribed: boolean | null;
+  }>(
+    `SELECT t.id, t.name, t.description, ts.subscribed
+       FROM topics t
+       LEFT JOIN topic_subscriptions ts
+         ON ts.workspace_id = t.workspace_id AND ts.topic_id = t.id AND ts.profile_id = $2
+       WHERE t.workspace_id = $1 AND coalesce(t.archived, false) = false
+       ORDER BY t.name`,
+    [ctx.workspaceId, profileId],
+  );
+  const topics = topicRows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    subscribed: r.subscribed === null ? true : r.subscribed,
+  }));
+
+  // Each medium group is default-subscribed; a `channel_optouts` row = opted out.
+  const { rows: channelRows } = await pool.query<{ medium_group: string }>(
+    `SELECT medium_group FROM channel_optouts WHERE workspace_id = $1 AND profile_id = $2`,
+    [ctx.workspaceId, profileId],
+  );
+  const optedOut = new Set(channelRows.map((r) => r.medium_group));
+  const channels = [
+    { group: 'email', label: 'Email', subscribed: !optedOut.has('email') },
+    { group: 'sms_whatsapp', label: 'SMS & WhatsApp', subscribed: !optedOut.has('sms_whatsapp') },
+  ];
+
+  return ok({ globalUnsubscribed, topics, channels });
+};
+
+/**
+ * PUT /profiles/:id/topic-subscriptions/:topicId  body: { subscribed: boolean }
+ * Admin override of one topic's opt-out state for one profile (mirrors the
+ * preference-center's per-recipient upsert). 404 if either id isn't in this
+ * workspace.
+ */
+export const setProfileTopicSubscription: Handler = async (ctx, pool, req) => {
+  const profileId = req.params.id!;
+  const topicId = req.params.topicId!;
+  const b = asObject(req.body);
+  if (typeof b.subscribed !== 'boolean') return ok({ error: 'subscribed must be a boolean' }, 400);
+  if (!(await topicBelongsToWorkspace(pool, ctx.workspaceId, topicId))) {
+    return ok({ error: 'topic not found in this workspace' }, 404);
+  }
+  const { rowCount } = await pool.query(
+    `INSERT INTO topic_subscriptions (workspace_id, profile_id, topic_id, subscribed, updated_at)
+       SELECT $1, p.id, $3, $4, now()
+       FROM profiles p WHERE p.workspace_id = $1 AND p.id = $2
+       ON CONFLICT (workspace_id, profile_id, topic_id)
+       DO UPDATE SET subscribed = EXCLUDED.subscribed, updated_at = now()`,
+    [ctx.workspaceId, profileId, topicId, b.subscribed],
+  );
+  if (!rowCount) return ok({ error: 'profile not found' }, 404);
+  return ok({ updated: rowCount });
+};
+
+/**
+ * PUT /profiles/:id/channel-subscriptions/:group  body: { subscribed: boolean }
+ * Admin override of one medium-group opt-out for one profile. `subscribed=true`
+ * deletes any existing channel_optouts row (back to default-on); `false` inserts
+ * the opt-out row (idempotent). Mirrors the public preference-center write path.
+ */
+export const setProfileChannelSubscription: Handler = async (ctx, pool, req) => {
+  const profileId = req.params.id!;
+  const group = req.params.group!;
+  if (group !== 'email' && group !== 'sms_whatsapp') {
+    return ok({ error: 'invalid medium group' }, 400);
+  }
+  const b = asObject(req.body);
+  if (typeof b.subscribed !== 'boolean') return ok({ error: 'subscribed must be a boolean' }, 400);
+  // Verify the profile is in this workspace BEFORE writing (404 fast).
+  const owner = await pool.query<{ exists: boolean }>(
+    'SELECT 1 AS exists FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ctx.workspaceId, profileId],
+  );
+  if (owner.rowCount === 0) return ok({ error: 'profile not found' }, 404);
+  if (b.subscribed) {
+    await pool.query(
+      `DELETE FROM channel_optouts WHERE workspace_id = $1 AND profile_id = $2 AND medium_group = $3`,
+      [ctx.workspaceId, profileId, group],
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO channel_optouts (workspace_id, profile_id, medium_group, updated_at)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (workspace_id, profile_id, medium_group) DO UPDATE SET updated_at = now()`,
+      [ctx.workspaceId, profileId, group],
+    );
+  }
+  return ok({ updated: 1 });
+};
+
 /** DELETE /topics/:id — hard-delete a topic (its subscription rows cascade). Scoped. */
 export const deleteTopic: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  // Defensively null out any broadcast/campaign reference so the FK doesn't block
-  // (an attached topic just becomes untopiced — sends to everyone not opted out).
+  // Defensively null out any broadcast reference so the FK doesn't block (an
+  // attached topic just becomes untopiced — sends to everyone not opted out).
+  // Campaigns no longer carry a top-level topic_id; per-send-node
+  // topic_id references live inside `definition` jsonb and are caller-resolved.
   await pool.query('UPDATE broadcasts SET topic_id = NULL WHERE workspace_id = $1 AND topic_id = $2', [ctx.workspaceId, id]);
-  await pool.query('UPDATE campaigns SET topic_id = NULL WHERE workspace_id = $1 AND topic_id = $2', [ctx.workspaceId, id]);
   const q = scopedQuery(ctx.workspaceId, 'DELETE FROM topics WHERE id = $1', [id]);
   const { rowCount } = await pool.query(q.text, q.values);
   if (!rowCount) return ok({ error: 'not found' }, 404);
@@ -2542,13 +2656,12 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
     draft_trigger_segment_id: string | null;
     trigger_on: string | null;
     keep_while_in_segment: string | null;
-    topic_id: string | null;
     active_version_id: string | null;
     active_version: number | null;
     active_version_name: string | null;
   }>(
     `SELECT c.id, c.name, c.status, c.definition, c.draft_definition, c.trigger_segment_id,
-            c.draft_trigger_segment_id, c.trigger_on, c.keep_while_in_segment, c.topic_id, c.active_version_id,
+            c.draft_trigger_segment_id, c.trigger_on, c.keep_while_in_segment, c.active_version_id,
             av.version AS active_version, av.name AS active_version_name
      FROM campaigns c
      LEFT JOIN campaign_versions av ON av.id = c.active_version_id AND av.workspace_id = c.workspace_id
@@ -2591,7 +2704,8 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
     trigger_segment_id: triggerSegmentId, // draft trigger ?? live trigger
     trigger_on: r.trigger_on,
     keep_while_in_segment: r.keep_while_in_segment,
-    topic_id: r.topic_id, // the campaign-level topic (dispatcher gates sends on it)
+    // topic_id moved to per-send-node config — clients read it from
+    // each `action.kind = 'send'` node's `topic_id`.
   };
   return ok({ campaign, timezone });
 };
@@ -2678,17 +2792,9 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
     if (resolved === REJECT) return ok({ error: 'trigger_segment_id not found in this workspace' }, 400);
     triggerSegmentId = resolved;
   }
-  // The campaign-level TOPIC (campaigns.topic_id — migration 0040): the dispatcher
-  // gates campaign sends by it (a topic-unsubscribed profile is skipped). A supplied
-  // topic_id MUST resolve inside the workspace (inv.2); null/'' explicitly clears it.
-  const setTopic = b.topic_id !== undefined;
-  let topicId: string | null = null;
-  if (setTopic && b.topic_id !== null && b.topic_id !== '') {
-    if (typeof b.topic_id !== 'string' || !(await topicBelongsToWorkspace(pool, ctx.workspaceId, b.topic_id))) {
-      return ok({ error: 'topic_id not found in this workspace' }, 400);
-    }
-    topicId = b.topic_id;
-  }
+  // topic_id moved to per-send-node config. The PATCH no longer
+  // accepts or stores a campaign-level topic_id; each send node's `topic_id`
+  // travels inside `definition` and is validated by the publish gate.
   const q = scopedQuery(
     ctx.workspaceId,
     `UPDATE campaigns SET
@@ -2697,8 +2803,7 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
        status = COALESCE($4, status),
        trigger_on = COALESCE($6, trigger_on),
        keep_while_in_segment = CASE WHEN $7::boolean THEN $8 ELSE keep_while_in_segment END,
-       trigger_segment_id = CASE WHEN $9::boolean THEN $10 ELSE trigger_segment_id END,
-       topic_id = CASE WHEN $11::boolean THEN $12 ELSE topic_id END
+       trigger_segment_id = CASE WHEN $9::boolean THEN $10 ELSE trigger_segment_id END
      WHERE id = $5`,
     [
       b.name !== undefined ? String(b.name) : null,
@@ -2711,8 +2816,6 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
       (b.keep_while_in_segment ?? null) as string | null,
       setTriggerSegment,
       triggerSegmentId,
-      setTopic,
-      topicId,
     ],
   );
   const { rowCount } = await pool.query(q.text, q.values);
@@ -4545,6 +4648,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /topics': createTopic,
   'PATCH /topics/:id': updateTopic,
   'DELETE /topics/:id': deleteTopic,
+  'GET /profiles/:id/subscriptions': listProfileSubscriptions,
+  'PUT /profiles/:id/topic-subscriptions/:topicId': setProfileTopicSubscription,
+  'PUT /profiles/:id/channel-subscriptions/:group': setProfileChannelSubscription,
   'GET /text-templates': listTextTemplates,
   'GET /text-templates/:id': getTextTemplate,
   'POST /text-templates': createTextTemplate,

@@ -364,9 +364,19 @@ describe('SEND channel (medium + text_body)', () => {
     expect(readSendConfig({ type: 'action', kind: 'send', template_id: 't' }).medium).toBe('email');
   });
 
-  it('reads a text send back (medium + body)', () => {
+  it('reads a text send back (medium + body, topic null by default)', () => {
     const form = readSendConfig({ type: 'action', kind: 'send', medium: 'sms', text_body: 'Hi' });
-    expect(form).toEqual({ medium: 'sms', textBody: 'Hi' });
+    expect(form).toEqual({ medium: 'sms', textBody: 'Hi', topicId: null });
+  });
+
+  it('reads a send carrying a per-node topic_id', () => {
+    const form = readSendConfig({ type: 'action', kind: 'send', medium: 'email', template_id: 't', topic_id: 'tpc-1' });
+    expect(form.topicId).toBe('tpc-1');
+  });
+
+  it('writes a send carrying the topic_id from the form', () => {
+    const node = writeSendConfig({ medium: 'email', textBody: '', topicId: 'tpc-9' }, 'tpl-1');
+    expect((node as { topic_id?: string }).topic_id).toBe('tpc-9');
   });
 
   it('writes an email send WITHOUT a text_body (preserves an existing template_id)', () => {

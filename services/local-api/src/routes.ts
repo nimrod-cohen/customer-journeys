@@ -59,6 +59,12 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /topics': 'manage_content',
   'PATCH /topics/:id': 'manage_content',
   'DELETE /topics/:id': 'manage_content',
+  // --- per-profile subscription preferences (admin override) ---
+  // Consolidated read returns the global unsubscribed flag + every topic +
+  // every channel group; per-resource PUTs toggle one at a time.
+  'GET /profiles/:id/subscriptions': 'manage_content',
+  'PUT /profiles/:id/topic-subscriptions/:topicId': 'manage_content',
+  'PUT /profiles/:id/channel-subscriptions/:group': 'manage_content',
 
   // --- text templates (reusable SMS/WhatsApp body library — manage_content) ---
   'GET /text-templates': 'manage_content',

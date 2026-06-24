@@ -297,13 +297,11 @@ export async function dispatchOutbox(
         }
       }
     } else if (ob.campaign_id) {
-      // Campaign send: the medium + text body ride the OUTBOX PAYLOAD (no broadcast
-      // row to read). Carry the campaign's topic for the uniform topic gate.
-      const { rows: cmRows } = await deps.reader.query<{ topic_id: string | null }>(
-        `SELECT topic_id FROM campaigns WHERE workspace_id = $1 AND id = $2`,
-        [workspaceId, ob.campaign_id],
-      );
-      topicId = cmRows[0]?.topic_id ?? null;
+      // Campaign send: the medium + text body + per-node topic ride the OUTBOX
+      // PAYLOAD. Campaigns don't carry a topic_id column — the runner stamps
+      // the send-node's topic_id directly onto the payload at enqueue time.
+      const payloadTopic = payload['topic_id'];
+      topicId = typeof payloadTopic === 'string' && payloadTopic.length > 0 ? payloadTopic : null;
       if (payloadMedium === 'sms' || payloadMedium === 'whatsapp') {
         medium = payloadMedium;
         const pt = payload['text_body'];

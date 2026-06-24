@@ -155,7 +155,7 @@ export function AppShell(): JSX.Element {
       ) : null}
       <aside
         data-testid="app-nav"
-        class={`fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 transform flex-col gap-1 bg-gradient-to-b from-ink-950 to-ink-900 px-3 py-4 text-stone-300 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] md:sticky md:top-0 md:z-auto md:translate-x-0 md:transition-none ${
+        class={`fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 transform flex-col gap-1 bg-gradient-to-b from-ink-950 to-ink-900 px-0 py-4 text-stone-300 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] md:sticky md:top-0 md:z-auto md:translate-x-0 md:transition-none ${
           navOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -273,15 +273,28 @@ export function AppShell(): JSX.Element {
         {/* Key by route AND active workspace so switching company/workspace
             remounts the screen and re-fetches its (now re-scoped) data, even when
             the route is unchanged (e.g. switching while already on Dashboards). */}
+        {/* Canvas screens (campaign builder, etc.) need the full viewport width
+            so the workflow grid can breathe; everything else gets a readable
+            max-w-6xl gutter. */}
         <div
           key={`${effectiveRoute}:${session.workspaceId ?? ''}`}
-          class="mx-auto w-full max-w-6xl flex-1 animate-fade-up px-4 py-5 sm:px-6 md:px-8 md:py-8"
+          class={`w-full flex-1 animate-fade-up px-4 sm:px-6 md:px-8 ${
+            isFullBleedRoute(effectiveRoute) ? 'py-3 md:py-4' : 'mx-auto max-w-6xl py-5 md:py-8'
+          }`}
         >
           {screenFor(effectiveRoute)}
         </div>
       </main>
     </div>
   );
+}
+
+/** Routes whose primary content is a canvas (campaign builder workflow grid).
+ *  These opt out of the readable max-w-6xl gutter so the canvas can use the
+ *  full viewport width minus the sidebar. */
+function isFullBleedRoute(path: string): boolean {
+  // /campaigns/new and /campaigns/:id (the canvas), but NOT /campaigns (the list).
+  return path.startsWith('/campaigns/');
 }
 
 function shortWs(id: string): string {
