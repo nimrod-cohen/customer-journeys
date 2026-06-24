@@ -17,22 +17,19 @@ test('build an SMS send node + a campaign topic, then publish to active', async 
   await page.getByTestId('campaign-canvas').waitFor();
   await page.getByTestId('campaign-name').fill('SMS journey');
 
-  // Set the campaign-level TOPIC (the dispatcher gates campaign sends by it). The
-  // Select autosaves; it creates the campaign row on first save (a brand-new
-  // campaign), so wait for the editing transition before continuing.
-  await page.getByTestId('campaign-topic').selectOption({ label: TOPIC_A_NAME });
-  await expect(page.getByTestId('campaign-topic')).toHaveValue(/.+/); // a topic id is selected
-
   // Insert a send node on the trigger→exit edge.
   await page.getByTestId('campaign-edge-insert').first().click();
   await page.getByTestId('campaign-palette').waitFor();
   await page.getByTestId('palette-send').click();
   await expect(page.getByTestId('node-send')).toBeVisible();
 
-  // Open the send editor → switch the channel to SMS → write a body → Save.
+  // Open the send editor → switch the channel to SMS → set the per-node TOPIC (the
+  // dispatcher gates this send on it) → write a body → Save.
   await page.getByTestId('node-send').getByTestId(/node-open-/).first().click();
   const drawer = page.getByTestId('node-editor-send');
   await drawer.getByTestId('send-medium').selectOption('sms');
+  await drawer.getByTestId('send-topic').selectOption({ label: TOPIC_A_NAME });
+  await expect(drawer.getByTestId('send-topic')).toHaveValue(/.+/); // a topic id is selected
   await drawer.getByTestId('send-text-body').fill('Hi {{customer.first_name}}, welcome!');
   await drawer.getByTestId('send-save-text').click();
   await expect(drawer).toBeHidden();

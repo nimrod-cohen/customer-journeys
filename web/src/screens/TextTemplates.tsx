@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
 import { useStore } from '../store/store.js';
-import { Button, Card, EmptyState, Input, Textarea, ActionMenu, type ActionMenuItem } from '../ui/kit.js';
+import { Button, Card, EmptyState, Input, DirectionalTextarea, ActionMenu, type ActionMenuItem } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
 
@@ -125,8 +125,10 @@ export function TextTemplatesPanel() {
           </div>
           <div>
             <label class="mb-1 block text-xs font-semibold uppercase tracking-wide text-stone-500">Message body</label>
-            <Textarea
+            <DirectionalTextarea
               data-testid="text-template-body"
+              testIdPrefix="text-template-dir"
+              storageKey="text-template-body"
               rows={3}
               placeholder={'Hi {{customer.first_name}}, your order has shipped!'}
               value={body}

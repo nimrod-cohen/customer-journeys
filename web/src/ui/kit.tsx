@@ -204,6 +204,66 @@ export function Textarea({ class: cls = '', ...rest }: JSX.IntrinsicElements['te
   return <textarea class={`textarea ${cls}`} rows={4} {...rest} />;
 }
 
+/**
+ * A Textarea with a small LTR/RTL writing-direction switcher in the top-right —
+ * for composing text (e.g. SMS/WhatsApp bodies) in mixed Hebrew/English. The
+ * direction is purely a composing aid (it sets the textarea `dir`; the stored
+ * value is unchanged) and is REMEMBERED across sessions per `storageKey`. Spreads
+ * `...rest` onto the real <textarea> so `data-testid`/value/handlers flow through.
+ */
+export function DirectionalTextarea({
+  class: cls = '',
+  defaultDir = 'rtl',
+  storageKey,
+  testIdPrefix,
+  ...rest
+}: JSX.IntrinsicElements['textarea'] & {
+  defaultDir?: 'ltr' | 'rtl';
+  storageKey?: string;
+  testIdPrefix?: string;
+}): JSX.Element {
+  const key = storageKey ? `cdp.textDir:${storageKey}` : undefined;
+  const [dir, setDir] = useState<'ltr' | 'rtl'>(() => {
+    if (key && typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(key);
+      if (saved === 'ltr' || saved === 'rtl') return saved;
+    }
+    return defaultDir;
+  });
+  const choose = (next: 'ltr' | 'rtl') => {
+    setDir(next);
+    if (key && typeof localStorage !== 'undefined') localStorage.setItem(key, next);
+  };
+  const segBtn = (d: 'ltr' | 'rtl', label: string) => (
+    <button
+      type="button"
+      data-testid={testIdPrefix ? `${testIdPrefix}-${d}` : undefined}
+      aria-pressed={dir === d}
+      onClick={() => choose(d)}
+      class={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+        dir === d ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'
+      }`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div>
+      <div class="mb-1 flex items-center justify-end gap-1">
+        <span class="mr-1 text-xs text-stone-400">Direction</span>
+        <div
+          data-testid={testIdPrefix ? `${testIdPrefix}-toggle` : undefined}
+          class="inline-flex items-center gap-0.5 rounded-md bg-stone-100 p-0.5"
+        >
+          {segBtn('ltr', 'LTR')}
+          {segBtn('rtl', 'RTL')}
+        </div>
+      </div>
+      <textarea class={`textarea ${cls}`} rows={4} dir={dir} {...rest} />
+    </div>
+  );
+}
+
 export function Select({ class: cls = '', children, ...rest }: JSX.IntrinsicElements['select']): JSX.Element {
   return (
     <select class={`select ${cls}`} {...rest}>

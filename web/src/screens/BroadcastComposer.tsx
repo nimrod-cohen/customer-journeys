@@ -8,7 +8,7 @@ import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { takeReturnedTemplate, takeReturnedTo } from '../store/editorReturn.js';
 import { openEmailDesigner } from '../store/emailDesignerDrawer.js';
-import { ActionMenu, Badge, Button, Card, Field, Input, PageHeader, Select, Textarea, EmptyState, toneFor } from '../ui/kit.js';
+import { ActionMenu, Badge, Button, Card, Field, Input, PageHeader, Select, DirectionalTextarea, EmptyState, toneFor } from '../ui/kit.js';
 import type { ActionMenuItem } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
@@ -850,8 +850,10 @@ export function BroadcastWizard({ id }: { id?: string }) {
               </Field>
             ) : null}
             <Field label={`${MEDIUM_LABEL[medium]} message`}>
-              <Textarea
+              <DirectionalTextarea
                 data-testid="broadcast-text-body"
+                testIdPrefix="broadcast-text-dir"
+                storageKey="broadcast-text-body"
                 rows={6}
                 placeholder={'Hi {{customer.first_name}}, your order has shipped!'}
                 value={textBody}

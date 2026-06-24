@@ -14,7 +14,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../../store/session.js';
 import { openEmailDesigner } from '../../store/emailDesignerDrawer.js';
-import { Button, Field, Input, Select, Textarea } from '../../ui/kit.js';
+import { Button, Field, Input, Select, Textarea, DirectionalTextarea } from '../../ui/kit.js';
 import { Suggest } from '../../ui/Suggest.js';
 import { showToast } from '../../ui/toast.js';
 import { RuleBuilder } from '../../segments/RuleBuilder.js';
@@ -620,8 +620,10 @@ function SendEditor(props: NodeEditorProps) {
           </Field>
         ) : null}
         <Field label="Message body" hint="Plain text. Merge tags like {{customer.first_name}} render per recipient.">
-          <Textarea
+          <DirectionalTextarea
             data-testid="send-text-body"
+            testIdPrefix="send-text-dir"
+            storageKey="campaign-send-text-body"
             rows={5}
             placeholder={`Hi {{customer.first_name}}, …`}
             value={textBody}
