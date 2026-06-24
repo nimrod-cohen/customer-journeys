@@ -80,6 +80,7 @@ function shell(title: string, inner: string, logoHtml = '', lang: Lang = 'en', w
     `.header{padding:24px;border-bottom:1px solid #eef0f2;text-align:center}.content{padding:28px 32px}` +
     `h1{font-size:24px;font-weight:800;margin:0 0 6px;text-align:start}` +
     `.intro{color:#78716c;font-size:14px;line-height:1.5;margin:0 0 24px;text-align:start}` +
+    `.unsub-banner{background:#fef2f2;border:1px solid #fecaca;color:#9f1239;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5;margin:0 0 22px;text-align:start}` +
     `.email{font-weight:700;color:#1c1917;unicode-bidi:isolate}` +
     // Two columns: Topics | divider | Channels — collapses to one column on mobile.
     `.cols{display:grid;grid-template-columns:1fr 1px 1fr;gap:28px;align-items:start}` +
@@ -114,6 +115,7 @@ function centerPage(
   groupSubscribed: Record<string, boolean>,
   logoHtml = '',
   lang: Lang = 'en',
+  globallyUnsubscribed = false,
 ): string {
   const s = stringsFor(lang);
   // A green toggle SWITCH backed by a real checkbox (so the existing POST handling +
@@ -152,6 +154,9 @@ function centerPage(
     s.manageTitle,
     `<h1>${esc(s.manageHeading)}</h1>` +
       `<p class="intro">${withEmail(s.manageIntro, email)}</p>` +
+      (globallyUnsubscribed
+        ? `<p class="unsub-banner" data-testid="pref-unsubscribed-banner">${esc(s.currentlyUnsubscribed)}</p>`
+        : '') +
       `<form method="POST" action="${esc(actionUrl)}" data-testid="pref-form">` +
       `<div class="cols">${topicsCol}<div class="vdiv"></div>${channelsCol}</div>` +
       `<button type="submit" class="primary" data-testid="pref-save">${esc(s.savePreferences)}</button>` +
@@ -365,7 +370,7 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
         return {
           statusCode: 200,
           headers: HTML_HEADERS,
-          body: centerPage(email, url, choices, groupSubscribed, logoHtml, lang),
+          body: centerPage(email, url, choices, groupSubscribed, logoHtml, lang, globallyUnsubscribed),
         };
       }
 
@@ -400,8 +405,14 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
       for (const [group, subscribed] of update.groups) {
         statements.push(buildChannelOptOutWrite(workspaceId, email, group, !subscribed));
       }
-      const anyChannelOn = MEDIUM_GROUPS.some((g) => update.groups.get(g) === true);
-      if (globallyUnsubscribed && anyChannelOn) {
+      // Re-enabling ANYTHING (a channel OR a topic) while globally unsubscribed is
+      // the user RESUMING — lift the master kill switch so the choice takes effect.
+      // (A Save with nothing turned on leaves them unsubscribed — no accidental
+      // re-subscribe; "unsubscribe from everything" re-applies the switch.)
+      const anyPositive =
+        MEDIUM_GROUPS.some((g) => update.groups.get(g) === true) ||
+        Array.from(update.topics.values()).some((v) => v === true);
+      if (globallyUnsubscribed && anyPositive) {
         statements.push(
           buildResubscribeSuppressionDelete(workspaceId, email),
           buildResubscribedAttribute(workspaceId, email),

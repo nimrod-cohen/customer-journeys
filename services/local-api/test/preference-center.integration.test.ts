@@ -183,6 +183,27 @@ describeMaybe('public preference center (real Postgres)', () => {
     expect(await groupOptedOut('sms_whatsapp')).toBe(true); // left off
   });
 
+  it('re-enabling only a TOPIC (no channel) while globally unsubscribed STILL lifts the kill switch + saves the topic', async () => {
+    // The reported bug: turning on a topic (channels left off) saved the topic but
+    // left the profile globally unsubscribed. Now any positive choice resumes them.
+    await pool.query("INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1,$2,'unsubscribe','one-click')", [WS, EMAIL]);
+    await pool.query("UPDATE profiles SET attributes='{\"unsubscribed\":true}'::jsonb WHERE workspace_id=$1 AND email=$2", [WS, EMAIL]);
+
+    // Turn ON one topic only; both channel boxes left unchecked.
+    const res = await post(`topic.${topicNews}=on`);
+    expect(res.status).toBe(200);
+    expect(await topicSubscribed(topicNews)).toBe(true); // topic preference saved
+    // The master kill switch is LIFTED (no longer globally unsubscribed).
+    expect(await suppressed()).toBe(false);
+    expect(await unsubAttr()).toBe('false');
+  });
+
+  it('GET shows the "currently unsubscribed" banner when globally unsubscribed', async () => {
+    await pool.query("INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1,$2,'unsubscribe','one-click')", [WS, EMAIL]);
+    const html = await (await app.request(link)).text();
+    expect(html).toContain('pref-unsubscribed-banner');
+  });
+
   it('re-subscribe NEVER deletes a bounce/complaint suppression (only the unsubscribe one)', async () => {
     // A hard bounce suppression must keep blocking even when the user re-subscribes.
     await pool.query("INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1,$2,'bounce','ses')", [WS, EMAIL]);

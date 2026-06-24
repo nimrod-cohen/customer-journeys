@@ -81,6 +81,8 @@ export interface Strings {
   readonly manageTitle: string;
   readonly manageHeading: string;
   readonly manageIntro: string;
+  /** Banner shown when the recipient is currently unsubscribed from everything. */
+  readonly currentlyUnsubscribed: string;
   readonly topicsHeading: string;
   readonly channelsHeading: string;
   readonly noTopics: string;
@@ -114,6 +116,8 @@ const EN: Strings = {
   manageTitle: 'Manage your subscription',
   manageHeading: 'Manage your subscription',
   manageIntro: "{email} — choose what you'd like to receive.",
+  currentlyUnsubscribed:
+    "You're currently unsubscribed from all messages. Turn on a channel and the topics you'd like, then save to resume.",
   topicsHeading: 'Topics',
   channelsHeading: 'Channels',
   noTopics: 'This sender has no topics.',
@@ -145,6 +149,8 @@ const HE: Strings = {
   manageTitle: 'ניהול ההרשמה',
   manageHeading: 'ניהול ההרשמה',
   manageIntro: '{email} — בחרו מה תרצו לקבל.',
+  currentlyUnsubscribed:
+    'כרגע אינכם רשומים לקבלת הודעות כלל. הפעילו ערוץ ואת הנושאים שתרצו, ולאחר מכן שמרו כדי לחדש את ההרשמה.',
   topicsHeading: 'נושאים',
   channelsHeading: 'ערוצים',
   noTopics: 'לשולח הזה אין נושאים.',
