@@ -278,7 +278,7 @@ function UnsubscribedIcon() {
       data-testid="profile-unsub"
       title="Unsubscribed"
       aria-label="Unsubscribed"
-      class="inline-flex items-center text-rose-500"
+      class="inline-flex items-center align-middle text-rose-500"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
         <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
