@@ -152,3 +152,39 @@ test('PINCH: ctrl+wheel up zooms IN, ctrl+wheel down zooms OUT; plain wheel does
   await page.waitForTimeout(150);
   expect(await zoomLevel(page)).toBe(beforePlain);
 });
+
+test('PAN headroom: a full viewport of padding on every side lets the map pan completely off-screen', async ({ page }) => {
+  await openSeededCampaign(page);
+  const canvas = page.getByTestId('campaign-canvas');
+
+  // The scroll area exceeds the viewport by at least one full screen on each axis
+  // (a viewport of headroom past the content on every side — the user's rule).
+  const dims = await canvas.evaluate((el) => ({
+    sw: el.scrollWidth,
+    sh: el.scrollHeight,
+    cw: el.clientWidth,
+    ch: el.clientHeight,
+  }));
+  expect(dims.sw - dims.cw).toBeGreaterThanOrEqual(dims.cw);
+  expect(dims.sh - dims.ch).toBeGreaterThanOrEqual(dims.ch);
+
+  const cv = (await canvas.boundingBox())!;
+
+  // Pan fully one way on each axis → the trigger card is pushed entirely off the
+  // opposite edge (the whole map can become invisible).
+  await canvas.evaluate((el) => {
+    el.scrollLeft = 0;
+    el.scrollTop = 0;
+  });
+  let box = (await page.getByTestId('node-trigger').boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(cv.x + cv.width - 2); // off the RIGHT edge
+  expect(box.y).toBeGreaterThanOrEqual(cv.y + cv.height - 2); // off the BOTTOM edge
+
+  await canvas.evaluate((el) => {
+    el.scrollLeft = el.scrollWidth;
+    el.scrollTop = el.scrollHeight;
+  });
+  box = (await page.getByTestId('node-trigger').boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(cv.x + 2); // off the LEFT edge
+  expect(box.y + box.height).toBeLessThanOrEqual(cv.y + 2); // off the TOP edge
+});

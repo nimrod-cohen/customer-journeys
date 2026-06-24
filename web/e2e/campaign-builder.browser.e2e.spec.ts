@@ -791,7 +791,13 @@ test('populated arms render as COMPACT straight columns: each arm + directly abo
 
   const setBox = (await page.getByTestId('node-set_attribute').boundingBox())!;
   const setCx = setBox.x + setBox.width / 2;
-  expect(Math.abs(setCx - sendCx)).toBeLessThanOrEqual(2); // SAME column as the Send
+  // Re-measure the Send box NOW: inserting the 2nd node can auto-scroll the viewport
+  // (the canvas pans freely with a full viewport of headroom on each side), so the
+  // earlier sendCx was at a different scroll offset. Compare both at the SAME scroll —
+  // they must share a column (a straight vertical, no per-node jog).
+  const sendBoxNow = (await page.getByTestId('node-send').boundingBox())!;
+  const sendCxNow = sendBoxNow.x + sendBoxNow.width / 2;
+  expect(Math.abs(setCx - sendCxNow)).toBeLessThanOrEqual(2); // SAME column as the Send
 
   await page.getByTestId('save-campaign').click();
   await expect(page.getByTestId('toast')).toBeVisible();

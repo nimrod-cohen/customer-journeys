@@ -128,6 +128,15 @@ export function CampaignCanvas({
   const [scale, setScale] = useState(1);
   const clampZoom = (z: number): number => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
 
+  // Panning headroom: pad the scrollable area by a FULL VIEWPORT on every side so the
+  // whole map can be panned completely off-screen in any direction (the user's rule).
+  // `pad` = the viewport's client size; a ResizeObserver keeps it current, and the
+  // spacer below derives from layout.width/height × scale + 2·pad, so it recomputes
+  // automatically on every node addition and at every zoom level.
+  const [pad, setPad] = useState({ x: 0, y: 0 });
+  const padRef = useRef(pad);
+  padRef.current = pad;
+
   // The scroll viewport (the `campaign-canvas` overflow-auto box). We drive its
   // scrollLeft/scrollTop directly for drag-to-pan, and attach a NON-PASSIVE wheel
   // listener to it for pinch-zoom (Preact's onWheel is passive → can't preventDefault).
@@ -205,10 +214,13 @@ export function CampaignCanvas({
         const cx = e.clientX - rect.left + container.scrollLeft;
         const cy = e.clientY - rect.top + container.scrollTop;
         const ratio = next / prev;
-        // Defer scroll fixup to after the re-render applies the new spacer size.
+        // Defer scroll fixup to after the re-render applies the new spacer size. The
+        // constant padding (p.x/p.y) is NOT scaled — only the content portion is, so
+        // anchor around the padded origin.
+        const p = padRef.current;
         requestAnimationFrame(() => {
-          container.scrollLeft = cx * ratio - (e.clientX - rect.left);
-          container.scrollTop = cy * ratio - (e.clientY - rect.top);
+          container.scrollLeft = p.x + (cx - p.x) * ratio - (e.clientX - rect.left);
+          container.scrollTop = p.y + (cy - p.y) * ratio - (e.clientY - rect.top);
         });
         return next;
       });
@@ -216,6 +228,31 @@ export function CampaignCanvas({
     container.addEventListener('wheel', onWheel, { passive: false });
     return () => container.removeEventListener('wheel', onWheel);
   }, []);
+
+  // Measure the viewport so the padding equals one full screen on each side; a
+  // ResizeObserver keeps it correct as the window / surrounding layout changes.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return undefined;
+    const measure = (): void => setPad({ x: el.clientWidth, y: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Initial scroll: once the padding is known, place the content's top-left at the
+  // viewport's top-left — identical to the pre-padding view — so the map opens where
+  // it always did and you pan OUTWARD into the padding from there. Done ONCE; later
+  // node additions must NOT yank the user's pan position.
+  const didInitScroll = useRef(false);
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el || didInitScroll.current || pad.x === 0) return;
+    didInitScroll.current = true;
+    el.scrollLeft = pad.x;
+    el.scrollTop = pad.y;
+  }, [pad.x, pad.y]);
 
   return (
     <div class="relative">
@@ -299,14 +336,25 @@ export function CampaignCanvas({
           backgroundAttachment: 'local',
         }}
       >
-        {/* Scaled-size spacer so the scrollable area tracks the zoom level. */}
-        <div style={{ width: `${layout.width * scale}px`, height: `${layout.height * scale}px` }}>
+        {/* Spacer = scaled content + a full viewport of padding on each side, so the
+            map can be panned entirely off-screen in any direction. The content is
+            absolutely positioned (out of flow) at the padded origin so only the
+            spacer's explicit size drives the scroll area. */}
+        <div
+          style={{
+            position: 'relative',
+            width: `${layout.width * scale + pad.x * 2}px`,
+            height: `${layout.height * scale + pad.y * 2}px`,
+          }}
+        >
           <div
-            class="relative"
             style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
               width: `${layout.width}px`,
               height: `${layout.height}px`,
-              transform: `scale(${scale})`,
+              transform: `translate(${pad.x}px, ${pad.y}px) scale(${scale})`,
               transformOrigin: 'top left',
             }}
           >
