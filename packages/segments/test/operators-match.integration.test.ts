@@ -41,6 +41,10 @@ describe.skipIf(!RUN)('expanded segment operators against real Postgres', () => 
     await admin.query("INSERT INTO profile_features (profile_id, workspace_id, monetary_total, last_event_at) VALUES ($1,$2,50, now() - interval '2 days')", [P_GOLD, WS]);
     await admin.query("INSERT INTO profile_features (profile_id, workspace_id, monetary_total, last_event_at) VALUES ($1,$2,5, now() - interval '100 days')", [P_SILVER, WS]);
     await admin.query('INSERT INTO profile_features (profile_id, workspace_id, monetary_total) VALUES ($1,$2,500)', [P_BRONZE, WS]);
+    // FUTURE-dated attribute (renewAt) for the "after duration from now" op:
+    // Gold +2 days, Silver +10 days, Bronze none. Stored DB-relative as an ISO string.
+    await admin.query("UPDATE profiles SET attributes = attributes || jsonb_build_object('renewAt', (now() + interval '2 days')) WHERE id=$1", [P_GOLD]);
+    await admin.query("UPDATE profiles SET attributes = attributes || jsonb_build_object('renewAt', (now() + interval '10 days')) WHERE id=$1", [P_SILVER]);
   });
 
   afterAll(async () => {
@@ -77,6 +81,16 @@ describe.skipIf(!RUN)('expanded segment operators against real Postgres', () => 
   it('before duration ago is the dual of in-the-last', async () => {
     // event older than 30 days ago → only Silver (100d). Gold (2d) is recent.
     expect(await matchSet({ field: 'last_event_at', operator: 'before duration ago', value: { amount: 30, unit: 'days' } })).toEqual(new Set([P_SILVER]));
+  });
+
+  it('after duration from now: a timestamp MORE THAN N ahead (the future mirror of before-duration-ago)', async () => {
+    // renewAt: Gold +2d, Silver +10d, Bronze none.
+    // "more than 4 days ahead" → only Silver (10d); Gold (2d) is within 4d; Bronze (null) never.
+    expect(await matchSet({ field: 'attributes.renewAt', operator: 'after duration from now', value: { amount: 4, unit: 'days' } })).toEqual(new Set([P_SILVER]));
+    // "more than 1 day ahead" → both Gold (2d) and Silver (10d).
+    expect(await matchSet({ field: 'attributes.renewAt', operator: 'after duration from now', value: { amount: 1, unit: 'days' } })).toEqual(new Set([P_GOLD, P_SILVER]));
+    // It is the strict complement of "within the next 4 days" (Gold only) among the future-dated profiles.
+    expect(await matchSet({ field: 'attributes.renewAt', operator: 'within next duration', value: { amount: 4, unit: 'days' } })).toEqual(new Set([P_GOLD]));
   });
 
   it('not exists matches profiles missing the attribute key', async () => {

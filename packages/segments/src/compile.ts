@@ -155,8 +155,9 @@ const COUNTER_PREFIX = 'features.counters.';
  *   - "string": case-insensitive substring/prefix/suffix (contains, not
  *     contains, starts with, ends with)
  *   - "timestamp": time-aware comparisons against a clock (before duration
- *     ago, within next duration, is in the past, is in the future, after
- *     date, before date). Duration ops take a {amount, unit} value where unit
+ *     ago, after duration from now, within next duration, is in the past, is
+ *     in the future, after date, before date). Duration ops take a {amount,
+ *     unit} value where unit
  *     is one of 'days' | 'hours' | 'minutes'. Works against both scalar
  *     timestamptz columns AND text-jsonb values that hold ISO strings or unix
  *     seconds/millis — see `tsExpr` for the coercion CASE.
@@ -180,6 +181,7 @@ export type OperatorToken =
   | 'ends with'
   // timestamp ops
   | 'before duration ago'
+  | 'after duration from now'
   | 'in the last duration'
   | 'within next duration'
   | 'is in the past'
@@ -219,6 +221,7 @@ export const OPERATORS: Readonly<Record<OperatorToken, OperatorSpec>> = {
   'ends with': { takesValue: true, arrayParam: false, group: 'string' },
   // Timestamp
   'before duration ago': { takesValue: true, arrayParam: false, group: 'timestamp' },
+  'after duration from now': { takesValue: true, arrayParam: false, group: 'timestamp' },
   'in the last duration': { takesValue: true, arrayParam: false, group: 'timestamp' },
   'within next duration': { takesValue: true, arrayParam: false, group: 'timestamp' },
   'is in the past': { takesValue: false, arrayParam: false, group: 'timestamp' },
@@ -573,6 +576,13 @@ function compilePredicate(
     const { amount, unit } = parseDurationValue(value);
     const d = params.bind(amount);
     return `${tsExpr(col)} < now() - (${d}::numeric * ${DURATION_INTERVAL[unit]})`;
+  }
+  if (op === 'after duration from now') {
+    // The FUTURE mirror of 'before duration ago': more than N units AHEAD of now
+    // (e.g. "is more than 4 days from now"). Strictly beyond the window.
+    const { amount, unit } = parseDurationValue(value);
+    const d = params.bind(amount);
+    return `${tsExpr(col)} > now() + (${d}::numeric * ${DURATION_INTERVAL[unit]})`;
   }
   if (op === 'in the last duration') {
     // Recent past: between (now - N) and now, exclusive of older, inclusive of now.

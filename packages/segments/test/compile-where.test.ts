@@ -257,6 +257,18 @@ describe('compileWhere — operators render correctly', () => {
     );
   });
 
+  it('after duration from now → > now() + N units (the future mirror of before-duration-ago)', () => {
+    const q = compileWhere(WS, {
+      field: 'created_at',
+      operator: 'after duration from now',
+      value: { amount: 4, unit: 'days' },
+    });
+    expect(q.text).toBe(
+      `p.workspace_id = $1 AND (p.created_at > now() + ($2::numeric * interval '1 day'))`,
+    );
+    expect(q.values).toEqual([WS, 4]);
+  });
+
   it('in the last duration → > now() - N AND <= now() (recent past)', () => {
     const q = compileWhere(WS, {
       field: 'created_at',

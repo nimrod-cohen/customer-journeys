@@ -19,7 +19,7 @@ export const BUILDER_OPERATORS = [
   'contains', 'not contains', 'starts with', 'ends with',
   // Timestamp
   'is in the past', 'is in the future',
-  'before duration ago', 'in the last duration', 'within next duration',
+  'before duration ago', 'after duration from now', 'in the last duration', 'within next duration',
   'after date', 'before date',
 ] as const;
 export type BuilderOperator = (typeof BUILDER_OPERATORS)[number];
@@ -65,6 +65,7 @@ export const OPERATOR_CATALOG: readonly OperatorMeta[] = [
   { value: 'is in the past',       label: 'is in the past',       group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'none' },
   { value: 'is in the future',     label: 'is in the future',     group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'none' },
   { value: 'before duration ago',  label: 'is before N ago',      group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'duration' },
+  { value: 'after duration from now', label: 'is more than N from now', group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'duration' },
   { value: 'in the last duration', label: 'is in the last N',     group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'duration' },
   { value: 'within next duration', label: 'is within the next N', group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'duration' },
   { value: 'after date',           label: 'is after specific date',  group: 'timestamp', groupLabel: 'Timestamp', valueShape: 'date' },
