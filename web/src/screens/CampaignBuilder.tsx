@@ -406,6 +406,24 @@ export function CampaignDetail({ id }: { id?: string }) {
   // Publish-gate feedback: a top-level reason + a per-node-id error for the card.
   const [publishReason, setPublishReason] = useState('');
   const [publishErrors, setPublishErrors] = useState<Record<string, string>>({});
+  // The currently SELECTED node (highlighted + auto-centered on the canvas). Persisted
+  // per-campaign in sessionStorage so a refresh — or opening the editor drawer and
+  // coming back — returns to the same node, selected + centered. `centerTick` is bumped
+  // to RE-center after the drawer closes (the user may have panned while it was open).
+  const selectedKey = editingId ? `cdp.campaignSelected:${editingId}` : null;
+  const [selectedNodeId, setSelectedNodeIdState] = useState<string | null>(() => {
+    if (existingId && typeof sessionStorage !== 'undefined') return sessionStorage.getItem(`cdp.campaignSelected:${existingId}`);
+    return null;
+  });
+  const [centerTick, setCenterTick] = useState(0);
+  const selectNode = (id: string | null): void => {
+    setSelectedNodeIdState(id);
+    if (selectedKey && typeof sessionStorage !== 'undefined') {
+      if (id) sessionStorage.setItem(selectedKey, id);
+      else sessionStorage.removeItem(selectedKey);
+    }
+    setCenterTick((t) => t + 1);
+  };
   // VERSIONING. The builder edits the DRAFT; live is the last published definition.
   // `live*` snapshot what was published (for the unsaved-draft diff); a fresh new
   // campaign has no live baseline (so any edit reads as an unsaved draft).
@@ -465,6 +483,16 @@ export function CampaignDetail({ id }: { id?: string }) {
     setTimeZone(res.timezone || 'UTC');
     clearPublish();
     setError('');
+    // Restore the persisted selection for THIS campaign + center it now the model is
+    // loaded (the canvas's center effect keys on centerTick). Drop a stale id that no
+    // longer exists in the loaded graph.
+    if (typeof sessionStorage !== 'undefined') {
+      const saved = sessionStorage.getItem(`cdp.campaignSelected:${res.campaign.id}`);
+      const exists = saved && Object.prototype.hasOwnProperty.call(res.campaign.definition.nodes, saved);
+      setSelectedNodeIdState(exists ? saved : null);
+      if (!exists && saved) sessionStorage.removeItem(`cdp.campaignSelected:${res.campaign.id}`);
+      setCenterTick((t) => t + 1);
+    }
   };
 
   // Refresh ONLY the version history (History tab). Workspace-scoped server-side.
@@ -638,6 +666,7 @@ export function CampaignDetail({ id }: { id?: string }) {
   // malformed in-progress graph surfaces as a toast and we don't open.
   const openEditor = async (node: CanvasNode): Promise<void> => {
     clearPublish();
+    selectNode(node.id); // highlight + remember (+ center) the node being edited
     try {
       await persist();
       await reloadList();
@@ -858,6 +887,8 @@ export function CampaignDetail({ id }: { id?: string }) {
             onStartPlacement={startPlacement}
             onPickTarget={(edge) => void pickTarget(edge)}
             onCancelPlacement={cancelPlacement}
+            selectedNodeId={selectedNodeId}
+            centerTick={centerTick}
           />
 
           <div class="mt-4 flex flex-wrap items-center gap-3">
@@ -931,7 +962,10 @@ export function CampaignDetail({ id }: { id?: string }) {
       {/* The per-node config editor (a side drawer, one body per node type). */}
       <Drawer
         open={openNode !== null}
-        onClose={() => setOpenNode(null)}
+        onClose={() => {
+          setOpenNode(null);
+          setCenterTick((t) => t + 1); // returning from the drawer → re-center the selected node
+        }}
         title={openNode ? nodeEditorTitle(openNode) : 'Edit step'}
         subtitle="Configure this step. Changes save into the journey."
         testId={openNode ? nodeEditorTestId(openNode) : 'node-editor'}
@@ -950,7 +984,10 @@ export function CampaignDetail({ id }: { id?: string }) {
             onReloadCampaign={async () => {
               if (editingId) await openById(editingId);
             }}
-            onDone={() => setOpenNode(null)}
+            onDone={() => {
+              setOpenNode(null);
+              setCenterTick((t) => t + 1); // returning from the drawer → re-center the selected node
+            }}
           />
         ) : null}
       </Drawer>

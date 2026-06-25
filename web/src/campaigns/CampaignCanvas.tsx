@@ -67,6 +67,8 @@ export function CampaignCanvas({
   onStartPlacement,
   onPickTarget,
   onCancelPlacement,
+  selectedNodeId,
+  centerTick,
 }: {
   model: CanvasModel;
   onInsert: (edge: CanvasEdge) => void;
@@ -85,6 +87,10 @@ export function CampaignCanvas({
   onPickTarget?: (edge: CanvasEdge) => void;
   /** Cancel the in-progress placement (banner button / Escape). */
   onCancelPlacement?: () => void;
+  /** The currently SELECTED node — highlighted + auto-centered in the viewport. */
+  selectedNodeId?: string | null;
+  /** Bump to RE-CENTER the selected node (e.g. on mount / after the drawer closes). */
+  centerTick?: number;
 }): JSX.Element {
   const layout = layoutDefinition(buildDefinition(model));
 
@@ -241,18 +247,43 @@ export function CampaignCanvas({
     return () => ro.disconnect();
   }, []);
 
-  // Initial scroll: once the padding is known, place the content's top-left at the
-  // viewport's top-left — identical to the pre-padding view — so the map opens where
-  // it always did and you pan OUTWARD into the padding from there. Done ONCE; later
-  // node additions must NOT yank the user's pan position.
+  // Center the SELECTED node in the viewport (accounting for pad + scale). The node's
+  // center in content coords is (pos.x, pos.y + cardHeight/2); the content is offset
+  // by `pad` and scaled, so the viewport scroll that centers it is computed below.
+  const centerOnNode = (nodeId: string): boolean => {
+    const el = viewportRef.current;
+    const pos = layout.positions.get(nodeId);
+    if (!el || !pos || padRef.current.x === 0) return false;
+    const cx = padRef.current.x + pos.x * scale;
+    const cy = padRef.current.y + (pos.y + LAYOUT.cardHeight / 2) * scale;
+    el.scrollLeft = cx - el.clientWidth / 2;
+    el.scrollTop = cy - el.clientHeight / 2;
+    return true;
+  };
+
+  // Initial scroll: once the padding is known, center the SELECTED node (if any —
+  // e.g. restored after a refresh / returning from the editor drawer), else place the
+  // content's top-left at the viewport's top-left (the historical default). Done ONCE;
+  // later node additions must NOT yank the user's pan position.
   const didInitScroll = useRef(false);
   useEffect(() => {
     const el = viewportRef.current;
     if (!el || didInitScroll.current || pad.x === 0) return;
     didInitScroll.current = true;
-    el.scrollLeft = pad.x;
-    el.scrollTop = pad.y;
+    if (!(selectedNodeId && centerOnNode(selectedNodeId))) {
+      el.scrollLeft = pad.x;
+      el.scrollTop = pad.y;
+    }
   }, [pad.x, pad.y]);
+
+  // Re-center whenever the selection changes OR `centerTick` is bumped (the owner bumps
+  // it after the drawer closes so we return to the selected node even if the user
+  // panned away). Skipped while the user is actively panning. Runs after `pad` is known.
+  useEffect(() => {
+    if (pad.x === 0 || panning) return;
+    if (selectedNodeId) centerOnNode(selectedNodeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodeId, centerTick, pad.x]);
 
   return (
     <div class="relative">
@@ -449,14 +480,22 @@ export function CampaignCanvas({
           // (which can extend down past the card) paints over — and stays clickable
           // over — the next card, instead of being intercepted by it.
           const raised = openMenuId === cn.id;
+          const isSelected = selectedNodeId === cn.id;
           return (
             <div
               key={cn.id}
               data-testid={`node-${dt}`}
               data-node-id={cn.id}
+              data-selected={isSelected ? 'true' : undefined}
               class={`absolute rounded-xl border bg-white shadow-card ring-1 ring-inset ${
-                raised ? 'z-20' : 'z-10'
-              } ${publishErr ? 'ring-rose-300' : 'ring-stone-200'}`}
+                raised || isSelected ? 'z-20' : 'z-10'
+              } ${
+                isSelected
+                  ? 'ring-2 ring-brand-500 border-brand-400'
+                  : publishErr
+                    ? 'ring-rose-300'
+                    : 'ring-stone-200'
+              }`}
               style={{
                 left: `${pos.x - LAYOUT.cardWidth / 2}px`,
                 top: `${pos.y}px`,
