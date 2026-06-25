@@ -298,17 +298,42 @@ export function decideRichWait(node: WaitNode, now: Date, tz: string, inputs: Ri
     deadline = inputs.pin!.deadline ? new Date(inputs.pin!.deadline) : null;
   }
 
-  const timeOk = target === null || now.getTime() >= target.getTime();
+  // The two gates are ACTIVE only when present + resolvable (an unresolvable anchor
+  // drops the time gate). A pinned/no-gate target is null → time gate inactive.
+  const timeGateActive = target !== null;
+  const conditionGateActive = node.waitCondition !== undefined;
+  const combine: 'and' | 'or' = node.combine === 'or' ? 'or' : 'and';
+
+  const timeReached = timeGateActive && now.getTime() >= target!.getTime();
+  const conditionPending = conditionGateActive && !inputs.conditionMet;
   const deadlineHit = deadline !== null && now.getTime() >= deadline.getTime();
-  if ((timeOk && inputs.conditionMet) || deadlineHit) {
+
+  // Combine ONLY the active gates. AND → every active gate satisfied; OR → any. With
+  // NO active gate, there is nothing to wait for UNLESS a maxWait deadline is set
+  // (a cap-only wait) — so proceed immediately when there's no deadline either, and
+  // otherwise let the deadline govern (never strand on an unresolvable-anchor-only node).
+  const active: boolean[] = [];
+  if (timeGateActive) active.push(timeReached);
+  if (conditionGateActive) active.push(inputs.conditionMet);
+  const gatesSatisfied =
+    active.length === 0 ? deadline === null : combine === 'or' ? active.some(Boolean) : active.every(Boolean);
+
+  if (gatesSatisfied || deadlineHit) {
     return { advance: true, nextRunAt: null, pinToPersist: null };
   }
 
-  // Stay. Wake at the earliest of: the time target (if not reached), NOW (poll the
-  // condition every sweep once the time gate is open), and the deadline cap.
+  // Stay. Pick the wake time. For AND we needn't poll the condition before the time
+  // target is reached (both required); for OR either gate can fire, so wake at the
+  // time target AND poll the condition. The deadline cap always bounds the wait.
   const candidates: number[] = [];
-  if (!timeOk && target) candidates.push(target.getTime());
-  if (timeOk && !inputs.conditionMet) candidates.push(now.getTime());
+  const timePending = timeGateActive && !timeReached;
+  if (combine === 'and') {
+    if (timePending) candidates.push(target!.getTime());
+    else if (conditionPending) candidates.push(now.getTime()); // time reached/absent → poll
+  } else {
+    if (timePending) candidates.push(target!.getTime());
+    if (conditionPending) candidates.push(now.getTime());
+  }
   if (deadline) candidates.push(deadline.getTime());
   if (candidates.length === 0) candidates.push(now.getTime());
   const nextRunAt = new Date(Math.min(...candidates));

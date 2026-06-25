@@ -158,6 +158,10 @@ test('WAIT-UNTIL editor: rich gates (relative time + condition + max-wait) combi
   await drawer.getByTestId('rule-field').first().fill('attributes.opened');
   await drawer.getByTestId('rule-operator').first().selectOption({ label: 'exists' });
 
+  // With BOTH a time and a condition gate, the AND/OR combine selector appears → pick OR.
+  await expect(drawer.getByTestId('wait-combine')).toBeVisible();
+  await drawer.getByTestId('wait-combine').selectOption('or');
+
   // MAX-WAIT cap → 5 days.
   await drawer.getByTestId('wait-max-enabled').check();
   await drawer.getByTestId('wait-max-amount').fill('5');
@@ -166,16 +170,18 @@ test('WAIT-UNTIL editor: rich gates (relative time + condition + max-wait) combi
   await drawer.getByTestId('node-save').click();
   await expect(drawer).toBeHidden();
 
-  // The card summary reflects the combined gates + the cap.
+  // The card summary reflects the combined gates (OR) + the cap.
   await expect(page.getByTestId('node-wait_until')).toContainText(/Wait until/i);
+  await expect(page.getByTestId('node-wait_until')).toContainText(/OR a condition/i);
   await expect(page.getByTestId('node-wait_until')).toContainText(/max 5 days/i);
 
-  // Reopen → the form round-trips the relative offset, the condition, and the cap.
+  // Reopen → the form round-trips the relative offset, the condition, the combine mode, and the cap.
   await page.getByTestId('node-wait_until').getByTestId(/node-open-/).first().click();
   const reopened = page.getByTestId('node-editor-wait_until');
   await expect(reopened.getByTestId('wait-offset-amount')).toHaveValue('2');
   await expect(reopened.getByTestId('wait-condition-enabled')).toBeChecked();
   await expect(reopened.getByTestId('rule-field').first()).toHaveValue('attributes.opened');
+  await expect(reopened.getByTestId('wait-combine')).toHaveValue('or');
   await expect(reopened.getByTestId('wait-max-enabled')).toBeChecked();
   await expect(reopened.getByTestId('wait-max-amount')).toHaveValue('5');
 });

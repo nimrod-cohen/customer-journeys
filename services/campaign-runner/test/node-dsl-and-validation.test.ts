@@ -172,6 +172,20 @@ describe('validateCampaignDefinition', () => {
     expect(() => validateCampaignDefinition(mk({ untilOffset: { amount: 1, unit: 'days' } }))).toThrow(/anchor must be 'now' or a/);
   });
 
+  it('accepts combine and|or; rejects any other combine value', () => {
+    const mk = (combine: unknown) => ({
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'w' },
+        w: { type: 'wait', untilOffset: { amount: 1, unit: 'days', anchor: 'now' }, waitCondition: { field: 'attributes.x', operator: 'exists' }, combine, next: 'x' },
+        x: { type: 'exit' },
+      },
+    });
+    expect(() => validateCampaignDefinition(mk('and'))).not.toThrow();
+    expect(() => validateCampaignDefinition(mk('or'))).not.toThrow();
+    expect(() => validateCampaignDefinition(mk('xor'))).toThrow(/combine must be 'and' or 'or'/);
+  });
+
   it('rejects an unknown node type', () => {
     const bad = {
       startNode: 't',

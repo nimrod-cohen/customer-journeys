@@ -405,11 +405,19 @@ function WaitUntilEditor(props: NodeEditorProps) {
     props.onDone();
   };
 
+  const bothGates = timeEnabled && form.hasCondition;
   return (
     <div class="space-y-4">
       <p class="text-sm text-stone-500">
-        Hold the profile here until the gates below are satisfied. With more than one, the journey proceeds when the
-        <b> time is reached AND the condition is true</b> — or when the maximum wait elapses (whichever comes first).
+        Hold the profile here until the gates below are satisfied.
+        {bothGates ? (
+          <>
+            {' '}The journey proceeds when the <b>time {form.combine === 'or' ? 'OR' : 'AND'} the condition</b> is met
+          </>
+        ) : (
+          <> The journey proceeds when the enabled gate is met</>
+        )}
+        {' '}— or when the maximum wait elapses (whichever comes first).
       </p>
 
       {/* TIME gate */}
@@ -508,6 +516,22 @@ function WaitUntilEditor(props: NodeEditorProps) {
           segments={props.segments.map((s) => ({ id: s.id, name: s.name }))}
         />
       </GateSection>
+
+      {/* TIME + CONDITION combine mode (only when BOTH gates are on) */}
+      {bothGates ? (
+        <div class="rounded-lg bg-stone-50 p-3 ring-1 ring-inset ring-stone-200">
+          <Field label="Proceed when" hint="How the time and condition gates combine. The maximum wait is always a separate cap (OR).">
+            <Select
+              data-testid="wait-combine"
+              value={form.combine}
+              onChange={(e: Event) => patch({ combine: (e.target as HTMLSelectElement).value as 'and' | 'or' })}
+            >
+              <option value="and">The time AND the condition are met</option>
+              <option value="or">The time OR the condition is met</option>
+            </Select>
+          </Field>
+        </div>
+      ) : null}
 
       {/* MAX-WAIT cap */}
       <GateSection

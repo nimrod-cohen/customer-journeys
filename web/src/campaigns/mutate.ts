@@ -782,6 +782,7 @@ export function nodeSummary(canvasNode: CanvasNode): string {
         delay?: { seconds?: number };
       };
       if (isWaitUntil(node)) {
+        const nn = node as typeof n & { combine?: string };
         const parts: string[] = [];
         if (typeof n.until === 'string') parts.push('a date');
         else if (n.untilOffset) {
@@ -790,7 +791,8 @@ export function nodeSummary(canvasNode: CanvasNode): string {
           parts.push(`${a} ${u}${n.untilOffset.anchor && n.untilOffset.anchor !== 'now' ? ' from a timestamp' : ' from now'}`);
         }
         if (n.waitCondition) parts.push('a condition');
-        const base = parts.length ? `Wait until ${parts.join(' + ')}` : 'Wait until';
+        const joiner = parts.length === 2 ? (nn.combine === 'or' ? ' OR ' : ' AND ') : ' + ';
+        const base = parts.length ? `Wait until ${parts.join(joiner)}` : 'Wait until';
         return n.maxWait ? `${base} (max ${n.maxWait.amount ?? 1} ${n.maxWait.unit ?? 'days'})` : base;
       }
       const secs = typeof n.delay?.seconds === 'number' ? n.delay.seconds : 0;

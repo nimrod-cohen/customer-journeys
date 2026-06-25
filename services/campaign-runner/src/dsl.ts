@@ -101,6 +101,10 @@ export interface WaitNode {
   readonly untilOffset?: WaitOffset;
   /** Condition gate — proceed only once the profile MATCHES this AST (§8). */
   readonly waitCondition?: AstNode;
+  /** How the TIME and CONDITION gates combine (default 'and'). 'and' = both must
+   *  hold; 'or' = either. Only meaningful when BOTH gates are present. The maxWait
+   *  cap is ALWAYS an OR (proceed-on-timeout) regardless of this. */
+  readonly combine?: 'and' | 'or';
   /** Max-wait cap — proceed anyway once elapsed (proceed-on-timeout). */
   readonly maxWait?: WaitMax;
   /** The node id to advance to once the wait elapses. */
@@ -403,6 +407,9 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
       if (hasMax) validateWaitDuration(id, 'maxWait', node.maxWait!, false);
       if (hasCondition && (typeof node.waitCondition !== 'object' || node.waitCondition === null)) {
         throw new Error(`validateCampaignDefinition: wait "${id}" waitCondition must be an AST object`);
+      }
+      if (node.combine !== undefined && node.combine !== 'and' && node.combine !== 'or') {
+        throw new Error(`validateCampaignDefinition: wait "${id}" combine must be 'and' or 'or'`);
       }
       requireEdge(node.next, 'next');
       return;

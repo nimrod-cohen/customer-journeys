@@ -164,6 +164,18 @@ describe('WAIT-UNTIL (rich: time + condition + max-wait)', () => {
     expect(waitUntilFormHasGate(f)).toBe(false);
     expect(writeWaitUntilForm(f, TZ)).toBeNull();
   });
+
+  it('combine is emitted ONLY when both a time AND a condition gate are present, and round-trips', () => {
+    const condition: RuleGroup = { combinator: 'and', rows: [{ kind: 'field', field: 'attributes.opened', operator: 'exists', value: '' }], groups: [] };
+    // both gates + or → combine:'or'
+    const both: WaitUntilForm = { ...baseForm(), timeMode: 'relative', amount: 1, unit: 'days', anchorKind: 'now', hasCondition: true, condition, combine: 'or' };
+    const bothNode = writeWaitUntilForm(both, TZ) as Record<string, unknown>;
+    expect(bothNode.combine).toBe('or');
+    expect(readWaitUntilForm(bothNode as never, TZ).combine).toBe('or');
+    // only a time gate → combine omitted (meaningless)
+    const timeOnly: WaitUntilForm = { ...baseForm(), timeMode: 'relative', amount: 1, unit: 'days', anchorKind: 'now', combine: 'or' };
+    expect((writeWaitUntilForm(timeOnly, TZ) as Record<string, unknown>).combine).toBeUndefined();
+  });
 });
 
 describe('HOUR-OF-DAY WINDOW', () => {

@@ -176,6 +176,8 @@ export interface WaitUntilForm {
   readonly anchorExpr: string; // {{...}} token expression when anchorKind 'expression'
   readonly hasCondition: boolean;
   readonly condition: RuleGroup;
+  /** How the time + condition gates combine (only meaningful when both are on). */
+  readonly combine: 'and' | 'or';
   readonly hasMaxWait: boolean;
   readonly maxAmount: number;
   readonly maxUnit: WaitDurationUnit;
@@ -187,6 +189,7 @@ export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilFor
     until?: unknown;
     untilOffset?: { amount?: unknown; unit?: unknown; anchor?: unknown };
     waitCondition?: AstNode | null;
+    combine?: unknown;
     maxWait?: { amount?: unknown; unit?: unknown };
   };
   let timeMode: WaitUntilForm['timeMode'] = 'none';
@@ -220,6 +223,7 @@ export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilFor
     anchorExpr,
     hasCondition,
     condition,
+    combine: n.combine === 'or' ? 'or' : 'and',
     hasMaxWait,
     maxAmount: hasMaxWait ? asAmount(n.maxWait!.amount) : 1,
     maxUnit: hasMaxWait ? asWaitUnit(n.maxWait!.unit) : 'days',
@@ -253,12 +257,16 @@ export function writeWaitUntilForm(form: WaitUntilForm, timeZone: string): DslNo
   }
   const ast = form.hasCondition && !conditionGroupIsEmpty(form.condition) ? editorRowsToConditionAst(form.condition) : null;
   const maxWait = form.hasMaxWait ? { amount: asAmount(form.maxAmount), unit: form.maxUnit } : undefined;
+  // `combine` only matters when BOTH a time gate and a condition gate are present.
+  const hasTimeGate = until !== undefined || untilOffset !== undefined;
+  const combine = hasTimeGate && ast ? form.combine : undefined;
   return {
     type: 'wait',
     delay: undefined,
     until,
     untilOffset,
     waitCondition: ast ?? undefined,
+    combine,
     maxWait,
   } as unknown as DslNode;
 }

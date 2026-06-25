@@ -85,6 +85,40 @@ describe('decideRichWait — BOTH time AND condition (combinable)', () => {
   });
 });
 
+describe('decideRichWait — time OR condition (combine: or)', () => {
+  const node: WaitNode = {
+    type: 'wait',
+    untilOffset: { amount: 2, unit: 'days', anchor: 'now' },
+    waitCondition: { field: 'attributes.opened', operator: 'exists' } as never,
+    combine: 'or',
+    next: 'x',
+  };
+  const pin: WaitPin = { target: '2026-06-09T12:00:00.000Z', deadline: null };
+
+  it('BEFORE the time target but condition MET → proceeds (OR — either gate)', () => {
+    const d = decideRichWait(node, new Date('2026-06-07T18:00:00Z'), TZ, resume(pin, { conditionMet: true }));
+    expect(d.advance).toBe(true);
+  });
+
+  it('BEFORE the time target and condition NOT met → stays, waking at the target AND polling now', () => {
+    const d = decideRichWait(node, new Date('2026-06-07T18:00:00Z'), TZ, resume(pin, { conditionMet: false }));
+    expect(d.advance).toBe(false);
+    // earliest of poll-now and the target → now (re-checks the condition each sweep)
+    expect(d.nextRunAt!.toISOString()).toBe('2026-06-07T18:00:00.000Z');
+  });
+
+  it('AFTER the time target, condition still NOT met → proceeds (OR — the time fired)', () => {
+    const d = decideRichWait(node, new Date('2026-06-09T12:00:00Z'), TZ, resume(pin, { conditionMet: false }));
+    expect(d.advance).toBe(true);
+  });
+
+  it('default (no combine) is AND: before the target with condition met → stays', () => {
+    const andNode: WaitNode = { ...node, combine: undefined };
+    const d = decideRichWait(andNode, new Date('2026-06-07T18:00:00Z'), TZ, resume(pin, { conditionMet: true }));
+    expect(d.advance).toBe(false);
+  });
+});
+
 describe('decideRichWait — max-wait cap (proceed on timeout)', () => {
   const node: WaitNode = {
     type: 'wait',
