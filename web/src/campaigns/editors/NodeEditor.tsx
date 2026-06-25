@@ -498,6 +498,25 @@ function WaitUntilEditor(props: NodeEditorProps) {
         )}
       </GateSection>
 
+      {/* TIME ↔ CONDITION combine mode — shown BETWEEN the two gates, only when BOTH
+          are enabled (it's meaningless otherwise). Prominent so it's never missed. */}
+      {bothGates ? (
+        <div class="flex flex-wrap items-center gap-3 rounded-lg border-2 border-brand-200 bg-brand-50 px-3 py-2.5" data-testid="wait-combine-row">
+          <span class="text-sm font-semibold text-brand-800">Proceed when the time</span>
+          <Select
+            data-testid="wait-combine"
+            class="w-28 font-semibold"
+            value={form.combine}
+            onChange={(e: Event) => patch({ combine: (e.target as HTMLSelectElement).value as 'and' | 'or' })}
+          >
+            <option value="and">AND</option>
+            <option value="or">OR</option>
+          </Select>
+          <span class="text-sm font-semibold text-brand-800">the condition is met.</span>
+          <span class="w-full text-xs text-brand-700/80">The maximum wait below is always a separate cap (proceeds on timeout regardless).</span>
+        </div>
+      ) : null}
+
       {/* CONDITION gate */}
       <GateSection
         title="Wait for a condition"
@@ -516,22 +535,6 @@ function WaitUntilEditor(props: NodeEditorProps) {
           segments={props.segments.map((s) => ({ id: s.id, name: s.name }))}
         />
       </GateSection>
-
-      {/* TIME + CONDITION combine mode (only when BOTH gates are on) */}
-      {bothGates ? (
-        <div class="rounded-lg bg-stone-50 p-3 ring-1 ring-inset ring-stone-200">
-          <Field label="Proceed when" hint="How the time and condition gates combine. The maximum wait is always a separate cap (OR).">
-            <Select
-              data-testid="wait-combine"
-              value={form.combine}
-              onChange={(e: Event) => patch({ combine: (e.target as HTMLSelectElement).value as 'and' | 'or' })}
-            >
-              <option value="and">The time AND the condition are met</option>
-              <option value="or">The time OR the condition is met</option>
-            </Select>
-          </Field>
-        </div>
-      ) : null}
 
       {/* MAX-WAIT cap */}
       <GateSection
