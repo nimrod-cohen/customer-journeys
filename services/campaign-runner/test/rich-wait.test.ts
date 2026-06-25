@@ -50,6 +50,13 @@ describe('decideRichWait — time gate (untilOffset from a {{timestamp}} anchor)
     const d = decideRichWait(node, NOW, TZ, arrival({ resolvedAnchor: null, conditionMet: true }));
     expect(d.advance).toBe(true); // no time gate + condition met → go
   });
+
+  it('direction "before" SUBTRACTS the offset from the anchor (1 day BEFORE the appointment)', () => {
+    const before: WaitNode = { type: 'wait', untilOffset: { amount: 1, unit: 'days', anchor: '{{event.appointment_at}}', direction: 'before' }, next: 'x' };
+    const anchorAt = new Date('2026-06-20T09:00:00.000Z');
+    const d = decideRichWait(before, NOW, TZ, arrival({ resolvedAnchor: anchorAt }));
+    expect(d.pinToPersist!.target).toBe('2026-06-19T09:00:00.000Z'); // appointment − 1 day
+  });
 });
 
 describe('decideRichWait — condition gate (poll every sweep)', () => {

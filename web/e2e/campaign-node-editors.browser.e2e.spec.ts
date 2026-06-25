@@ -147,11 +147,13 @@ test('WAIT-UNTIL editor: rich gates (relative time + condition + max-wait) combi
   const drawer = page.getByTestId('node-editor-wait_until');
   await expect(drawer).toBeVisible();
 
-  // TIME gate → a relative offset, 2 days from now.
+  // TIME gate → a relative offset, 2 days BEFORE a timestamp.
   await drawer.getByTestId('wait-time-mode').selectOption('relative');
   await drawer.getByTestId('wait-offset-amount').fill('2');
   await drawer.getByTestId('wait-offset-unit').selectOption('days');
-  await drawer.getByTestId('wait-offset-anchor').selectOption('now');
+  await drawer.getByTestId('wait-offset-direction').selectOption('before');
+  await drawer.getByTestId('wait-offset-anchor').selectOption('expression');
+  await drawer.getByTestId('wait-offset-anchor-expr').fill('{{event.appointment_at}}');
 
   // CONDITION gate → enable + add a rule (the SAME shared rule builder as segments).
   await drawer.getByTestId('wait-condition-enabled').check();
@@ -170,15 +172,19 @@ test('WAIT-UNTIL editor: rich gates (relative time + condition + max-wait) combi
   await drawer.getByTestId('node-save').click();
   await expect(drawer).toBeHidden();
 
-  // The card summary reflects the combined gates (OR) + the cap.
+  // The card summary reflects the combined gates (OR) + the BEFORE direction + the cap.
   await expect(page.getByTestId('node-wait_until')).toContainText(/Wait until/i);
+  await expect(page.getByTestId('node-wait_until')).toContainText(/2 days before a timestamp/i);
   await expect(page.getByTestId('node-wait_until')).toContainText(/OR a condition/i);
   await expect(page.getByTestId('node-wait_until')).toContainText(/max 5 days/i);
 
-  // Reopen → the form round-trips the relative offset, the condition, the combine mode, and the cap.
+  // Reopen → the form round-trips the relative offset, the direction, the condition, the combine mode, and the cap.
   await page.getByTestId('node-wait_until').getByTestId(/node-open-/).first().click();
   const reopened = page.getByTestId('node-editor-wait_until');
   await expect(reopened.getByTestId('wait-offset-amount')).toHaveValue('2');
+  await expect(reopened.getByTestId('wait-offset-direction')).toHaveValue('before');
+  await expect(reopened.getByTestId('wait-offset-anchor')).toHaveValue('expression');
+  await expect(reopened.getByTestId('wait-offset-anchor-expr')).toHaveValue('{{event.appointment_at}}');
   await expect(reopened.getByTestId('wait-condition-enabled')).toBeChecked();
   await expect(reopened.getByTestId('rule-field').first()).toHaveValue('attributes.opened');
   await expect(reopened.getByTestId('wait-combine')).toHaveValue('or');

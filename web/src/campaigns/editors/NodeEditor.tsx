@@ -471,7 +471,15 @@ function WaitUntilEditor(props: NodeEditorProps) {
                   </option>
                 ))}
               </Select>
-              <span class="text-sm text-stone-500">from</span>
+              <Select
+                data-testid="wait-offset-direction"
+                class="w-28"
+                value={form.direction}
+                onChange={(e: Event) => patch({ direction: (e.target as HTMLSelectElement).value as 'before' | 'after' })}
+              >
+                <option value="after">after</option>
+                <option value="before">before</option>
+              </Select>
               <Select
                 data-testid="wait-offset-anchor"
                 class="w-40"

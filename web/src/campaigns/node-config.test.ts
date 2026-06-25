@@ -150,6 +150,18 @@ describe('WAIT-UNTIL (rich: time + condition + max-wait)', () => {
     expect(back.anchorExpr).toBe('{{event.appointment_at}}');
   });
 
+  it('direction "before" round-trips; "after" (default) is omitted from the node', () => {
+    const beforeF: WaitUntilForm = { ...baseForm(), timeMode: 'relative', amount: 4, unit: 'days', direction: 'before', anchorKind: 'expression', anchorExpr: '{{event.appointment_at}}' };
+    const beforeNode = writeWaitUntilForm(beforeF, TZ) as Record<string, unknown>;
+    expect(beforeNode.untilOffset).toEqual({ amount: 4, unit: 'days', anchor: '{{event.appointment_at}}', direction: 'before' });
+    expect(readWaitUntilForm(beforeNode as never, TZ).direction).toBe('before');
+    // 'after' is the default → omitted (keeps the node clean), reads back as 'after'.
+    const afterF: WaitUntilForm = { ...beforeF, direction: 'after' };
+    const afterNode = writeWaitUntilForm(afterF, TZ) as Record<string, unknown>;
+    expect((afterNode.untilOffset as Record<string, unknown>).direction).toBeUndefined();
+    expect(readWaitUntilForm(afterNode as never, TZ).direction).toBe('after');
+  });
+
   it('a condition gate serializes to a §8 waitCondition AST and validates', () => {
     const condition: RuleGroup = { combinator: 'and', rows: [{ kind: 'field', field: 'attributes.opened', operator: 'exists', value: '' }], groups: [] };
     const f: WaitUntilForm = { ...baseForm(), hasCondition: true, condition };

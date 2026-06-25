@@ -71,6 +71,9 @@ export interface WaitOffset {
   readonly amount: number;
   readonly unit: WaitDurationUnit;
   readonly anchor: 'now' | string;
+  /** Offset direction: 'after' (default) adds the duration to the anchor; 'before'
+   *  subtracts it — e.g. "1 day BEFORE {{event.appointment_at}}" (reminder pattern). */
+  readonly direction?: 'before' | 'after';
 }
 
 /** A maximum-wait cap: proceed to `next` anyway once this much time has elapsed
@@ -403,7 +406,13 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
       if (!hasDelay && !hasUntil && !hasOffset && !hasCondition && !hasMax) {
         throw new Error(`validateCampaignDefinition: wait "${id}" needs a delay, until, untilOffset, waitCondition or maxWait`);
       }
-      if (hasOffset) validateWaitDuration(id, 'untilOffset', node.untilOffset!, true);
+      if (hasOffset) {
+        validateWaitDuration(id, 'untilOffset', node.untilOffset!, true);
+        const dir = node.untilOffset!.direction;
+        if (dir !== undefined && dir !== 'before' && dir !== 'after') {
+          throw new Error(`validateCampaignDefinition: wait "${id}" untilOffset.direction must be 'before' or 'after'`);
+        }
+      }
       if (hasMax) validateWaitDuration(id, 'maxWait', node.maxWait!, false);
       if (hasCondition && (typeof node.waitCondition !== 'object' || node.waitCondition === null)) {
         throw new Error(`validateCampaignDefinition: wait "${id}" waitCondition must be an AST object`);

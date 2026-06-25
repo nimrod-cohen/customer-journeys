@@ -170,6 +170,9 @@ describe('validateCampaignDefinition', () => {
     expect(() => validateCampaignDefinition(mk({ untilOffset: { amount: 0, unit: 'days', anchor: 'now' } }))).toThrow(/amount must be a positive number/);
     expect(() => validateCampaignDefinition(mk({ maxWait: { amount: 2, unit: 'weeks' } }))).toThrow(/unit must be minutes\|hours\|days/);
     expect(() => validateCampaignDefinition(mk({ untilOffset: { amount: 1, unit: 'days' } }))).toThrow(/anchor must be 'now' or a/);
+    // direction: accepts before/after, rejects anything else.
+    expect(() => validateCampaignDefinition(mk({ untilOffset: { amount: 1, unit: 'days', anchor: 'now', direction: 'before' } }))).not.toThrow();
+    expect(() => validateCampaignDefinition(mk({ untilOffset: { amount: 1, unit: 'days', anchor: 'now', direction: 'sideways' } }))).toThrow(/direction must be 'before' or 'after'/);
   });
 
   it('accepts combine and|or; rejects any other combine value', () => {

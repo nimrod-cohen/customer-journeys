@@ -260,9 +260,12 @@ export interface RichWaitInputs {
 function richWaitTimeTarget(node: WaitNode, now: Date, tz: string, resolvedAnchor: Date | null): Date | null {
   if (node.until !== undefined) return resolveUntilInstant(node.until, tz);
   if (node.untilOffset !== undefined) {
-    const ms = node.untilOffset.amount * WAIT_UNIT_MS[node.untilOffset.unit];
+    // 'before' subtracts the offset from the anchor (e.g. 1 day BEFORE the
+    // appointment); 'after' (default) adds it.
+    const sign = node.untilOffset.direction === 'before' ? -1 : 1;
+    const ms = sign * node.untilOffset.amount * WAIT_UNIT_MS[node.untilOffset.unit];
     if (node.untilOffset.anchor === 'now') return new Date(now.getTime() + ms);
-    // Expression anchor: pin resolvedAnchor + offset; an UNRESOLVABLE anchor (no such
+    // Expression anchor: pin resolvedAnchor ± offset; an UNRESOLVABLE anchor (no such
     // timestamp on the profile/event) drops the time gate (→ governed by condition/cap).
     if (resolvedAnchor === null || Number.isNaN(resolvedAnchor.getTime())) return null;
     return new Date(resolvedAnchor.getTime() + ms);

@@ -172,6 +172,8 @@ export interface WaitUntilForm {
   readonly dateInput: string; // datetime-local (workspace-zoned) for timeMode 'date'
   readonly amount: number;
   readonly unit: WaitDurationUnit;
+  /** 'after' adds the offset to the anchor (default); 'before' subtracts it. */
+  readonly direction: 'before' | 'after';
   readonly anchorKind: 'now' | 'expression';
   readonly anchorExpr: string; // {{...}} token expression when anchorKind 'expression'
   readonly hasCondition: boolean;
@@ -187,7 +189,7 @@ export interface WaitUntilForm {
 export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilForm {
   const n = node as {
     until?: unknown;
-    untilOffset?: { amount?: unknown; unit?: unknown; anchor?: unknown };
+    untilOffset?: { amount?: unknown; unit?: unknown; anchor?: unknown; direction?: unknown };
     waitCondition?: AstNode | null;
     combine?: unknown;
     maxWait?: { amount?: unknown; unit?: unknown };
@@ -196,6 +198,7 @@ export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilFor
   let dateInput = '';
   let amount = 1;
   let unit: WaitDurationUnit = 'days';
+  let direction: 'before' | 'after' = 'after';
   let anchorKind: 'now' | 'expression' = 'now';
   let anchorExpr = '';
   if (typeof n.until === 'string' && n.until.length > 0) {
@@ -205,6 +208,7 @@ export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilFor
     timeMode = 'relative';
     amount = asAmount(n.untilOffset.amount);
     unit = asWaitUnit(n.untilOffset.unit);
+    if (n.untilOffset.direction === 'before') direction = 'before';
     const anchor = n.untilOffset.anchor;
     if (typeof anchor === 'string' && anchor !== 'now') {
       anchorKind = 'expression';
@@ -219,6 +223,7 @@ export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilFor
     dateInput,
     amount,
     unit,
+    direction,
     anchorKind,
     anchorExpr,
     hasCondition,
@@ -248,12 +253,16 @@ export function writeWaitUntilForm(form: WaitUntilForm, timeZone: string): DslNo
   // (e.g. the default `until`) is cleared rather than lingering. (undefined keys are
   // dropped on the JSON round-trip; the read path treats them as absent.)
   let until: string | undefined;
-  let untilOffset: { amount: number; unit: WaitDurationUnit; anchor: string } | undefined;
+  let untilOffset: { amount: number; unit: WaitDurationUnit; anchor: string; direction?: 'before' | 'after' } | undefined;
   if (form.timeMode === 'date' && form.dateInput.length > 0) {
     until = zonedInputToUtcIso(form.dateInput, timeZone);
   } else if (form.timeMode === 'relative') {
     const anchor = form.anchorKind === 'now' ? 'now' : form.anchorExpr.trim();
-    if (anchor.length > 0) untilOffset = { amount: asAmount(form.amount), unit: form.unit, anchor };
+    if (anchor.length > 0) {
+      untilOffset = { amount: asAmount(form.amount), unit: form.unit, anchor };
+      // Emit direction only when 'before' (default 'after' keeps the node clean).
+      if (form.direction === 'before') untilOffset.direction = 'before';
+    }
   }
   const ast = form.hasCondition && !conditionGroupIsEmpty(form.condition) ? editorRowsToConditionAst(form.condition) : null;
   const maxWait = form.hasMaxWait ? { amount: asAmount(form.maxAmount), unit: form.maxUnit } : undefined;

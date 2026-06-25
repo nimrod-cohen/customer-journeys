@@ -788,7 +788,9 @@ export function nodeSummary(canvasNode: CanvasNode): string {
         else if (n.untilOffset) {
           const a = n.untilOffset.amount ?? 1;
           const u = n.untilOffset.unit ?? 'days';
-          parts.push(`${a} ${u}${n.untilOffset.anchor && n.untilOffset.anchor !== 'now' ? ' from a timestamp' : ' from now'}`);
+          const dir = (n.untilOffset as { direction?: string }).direction === 'before' ? 'before' : 'after';
+          const anchorLabel = n.untilOffset.anchor && n.untilOffset.anchor !== 'now' ? 'a timestamp' : 'now';
+          parts.push(`${a} ${u} ${dir} ${anchorLabel}`);
         }
         if (n.waitCondition) parts.push('a condition');
         const joiner = parts.length === 2 ? (nn.combine === 'or' ? ' OR ' : ' AND ') : ' + ';
