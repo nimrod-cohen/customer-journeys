@@ -11,6 +11,7 @@
 // flow (POST .../attach-template + editorReturn) for its email instance. Standing
 // UI rules: every server-calling button RETURNS its promise (kit Button auto-locks);
 // NO native dialogs (inline hints + showToast); every control has a data-testid.
+import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../../store/session.js';
 import { openEmailDesigner } from '../../store/emailDesignerDrawer.js';
@@ -25,8 +26,11 @@ import {
   writeTriggerConfig,
   readWaitSeconds,
   writeWaitConfig,
-  readWaitUntilInput,
-  writeWaitUntilConfig,
+  readWaitUntilForm,
+  writeWaitUntilForm,
+  waitUntilFormHasGate,
+  type WaitUntilForm,
+  type WaitDurationUnit,
   readHourWindow,
   writeHourWindowConfig,
   writeConditionConfig,
@@ -348,30 +352,202 @@ function WaitEditor(props: NodeEditorProps) {
   );
 }
 
-// ── WAIT-UNTIL ──────────────────────────────────────────────────────────────────
+// ── WAIT-UNTIL (rich: time gate + condition gate + max-wait cap) ──────────────────
+
+const WAIT_DURATION_UNITS: { value: WaitDurationUnit; label: string }[] = [
+  { value: 'minutes', label: 'minutes' },
+  { value: 'hours', label: 'hours' },
+  { value: 'days', label: 'days' },
+];
+
+/** A small bordered, toggle-headed section used for each optional wait gate. */
+function GateSection(props: {
+  title: string;
+  hint: string;
+  enabled: boolean;
+  onToggle: (on: boolean) => void;
+  testid: string;
+  children?: ComponentChildren;
+}) {
+  return (
+    <div class="rounded-lg border border-stone-200 p-3">
+      <label class="flex cursor-pointer items-start gap-2">
+        <input
+          type="checkbox"
+          class="mt-1"
+          data-testid={props.testid}
+          checked={props.enabled}
+          onChange={(e: Event) => props.onToggle((e.target as HTMLInputElement).checked)}
+        />
+        <span>
+          <span class="text-sm font-medium text-ink-800">{props.title}</span>
+          <span class="block text-xs text-stone-500">{props.hint}</span>
+        </span>
+      </label>
+      {props.enabled ? <div class="mt-3 space-y-3 pl-6">{props.children}</div> : null}
+    </div>
+  );
+}
 
 function WaitUntilEditor(props: NodeEditorProps) {
-  const [local, setLocal] = useState(() => readWaitUntilInput(props.node.node, props.timeZone));
+  const [form, setForm] = useState<WaitUntilForm>(() => readWaitUntilForm(props.node.node, props.timeZone));
+  const patch = (p: Partial<WaitUntilForm>) => setForm((f) => ({ ...f, ...p }));
+  const timeEnabled = form.timeMode !== 'none';
+  const canSave = waitUntilFormHasGate(form);
 
   const save = async (): Promise<void> => {
-    if (!local) {
-      showToast('Pick a date and time.', { tone: 'error' });
+    const node = writeWaitUntilForm(form, props.timeZone);
+    if (!node) {
+      showToast('Set at least one of: a time, a condition, or a maximum wait.', { tone: 'error' });
       return;
     }
-    await props.onSaveNode(writeWaitUntilConfig(local, props.timeZone));
+    await props.onSaveNode(node);
     props.onDone();
   };
 
   return (
     <div class="space-y-4">
-      <Field label="Wait until" hint={`Interpreted in the workspace timezone (${props.timeZone}).`}>
-        <Input data-testid="wait-until-input" type="datetime-local" value={local} onInput={(e: Event) => setLocal((e.target as HTMLInputElement).value)} />
-      </Field>
-      <p data-testid="wait-until-tz" class="text-xs text-stone-400">
-        Timezone: {props.timeZone}
+      <p class="text-sm text-stone-500">
+        Hold the profile here until the gates below are satisfied. With more than one, the journey proceeds when the
+        <b> time is reached AND the condition is true</b> — or when the maximum wait elapses (whichever comes first).
       </p>
+
+      {/* TIME gate */}
+      <GateSection
+        title="Wait for a time"
+        hint="A specific date, or a relative offset from now or a timestamp."
+        enabled={timeEnabled}
+        onToggle={(on) => patch({ timeMode: on ? 'relative' : 'none' })}
+        testid="wait-time-enabled"
+      >
+        <Select
+          data-testid="wait-time-mode"
+          value={form.timeMode === 'date' ? 'date' : 'relative'}
+          onChange={(e: Event) => patch({ timeMode: (e.target as HTMLSelectElement).value as 'date' | 'relative' })}
+        >
+          <option value="relative">A relative time from now / a timestamp</option>
+          <option value="date">A specific date &amp; time</option>
+        </Select>
+        {form.timeMode === 'date' ? (
+          <>
+            <Input
+              data-testid="wait-until-input"
+              type="datetime-local"
+              value={form.dateInput}
+              onInput={(e: Event) => patch({ dateInput: (e.target as HTMLInputElement).value })}
+            />
+            <p data-testid="wait-until-tz" class="text-xs text-stone-400">
+              Timezone: {props.timeZone}
+            </p>
+          </>
+        ) : (
+          <>
+            <div class="flex items-center gap-2">
+              <Input
+                data-testid="wait-offset-amount"
+                type="number"
+                min={1}
+                class="w-24"
+                value={String(form.amount)}
+                onInput={(e: Event) => patch({ amount: Math.max(1, Math.floor(Number((e.target as HTMLInputElement).value) || 1)) })}
+              />
+              <Select
+                data-testid="wait-offset-unit"
+                class="w-32"
+                value={form.unit}
+                onChange={(e: Event) => patch({ unit: (e.target as HTMLSelectElement).value as WaitDurationUnit })}
+              >
+                {WAIT_DURATION_UNITS.map((u) => (
+                  <option key={u.value} value={u.value}>
+                    {u.label}
+                  </option>
+                ))}
+              </Select>
+              <span class="text-sm text-stone-500">from</span>
+              <Select
+                data-testid="wait-offset-anchor"
+                class="w-40"
+                value={form.anchorKind}
+                onChange={(e: Event) => patch({ anchorKind: (e.target as HTMLSelectElement).value as 'now' | 'expression' })}
+              >
+                <option value="now">now</option>
+                <option value="expression">a timestamp…</option>
+              </Select>
+            </div>
+            {form.anchorKind === 'expression' ? (
+              <Input
+                data-testid="wait-offset-anchor-expr"
+                placeholder="{{event.appointment_at}}"
+                value={form.anchorExpr}
+                onInput={(e: Event) => patch({ anchorExpr: (e.target as HTMLInputElement).value })}
+              />
+            ) : null}
+            <p class="text-xs text-stone-400">
+              Use a <code>{'{{customer.*}}'}</code> / <code>{'{{event.*}}'}</code> token that holds a timestamp, e.g.{' '}
+              <code>{'{{event.appointment_at}}'}</code>.
+            </p>
+          </>
+        )}
+      </GateSection>
+
+      {/* CONDITION gate */}
+      <GateSection
+        title="Wait for a condition"
+        hint="Proceed only once the profile matches these rules (re-checked every sweep). Same builder as segments."
+        enabled={form.hasCondition}
+        onToggle={(on) => patch({ hasCondition: on })}
+        testid="wait-condition-enabled"
+      >
+        <RuleBuilder
+          group={form.condition}
+          onChange={(g) => patch({ condition: g })}
+          allowEmptyRootRules
+          context="campaign"
+          triggerIsEvent={props.triggerNode?.kind === 'event'}
+          triggerEventType={props.triggerNode?.eventType ?? ''}
+          segments={props.segments.map((s) => ({ id: s.id, name: s.name }))}
+        />
+      </GateSection>
+
+      {/* MAX-WAIT cap */}
+      <GateSection
+        title="Maximum wait"
+        hint="Proceed to the next step anyway once this much time has passed."
+        enabled={form.hasMaxWait}
+        onToggle={(on) => patch({ hasMaxWait: on })}
+        testid="wait-max-enabled"
+      >
+        <div class="flex items-center gap-2">
+          <Input
+            data-testid="wait-max-amount"
+            type="number"
+            min={1}
+            class="w-24"
+            value={String(form.maxAmount)}
+            onInput={(e: Event) => patch({ maxAmount: Math.max(1, Math.floor(Number((e.target as HTMLInputElement).value) || 1)) })}
+          />
+          <Select
+            data-testid="wait-max-unit"
+            class="w-32"
+            value={form.maxUnit}
+            onChange={(e: Event) => patch({ maxUnit: (e.target as HTMLSelectElement).value as WaitDurationUnit })}
+          >
+            {WAIT_DURATION_UNITS.map((u) => (
+              <option key={u.value} value={u.value}>
+                {u.label}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </GateSection>
+
+      {!canSave ? (
+        <p data-testid="wait-until-incomplete" class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-200">
+          Enable at least one gate: a time, a condition, or a maximum wait.
+        </p>
+      ) : null}
       <div class="flex justify-end">
-        <Button data-testid="node-save" onClick={save}>
+        <Button data-testid="node-save" disabled={!canSave} onClick={save}>
           Save wait-until
         </Button>
       </div>

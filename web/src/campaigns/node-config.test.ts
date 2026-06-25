@@ -20,6 +20,10 @@ import {
   readWaitSeconds,
   writeWaitUntilConfig,
   readWaitUntilInput,
+  readWaitUntilForm,
+  writeWaitUntilForm,
+  waitUntilFormHasGate,
+  type WaitUntilForm,
   writeHourWindowConfig,
   readHourWindow,
   editorRowsToConditionAst,
@@ -114,6 +118,51 @@ describe('WAIT-UNTIL (workspace tz, DST-correct)', () => {
     // Reading back renders the SAME wall-clock input.
     expect(readWaitUntilInput(sNode, TZ)).toBe(summer);
     expect(readWaitUntilInput(wNode, TZ)).toBe(winter);
+  });
+});
+
+describe('WAIT-UNTIL (rich: time + condition + max-wait)', () => {
+  const TZ = 'UTC';
+  const baseForm = () => readWaitUntilForm({ type: 'wait', next: '' } as never, TZ);
+
+  it('a relative-from-now offset + max-wait → untilOffset + maxWait, validates, round-trips', () => {
+    const f: WaitUntilForm = { ...baseForm(), timeMode: 'relative', amount: 2, unit: 'days', anchorKind: 'now', hasMaxWait: true, maxAmount: 5, maxUnit: 'days' };
+    const node = writeWaitUntilForm(f, TZ) as Record<string, unknown>;
+    expect(node.untilOffset).toEqual({ amount: 2, unit: 'days', anchor: 'now' });
+    expect(node.maxWait).toEqual({ amount: 5, unit: 'days' });
+    expect(node.until).toBeUndefined();
+    const def = { startNode: 't', nodes: { t: { type: 'trigger', kind: 'manual', next: 'w' }, w: { ...node, next: 'x' }, x: { type: 'exit' } } };
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+    // round-trip
+    const back = readWaitUntilForm(node as never, TZ);
+    expect(back.timeMode).toBe('relative');
+    expect(back.amount).toBe(2);
+    expect(back.hasMaxWait).toBe(true);
+    expect(back.maxAmount).toBe(5);
+  });
+
+  it('an expression anchor is stored verbatim as untilOffset.anchor', () => {
+    const f: WaitUntilForm = { ...baseForm(), timeMode: 'relative', amount: 1, unit: 'days', anchorKind: 'expression', anchorExpr: '{{event.appointment_at}}' };
+    const node = writeWaitUntilForm(f, TZ) as Record<string, unknown>;
+    expect(node.untilOffset).toEqual({ amount: 1, unit: 'days', anchor: '{{event.appointment_at}}' });
+    const back = readWaitUntilForm(node as never, TZ);
+    expect(back.anchorKind).toBe('expression');
+    expect(back.anchorExpr).toBe('{{event.appointment_at}}');
+  });
+
+  it('a condition gate serializes to a §8 waitCondition AST and validates', () => {
+    const condition: RuleGroup = { combinator: 'and', rows: [{ kind: 'field', field: 'attributes.opened', operator: 'exists', value: '' }], groups: [] };
+    const f: WaitUntilForm = { ...baseForm(), hasCondition: true, condition };
+    const node = writeWaitUntilForm(f, TZ) as Record<string, unknown>;
+    expect(node.waitCondition).toBeTruthy();
+    const def = { startNode: 't', nodes: { t: { type: 'trigger', kind: 'manual', next: 'w' }, w: { ...node, next: 'x' }, x: { type: 'exit' } } };
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('an empty form (no gate) does NOT serialize (write returns null, hasGate false)', () => {
+    const f = baseForm();
+    expect(waitUntilFormHasGate(f)).toBe(false);
+    expect(writeWaitUntilForm(f, TZ)).toBeNull();
   });
 });
 

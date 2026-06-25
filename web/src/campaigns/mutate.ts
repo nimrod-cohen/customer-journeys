@@ -14,6 +14,7 @@ import {
   defaultNodeConfig,
   freshNodeId,
   displayType,
+  isWaitUntil,
   outgoingEdges,
   type CampaignDefinition,
   type CanvasModel,
@@ -734,7 +735,7 @@ export function duplicateSubtree(model: CanvasModel, rootId: string, destEdge: C
 function paletteTypeOf(node: DslNode): PaletteType {
   switch (node.type) {
     case 'wait':
-      return typeof (node as { until?: unknown }).until === 'string' ? 'wait_until' : 'wait';
+      return isWaitUntil(node) ? 'wait_until' : 'wait';
     case 'hour_of_day_window':
       return 'hour_of_day_window';
     case 'condition':
@@ -773,10 +774,26 @@ export function nodeSummary(canvasNode: CanvasNode): string {
       return map[kind] ?? 'Trigger';
     }
     case 'wait': {
-      const until = (node as { until?: unknown }).until;
-      if (typeof until === 'string') return 'Wait until a date';
-      const delay = (node as { delay?: { seconds?: number } }).delay;
-      const secs = typeof delay?.seconds === 'number' ? delay.seconds : 0;
+      const n = node as {
+        until?: unknown;
+        untilOffset?: { amount?: number; unit?: string; anchor?: string };
+        waitCondition?: unknown;
+        maxWait?: { amount?: number; unit?: string };
+        delay?: { seconds?: number };
+      };
+      if (isWaitUntil(node)) {
+        const parts: string[] = [];
+        if (typeof n.until === 'string') parts.push('a date');
+        else if (n.untilOffset) {
+          const a = n.untilOffset.amount ?? 1;
+          const u = n.untilOffset.unit ?? 'days';
+          parts.push(`${a} ${u}${n.untilOffset.anchor && n.untilOffset.anchor !== 'now' ? ' from a timestamp' : ' from now'}`);
+        }
+        if (n.waitCondition) parts.push('a condition');
+        const base = parts.length ? `Wait until ${parts.join(' + ')}` : 'Wait until';
+        return n.maxWait ? `${base} (max ${n.maxWait.amount ?? 1} ${n.maxWait.unit ?? 'days'})` : base;
+      }
+      const secs = typeof n.delay?.seconds === 'number' ? n.delay.seconds : 0;
       return `Wait ${formatDuration(secs)}`;
     }
     case 'hour_of_day_window': {

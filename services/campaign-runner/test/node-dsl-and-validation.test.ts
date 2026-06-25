@@ -141,7 +141,35 @@ describe('validateCampaignDefinition', () => {
         x: { type: 'exit' },
       },
     };
-    expect(() => validateCampaignDefinition(badWait)).toThrow(/delay or until/);
+    expect(() => validateCampaignDefinition(badWait)).toThrow(/needs a delay, until, untilOffset, waitCondition or maxWait/);
+  });
+
+  it('accepts a RICH wait-until: untilOffset + waitCondition + maxWait combined', () => {
+    const def = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'w' },
+        w: {
+          type: 'wait',
+          untilOffset: { amount: 1, unit: 'days', anchor: '{{event.appointment_at}}' },
+          waitCondition: { field: 'attributes.opened', operator: 'exists' },
+          maxWait: { amount: 3, unit: 'days' },
+          next: 'x',
+        },
+        x: { type: 'exit' },
+      },
+    };
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+  });
+
+  it('rejects a bad rich-wait duration (zero amount / unknown unit / missing anchor)', () => {
+    const mk = (wait: Record<string, unknown>) => ({
+      startNode: 't',
+      nodes: { t: { type: 'trigger', kind: 'manual', next: 'w' }, w: { type: 'wait', next: 'x', ...wait }, x: { type: 'exit' } },
+    });
+    expect(() => validateCampaignDefinition(mk({ untilOffset: { amount: 0, unit: 'days', anchor: 'now' } }))).toThrow(/amount must be a positive number/);
+    expect(() => validateCampaignDefinition(mk({ maxWait: { amount: 2, unit: 'weeks' } }))).toThrow(/unit must be minutes\|hours\|days/);
+    expect(() => validateCampaignDefinition(mk({ untilOffset: { amount: 1, unit: 'days' } }))).toThrow(/anchor must be 'now' or a/);
   });
 
   it('rejects an unknown node type', () => {

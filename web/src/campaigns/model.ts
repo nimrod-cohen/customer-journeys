@@ -105,6 +105,14 @@ function edgeIf(
   return [label !== undefined ? { from, to, slot, label } : { from, to, slot }];
 }
 
+/** A wait node is a (rich) WAIT-UNTIL when it carries a time-target / condition /
+ *  max-wait gate — vs a SIMPLE relative `delay` wait. */
+export function isWaitUntil(node: DslNode): boolean {
+  if (node.type !== 'wait') return false;
+  const n = node as { until?: unknown; untilOffset?: unknown; waitCondition?: unknown; maxWait?: unknown };
+  return n.until !== undefined || n.untilOffset !== undefined || n.waitCondition !== undefined || n.maxWait !== undefined;
+}
+
 /** The display type of a DSL node (refines actions to send/set_attribute/set_journey/webhook). */
 export function displayType(node: DslNode): DisplayType {
   if (node.type === 'action') {
@@ -112,6 +120,7 @@ export function displayType(node: DslNode): DisplayType {
     if (kind === 'send' || kind === 'set_attribute' || kind === 'set_journey' || kind === 'webhook') return kind;
     return 'action';
   }
+  if (node.type === 'wait') return isWaitUntil(node) ? 'wait_until' : 'wait';
   return node.type as DisplayType;
 }
 

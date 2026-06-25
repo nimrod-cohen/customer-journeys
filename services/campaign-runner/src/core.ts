@@ -135,6 +135,9 @@ export type ProcessResult =
       readonly nextNode: string;
       readonly nextRunAt: Date;
       readonly sideEffects: readonly SideEffect[];
+      /** A rich wait's pinned time-target/deadline to persist on state.wait.<nodeId>
+       *  (set only on first arrival; the caller folds it into the park write). */
+      readonly waitPin?: WaitPin;
     }
   | {
       /** Terminal — the enrollment completes (exit). */
@@ -186,18 +189,20 @@ const BARE_WALL_CLOCK = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?$/;
  * explicit Z / ±HH:MM offset (or a Date) is an absolute instant, honored verbatim
  * (no double-shift). `tz` defaults to UTC for the legacy callers.
  */
+/** Resolve an absolute `until` instant (tz-aware for a bare wall-clock string). */
+function resolveUntilInstant(until: string | Date, tz: string): Date {
+  if (typeof until === 'string' && BARE_WALL_CLOCK.test(until.trim())) {
+    // Bare wall clock → interpret in the workspace tz (DST-correct).
+    return new Date(zonedInputToUtcIso(until.trim().replace(' ', 'T'), tz));
+  }
+  const at = until instanceof Date ? until : new Date(until);
+  if (Number.isNaN(at.getTime())) throw new Error('computeWaitNextRunAt: invalid until date');
+  return at;
+}
+
 export function computeWaitNextRunAt(node: WaitNode, now: Date, tz: string = DEFAULT_WORKSPACE_TZ): Date {
   if (node.until !== undefined) {
-    if (typeof node.until === 'string' && BARE_WALL_CLOCK.test(node.until.trim())) {
-      // Bare wall clock → interpret in the workspace tz (DST-correct).
-      const iso = zonedInputToUtcIso(node.until.trim().replace(' ', 'T'), tz);
-      return new Date(iso);
-    }
-    const at = node.until instanceof Date ? node.until : new Date(node.until);
-    if (Number.isNaN(at.getTime())) {
-      throw new Error('computeWaitNextRunAt: invalid until date');
-    }
-    return at;
+    return resolveUntilInstant(node.until, tz);
   }
   if (node.delay !== undefined) {
     if (typeof node.delay === 'string') {
@@ -218,6 +223,100 @@ export function isWaitElapsed(nextRunAt: Date | string | null, now: Date): boole
   const at = nextRunAt instanceof Date ? nextRunAt : new Date(nextRunAt);
   if (Number.isNaN(at.getTime())) return true;
   return at.getTime() <= now.getTime();
+}
+
+// ── rich wait-until (time gate + condition gate + max-wait cap) ────────────────
+
+const WAIT_UNIT_MS: Record<'minutes' | 'hours' | 'days', number> = {
+  minutes: 60_000,
+  hours: 3_600_000,
+  days: 86_400_000,
+};
+
+/** A node is a RICH wait-until when it carries any gate beyond a simple delay/until. */
+export function isRichWait(node: WaitNode): boolean {
+  return node.untilOffset !== undefined || node.waitCondition !== undefined || node.maxWait !== undefined;
+}
+
+/** The pinned time-target / max-wait deadline for a rich wait (ISO strings or null),
+ *  persisted on `state.wait.<nodeId>` on first arrival so a later sweep doesn't
+ *  recompute against a moving "now" or a re-resolved anchor. */
+export interface WaitPin {
+  readonly target: string | null;
+  readonly deadline: string | null;
+}
+
+/** Inputs the runner resolves before deciding a rich wait (keeps the decision pure). */
+export interface RichWaitInputs {
+  /** True if the node has no waitCondition OR the condition AST matches NOW. */
+  readonly conditionMet: boolean;
+  /** Resolved {{timestamp}} anchor for an untilOffset expression (null = 'now'/none/unresolvable). */
+  readonly resolvedAnchor: Date | null;
+  /** The pin persisted on a PRIOR arrival (null on first arrival → compute + pin). */
+  readonly pin: WaitPin | null;
+}
+
+/** The absolute time gate of a rich wait (or null = no time gate), pinned on first arrival. */
+function richWaitTimeTarget(node: WaitNode, now: Date, tz: string, resolvedAnchor: Date | null): Date | null {
+  if (node.until !== undefined) return resolveUntilInstant(node.until, tz);
+  if (node.untilOffset !== undefined) {
+    const ms = node.untilOffset.amount * WAIT_UNIT_MS[node.untilOffset.unit];
+    if (node.untilOffset.anchor === 'now') return new Date(now.getTime() + ms);
+    // Expression anchor: pin resolvedAnchor + offset; an UNRESOLVABLE anchor (no such
+    // timestamp on the profile/event) drops the time gate (→ governed by condition/cap).
+    if (resolvedAnchor === null || Number.isNaN(resolvedAnchor.getTime())) return null;
+    return new Date(resolvedAnchor.getTime() + ms);
+  }
+  return null;
+}
+
+/** The decision for a rich wait: advance now, or stay-and-park (+ a pin to persist). */
+export interface RichWaitDecision {
+  readonly advance: boolean;
+  readonly nextRunAt: Date | null;
+  /** Set ONLY on first arrival (to persist via state.wait.<nodeId>). */
+  readonly pinToPersist: WaitPin | null;
+}
+
+/**
+ * Decide a rich wait-until (PURE). Proceed when the time gate (if any) is reached
+ * AND the condition (if any) is met — OR when the max-wait cap elapses
+ * (proceed-on-timeout). While pending on a condition, re-park at `now` so the next
+ * sweep re-checks; the cap (if any) bounds the polling. On FIRST arrival the
+ * absolute time target + deadline are computed and returned in `pinToPersist`;
+ * later sweeps read them back from `inputs.pin` so the gate doesn't drift.
+ */
+export function decideRichWait(node: WaitNode, now: Date, tz: string, inputs: RichWaitInputs): RichWaitDecision {
+  const firstArrival = inputs.pin === null;
+  let target: Date | null;
+  let deadline: Date | null;
+  if (firstArrival) {
+    target = richWaitTimeTarget(node, now, tz, inputs.resolvedAnchor);
+    deadline = node.maxWait ? new Date(now.getTime() + node.maxWait.amount * WAIT_UNIT_MS[node.maxWait.unit]) : null;
+  } else {
+    target = inputs.pin!.target ? new Date(inputs.pin!.target) : null;
+    deadline = inputs.pin!.deadline ? new Date(inputs.pin!.deadline) : null;
+  }
+
+  const timeOk = target === null || now.getTime() >= target.getTime();
+  const deadlineHit = deadline !== null && now.getTime() >= deadline.getTime();
+  if ((timeOk && inputs.conditionMet) || deadlineHit) {
+    return { advance: true, nextRunAt: null, pinToPersist: null };
+  }
+
+  // Stay. Wake at the earliest of: the time target (if not reached), NOW (poll the
+  // condition every sweep once the time gate is open), and the deadline cap.
+  const candidates: number[] = [];
+  if (!timeOk && target) candidates.push(target.getTime());
+  if (timeOk && !inputs.conditionMet) candidates.push(now.getTime());
+  if (deadline) candidates.push(deadline.getTime());
+  if (candidates.length === 0) candidates.push(now.getTime());
+  const nextRunAt = new Date(Math.min(...candidates));
+
+  const pinToPersist = firstArrival
+    ? { target: target ? target.toISOString() : null, deadline: deadline ? deadline.toISOString() : null }
+    : null;
+  return { advance: false, nextRunAt, pinToPersist };
 }
 
 // ── branch evaluation ─────────────────────────────────────────────────────────
@@ -297,13 +396,28 @@ export function processNode(
   now: Date,
   arrival: Arrival = 'resumed',
   tz: string = DEFAULT_WORKSPACE_TZ,
+  richWait: RichWaitInputs | null = null,
 ): ProcessResult {
   switch (node.type) {
     case 'trigger':
       return { disposition: 'advance', nextNode: node.next, sideEffects: [] };
 
     case 'wait': {
-      // Resumed by the sweep on a parked wait whose due time has elapsed → go.
+      // RICH wait-until (time gate + condition gate + max-wait cap): the runner
+      // supplies the resolved condition/anchor + the persisted pin; decide here.
+      if (isRichWait(node)) {
+        const d = decideRichWait(node, now, tz, richWait ?? { conditionMet: true, resolvedAnchor: null, pin: null });
+        if (d.advance) return { disposition: 'advance', nextNode: node.next, sideEffects: [] };
+        return {
+          disposition: 'stay',
+          nextNode: node.next,
+          nextRunAt: d.nextRunAt ?? now,
+          sideEffects: [],
+          ...(d.pinToPersist ? { waitPin: d.pinToPersist } : {}),
+        };
+      }
+      // SIMPLE wait (delay/until). Resumed by the sweep on a parked wait whose due
+      // time has elapsed → go.
       if (arrival === 'resumed' && isWaitElapsed(state.next_run_at, now)) {
         return { disposition: 'advance', nextNode: node.next, sideEffects: [] };
       }
@@ -912,19 +1026,35 @@ export function buildAdvanceEnrollment(
     readonly currentNode: string;
     readonly status: 'active' | 'completed' | 'exited' | 'failed';
     readonly nextRunAt: Date | null;
+    /** Persist a rich-wait pin onto state.wait.<nodeId> in the SAME guarded UPDATE
+     *  (so it doesn't bump updated_at separately and break the guard). */
+    readonly waitPin?: { readonly nodeId: string; readonly pin: WaitPin };
   },
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildAdvanceEnrollment: workspaceId is required');
   const guard = guardUpdatedAt instanceof Date ? guardUpdatedAt.toISOString() : guardUpdatedAt;
   const nextRunAt = next.nextRunAt ? next.nextRunAt.toISOString() : null;
+  const values: unknown[] = [workspaceId, enrollmentId, guard, next.currentNode, next.status, nextRunAt];
+  // Optionally fold a state.wait.<nodeId> patch into the SAME SET — the node id is a
+  // BOUND jsonb path param (never interpolated), the pin a bound ::jsonb value.
+  let stateSet = '';
+  if (next.waitPin) {
+    // Seed state.wait first (jsonb_set won't create a missing intermediate key),
+    // THEN set state.wait.<nodeId>. The node id is a BOUND jsonb path param.
+    stateSet =
+      `, state = jsonb_set(` +
+      `jsonb_set(coalesce(state, '{}'::jsonb), '{wait}', coalesce(state->'wait', '{}'::jsonb), true), ` +
+      `$7::text[], $8::jsonb, true)`;
+    values.push(`{wait,${next.waitPin.nodeId}}`, JSON.stringify(next.waitPin.pin));
+  }
   // Guard on updated_at AS TEXT (the claim's returned token) — same exact-match
   // reasoning as buildEnrollmentClaim.
   return {
     text: `UPDATE campaign_enrollments
-           SET current_node = $4, status = $5, next_run_at = $6::timestamptz,
+           SET current_node = $4, status = $5, next_run_at = $6::timestamptz${stateSet},
                updated_at = clock_timestamp()
            WHERE workspace_id = $1 AND id = $2 AND updated_at::text = $3`,
-    values: [workspaceId, enrollmentId, guard, next.currentNode, next.status, nextRunAt],
+    values,
   };
 }
 

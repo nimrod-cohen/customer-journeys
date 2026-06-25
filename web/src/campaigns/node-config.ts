@@ -132,7 +132,7 @@ export function writeWaitConfig(seconds: number): DslNode {
   return { type: 'wait', delay: { seconds: secs } };
 }
 
-// ── WAIT-UNTIL (absolute, workspace tz) ─────────────────────────────────────────
+// ── WAIT-UNTIL (rich: time gate + condition gate + max-wait cap) ────────────────
 
 /** Read an absolute wait's instant back to a zoned wall-clock input (workspace tz). */
 export function readWaitUntilInput(node: DslNode, timeZone: string): string {
@@ -146,11 +146,121 @@ export function readWaitUntilInput(node: DslNode, timeZone: string): string {
 }
 
 /**
- * Serialize a wait-until: the zoned wall-clock input (interpreted in the WORKSPACE
- * timezone, DST-correct via zonedInputToUtcIso) becomes a stored UTC ISO instant.
+ * Serialize a SIMPLE wait-until: the zoned wall-clock input (interpreted in the
+ * WORKSPACE timezone, DST-correct via zonedInputToUtcIso) → a stored UTC ISO instant.
+ * (Kept for the date-only path / back-compat; the rich form below composes it.)
  */
 export function writeWaitUntilConfig(localInput: string, timeZone: string): DslNode {
   return { type: 'wait', until: zonedInputToUtcIso(localInput, timeZone) };
+}
+
+export type WaitDurationUnit = 'minutes' | 'hours' | 'days';
+const WAIT_UNITS = new Set<WaitDurationUnit>(['minutes', 'hours', 'days']);
+const asWaitUnit = (u: unknown): WaitDurationUnit => (typeof u === 'string' && WAIT_UNITS.has(u as WaitDurationUnit) ? (u as WaitDurationUnit) : 'days');
+const asAmount = (n: unknown, dflt = 1): number => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : dflt);
+
+/**
+ * The rich WAIT-UNTIL form. Any of the three gates may be enabled (combinable):
+ *   - a TIME gate: `timeMode` 'date' (absolute datetime) | 'relative' (amount/unit
+ *     from `now` or a {{timestamp}} expression) | 'none' (no time gate),
+ *   - a CONDITION gate (segment-style rule group, reuses the RuleBuilder),
+ *   - a MAX-WAIT cap (proceed-on-timeout).
+ * At least one gate must be enabled to save (waitUntilFormHasGate).
+ */
+export interface WaitUntilForm {
+  readonly timeMode: 'none' | 'date' | 'relative';
+  readonly dateInput: string; // datetime-local (workspace-zoned) for timeMode 'date'
+  readonly amount: number;
+  readonly unit: WaitDurationUnit;
+  readonly anchorKind: 'now' | 'expression';
+  readonly anchorExpr: string; // {{...}} token expression when anchorKind 'expression'
+  readonly hasCondition: boolean;
+  readonly condition: RuleGroup;
+  readonly hasMaxWait: boolean;
+  readonly maxAmount: number;
+  readonly maxUnit: WaitDurationUnit;
+}
+
+/** Read a (possibly rich) wait node into the WAIT-UNTIL form. */
+export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilForm {
+  const n = node as {
+    until?: unknown;
+    untilOffset?: { amount?: unknown; unit?: unknown; anchor?: unknown };
+    waitCondition?: AstNode | null;
+    maxWait?: { amount?: unknown; unit?: unknown };
+  };
+  let timeMode: WaitUntilForm['timeMode'] = 'none';
+  let dateInput = '';
+  let amount = 1;
+  let unit: WaitDurationUnit = 'days';
+  let anchorKind: 'now' | 'expression' = 'now';
+  let anchorExpr = '';
+  if (typeof n.until === 'string' && n.until.length > 0) {
+    timeMode = 'date';
+    dateInput = readWaitUntilInput(node, timeZone);
+  } else if (n.untilOffset && typeof n.untilOffset === 'object') {
+    timeMode = 'relative';
+    amount = asAmount(n.untilOffset.amount);
+    unit = asWaitUnit(n.untilOffset.unit);
+    const anchor = n.untilOffset.anchor;
+    if (typeof anchor === 'string' && anchor !== 'now') {
+      anchorKind = 'expression';
+      anchorExpr = anchor;
+    }
+  }
+  const hasCondition = n.waitCondition !== undefined && n.waitCondition !== null;
+  const condition = groupFromAst(hasCondition ? (n.waitCondition as AstNode) : null);
+  const hasMaxWait = n.maxWait !== undefined && n.maxWait !== null;
+  return {
+    timeMode,
+    dateInput,
+    amount,
+    unit,
+    anchorKind,
+    anchorExpr,
+    hasCondition,
+    condition,
+    hasMaxWait,
+    maxAmount: hasMaxWait ? asAmount(n.maxWait!.amount) : 1,
+    maxUnit: hasMaxWait ? asWaitUnit(n.maxWait!.unit) : 'days',
+  };
+}
+
+/** True when the form enables at least one gate (a savable rich wait). */
+export function waitUntilFormHasGate(form: WaitUntilForm): boolean {
+  const timeOk = form.timeMode === 'date' ? form.dateInput.length > 0 : form.timeMode === 'relative';
+  const condOk = form.hasCondition && !conditionGroupIsEmpty(form.condition);
+  return timeOk || condOk || form.hasMaxWait;
+}
+
+/**
+ * Serialize the WAIT-UNTIL form → a `{type:'wait', …}` node (edges reapplied by
+ * applyNodeConfig). Returns null when no gate is enabled (the editor blocks save).
+ */
+export function writeWaitUntilForm(form: WaitUntilForm, timeZone: string): DslNode | null {
+  if (!waitUntilFormHasGate(form)) return null;
+  // applyNodeConfig MERGES the patch onto the existing node, so EVERY gate field is
+  // emitted explicitly — `undefined` for a disabled gate so a previously-set value
+  // (e.g. the default `until`) is cleared rather than lingering. (undefined keys are
+  // dropped on the JSON round-trip; the read path treats them as absent.)
+  let until: string | undefined;
+  let untilOffset: { amount: number; unit: WaitDurationUnit; anchor: string } | undefined;
+  if (form.timeMode === 'date' && form.dateInput.length > 0) {
+    until = zonedInputToUtcIso(form.dateInput, timeZone);
+  } else if (form.timeMode === 'relative') {
+    const anchor = form.anchorKind === 'now' ? 'now' : form.anchorExpr.trim();
+    if (anchor.length > 0) untilOffset = { amount: asAmount(form.amount), unit: form.unit, anchor };
+  }
+  const ast = form.hasCondition && !conditionGroupIsEmpty(form.condition) ? editorRowsToConditionAst(form.condition) : null;
+  const maxWait = form.hasMaxWait ? { amount: asAmount(form.maxAmount), unit: form.maxUnit } : undefined;
+  return {
+    type: 'wait',
+    delay: undefined,
+    until,
+    untilOffset,
+    waitCondition: ast ?? undefined,
+    maxWait,
+  } as unknown as DslNode;
 }
 
 // ── HOUR-OF-DAY WINDOW ──────────────────────────────────────────────────────────

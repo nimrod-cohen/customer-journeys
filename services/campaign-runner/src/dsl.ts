@@ -56,13 +56,53 @@ export interface WaitDelaySeconds {
   readonly seconds: number;
 }
 
-/** A wait node — defers the journey via next_run_at (§9B "waits"). */
+/** The duration unit for the rich wait-until offset / max-wait. */
+export type WaitDurationUnit = 'minutes' | 'hours' | 'days';
+
+/**
+ * A RELATIVE time gate for a rich wait-until: `amount` `unit` from an `anchor`.
+ * The anchor is either the literal `'now'` (offset from the moment the profile
+ * reaches the node) or a `{{...}}` token EXPRESSION (customer.* / event.* /
+ * journey.*) that resolves to a timestamp at tick time — e.g. "1 day from
+ * {{event.appointment_at}}". The resolved anchor + offset is pinned ONCE on first
+ * arrival (so a later sweep doesn't recompute against a moving "now").
+ */
+export interface WaitOffset {
+  readonly amount: number;
+  readonly unit: WaitDurationUnit;
+  readonly anchor: 'now' | string;
+}
+
+/** A maximum-wait cap: proceed to `next` anyway once this much time has elapsed
+ *  since the profile reached the node (even if the condition is never met). */
+export interface WaitMax {
+  readonly amount: number;
+  readonly unit: WaitDurationUnit;
+}
+
+/**
+ * A wait node — defers the journey via next_run_at (§9B "waits").
+ *
+ * A SIMPLE wait (the "Wait N" palette node) uses `delay` only. A rich WAIT-UNTIL
+ * node combines, in ONE node, any of: a TIME gate (`until` absolute OR
+ * `untilOffset` relative), a segment-style CONDITION gate (`waitCondition`, the
+ * §8 AstNode reused verbatim), and a `maxWait` cap. Semantics: PROCEED to `next`
+ * when (time gate reached, if any) AND (condition true, if any) — OR when the
+ * `maxWait` cap elapses (proceed-on-timeout, single output edge). A pending
+ * condition is re-checked every sweep until met or capped.
+ */
 export interface WaitNode {
   readonly type: 'wait';
   /** Relative delay: either {seconds} or an ISO-8601 duration string. */
   readonly delay?: WaitDelaySeconds | string;
   /** Absolute wait: resume at this date (ISO-8601 string or Date). */
   readonly until?: string | Date;
+  /** Relative time gate: `amount unit` from `now` or a {{timestamp}} expression. */
+  readonly untilOffset?: WaitOffset;
+  /** Condition gate — proceed only once the profile MATCHES this AST (§8). */
+  readonly waitCondition?: AstNode;
+  /** Max-wait cap — proceed anyway once elapsed (proceed-on-timeout). */
+  readonly maxWait?: WaitMax;
   /** The node id to advance to once the wait elapses. */
   readonly next: string;
 }
@@ -353,8 +393,16 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
     case 'wait': {
       const hasDelay = node.delay !== undefined;
       const hasUntil = node.until !== undefined;
-      if (!hasDelay && !hasUntil) {
-        throw new Error(`validateCampaignDefinition: wait "${id}" needs a delay or until`);
+      const hasOffset = node.untilOffset !== undefined;
+      const hasCondition = node.waitCondition !== undefined;
+      const hasMax = node.maxWait !== undefined;
+      if (!hasDelay && !hasUntil && !hasOffset && !hasCondition && !hasMax) {
+        throw new Error(`validateCampaignDefinition: wait "${id}" needs a delay, until, untilOffset, waitCondition or maxWait`);
+      }
+      if (hasOffset) validateWaitDuration(id, 'untilOffset', node.untilOffset!, true);
+      if (hasMax) validateWaitDuration(id, 'maxWait', node.maxWait!, false);
+      if (hasCondition && (typeof node.waitCondition !== 'object' || node.waitCondition === null)) {
+        throw new Error(`validateCampaignDefinition: wait "${id}" waitCondition must be an AST object`);
       }
       requireEdge(node.next, 'next');
       return;
@@ -576,6 +624,27 @@ function validateHourWindowFields(id: string, node: HourOfDayWindowNode): void {
 }
 
 /** Outgoing edge targets of a node (for reachability). */
+/** Whitelisted wait duration units (also used to build SQL-free interval math). */
+export const WAIT_DURATION_UNITS = new Set<WaitDurationUnit>(['minutes', 'hours', 'days']);
+
+/** Validate a {amount, unit, anchor?} duration on a wait node. */
+function validateWaitDuration(
+  id: string,
+  field: 'untilOffset' | 'maxWait',
+  d: { amount?: unknown; unit?: unknown; anchor?: unknown },
+  requireAnchor: boolean,
+): void {
+  if (typeof d.amount !== 'number' || !Number.isFinite(d.amount) || d.amount <= 0) {
+    throw new Error(`validateCampaignDefinition: wait "${id}" ${field}.amount must be a positive number`);
+  }
+  if (typeof d.unit !== 'string' || !WAIT_DURATION_UNITS.has(d.unit as WaitDurationUnit)) {
+    throw new Error(`validateCampaignDefinition: wait "${id}" ${field}.unit must be minutes|hours|days`);
+  }
+  if (requireAnchor && (typeof d.anchor !== 'string' || d.anchor.length === 0)) {
+    throw new Error(`validateCampaignDefinition: wait "${id}" ${field}.anchor must be 'now' or a {{timestamp}} expression`);
+  }
+}
+
 function edgesOf(node: Node): string[] {
   switch (node.type) {
     case 'trigger':

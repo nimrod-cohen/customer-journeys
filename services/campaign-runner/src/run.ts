@@ -23,8 +23,10 @@ import {
   isValidTimeZone,
   isJsSpec,
   resolveValueSpec,
+  customerMerge,
   eventMerge,
   journeyMerge,
+  renderExpression,
   type CustomerProfile,
 } from '@cdp/shared';
 import { evaluateJsValue } from './js-value.js';
@@ -41,12 +43,15 @@ import {
   buildSetJourney,
   buildWebhookActivityInsert,
   isEnrollableCampaignStatus,
+  isRichWait,
   DEFAULT_WORKSPACE_TZ,
   type EnrollmentState,
   type SideEffect,
   type SqlStatement,
   type ProcessResult,
   type Arrival,
+  type RichWaitInputs,
+  type WaitPin,
 } from './core.js';
 import {
   validateCampaignDefinition,
@@ -144,6 +149,8 @@ interface EnrollmentRow {
     event?: { payload?: Record<string, unknown> };
     /** Per-enrollment journey-vars map (freeform; written by `set_journey`). */
     journey?: Record<string, unknown>;
+    /** Per-rich-wait pins, keyed by node id (state.wait.<nodeId> = {target,deadline}). */
+    wait?: Record<string, WaitPin>;
   } | null;
 }
 
@@ -180,7 +187,13 @@ export function buildDispatchEnqueueMessage(
 interface TickOutcome {
   /** The boundary that ended the tick. */
   readonly boundary:
-    | { readonly kind: 'park'; readonly node: string; readonly nextRunAt: Date }
+    | {
+        readonly kind: 'park';
+        readonly node: string;
+        readonly nextRunAt: Date;
+        /** A rich-wait pin to persist atomically with the park (state.wait.<nodeId>). */
+        readonly waitPin?: { readonly nodeId: string; readonly pin: WaitPin };
+      }
     | { readonly kind: 'complete'; readonly node: string }
     | { readonly kind: 'maxSteps'; readonly node: string };
   /** The outbox inserts + set_attribute writes accumulated during the tick. */
@@ -253,12 +266,47 @@ async function chainTick(
       matchesNow = matchRows.length > 0;
     }
 
-    const result: ProcessResult = processNode(node, state, matchesNow, now, arrival, tz);
+    // RICH wait-until: resolve the condition gate (segment-style AST, evaluated like a
+    // condition node), the {{timestamp}} anchor (rendered against the profile/event/
+    // journey merge → a Date), and the persisted pin (state.wait.<nodeId>) so the
+    // pure decideRichWait can decide advance-vs-park (proceed-on-timeout).
+    let richWait: RichWaitInputs | null = null;
+    if (node.type === 'wait' && isRichWait(node)) {
+      let conditionMet = true;
+      if (node.waitCondition !== undefined) {
+        const ast = rewriteTriggerEventLeaves(node.waitCondition, row.state?.event?.payload ?? null);
+        const q = buildBranchMatchQuery(workspaceId, ast, row.profile_id);
+        const { rows: matchRows } = await read.query<{ id: string }>(q.text, q.values);
+        conditionMet = matchRows.length > 0;
+      }
+      let resolvedAnchor: Date | null = null;
+      const off = node.untilOffset;
+      if (off && off.anchor !== 'now') {
+        const merge = {
+          ...customerMerge(resolveCtx.profile),
+          ...eventMerge(resolveCtx.event),
+          ...journeyMerge(resolveCtx.journey),
+        };
+        const rendered = renderExpression(off.anchor, merge).trim();
+        const d = rendered ? new Date(rendered) : null;
+        resolvedAnchor = d && !Number.isNaN(d.getTime()) ? d : null;
+      }
+      const stored = (row.state?.wait as Record<string, WaitPin> | undefined)?.[currentNodeId] ?? null;
+      richWait = { conditionMet, resolvedAnchor, pin: stored };
+    }
+
+    const result: ProcessResult = processNode(node, state, matchesNow, now, arrival, tz, richWait);
 
     if (result.disposition === 'stay') {
       // Wait / hour-window boundary: park the enrollment at THIS node until nextRunAt.
+      const waitPin = result.waitPin;
       return {
-        boundary: { kind: 'park', node: currentNodeId, nextRunAt: result.nextRunAt },
+        boundary: {
+          kind: 'park',
+          node: currentNodeId,
+          nextRunAt: result.nextRunAt,
+          ...(waitPin ? { waitPin: { nodeId: currentNodeId, pin: waitPin } } : {}),
+        },
         writes,
         sends,
         webhooks,
@@ -370,6 +418,7 @@ function advanceFor(
         currentNode: b.node,
         status: 'active',
         nextRunAt: b.nextRunAt,
+        ...(b.waitPin ? { waitPin: b.waitPin } : {}),
       }),
     );
   } else if (b.kind === 'complete') {

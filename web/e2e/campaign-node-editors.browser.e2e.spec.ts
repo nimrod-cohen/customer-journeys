@@ -131,6 +131,55 @@ test('WAIT editor: set 3 days, save, reload round-trips the summary', async ({ p
   await expect(page.getByTestId('node-wait')).toContainText(/3 days|3d/i);
 });
 
+test('WAIT-UNTIL editor: rich gates (relative time + condition + max-wait) combine, save, round-trip', async ({ page }) => {
+  await openCampaigns(page);
+  // Build a fresh campaign so we can insert a wait-until node on the trigger→exit edge.
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-canvas').waitFor();
+  await page.getByTestId('campaign-name').fill('Wait-until journey');
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('campaign-palette').waitFor();
+  await page.getByTestId('palette-wait-until').click();
+  await expect(page.getByTestId('node-wait_until')).toBeVisible();
+
+  // Open the rich editor.
+  await page.getByTestId('node-wait_until').getByTestId(/node-open-/).first().click();
+  const drawer = page.getByTestId('node-editor-wait_until');
+  await expect(drawer).toBeVisible();
+
+  // TIME gate → a relative offset, 2 days from now.
+  await drawer.getByTestId('wait-time-mode').selectOption('relative');
+  await drawer.getByTestId('wait-offset-amount').fill('2');
+  await drawer.getByTestId('wait-offset-unit').selectOption('days');
+  await drawer.getByTestId('wait-offset-anchor').selectOption('now');
+
+  // CONDITION gate → enable + add a rule (the SAME shared rule builder as segments).
+  await drawer.getByTestId('wait-condition-enabled').check();
+  await drawer.getByTestId('rule-field').first().fill('attributes.opened');
+  await drawer.getByTestId('rule-operator').first().selectOption({ label: 'exists' });
+
+  // MAX-WAIT cap → 5 days.
+  await drawer.getByTestId('wait-max-enabled').check();
+  await drawer.getByTestId('wait-max-amount').fill('5');
+  await drawer.getByTestId('wait-max-unit').selectOption('days');
+
+  await drawer.getByTestId('node-save').click();
+  await expect(drawer).toBeHidden();
+
+  // The card summary reflects the combined gates + the cap.
+  await expect(page.getByTestId('node-wait_until')).toContainText(/Wait until/i);
+  await expect(page.getByTestId('node-wait_until')).toContainText(/max 5 days/i);
+
+  // Reopen → the form round-trips the relative offset, the condition, and the cap.
+  await page.getByTestId('node-wait_until').getByTestId(/node-open-/).first().click();
+  const reopened = page.getByTestId('node-editor-wait_until');
+  await expect(reopened.getByTestId('wait-offset-amount')).toHaveValue('2');
+  await expect(reopened.getByTestId('wait-condition-enabled')).toBeChecked();
+  await expect(reopened.getByTestId('rule-field').first()).toHaveValue('attributes.opened');
+  await expect(reopened.getByTestId('wait-max-enabled')).toBeChecked();
+  await expect(reopened.getByTestId('wait-max-amount')).toHaveValue('5');
+});
+
 test('IF editor: embeds the SAME rule builder; an empty group blocks save inline', async ({ page }) => {
   await openCampaigns(page);
   await openSeeded(page);
