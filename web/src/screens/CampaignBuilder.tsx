@@ -44,6 +44,7 @@ import {
   deleteNode,
   moveSubtree,
   duplicateSubtree,
+  duplicateAfterBranch,
   MutationError,
 } from '../campaigns/mutate.js';
 import { NodeEditorBody, nodeEditorTestId, nodeEditorTitle } from '../campaigns/editors/NodeEditor.js';
@@ -592,6 +593,34 @@ export function CampaignDetail({ id }: { id?: string }) {
     }
   };
 
+  // The user picked a branch's MERGE (+) while DUPLICATE-placing: drop the copy AFTER
+  // that branch (it runs the branch, then the copy, then the continuation). Same
+  // persist/revert flow as pickTarget.
+  const pickMergeTarget = async (conditionId: string): Promise<void> => {
+    if (!placement || placement.op !== 'duplicate') return;
+    const { rootId } = placement;
+    let next: CanvasModel;
+    try {
+      next = duplicateAfterBranch(model, rootId, conditionId);
+    } catch (e) {
+      const msg = e instanceof MutationError || e instanceof Error ? e.message : String(e);
+      showToast(msg, { tone: 'error' });
+      return; // stay in placement so the user can pick another spot
+    }
+    setModel(next);
+    setPlacement(null);
+    clearPublish();
+    try {
+      await persist(next);
+      await reloadList();
+      showToast('Branch duplicated.', { tone: 'success' });
+    } catch (err) {
+      const msg = (err as { error?: string })?.error ?? String(err);
+      setModel(model);
+      showToast(msg, { tone: 'error' });
+    }
+  };
+
   // Persist the current model — to the DRAFT, never the live definition (live is
   // untouched until Publish). A BRAND-NEW campaign has no row yet, so the first
   // persist CREATES it via POST /campaigns (a fresh campaign's live == draft, so
@@ -886,6 +915,7 @@ export function CampaignDetail({ id }: { id?: string }) {
             placement={placement}
             onStartPlacement={startPlacement}
             onPickTarget={(edge) => void pickTarget(edge)}
+            onPickMergeTarget={(condId) => void pickMergeTarget(condId)}
             onCancelPlacement={cancelPlacement}
             selectedNodeId={selectedNodeId}
             centerTick={centerTick}

@@ -1400,6 +1400,39 @@ test('DUPLICATE a node to a chosen + adds a second card; the original stays', as
   await expect(page.getByTestId('toast').first()).toBeVisible();
 });
 
+test('DUPLICATE a branch AFTER itself via the merge (+) — the copy runs after the original', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Dupe branch after');
+
+  // A single branch on the trunk whose arms rejoin the only exit:
+  //   trigger → cond(onTrue → wait → exit_1, onFalse → exit_1).
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toHaveCount(1);
+  const arms = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(arms[0]!).click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toHaveCount(1);
+
+  // ⋮ on the If → "Duplicate…" → the merge (+) below the branch is now a drop target.
+  const condCard = page.getByTestId('node-condition');
+  await condCard.getByLabel('Step actions').click();
+  await condCard.getByTestId('node-duplicate').click();
+  await expect(page.getByTestId('placement-banner')).toContainText(/copy/i);
+  await expect(page.getByTestId('placement-merge-target')).toBeVisible();
+  await page.getByTestId('placement-merge-target').click();
+  await expect(page.getByTestId('placement-banner')).toHaveCount(0);
+  await expect(page.getByTestId('toast')).toContainText(/duplicated/i);
+
+  // A SECOND condition (and a second wait) now exist — the copy runs after the original.
+  await expect(page.getByTestId('node-condition')).toHaveCount(2);
+  await expect(page.getByTestId('node-wait')).toHaveCount(2);
+
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast').first()).toBeVisible();
+});
+
 test('deleting the last exit is refused with a styled toast (no native dialog)', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click(); // trigger → exit_1 (the only exit)

@@ -560,6 +560,72 @@ export function insertAfterBranch(
   return parseDefinition(nextDef);
 }
 
+/**
+ * Is the merge (+) BELOW `condId` a valid place to DROP the duplicated `rootId`?
+ * Valid when the target branch has a single rejoin C and the target is either the
+ * moving branch ITSELF (place a copy to run right after this branch) or a condition
+ * OUTSIDE the moving subtree (placing a copy after some other branch). A condition
+ * strictly INSIDE the subtree being copied (other than the root) would self-nest.
+ */
+export function canPlaceAfterBranch(model: CanvasModel, rootId: string, condId: string): boolean {
+  const def = buildDefinition(model);
+  const cond = def.nodes[condId];
+  if (!cond || cond.type !== 'condition') return false;
+  if (branchContinuation(model, condId) === undefined) return false;
+  if (condId === rootId) return true;
+  return !movePlan(model, rootId).ids.has(condId);
+}
+
+/**
+ * duplicateAfterBranch(model, rootId, condId) — DUPLICATE `rootId`'s subtree and
+ * splice the copy AFTER the branch of `condId`, BEFORE that branch's continuation C:
+ * every boundary edge of `condId` (an in-branch node → C) re-points to the clone root,
+ * and the clone's own boundary (→ its continuation) re-points to C. So the original
+ * branch flows THROUGH the copy before reaching C ("run the branch, then a copy").
+ * When `condId === rootId` this places a copy to run right after the original branch.
+ * Fresh ids → no cycle; re-validated locally + server-side.
+ */
+export function duplicateAfterBranch(model: CanvasModel, rootId: string, condId: string): CanvasModel {
+  if (rootId === model.start) throw new MutationError("The trigger can't be duplicated.");
+  const def = buildDefinition(model);
+  const target = conditionMerge(def, condId);
+  const Ct = target.C;
+  const St = target.S;
+  if (!Ct) throw new MutationError('This branch has no single rejoin point to add a copy after.');
+
+  const plan = movePlan(model, rootId);
+  const Sr = plan.ids;
+  const Cr = plan.continuation;
+
+  // Clone the subtree with fresh ids: internal edges → their clones; the clone's
+  // BOUNDARY edges (→ its own continuation Cr) → the target continuation Ct.
+  const existing = new Set<string>(Object.keys(def.nodes));
+  const idMap = new Map<string, string>();
+  for (const oldId of Sr) {
+    const fresh = freshNodeId(paletteTypeOf(def.nodes[oldId]!), existing);
+    existing.add(fresh);
+    idMap.set(oldId, fresh);
+  }
+  const nodes: Record<string, DslNode> = { ...def.nodes };
+  for (const oldId of Sr) {
+    let clone: DslNode = { ...def.nodes[oldId]! };
+    for (const slot of ['next', 'onTrue', 'onFalse'] as const) {
+      const t = (clone as Record<string, unknown>)[slot];
+      if (typeof t !== 'string' || t.length === 0) continue;
+      if (Sr.has(t)) clone = repointSlot(clone, slot, idMap.get(t)!);
+      else if (t === Cr) clone = repointSlot(clone, slot, Ct);
+    }
+    nodes[idMap.get(oldId)!] = clone;
+  }
+  // Re-point the TARGET branch's boundary edges (in-branch node → Ct) to the clone root.
+  const cloneRoot = idMap.get(rootId)!;
+  for (const nid of St) nodes[nid] = repointParents(nodes[nid]!, Ct, cloneRoot);
+
+  const nextDef = { startNode: def.startNode, nodes };
+  assertWellFormed(nextDef, 'That copy would break the journey.');
+  return parseDefinition(nextDef);
+}
+
 /** Does the definition contain a cycle? (down-only must hold — a DFS back-edge fails.) */
 function hasCycle(def: CampaignDefinition): boolean {
   const WHITE = 0;

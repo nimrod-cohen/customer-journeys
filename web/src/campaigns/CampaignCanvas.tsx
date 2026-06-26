@@ -10,7 +10,7 @@ import { ActionMenu } from '../ui/kit.js';
 import { layoutDefinition, mergeAnchor, LAYOUT, type LayoutEdge } from './layout.js';
 import { orthogonalPath, verticalAnchor } from './orthogonal-path.js';
 import { buildDefinition, displayType, type CanvasModel, type CanvasEdge, type CanvasNode } from './model.js';
-import { nodeSummary, canDropOnEdge, branchContinuation } from './mutate.js';
+import { nodeSummary, canDropOnEdge, branchContinuation, canPlaceAfterBranch } from './mutate.js';
 
 /** An in-progress placement (Move / Duplicate): pick a destination + to splice at. */
 export interface Placement {
@@ -66,6 +66,7 @@ export function CampaignCanvas({
   placement,
   onStartPlacement,
   onPickTarget,
+  onPickMergeTarget,
   onCancelPlacement,
   selectedNodeId,
   centerTick,
@@ -85,6 +86,9 @@ export function CampaignCanvas({
   onStartPlacement?: (op: 'move' | 'duplicate', node: CanvasNode) => void;
   /** A (+) was clicked while placing — splice the moved/duplicated branch here. */
   onPickTarget?: (edge: CanvasEdge) => void;
+  /** The merge (+) BELOW a condition was clicked while DUPLICATE-placing — drop the
+   *  copy AFTER that branch (run the branch, then the copy, then its continuation). */
+  onPickMergeTarget?: (conditionId: string) => void;
   /** Cancel the in-progress placement (banner button / Escape). */
   onCancelPlacement?: () => void;
   /** The currently SELECTED node — highlighted + auto-centered in the viewport. */
@@ -439,14 +443,20 @@ export function CampaignCanvas({
             Anchored on the MERGED VERTICAL TRUNK just above the continuation card,
             it inserts a step AFTER the branch (both arms flow through it before C).
             Hidden during placement (a different interaction). */}
-        {!placing
-          ? model.nodes
+        {model.nodes
               .filter((cn) => cn.node.type === 'condition')
               .map((cn) => {
                 const contId = branchContinuation(model, cn.id);
                 if (!contId) return null; // no single continuation → no merge (+)
                 const contPos = layout.positions.get(contId);
                 if (!contPos) return null;
+                // During a DUPLICATE placement the merge (+) becomes a drop target —
+                // "place the copy AFTER this branch". During a MOVE placement (or an
+                // invalid duplicate target) it's hidden. In normal mode it inserts a
+                // step after the branch.
+                const asPlacement =
+                  placing && placement?.op === 'duplicate' && canPlaceAfterBranch(model, placement.rootId, cn.id);
+                if (placing && !asPlacement) return null;
                 // The arms CLOSE into the continuation high (top-knee), leaving a tall
                 // central vertical run; anchor the merge (+) in its MIDDLE so a visible
                 // line sits ABOVE it (closure corner → +) and BELOW it (+ → card).
@@ -457,17 +467,20 @@ export function CampaignCanvas({
                   <button
                     key={`merge-${cn.id}`}
                     type="button"
-                    data-testid="campaign-merge-insert"
-                    aria-label="Insert a step after the branch"
-                    onClick={() => onInsertAfterBranch?.(cn.id)}
-                    class="absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-violet-300 bg-white text-sm font-bold text-violet-500 shadow-sm transition-colors hover:border-violet-500 hover:text-violet-700"
+                    data-testid={asPlacement ? 'placement-merge-target' : 'campaign-merge-insert'}
+                    aria-label={asPlacement ? 'Place the copy after this branch' : 'Insert a step after the branch'}
+                    onClick={() => (asPlacement ? onPickMergeTarget?.(cn.id) : onInsertAfterBranch?.(cn.id))}
+                    class={`absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-sm font-bold shadow-sm transition-colors ${
+                      asPlacement
+                        ? 'animate-pulse border-brand-500 bg-brand-500 text-white ring-2 ring-brand-200 hover:bg-brand-600'
+                        : 'border-violet-300 bg-white text-violet-500 hover:border-violet-500 hover:text-violet-700'
+                    }`}
                     style={{ left: `${x}px`, top: `${y}px` }}
                   >
                     +
                   </button>
                 );
-              })
-          : null}
+              })}
 
         {/* Node cards. */}
         {model.nodes.map((cn) => {

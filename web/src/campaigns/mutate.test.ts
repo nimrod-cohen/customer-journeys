@@ -11,6 +11,8 @@ import {
   nodeSummary,
   moveSubtree,
   duplicateSubtree,
+  duplicateAfterBranch,
+  canPlaceAfterBranch,
   subtreeNodeIds,
   movePlan,
   canDropOnEdge,
@@ -543,6 +545,29 @@ describe('moveSubtree', () => {
     expect(Object.values(def.nodes).filter((n) => n.type === 'condition')).toHaveLength(2);
     expect((def.nodes.trigger as unknown as { next: string }).next).not.toBe(condId); // → the clone
     expect(() => validateCampaignDefinition(def)).not.toThrow();
+
+    // AND the branch's own merge (+) is a valid duplicate target → place the copy AFTER it.
+    expect(canPlaceAfterBranch(m, condId, condId)).toBe(true);
+    const after = duplicateAfterBranch(m, condId, condId);
+    const adef = buildDefinition(after);
+    expect(Object.values(adef.nodes).filter((n) => n.type === 'condition')).toHaveLength(2);
+    // The original condition still leads (trigger → original); the copy runs after it,
+    // and the whole thing still ends at the exit. Validates with no orphan/cycle.
+    expect((adef.nodes.trigger as unknown as { next: string }).next).toBe(condId);
+    expect(() => validateCampaignDefinition(adef)).not.toThrow();
+  });
+
+  it('canPlaceAfterBranch: a condition strictly INSIDE the duplicated subtree (not its root) is NOT a valid after-target', () => {
+    // trigger → outer(onTrue → inner(diamond), onFalse → exit_1) ; inner arms → exit_1.
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW);
+    const outerId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const outerYes = m.edges.find((e) => e.from === outerId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, outerYes, 'condition', NOW);
+    const innerId = m.nodes.find((n) => n.node.type === 'condition' && n.id !== outerId)!.id;
+    // Duplicating OUTER: placing after OUTER itself is fine; after INNER (inside it) self-nests → false.
+    expect(canPlaceAfterBranch(m, outerId, outerId)).toBe(true);
+    expect(canPlaceAfterBranch(m, outerId, innerId)).toBe(false);
   });
 });
 
