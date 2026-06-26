@@ -249,6 +249,30 @@ test('IF editor (campaign context): differentiates Profile attribute / Segment /
   await expect(re.getByTestId('rule-segment').first()).toHaveValue(segVal);
 });
 
+test('IF editor: a JOURNEY attribute rule (branch on a per-enrollment journey var) saves + round-trips', async ({ page }) => {
+  await openCampaigns(page);
+  await openSeeded(page);
+  await page.getByTestId('node-condition').getByTestId(/node-open-/).first().click();
+  const drawer = page.getByTestId('node-editor-condition');
+  const kind = drawer.getByTestId('rule-kind').first();
+  await expect(kind).toBeVisible();
+
+  // "Journey attribute" is offered in the campaign IF; switch to it → a journey-key input.
+  await expect(kind.locator('option').filter({ hasText: 'Journey attribute' })).toHaveCount(1);
+  await kind.selectOption('journey');
+  await drawer.getByTestId('rule-journey-key').first().fill('day');
+  await drawer.getByTestId('rule-value').first().fill('saturday');
+  await drawer.getByTestId('node-save').click();
+  await expect(drawer).toBeHidden();
+
+  // Reopen → the journey rule re-hydrates with the key + value.
+  await page.getByTestId('node-condition').getByTestId(/node-open-/).first().click();
+  const re = page.getByTestId('node-editor-condition');
+  await expect(re.getByTestId('rule-kind').first()).toHaveValue('journey');
+  await expect(re.getByTestId('rule-journey-key').first()).toHaveValue('day');
+  await expect(re.getByTestId('rule-value').first()).toHaveValue('saturday');
+});
+
 test('IF editor: Trigger event kind appears for an EVENT-triggered campaign and saves a payload filter', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

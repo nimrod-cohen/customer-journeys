@@ -8,6 +8,7 @@ import {
   groupFromAst,
   emptySegmentRow,
   emptyTriggerEventRow,
+  emptyJourneyRow,
   parseValue,
   rowToCondition,
   OPERATOR_CATALOG,
@@ -150,5 +151,24 @@ describe('mixed kinds in one group still round-trip', () => {
     // and back into 3 rows of the right kinds
     const back = groupFromAst(ast as never);
     expect(back.rows.map((r) => r.kind)).toEqual(['field', 'segment', 'trigger_event']);
+  });
+});
+
+describe('journey-attribute rule', () => {
+  it('builds a JourneyNode (key in field) and round-trips back to a journey row', () => {
+    const g = groupOf([{ ...emptyJourneyRow(), field: 'day', operator: '=' as const, value: 'saturday' }]);
+    const ast = buildAstFromGroup(g);
+    expect(ast).toEqual({ journeyKey: 'day', operator: '=', value: 'saturday' });
+    const back = groupFromAst(ast as never);
+    expect(back.rows[0]!.kind).toBe('journey');
+    expect(back.rows[0]!.field).toBe('day');
+    expect(back.rows[0]!.value).toBe('saturday');
+  });
+  it('a valueless operator (exists) omits the value', () => {
+    const g = groupOf([{ ...emptyJourneyRow(), field: 'cohort', operator: 'exists' as const, value: '' }]);
+    expect(buildAstFromGroup(g)).toEqual({ journeyKey: 'cohort', operator: 'exists' });
+  });
+  it('an empty journey key yields no node', () => {
+    expect(buildAstFromGroup(groupOf([{ ...emptyJourneyRow(), field: '' }]))).toBeNull();
   });
 });

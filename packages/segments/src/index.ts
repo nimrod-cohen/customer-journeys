@@ -6,6 +6,7 @@ export {
   compileWhere,
   validateAst,
   isTimeSensitive,
+  isJourney,
   resolveField,
   resolveOperator,
   SCALAR_FEATURE_FIELDS,
@@ -19,6 +20,7 @@ export {
   type SegmentNode,
   type ConstNode,
   type TriggerEventNode,
+  type JourneyNode,
   type OperatorToken,
   type ResolvedField,
 } from './compile.js';

@@ -643,3 +643,15 @@ describe('trigger-event leaf (campaign-only, in-memory)', () => {
     expect(() => compileWhere(WS, { triggerEvent: true } as AstNode)).toThrow(/in-memory|rewritten/);
   });
 });
+
+describe('journey-attribute leaf (campaign-only, in-memory)', () => {
+  it('validateAst accepts a journey leaf; rejects an empty key or unknown operator', () => {
+    expect(() => validateAst({ journeyKey: 'day', operator: '=', value: 'saturday' } as AstNode)).not.toThrow();
+    expect(() => validateAst({ journeyKey: 'cohort', operator: 'exists' } as AstNode)).not.toThrow();
+    expect(() => validateAst({ journeyKey: '', operator: '=', value: 'x' } as AstNode)).toThrow(/journeyKey/);
+    expect(() => validateAst({ journeyKey: 'day', operator: 'LIKE', value: 'x' } as AstNode)).toThrow();
+  });
+  it('compiling one DIRECTLY throws — it must be rewritten in-memory first (never hits SQL)', () => {
+    expect(() => compileWhere(WS, { journeyKey: 'day', operator: '=', value: 'saturday' } as AstNode)).toThrow(/in-memory|rewritten/);
+  });
+});

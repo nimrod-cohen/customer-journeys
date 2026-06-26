@@ -397,6 +397,34 @@ export function rewriteTriggerEventLeaves(
 }
 
 /**
+ * Fold every JOURNEY-attribute leaf (journeyKey/operator/value) into a ConstNode by
+ * evaluating it IN-MEMORY against the enrollment's `state.journey` (the per-enrollment
+ * vars an Update-journey node writes). Mirrors rewriteTriggerEventLeaves: journey vars
+ * live on the enrollment row, NOT the profile, so they can't be SQL-compiled — they
+ * must be resolved here and replaced with a constant BEFORE buildBranchMatchQuery.
+ * Deep-dot/array path resolution + the SAME whitelisted operator semantics as the
+ * trigger-event payload filter; a missing key resolves to undefined (forgiving).
+ */
+export function rewriteJourneyLeaves(node: AstNode, journeyVars: Record<string, unknown> | null): AstNode {
+  if (node && typeof node === 'object') {
+    const g = node as { op?: unknown; conditions?: unknown };
+    if (typeof g.op === 'string' && Array.isArray(g.conditions)) {
+      return {
+        ...(node as object),
+        conditions: (g.conditions as AstNode[]).map((c) => rewriteJourneyLeaves(c, journeyVars)),
+      } as unknown as AstNode;
+    }
+    const j = node as { journeyKey?: unknown; operator?: unknown; value?: unknown };
+    if (typeof j.journeyKey === 'string') {
+      const op = resolveOperator(String(j.operator)); // THROWS on a non-whitelisted operator
+      const actual = resolveEventPath(journeyVars ?? {}, j.journeyKey);
+      return { const: applyPayloadOperator(op, actual, j.value) } as AstNode;
+    }
+  }
+  return node;
+}
+
+/**
  * Decide the next node for a condition node given whether the branch matched.
  * Pure — the orchestrator runs buildBranchMatchQuery against Postgres and feeds
  * the boolean here.

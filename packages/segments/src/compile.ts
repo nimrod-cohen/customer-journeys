@@ -101,9 +101,32 @@ export interface TriggerEventNode {
   readonly filter?: AstNode;
 }
 
+/**
+ * A JOURNEY-attribute leaf (CAMPAIGN IF only): match a per-enrollment journey
+ * VARIABLE (set by an Update-journey node, stored on `campaign_enrollments.state.journey`).
+ * Like a trigger-event leaf it is NOT SQL-compilable (journey vars live on the
+ * enrollment row, not a table the segment SQL touches) — the campaign runner
+ * evaluates it in-memory against `state.journey` and REWRITES this node to a
+ * ConstNode BEFORE compiling. `journeyKey` is the variable key (deep-dot supported,
+ * e.g. `cohort` or `meta.tier`). Reaching the SQL compiler with one is a bug.
+ */
+export interface JourneyNode {
+  readonly journeyKey: string;
+  readonly operator: string;
+  readonly value?: unknown;
+}
+
 /** A rule-AST node — a boolean group, a leaf condition, an event predicate, a
- *  segment-membership leaf, a constant, or a (campaign-only) trigger-event leaf. */
-export type AstNode = GroupNode | ConditionNode | EventNode | SegmentNode | ConstNode | TriggerEventNode;
+ *  segment-membership leaf, a constant, a (campaign-only) trigger-event leaf, or a
+ *  (campaign-only) journey-attribute leaf. */
+export type AstNode =
+  | GroupNode
+  | ConditionNode
+  | EventNode
+  | SegmentNode
+  | ConstNode
+  | TriggerEventNode
+  | JourneyNode;
 
 /** The count-comparison operators an EventNode may use. */
 const EVENT_COUNT_OPERATORS = new Set(['>', '>=', '=', '<=', '<']);
@@ -299,6 +322,11 @@ function isTriggerEvent(node: AstNode): node is TriggerEventNode {
   return (node as TriggerEventNode).triggerEvent === true;
 }
 
+/** A journey-attribute leaf (campaign IF, evaluated in-memory + rewritten before SQL). */
+export function isJourney(node: AstNode): node is JourneyNode {
+  return typeof (node as JourneyNode).journeyKey === 'string';
+}
+
 /**
  * Resolve an AST field name against the whitelist. THROWS on anything unknown —
  * this is the field-name injection guard. For `attributes.*` and
@@ -421,6 +449,13 @@ export function validateAst(node: AstNode): void {
     if (node.filter !== undefined) {
       assertPayloadOnlyAst(node.filter);
     }
+    return;
+  }
+  if (isJourney(node)) {
+    if (typeof node.journeyKey !== 'string' || node.journeyKey.length === 0) {
+      throw new Error('validateAst: journey leaf needs a non-empty journeyKey');
+    }
+    resolveOperator(node.operator); // whitelist the operator (THROWS on unknown)
     return;
   }
   // Leaf condition.
@@ -734,6 +769,11 @@ function compileNode(node: AstNode, params: ParamBuilder): string {
   if (isTriggerEvent(node)) {
     throw new Error(
       'compileWhere: a trigger-event leaf must be evaluated in-memory and rewritten to a constant before SQL compilation',
+    );
+  }
+  if (isJourney(node)) {
+    throw new Error(
+      'compileWhere: a journey-attribute leaf must be evaluated in-memory and rewritten to a constant before SQL compilation',
     );
   }
   return compileCondition(node as ConditionNode, params);

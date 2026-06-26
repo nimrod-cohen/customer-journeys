@@ -37,6 +37,7 @@ import {
   buildAdvanceEnrollment,
   buildBranchMatchQuery,
   rewriteTriggerEventLeaves,
+  rewriteJourneyLeaves,
   buildCampaignOutboxInsert,
   buildCampaignDedupeKey,
   buildSetAttribute,
@@ -246,6 +247,11 @@ async function chainTick(
   let arrival: Arrival = 'resumed'; // the swept node is being resumed
   let steps = 0;
   let currentNodeId = row.current_node;
+  // The journey vars as they EVOLVE this tick: start from the persisted state, then
+  // fold in each set_journey node's resolved values, so a LATER IF / set_journey / send
+  // in the SAME tick sees them (the SQL write only commits at tx end). Without this a
+  // "set journey var → branch on it" in one tick would read the stale start-of-tick state.
+  let tickJourney: Record<string, unknown> = { ...((row.state?.journey as Record<string, unknown>) ?? {}) };
 
   for (;;) {
     if (steps >= MAX_STEPS_PER_TICK) {
@@ -260,7 +266,11 @@ async function chainTick(
     // enrolling event payload and fold them into the AST as constants first.
     let matchesNow = false;
     if (node.type === 'condition') {
-      const ast = rewriteTriggerEventLeaves(node.ast, row.state?.event?.payload ?? null);
+      // Fold the in-memory-only leaves (trigger-event payload + journey vars from the
+      // enrollment state) into constants BEFORE the SQL compile — neither lives on a
+      // table the segment SQL touches.
+      let ast = rewriteTriggerEventLeaves(node.ast, row.state?.event?.payload ?? null);
+      ast = rewriteJourneyLeaves(ast, tickJourney);
       const q = buildBranchMatchQuery(workspaceId, ast, row.profile_id);
       const { rows: matchRows } = await read.query<{ id: string }>(q.text, q.values);
       matchesNow = matchRows.length > 0;
@@ -274,7 +284,8 @@ async function chainTick(
     if (node.type === 'wait' && isRichWait(node)) {
       let conditionMet = true;
       if (node.waitCondition !== undefined) {
-        const ast = rewriteTriggerEventLeaves(node.waitCondition, row.state?.event?.payload ?? null);
+        let ast = rewriteTriggerEventLeaves(node.waitCondition, row.state?.event?.payload ?? null);
+        ast = rewriteJourneyLeaves(ast, tickJourney);
         const q = buildBranchMatchQuery(workspaceId, ast, row.profile_id);
         const { rows: matchRows } = await read.query<{ id: string }>(q.text, q.values);
         conditionMet = matchRows.length > 0;
@@ -335,7 +346,7 @@ async function chainTick(
         // profile). Skipped when there's nothing to add — keeps payload tidy.
         const extraMerge: Record<string, string> = {
           ...eventMerge(resolveCtx.event),
-          ...journeyMerge(resolveCtx.journey),
+          ...journeyMerge(tickJourney),
         };
         if (Object.keys(extraMerge).length > 0) payload.merge = extraMerge;
         writes.push(
@@ -367,9 +378,11 @@ async function chainTick(
         // but the values already incorporate the in-node dependencies. A retry
         // re-resolves identically from the immutable source (idempotent).
         const isJourney = eff.kind === 'set_journey';
-        // Mutable working copies threaded forward across rows in THIS node.
+        // Mutable working copies threaded forward across rows in THIS node. The journey
+        // copy starts from `tickJourney` (incl. any set_journey EARLIER this tick), not
+        // the stale start-of-tick state, so cross-node journey dependencies resolve.
         const workAttrs: Record<string, unknown> = { ...(resolveCtx.profile.attributes ?? {}) };
-        const workJourney: Record<string, unknown> = { ...((resolveCtx.journey as Record<string, unknown>) ?? {}) };
+        const workJourney: Record<string, unknown> = { ...tickJourney };
         const resolved: { key: string; value: unknown }[] = [];
         for (const a of eff.assignments) {
           const valueCtx = {
@@ -386,6 +399,9 @@ async function chainTick(
         }
         if (isJourney) {
           writes.push(buildSetJourney(workspaceId, row.id, resolved));
+          // Fold this node's resolved journey vars into the tick state so a LATER
+          // IF / set_journey / send this tick sees them (matches the committed write).
+          tickJourney = { ...tickJourney, ...Object.fromEntries(resolved.map((r) => [r.key, r.value])) };
         } else {
           writes.push(buildSetAttribute(workspaceId, row.profile_id, resolved));
         }

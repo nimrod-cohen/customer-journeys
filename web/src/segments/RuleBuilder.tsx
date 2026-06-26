@@ -18,6 +18,7 @@ import {
   emptyEventCondition,
   emptySegmentRow,
   emptyTriggerEventRow,
+  emptyJourneyRow,
   OPERATOR_GROUPS,
   OPERATOR_META,
   EVENT_COUNT_OPS,
@@ -260,6 +261,8 @@ function blankRowForKind(kind: RuleKind): RuleRow {
       return emptySegmentRow();
     case 'trigger_event':
       return emptyTriggerEventRow();
+    case 'journey':
+      return emptyJourneyRow();
     default:
       return emptyRow();
   }
@@ -312,6 +315,7 @@ function RuleListEditor({
                   <option value="trigger_event">Trigger event</option>
                 ) : null}
                 {ctx.context === 'campaign' ? <option value="segment">Segment</option> : null}
+                {ctx.context === 'campaign' ? <option value="journey">Journey attribute</option> : null}
                 <option value="event">Event</option>
               </Select>
               {rows.length > 1 || allowEmpty ? (
@@ -355,6 +359,28 @@ function RuleListEditor({
                     const canon = resolveCustomerField(row.field);
                     return canon.startsWith('attributes.') ? fetchAttrValues(canon.slice('attributes.'.length)) : null;
                   })()}
+                />
+              </div>
+            ) : kind === 'journey' ? (
+              <div class="flex flex-wrap items-center gap-2">
+                <Input
+                  data-testid="rule-journey-key"
+                  class="min-w-[12rem] flex-1 font-mono text-xs"
+                  placeholder="journey variable (e.g. cohort) — set by an Update-journey step"
+                  value={row.field}
+                  onInput={(e: Event) => update(i, { field: (e.target as HTMLInputElement).value })}
+                />
+                <OperatorSelect
+                  testId="rule-operator"
+                  value={row.operator}
+                  onChange={(op) => update(i, { operator: op })}
+                />
+                <ValueInputs
+                  testId="rule-value"
+                  operator={row.operator}
+                  value={row.value}
+                  onChange={(v) => update(i, { value: v })}
+                  fetcher={null}
                 />
               </div>
             ) : kind === 'segment' ? (

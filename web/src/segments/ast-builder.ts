@@ -91,8 +91,10 @@ export const OPERATOR_GROUPS: ReadonlyArray<{ group: OperatorGroup; label: strin
  *   - 'segment'       → IS / IS NOT a member of a segment (CAMPAIGN IF only)
  *   - 'trigger_event' → the ENROLLING event's data — a payload-only filter, NO
  *                       occurrence/time test (CAMPAIGN IF, event-triggered only)
+ *   - 'journey'       → a per-enrollment journey VARIABLE (set by an Update-journey
+ *                       step), matched in-memory by the runner (CAMPAIGN IF only)
  */
-export type RuleKind = 'field' | 'event' | 'segment' | 'trigger_event';
+export type RuleKind = 'field' | 'event' | 'segment' | 'trigger_event' | 'journey';
 
 /**
  * The event occurrence test: 'occurred' = at least once (EXISTS), 'not_occurred'
@@ -183,7 +185,15 @@ export interface TriggerEventNode {
   filter?: AstNode;
 }
 
-export type AstNode = GroupNode | ConditionNode | EventNode | SegmentNode | TriggerEventNode;
+/** An AST journey-attribute leaf (matches @cdp/segments JourneyNode). Campaign IF
+ *  only — evaluated in-memory against the enrollment's state.journey by the runner. */
+export interface JourneyNode {
+  journeyKey: string;
+  operator: BuilderOperator;
+  value?: unknown;
+}
+
+export type AstNode = GroupNode | ConditionNode | EventNode | SegmentNode | TriggerEventNode | JourneyNode;
 
 /** A blank field rule for a fresh builder. */
 export function emptyRow(): RuleRow {
@@ -215,6 +225,10 @@ export function emptySegmentRow(): RuleRow {
 }
 
 /** A blank trigger-event rule (CAMPAIGN IF, payload-only filter). */
+export function emptyJourneyRow(): RuleRow {
+  return { kind: 'journey', field: '', operator: '=', value: '', eventOp: 'occurred', conditions: [] };
+}
+
 export function emptyTriggerEventRow(): RuleRow {
   return { kind: 'trigger_event', field: '', operator: '=', value: '', triggerMatch: 'all', conditions: [] };
 }
@@ -344,11 +358,22 @@ function rowToTriggerEvent(row: RuleRow): TriggerEventNode {
   return { triggerEvent: true, filter: { op, conditions: conds } };
 }
 
+/** Build a journey-attribute node: journey.<key> <op> <value>, matched in-memory by
+ *  the runner against the enrollment's journey vars. Null when no key is entered. */
+function rowToJourney(row: RuleRow): JourneyNode | null {
+  const key = row.field.trim();
+  if (!key) return null;
+  const shape = OPERATOR_META[row.operator]?.valueShape ?? 'text';
+  if (shape === 'none') return { journeyKey: key, operator: row.operator };
+  return { journeyKey: key, operator: row.operator, value: parseValue(row.operator, row.value) };
+}
+
 /** Build one AST node from a row (null when the row is empty/invalid). */
 function rowToNode(row: RuleRow): AstNode | null {
   if (row.kind === 'event') return rowToEvent(row);
   if (row.kind === 'segment') return rowToSegment(row);
   if (row.kind === 'trigger_event') return rowToTriggerEvent(row);
+  if (row.kind === 'journey') return rowToJourney(row);
   if (row.field.trim().length === 0) return null;
   return rowToCondition(row);
 }
@@ -410,6 +435,9 @@ function isSegmentNode(n: AstNode): n is SegmentNode {
 function isTriggerEventNode(n: AstNode): n is TriggerEventNode {
   return (n as TriggerEventNode).triggerEvent === true;
 }
+function isJourneyNode(n: AstNode): n is JourneyNode {
+  return typeof (n as JourneyNode).journeyKey === 'string';
+}
 /** A GROUP node (the only non-leaf): has a string `op` + a conditions array. */
 function isGroupNode(n: AstNode): n is GroupNode {
   return typeof (n as GroupNode).op === 'string' && Array.isArray((n as GroupNode).conditions);
@@ -444,6 +472,12 @@ function asBuilderOp(op: string): BuilderOperator {
 function conditionToRow(c: ConditionNode): RuleRow {
   const operator = asBuilderOp(c.operator);
   return { kind: 'field', field: c.field, operator, value: valueToRaw(operator, c.value), eventOp: 'occurred', conditions: [] };
+}
+
+/** Turn one journey-attribute node into an editable journey row (key in `field`). */
+function journeyToRow(n: JourneyNode): RuleRow {
+  const operator = asBuilderOp(n.operator);
+  return { kind: 'journey', field: n.journeyKey, operator, value: valueToRaw(operator, n.value), eventOp: 'occurred', conditions: [] };
 }
 
 /** Turn one event node into an editable event row. */
@@ -499,6 +533,7 @@ function leafToRow(n: AstNode): RuleRow {
   if (isEvent(n)) return eventToRow(n);
   if (isSegmentNode(n)) return segmentToRow(n);
   if (isTriggerEventNode(n)) return triggerEventToRow(n);
+  if (isJourneyNode(n)) return journeyToRow(n);
   return conditionToRow(n as ConditionNode);
 }
 
