@@ -534,9 +534,13 @@ describe('moveSubtree', () => {
     // The branch's OWN incoming edge (trigger→cond) is now a valid drop target…
     const incoming = m.edges.find((e) => e.from === 'trigger' && e.to === condId)!;
     expect(canDropOnEdge(m, condId, incoming)).toBe(true);
-    // …while edges INSIDE the branch are not.
+    // …while for a MOVE, edges INSIDE the branch are not (self-cycle).
     const armEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
-    expect(canDropOnEdge(m, condId, armEdge)).toBe(false);
+    expect(canDropOnEdge(m, condId, armEdge, 'move')).toBe(false);
+    // For a DUPLICATE the copy has fresh ids → ANY edge is a valid drop, incl. an arm.
+    expect(canDropOnEdge(m, condId, armEdge, 'duplicate')).toBe(true);
+    const dupOnArm = duplicateSubtree(m, condId, armEdge);
+    expect(() => validateCampaignDefinition(buildDefinition(dupOnArm))).not.toThrow();
 
     // Duplicating onto that incoming edge places the copy BEFORE the original, rejoining
     // the original condition; the originals are intact and the graph validates.

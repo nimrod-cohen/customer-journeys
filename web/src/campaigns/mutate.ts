@@ -410,14 +410,24 @@ export function movePlan(
  *   - 'branch' mode: valid UNLESS destEdge.from ∈ ids OR destEdge.to ∈ ids (inside
  *     the moving subtree → self-insert / cycle). (unchanged behavior).
  */
-export function canDropOnEdge(model: CanvasModel, rootId: string, destEdge: CanvasEdge): boolean {
+export function canDropOnEdge(
+  model: CanvasModel,
+  rootId: string,
+  destEdge: CanvasEdge,
+  op: 'move' | 'duplicate' = 'move',
+): boolean {
   const plan = movePlan(model, rootId);
   if (plan.mode === 'single') {
+    // A single node's OWN out-edge is degenerate for both ops (duplicateSubtree/
+    // moveSubtree reject it); every other edge — incl. a parent edge — is valid.
     return destEdge.from !== rootId;
   }
-  // The branch root's OWN incoming edge (to === rootId) is a valid target — it places
-  // the copy/branch immediately BEFORE the original (duplicate) / is a no-op (move).
-  // Otherwise the destination must be OUTSIDE the moving subtree (no self-insert/cycle).
+  // DUPLICATE: the copy has FRESH ids, so it can never cycle with the originals —
+  // dropping it on ANY edge (incl. one inside the branch's own arms) is structurally
+  // valid (duplicateSubtree splices A→clone→B and the clone rejoins B). Offer them all.
+  if (op === 'duplicate') return true;
+  // MOVE: the branch root's OWN incoming edge (to === rootId) is valid (no-op / before
+  // it); otherwise the destination must be OUTSIDE the moving subtree (no self-cycle).
   if (destEdge.to === rootId) return true;
   return !(plan.ids.has(destEdge.from) || plan.ids.has(destEdge.to));
 }

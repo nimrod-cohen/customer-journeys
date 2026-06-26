@@ -104,7 +104,7 @@ export function CampaignCanvas({
   // an empty-If arm currently targeting the moving node); in BRANCH mode it excludes
   // every edge inside the moving subtree (self-insert / cycle).
   const isValidTarget = (edge: CanvasEdge): boolean =>
-    placement != null && canDropOnEdge(model, placement.rootId, edge);
+    placement != null && canDropOnEdge(model, placement.rootId, edge, placement.op);
 
   // Escape cancels an in-progress placement (parity with closing the palette).
   // Registered in the CAPTURE phase on `document` so it fires regardless of which
