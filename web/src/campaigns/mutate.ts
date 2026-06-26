@@ -375,6 +375,17 @@ export function movePlan(
   const node = def.nodes[rootId];
   if (!node) return { mode: 'single', ids: new Set([rootId]), continuation: undefined };
   if (node.type === 'condition') {
+    // The branch unit is the ARMS rejoining their merge (conditionMerge): S = the
+    // strictly-in-branch nodes (incl. the condition), C = the shared rejoin. This
+    // AGREES with exclusiveSubtree whenever the rejoin is shared with a sibling/
+    // ancestor arm, but ALSO handles the sole-trunk case where the arms rejoin a
+    // node only reachable via this branch (e.g. the only Exit): exclusiveSubtree
+    // would swallow that node with NO continuation, leaving the copy/move unplaceable
+    // (and orphan-prone); conditionMerge correctly yields it as C. Only when the arms
+    // share NO descendant (terminal arms → each its own exit) does C come back
+    // undefined — then fall back to the exclusive subtree (the whole branch + its exits).
+    const cm = conditionMerge(def, rootId);
+    if (cm.C !== undefined) return { mode: 'branch', ids: cm.S, continuation: cm.C };
     const { ids, continuation } = exclusiveSubtree(def, rootId);
     return { mode: 'branch', ids, continuation };
   }
@@ -404,6 +415,10 @@ export function canDropOnEdge(model: CanvasModel, rootId: string, destEdge: Canv
   if (plan.mode === 'single') {
     return destEdge.from !== rootId;
   }
+  // The branch root's OWN incoming edge (to === rootId) is a valid target — it places
+  // the copy/branch immediately BEFORE the original (duplicate) / is a no-op (move).
+  // Otherwise the destination must be OUTSIDE the moving subtree (no self-insert/cycle).
+  if (destEdge.to === rootId) return true;
   return !(plan.ids.has(destEdge.from) || plan.ids.has(destEdge.to));
 }
 

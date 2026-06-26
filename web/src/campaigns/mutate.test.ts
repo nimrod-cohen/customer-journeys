@@ -452,13 +452,14 @@ describe('moveSubtree', () => {
     expect(moveSubtree(m, waitId, armEdge)).toBe(m); // unchanged reference
   });
 
-  it('a branch move that orphans a sibling subtree is rejected on persist by the SERVER validator', () => {
+  it('a branch whose arms rejoin a node (the merge) moves onto a sibling arm WITHOUT orphaning — it rejoins the destination', () => {
     // trigger → cond(onTrue → exitA, onFalse → inner(onTrue→exit_1, onFalse→exit_1)).
-    // Move the onFalse INNER condition branch (S = {inner, exit_1}, terminal, C =
-    // undefined) onto the Yes arm cond→exitA. Locally this passes the lightweight
-    // guards (a reachable exit remains, no dangling edge, no cycle), but it ORPHANS
-    // exitA — which the server's validateCampaignDefinition rejects on save (the
-    // screen surfaces the error).
+    // The inner condition's arms REJOIN at exit_1 → its unit is S={inner}, C=exit_1
+    // (conditionMerge — not the whole tail). Moving it onto the Yes arm cond→exitA
+    // relocates JUST the branch: its arms now rejoin the destination (exitA) and the
+    // old continuation (exit_1) stays reachable via cond.onFalse → NO orphan, a valid
+    // graph the server accepts. (Before, exclusiveSubtree swallowed exit_1 with no
+    // continuation and the move orphaned exitA.)
     let m = starterModel(); // trigger → exit_1
     m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW); // both arms → exit_1
     const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
@@ -469,11 +470,18 @@ describe('moveSubtree', () => {
     const innerId = m.nodes.find((n) => n.node.type === 'condition' && n.id !== condId)!.id;
     const exitA = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!.to;
 
+    // conditionMerge unit: inner's continuation is exit_1 (the rejoin), S = {inner}.
+    const plan = movePlan(m, innerId);
+    expect(plan.continuation).toBe('exit_1');
+    expect([...plan.ids]).toEqual([innerId]);
+
     const armToExitA = m.edges.find((e) => e.from === condId && e.to === exitA)!;
-    const moved = moveSubtree(m, innerId, armToExitA); // local guards pass…
-    // …but the moved result orphans exitA → the SERVER validator rejects it (parity
-    // with the persist-time rejection the screen surfaces).
-    expect(() => validateCampaignDefinition(buildDefinition(moved))).toThrow();
+    const moved = moveSubtree(m, innerId, armToExitA);
+    const def = buildDefinition(moved);
+    // exitA reachable via the relocated inner; exit_1 still reachable via cond.onFalse.
+    expect((def.nodes[condId] as unknown as { onTrue: string }).onTrue).toBe(innerId);
+    expect((def.nodes[condId] as unknown as { onFalse: string }).onFalse).toBe('exit_1');
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
   });
 
   it('subtreeNodeIds on a CONDITION returns the exclusive members (root + arm-only descendants), NOT a SHARED join', () => {
@@ -500,6 +508,41 @@ describe('moveSubtree', () => {
 
     // A single-out NON-condition node (the send) yields just ITSELF (single mode).
     expect([...subtreeNodeIds(m, sendId)]).toEqual([sendId]);
+  });
+
+  it('a SOLE-TRUNK condition whose arms rejoin the only exit can be DUPLICATED before itself (the reported bug)', () => {
+    // trigger → cond(onTrue→wait→exit_1, onFalse→exit_1). The arms rejoin exit_1, which
+    // is reachable ONLY via this branch → exclusiveSubtree swallowed it (C undefined),
+    // leaving the copy unplaceable. conditionMerge gives S={cond,wait}, C=exit_1, so the
+    // incoming edge (trigger→cond) is a valid drop target and the copy rejoins exit_1.
+    let m = starterModel(); // trigger → exit_1
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'condition', NOW); // cond, both arms → exit_1
+    const condId = m.nodes.find((n) => n.node.type === 'condition')!.id;
+    const yesEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    m = insertOnEdge(m, yesEdge, 'wait', NOW); // onTrue → wait → exit_1 ; onFalse → exit_1
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+
+    // The unit is the arms rejoining exit_1 (NOT the swallowed exit).
+    const plan = movePlan(m, condId);
+    expect(plan.continuation).toBe('exit_1');
+    expect(plan.ids.has(condId)).toBe(true);
+    expect(plan.ids.has(waitId)).toBe(true);
+    expect(plan.ids.has('exit_1')).toBe(false);
+
+    // The branch's OWN incoming edge (trigger→cond) is now a valid drop target…
+    const incoming = m.edges.find((e) => e.from === 'trigger' && e.to === condId)!;
+    expect(canDropOnEdge(m, condId, incoming)).toBe(true);
+    // …while edges INSIDE the branch are not.
+    const armEdge = m.edges.find((e) => e.from === condId && e.slot === 'onTrue')!;
+    expect(canDropOnEdge(m, condId, armEdge)).toBe(false);
+
+    // Duplicating onto that incoming edge places the copy BEFORE the original, rejoining
+    // the original condition; the originals are intact and the graph validates.
+    const dup = duplicateSubtree(m, condId, incoming);
+    const def = buildDefinition(dup);
+    expect(Object.values(def.nodes).filter((n) => n.type === 'condition')).toHaveLength(2);
+    expect((def.nodes.trigger as unknown as { next: string }).next).not.toBe(condId); // → the clone
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
   });
 });
 
