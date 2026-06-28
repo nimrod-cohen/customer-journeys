@@ -280,6 +280,45 @@ test('assemble trigger→wait→send→exit via the (+) palette, then save', asy
   await expect(page.getByTestId('campaign-list')).toContainText('Assembled linear');
 });
 
+test('BOTH arms of an If get a closing (+) below their last node, before the merge', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-canvas').waitFor();
+
+  // trigger → If, then a node on EACH arm so each arm has content that CLOSES into the join.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toBeVisible();
+  let arms = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(arms[0]!).click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toHaveCount(1);
+  arms = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(arms[arms.length - 1]!).click();
+  await page.getByTestId('palette-send').click();
+  await expect(page.getByTestId('node-send')).toBeVisible();
+
+  // Both arm CARDS rejoin a single merge. EACH arm must have a closing (+) below its
+  // card (one per arm, at distinct x), plus the after-branch merge (+). Find the
+  // edge-insert (+)s that sit BELOW both arm cards' bottoms.
+  const waitBox = await page.getByTestId('node-wait').boundingBox();
+  const sendBox = await page.getByTestId('node-send').boundingBox();
+  const armsBottom = Math.max(waitBox!.y + waitBox!.height, sendBox!.y + sendBox!.height);
+  const closing = await page.getByTestId('campaign-edge-insert').evaluateAll(
+    (els, below) =>
+      els
+        .map((e) => (e as HTMLElement).getBoundingClientRect())
+        .filter((r) => r.top > below)
+        .map((r) => Math.round(r.left)),
+    armsBottom,
+  );
+  // Exactly TWO closing (+)s — one per arm — at DISTINCT x (left arm vs right arm).
+  expect(closing).toHaveLength(2);
+  expect(new Set(closing).size).toBe(2);
+  // …and the after-branch merge (+) is present too.
+  await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(1);
+});
+
 test('the palette offers all eight node types', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();
