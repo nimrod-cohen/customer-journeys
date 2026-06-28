@@ -429,6 +429,54 @@ function multiParentNodes(def: CampaignDefinition): Set<string> {
   return joins;
 }
 
+/** Every node reachable from `start` (inclusive), following edges downward. */
+function reachableFrom(def: CampaignDefinition, start: string): Set<string> {
+  const seen = new Set<string>();
+  const queue = [start];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    const node = def.nodes[cur];
+    if (!node) continue;
+    for (const e of outgoingEdges(cur, node)) queue.push(e.to);
+  }
+  return seen;
+}
+
+/**
+ * For each JOIN, the DEEPEST condition whose two arms BOTH rejoin it (i.e. its merge
+ * point) — the If that "owns" the diamond closing there. A join can be the merge of
+ * several nested Ifs; the deepest one is the immediate diamond. Used to center a
+ * shared join under its IMMEDIATE arms (not far ancestor arms that also rejoin it).
+ */
+function joinOwners(def: CampaignDefinition, depth: Map<string, number>): Map<string, string> {
+  const owner = new Map<string, string>(); // join id → deepest owning condition id
+  for (const id of Object.keys(def.nodes)) {
+    const node = def.nodes[id];
+    if (!node || node.type !== 'condition') continue;
+    const c = node as { onTrue?: string; onFalse?: string };
+    if (typeof c.onTrue !== 'string' || typeof c.onFalse !== 'string') continue;
+    // The merge = the SHALLOWEST node reachable from BOTH arms (nearest common descendant).
+    const a = reachableFrom(def, c.onTrue);
+    const b = reachableFrom(def, c.onFalse);
+    let merge: string | undefined;
+    let best = Infinity;
+    for (const n of a) {
+      if (!b.has(n)) continue;
+      const d = depth.get(n) ?? Infinity;
+      if (d < best) {
+        best = d;
+        merge = n;
+      }
+    }
+    if (merge === undefined) continue;
+    const prev = owner.get(merge);
+    if (prev === undefined || (depth.get(id) ?? 0) > (depth.get(prev) ?? 0)) owner.set(merge, id);
+  }
+  return owner;
+}
+
 /** Shift every node in the subtree rooted at `id` by `delta` columns, STOPPING at a
  *  shared join (a multi-parent node) — it belongs to no single arm and is recentered
  *  later. Diamond-safe via `seen`. */
@@ -470,6 +518,7 @@ function recenterJoins(def: CampaignDefinition, col: Map<string, number>): void 
   }
   const joins = multiParentNodes(def);
   const depth = computeDepths(def);
+  const owners = joinOwners(def, depth);
   // Shallowest join first so outer re-centering settles before inner joins read it.
   const joinIds = [...parents.entries()]
     .filter(([, ps]) => ps.length > 1)
@@ -477,7 +526,17 @@ function recenterJoins(def: CampaignDefinition, col: Map<string, number>): void 
     .sort((x, y) => (depth.get(x) ?? 0) - (depth.get(y) ?? 0));
   for (const id of joinIds) {
     const ps = parents.get(id)!;
-    const cols = ps.map((p) => col.get(p) ?? 0);
+    // Center under the IMMEDIATE diamond closure: the parents that descend from the
+    // DEEPEST If whose merge is this join (the inner diamond's arm leaves) — NOT a far
+    // ancestor If's arm that ALSO rejoins here. A SHARED join otherwise centers between
+    // the inner arms AND the outer arm, landing off-center so the inner diamond closes
+    // asymmetrically; the ancestor arm simply jogs in. Unequal arms (both leaves descend
+    // from the SAME owning If) and empty arms (a parent IS the owning If) are unaffected.
+    const owner = owners.get(id);
+    const closureParents =
+      owner !== undefined ? ((d) => ps.filter((p) => d.has(p)))(reachableFrom(def, owner)) : ps;
+    const considered = closureParents.length > 0 ? closureParents : ps;
+    const cols = considered.map((p) => col.get(p) ?? 0);
     const target = (Math.min(...cols) + Math.max(...cols)) / 2;
     const current = col.get(id) ?? 0;
     const delta = target - current;

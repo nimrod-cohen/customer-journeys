@@ -389,6 +389,34 @@ describe('layoutDefinition', () => {
     expect(join.x).toBeCloseTo((lo + hi) / 2, 5);
   });
 
+  it('a NESTED If centers its join under ITS OWN arms, not pulled by an outer arm that shares the join', () => {
+    // trigger → outer(onTrue → inner, onFalse → join) ; inner(onTrue → a, onFalse → b);
+    // a,b → join ; join → exit. `join` is the merge of BOTH Ifs — it must center under
+    // the INNER arms (a,b), so the inner diamond closes symmetrically; the outer's
+    // onFalse arm jogs in. (Regression: centering under all 3 parents put it off-center.)
+    const nested: CampaignDefinition = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'manual', next: 'outer' } as never,
+        outer: { type: 'condition', ast: {}, onTrue: 'inner', onFalse: 'join' } as never,
+        inner: { type: 'condition', ast: {}, onTrue: 'a', onFalse: 'b' } as never,
+        a: { type: 'wait', delay: { seconds: 1 }, next: 'join' } as never,
+        b: { type: 'wait', delay: { seconds: 1 }, next: 'join' } as never,
+        join: { type: 'wait', delay: { seconds: 1 }, next: 'x' } as never,
+        x: { type: 'exit' } as never,
+      },
+    };
+    const { positions } = layoutDefinition(nested);
+    const ax = positions.get('a')!.x;
+    const bx = positions.get('b')!.x;
+    const innerX = positions.get('inner')!.x;
+    const joinX = positions.get('join')!.x;
+    // The join sits at the midpoint of the INNER arms (= under the inner If), NOT pulled
+    // toward the (rightmost) outer If.
+    expect(joinX).toBeCloseTo((ax + bx) / 2, 5);
+    expect(joinX).toBeCloseTo(innerX, 5);
+  });
+
   it('computeEdges emits one down-only edge PER incoming edge into the join', () => {
     const { positions } = layoutDefinition(emptyArmDiamond);
     const edges = computeEdges(emptyArmDiamond, positions);
