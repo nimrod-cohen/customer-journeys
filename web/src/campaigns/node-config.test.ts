@@ -26,6 +26,7 @@ import {
   type WaitUntilForm,
   writeHourWindowConfig,
   readHourWindow,
+  describeHourWindow,
   editorRowsToConditionAst,
   conditionAstToRows,
   writeConditionConfig,
@@ -191,21 +192,49 @@ describe('WAIT-UNTIL (rich: time + condition + max-wait)', () => {
 });
 
 describe('HOUR-OF-DAY WINDOW', () => {
-  it('stores integer hours, accepts overnight (start>end), omits days when none chosen', () => {
-    const node = writeHourWindowConfig({ startHour: 22, endHour: 6, daysOfWeek: [] });
-    expect(node).toEqual({ type: 'hour_of_day_window', startHour: 22, endHour: 6 });
+  it('stores minute-of-day open/close, accepts overnight (open>close), omits days when none chosen', () => {
+    const node = writeHourWindowConfig({ openMin: 22 * 60, closeMin: 7 * 60, daysOfWeek: [] }); // 22:00 → 07:00 overnight
+    expect(node).toMatchObject({ type: 'hour_of_day_window', startMin: 1320, endMin: 420 });
     expect('daysOfWeek' in (node as object)).toBe(false);
   });
 
   it('stores a unique sorted subset of days when chosen and the runner accepts it', () => {
-    const node = writeHourWindowConfig({ startHour: 9, endHour: 17, daysOfWeek: [5, 1, 1, 3] });
+    const node = writeHourWindowConfig({ openMin: 9 * 60, closeMin: 17 * 60, daysOfWeek: [5, 1, 1, 3] });
     expect((node as unknown as { daysOfWeek: number[] }).daysOfWeek).toEqual([1, 3, 5]);
     const def: CampaignDefinition = {
       startNode: 't',
       nodes: { t: { type: 'trigger', kind: 'manual', next: 'h' }, h: { ...node, next: 'x' }, x: { type: 'exit' } },
     };
     expect(() => validateCampaignDefinition(def)).not.toThrow();
-    expect(readHourWindow(def.nodes.h!)).toMatchObject({ startHour: 9, endHour: 17, daysOfWeek: [1, 3, 5] });
+    expect(readHourWindow(def.nodes.h!)).toMatchObject({ openMin: 540, closeMin: 1020, daysOfWeek: [1, 3, 5] });
+  });
+
+  it('minute-of-day round-trip incl. half-hours; legacy whole-hour fields derive', () => {
+    // "at least 8pm, up to midnight" → open 20:00 (1200), close midnight (1440).
+    const node = writeHourWindowConfig({ openMin: 1200, closeMin: 1440, daysOfWeek: [] });
+    expect(node).toMatchObject({ type: 'hour_of_day_window', startMin: 1200, endMin: 1440, startHour: 20, endHour: 23 });
+    expect(readHourWindow(node)).toMatchObject({ openMin: 1200, closeMin: 1440 });
+    // HALF-HOUR: open 20:30 (1230), close 22:30 (1350) round-trips exactly.
+    const half = writeHourWindowConfig({ openMin: 1230, closeMin: 1350, daysOfWeek: [] });
+    expect(half).toMatchObject({ startMin: 1230, endMin: 1350 });
+    expect(readHourWindow(half)).toMatchObject({ openMin: 1230, closeMin: 1350 });
+    const def: CampaignDefinition = {
+      startNode: 't',
+      nodes: { t: { type: 'trigger', kind: 'manual', next: 'h' }, h: { ...half, next: 'x' }, x: { type: 'exit' } },
+    };
+    expect(() => validateCampaignDefinition(def)).not.toThrow();
+    // a LEGACY node (startHour/endHour only) reads back via the minute derivation.
+    expect(readHourWindow({ type: 'hour_of_day_window', startHour: 9, endHour: 16 } as never)).toMatchObject({ openMin: 540, closeMin: 1020 });
+  });
+
+  it('describeHourWindow: same-day, half-hour, "to midnight", overnight, and always-open', () => {
+    expect(describeHourWindow(1200, 1440)).toBe('Opens at 20:00, closes at midnight.'); // 8pm → midnight
+    expect(describeHourWindow(540, 1020)).toBe('Opens at 09:00, closes at 17:00.'); // 9 → 5
+    expect(describeHourWindow(1230, 1350)).toBe('Opens at 20:30, closes at 22:30.'); // half-hours
+    expect(describeHourWindow(1320, 390)).toBe('Opens at 22:00, closes at 06:30 the next day (overnight).');
+    expect(describeHourWindow(1200, 1200)).toMatch(/Open 24 hours.*never blocks/); // open==close → 24h
+    expect(describeHourWindow(0, 1440)).toMatch(/Open 24 hours.*never blocks/); // full day
+    expect(describeHourWindow(1200, 1440, [1, 3, 5])).toBe('Opens at 20:00, closes at midnight on Mon, Wed, Fri.');
   });
 });
 

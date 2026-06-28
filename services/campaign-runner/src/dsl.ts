@@ -220,10 +220,14 @@ export interface ActionNode {
  */
 export interface HourOfDayWindowNode {
   readonly type: 'hour_of_day_window';
-  /** Window start hour, integer 0–23 (inclusive). */
+  /** Window start hour, integer 0–23 (inclusive). LEGACY — used when `startMin` absent. */
   readonly startHour: number;
-  /** Window end hour, integer 0–23 (inclusive). May be < startHour (overnight). */
+  /** Window end hour, integer 0–23 (legacy inclusive-through-:59). Used when `endMin` absent. */
   readonly endHour: number;
+  /** CANONICAL open minute-of-day (0–1439, INCLUSIVE) — supports half-hours (20:30 = 1230). */
+  readonly startMin?: number;
+  /** CANONICAL close minute-of-day (1–1440, EXCLUSIVE; 1440 = midnight). open>=close = overnight. */
+  readonly endMin?: number;
   /** Optional allowed weekdays (0=Sun … 6=Sat); unique, non-empty when present. */
   readonly daysOfWeek?: readonly number[];
   /** The node id to advance to once inside (or after parking until) the window. */
@@ -621,6 +625,19 @@ function validateHourWindowFields(id: string, node: HourOfDayWindowNode): void {
     throw new Error(`validateCampaignDefinition: hour window "${id}" hours must be integers 0–23`);
   }
   // startHour > endHour is a VALID overnight wrap-around (semantics resolved in the runner).
+  // CANONICAL minute-of-day fields (optional, support half-hours): open 0–1439 inclusive,
+  // close 1–1440 exclusive (1440 = midnight). open>=close is a valid overnight/24h window.
+  const n = node as { startMin?: unknown; endMin?: unknown };
+  if (n.startMin !== undefined) {
+    if (typeof n.startMin !== 'number' || !Number.isInteger(n.startMin) || n.startMin < 0 || n.startMin > 1439) {
+      throw new Error(`validateCampaignDefinition: hour window "${id}" startMin must be an integer 0–1439`);
+    }
+  }
+  if (n.endMin !== undefined) {
+    if (typeof n.endMin !== 'number' || !Number.isInteger(n.endMin) || n.endMin < 1 || n.endMin > 1440) {
+      throw new Error(`validateCampaignDefinition: hour window "${id}" endMin must be an integer 1–1440`);
+    }
+  }
   if (node.daysOfWeek !== undefined) {
     const d = node.daysOfWeek;
     if (!Array.isArray(d) || d.length === 0) {

@@ -13,6 +13,7 @@ import {
   isJsSpec,
   zonedInputToUtcIso,
   utcIsoToZonedInput,
+  windowMinutes,
   type ValueSpec,
 } from '@cdp/shared';
 import {
@@ -282,43 +283,82 @@ export function writeWaitUntilForm(form: WaitUntilForm, timeZone: string): DslNo
 
 // ── HOUR-OF-DAY WINDOW ──────────────────────────────────────────────────────────
 
+/**
+ * The editable hour-window form: minute-of-day precision (supports half-hours).
+ * `openMin` 0–1439 (INCLUSIVE), `closeMin` 30–1440 (EXCLUSIVE; 1440 = midnight).
+ * `openMin >= closeMin` is a valid OVERNIGHT window; `openMin === closeMin` = 24h.
+ */
 export interface HourWindowForm {
-  readonly startHour: number;
-  readonly endHour: number;
+  readonly openMin: number;
+  readonly closeMin: number;
   /** Allowed weekdays (0=Sun … 6=Sat); empty = all days. */
   readonly daysOfWeek: readonly number[];
 }
 
-/** Read an hour-window node into its editable form (no days → empty = all). */
+const clampOpen = (m: number): number => Math.min(1439, Math.max(0, Math.floor(Number(m)) || 0));
+const clampClose = (m: number): number => Math.min(1440, Math.max(1, Math.floor(Number(m)) || 1));
+
+/** Read an hour-window node into its editable form (minute-of-day; derives open/close
+ *  from the canonical startMin/endMin, falling back to the legacy whole-hour fields). */
 export function readHourWindow(node: DslNode): HourWindowForm {
-  const n = node as { startHour?: number; endHour?: number; daysOfWeek?: number[] };
+  const m = windowMinutes(node as never); // {open, close} — prefers startMin/endMin, else startHour/endHour
   return {
-    startHour: clampHour(n.startHour ?? 9),
-    endHour: clampHour(n.endHour ?? 17),
-    daysOfWeek: Array.isArray(n.daysOfWeek) ? [...n.daysOfWeek] : [],
+    openMin: clampOpen(m.open),
+    closeMin: clampClose(m.close),
+    daysOfWeek: Array.isArray((node as { daysOfWeek?: number[] }).daysOfWeek) ? [...(node as { daysOfWeek?: number[] }).daysOfWeek!] : [],
   };
 }
 
 /**
- * Serialize an hour-window: integer startHour/endHour 0–23 (startHour>endHour is a
- * valid overnight window — preserved verbatim). daysOfWeek is written ONLY when a
- * non-empty UNIQUE subset is chosen (omitted = all days, per the DSL).
+ * Serialize an hour-window: the CANONICAL `startMin`/`endMin` (minute-of-day) plus the
+ * legacy whole-hour `startHour`/`endHour` (derived, so any consumer reading hours still
+ * works and the runner's validator passes). daysOfWeek written only when a non-empty
+ * unique subset is chosen (omitted = all days, per the DSL).
  */
 export function writeHourWindowConfig(form: HourWindowForm): DslNode {
+  const openMin = clampOpen(form.openMin);
+  const closeMin = clampClose(form.closeMin);
   const node: DslNode = {
     type: 'hour_of_day_window',
-    startHour: clampHour(form.startHour),
-    endHour: clampHour(form.endHour),
-  };
+    startMin: openMin,
+    endMin: closeMin,
+    startHour: Math.floor(openMin / 60),
+    endHour: Math.min(23, Math.max(0, Math.floor((closeMin - 1) / 60))),
+  } as unknown as DslNode;
   const days = [...new Set(form.daysOfWeek)].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort((a, b) => a - b);
   if (days.length > 0) (node as { daysOfWeek?: number[] }).daysOfWeek = days;
   return node;
 }
 
-function clampHour(h: number): number {
-  const n = Math.floor(Number(h));
-  if (!Number.isFinite(n)) return 0;
-  return Math.min(23, Math.max(0, n));
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+/** Format a minute-of-day (0–1440) as "HH:MM", with 1440 shown as "midnight". */
+export function fmtMinuteOfDay(m: number): string {
+  if (m >= 1440) return 'midnight';
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/**
+ * A plain-English description of an hour-window so the open/close + overnight semantics
+ * are never ambiguous. Covers a 24-hour always-open window (a no-op gate), an OVERNIGHT
+ * window (closes the next day), and a same-day window. Minute-precise (half-hours).
+ */
+export function describeHourWindow(openMin: number, closeMin: number, daysOfWeek: readonly number[] = []): string {
+  const open = clampOpen(openMin);
+  const close = clampClose(closeMin);
+  const days = [...new Set(daysOfWeek)].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort((a, b) => a - b);
+  const daySuffix = days.length > 0 && days.length < 7 ? ` on ${days.map((d) => DAY_NAMES[d]).join(', ')}` : '';
+
+  const covered = open < close ? close - open : 1440 - open + close;
+  if (covered >= 1440) {
+    return `Open 24 hours${daySuffix ? ` (${daySuffix.trim()})` : ''} — this never blocks the journey.`;
+  }
+  if (open >= close) {
+    return `Opens at ${fmtMinuteOfDay(open)}, closes at ${fmtMinuteOfDay(close)} the next day (overnight)${daySuffix}.`;
+  }
+  return `Opens at ${fmtMinuteOfDay(open)}, closes at ${fmtMinuteOfDay(close)}${daySuffix}.`;
 }
 
 // ── IF / condition ───────────────────────────────────────────────────────────

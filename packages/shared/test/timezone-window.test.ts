@@ -56,6 +56,31 @@ describe('nextWindowOpening — same-day window (9..17)', () => {
   });
 });
 
+describe('minute-of-day window (half-hours + EXCLUSIVE close; startMin/endMin canonical)', () => {
+  it('"8pm to midnight" (endMin 1440 = exclusive midnight): 23:30 inside, 00:00 next day OUTSIDE', () => {
+    // startMin/endMin take precedence over the (deliberately wrong) legacy hour fields.
+    const win = { startHour: 0, endHour: 0, startMin: 1200, endMin: 1440 };
+    expect(isWindowOpen(new Date('2026-06-19T20:00:00.000Z'), win, 'UTC')).toBe(true);
+    expect(isWindowOpen(new Date('2026-06-19T23:30:00.000Z'), win, 'UTC')).toBe(true);
+    expect(isWindowOpen(new Date('2026-06-20T00:00:00.000Z'), win, 'UTC')).toBe(false); // closed AT midnight
+    expect(nextWindowOpening(new Date('2026-06-19T19:00:00.000Z'), win, 'UTC')?.toISOString()).toBe(zonedInputToUtcIso('2026-06-19T20:00', 'UTC'));
+  });
+  it('half-hour window 20:30–22:30 (exclusive): 20:00 out, 20:30 in, 22:00 in, 22:30 out; opens 20:30', () => {
+    const win = { startHour: 0, endHour: 0, startMin: 1230, endMin: 1350 };
+    expect(isWindowOpen(new Date('2026-06-19T20:00:00.000Z'), win, 'UTC')).toBe(false);
+    expect(isWindowOpen(new Date('2026-06-19T20:30:00.000Z'), win, 'UTC')).toBe(true);
+    expect(isWindowOpen(new Date('2026-06-19T22:00:00.000Z'), win, 'UTC')).toBe(true);
+    expect(isWindowOpen(new Date('2026-06-19T22:30:00.000Z'), win, 'UTC')).toBe(false);
+    expect(nextWindowOpening(new Date('2026-06-19T19:00:00.000Z'), win, 'UTC')?.toISOString()).toBe(zonedInputToUtcIso('2026-06-19T20:30', 'UTC'));
+  });
+  it('open === close ⇒ always open (24h); nextWindowOpening is null', () => {
+    const win = { startHour: 0, endHour: 0, startMin: 720, endMin: 720 };
+    expect(isWindowOpen(new Date('2026-06-19T03:00:00.000Z'), win, 'UTC')).toBe(true);
+    expect(isWindowOpen(new Date('2026-06-19T15:00:00.000Z'), win, 'UTC')).toBe(true);
+    expect(nextWindowOpening(new Date('2026-06-19T03:00:00.000Z'), win, 'UTC')).toBeNull();
+  });
+});
+
 describe('nextWindowOpening — overnight window (22..6)', () => {
   const win = { startHour: 22, endHour: 6 };
   it('23:30 ws-local is inside → null', () => {

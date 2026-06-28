@@ -33,6 +33,8 @@ import {
   type WaitDurationUnit,
   readHourWindow,
   writeHourWindowConfig,
+  describeHourWindow,
+  fmtMinuteOfDay,
   writeConditionConfig,
   conditionGroupIsEmpty,
   readEventPayloadFilter,
@@ -594,42 +596,48 @@ function WaitUntilEditor(props: NodeEditorProps) {
 
 function HourWindowEditor(props: NodeEditorProps) {
   const init = readHourWindow(props.node.node);
-  const [startHour, setStartHour] = useState(init.startHour);
-  const [endHour, setEndHour] = useState(init.endHour);
+  const [openMin, setOpenMin] = useState(init.openMin);
+  const [closeMin, setCloseMin] = useState(init.closeMin);
   const [days, setDays] = useState<number[]>([...init.daysOfWeek]);
 
   const toggleDay = (d: number) => setDays((ds) => (ds.includes(d) ? ds.filter((x) => x !== d) : [...ds, d]));
 
   const save = async (): Promise<void> => {
-    const form: HourWindowForm = { startHour, endHour, daysOfWeek: days };
+    const form: HourWindowForm = { openMin, closeMin, daysOfWeek: days };
     await props.onSaveNode(writeHourWindowConfig(form));
     props.onDone();
   };
 
-  const hours = Array.from({ length: 24 }, (_, h) => h);
+  // Half-hour steps. OPENS = inclusive minute-of-day 00:00…23:30. CLOSES = EXCLUSIVE
+  // minute-of-day 00:30…24:00 where 24:00 = midnight (end of day).
+  const openOptions = Array.from({ length: 48 }, (_, i) => i * 30); // 0,30,…,1410
+  const closeOptions = Array.from({ length: 48 }, (_, i) => (i + 1) * 30); // 30,60,…,1440
   return (
     <div class="space-y-4">
       <p class="text-sm text-stone-500">Only let the journey proceed within these hours (and, optionally, days). Steps that arrive outside the window wait until it opens.</p>
       <div class="flex items-center gap-3">
-        <Field label="From hour">
-          <Select data-testid="hour-start" value={String(startHour)} onChange={(e: Event) => setStartHour(Number((e.target as HTMLSelectElement).value))}>
-            {hours.map((h) => (
-              <option key={h} value={String(h)}>
-                {String(h).padStart(2, '0')}:00
+        <Field label="Opens at">
+          <Select data-testid="hour-start" value={String(openMin)} onChange={(e: Event) => setOpenMin(Number((e.target as HTMLSelectElement).value))}>
+            {openOptions.map((m) => (
+              <option key={m} value={String(m)}>
+                {fmtMinuteOfDay(m)}
               </option>
             ))}
           </Select>
         </Field>
-        <Field label="To hour">
-          <Select data-testid="hour-end" value={String(endHour)} onChange={(e: Event) => setEndHour(Number((e.target as HTMLSelectElement).value))}>
-            {hours.map((h) => (
-              <option key={h} value={String(h)}>
-                {String(h).padStart(2, '0')}:00
+        <Field label="Closes at">
+          <Select data-testid="hour-end" value={String(closeMin)} onChange={(e: Event) => setCloseMin(Number((e.target as HTMLSelectElement).value))}>
+            {closeOptions.map((m) => (
+              <option key={m} value={String(m)}>
+                {m === 1440 ? 'midnight (24:00)' : fmtMinuteOfDay(m)}
               </option>
             ))}
           </Select>
         </Field>
       </div>
+      <p data-testid="hour-window-summary" class="rounded-lg bg-stone-50 px-3 py-2 text-sm text-stone-600 ring-1 ring-inset ring-stone-200">
+        {describeHourWindow(openMin, closeMin, days)}
+      </p>
       <Field label="Days (optional — none = every day)">
         <div data-testid="hour-days" class="flex flex-wrap gap-1.5">
           {DAY_LABELS.map((label, d) => (

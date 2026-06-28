@@ -55,7 +55,7 @@ describe('per-node serialize → parse round-trip', () => {
     const samples: Record<string, ReturnType<typeof writeWaitConfig>> = {
       wait: writeWaitConfig(3600),
       waitUntil: writeWaitUntilConfig('2030-01-01T08:00', TZ),
-      hour: writeHourWindowConfig({ startHour: 8, endHour: 20, daysOfWeek: [1, 2, 3, 4, 5] }),
+      hour: writeHourWindowConfig({ openMin: 8 * 60, closeMin: 20 * 60, daysOfWeek: [1, 2, 3, 4, 5] }),
       setAttr: writeSetAttributeConfig({ rows: [{ key: 'k', mode: 'expression', literal: '', expression: '{{customer.tier}}', js: '' }] }),
       webhook: writeWebhookConfig({ url: 'https://h.example.com', method: 'PUT', headers: [{ name: 'X-A', value: '1' }], bodyTemplate: '{}', timeoutMs: '3000', maxRetries: '1', secret: '', secretHeader: '', hasSecret: false }).node!,
     };

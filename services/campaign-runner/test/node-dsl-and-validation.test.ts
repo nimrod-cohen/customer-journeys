@@ -241,6 +241,14 @@ describe('validateCampaignDefinition: hour_of_day_window node', () => {
     expect(() => validateCampaignDefinition(withWindow({ startHour: 9.5, endHour: 17 }))).toThrow(/hour/);
   });
 
+  it('accepts canonical minute-of-day fields (half-hours); rejects out-of-range startMin/endMin', () => {
+    // 20:30 → midnight (exclusive): startMin 1230, endMin 1440.
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 20, endHour: 23, startMin: 1230, endMin: 1440 }))).not.toThrow();
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 0, endHour: 0, startMin: 1440, endMin: 60 }))).toThrow(/startMin/); // 1440 out of 0–1439
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 0, endHour: 0, startMin: 0, endMin: 0 }))).toThrow(/endMin/); // 0 out of 1–1440
+    expect(() => validateCampaignDefinition(withWindow({ startHour: 0, endHour: 0, startMin: 30.5, endMin: 60 }))).toThrow(/startMin/);
+  });
+
   it('rejects an invalid daysOfWeek (out-of-range, duplicate, non-array, empty)', () => {
     expect(() => validateCampaignDefinition(withWindow({ startHour: 9, endHour: 17, daysOfWeek: [7] }))).toThrow(/day/);
     expect(() =>

@@ -8,6 +8,7 @@
 //     the trigger or to remove the last reachable exit.
 // Every result is re-checked by the server's validateCampaignDefinition before
 // save (the structural gate). These functions are pure + unit-tested first.
+import { windowMinutes } from '@cdp/shared';
 import {
   buildDefinition,
   parseDefinition,
@@ -23,6 +24,7 @@ import {
   type DslNode,
   type PaletteType,
 } from './model.js';
+import { fmtMinuteOfDay } from './node-config.js';
 
 /** A thrown mutation error the builder surfaces as a toast (never a native dialog). */
 export class MutationError extends Error {}
@@ -892,9 +894,8 @@ export function nodeSummary(canvasNode: CanvasNode): string {
       return `Wait ${formatDuration(secs)}`;
     }
     case 'hour_of_day_window': {
-      const s = (node as { startHour?: number }).startHour ?? 0;
-      const e = (node as { endHour?: number }).endHour ?? 0;
-      return `Only ${pad(s)}:00–${pad(e)}:00`;
+      const m = windowMinutes(node as never); // {open, close} — minute-precise (half-hours)
+      return `Only ${fmtMinuteOfDay(m.open)}–${fmtMinuteOfDay(m.close)}`;
     }
     case 'condition': {
       const label = String((node as { label?: unknown }).label ?? '').trim();
@@ -946,9 +947,6 @@ function plural(n: number, unit: string): string {
   return `${n} ${unit}${n === 1 ? '' : 's'}`;
 }
 
-function pad(n: number): string {
-  return String(n).padStart(2, '0');
-}
 
 /** The display type re-export (cards key their icon/colour off it). */
 export { displayType };

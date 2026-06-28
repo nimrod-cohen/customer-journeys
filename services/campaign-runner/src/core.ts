@@ -505,6 +505,8 @@ export function processNode(
       const win = {
         startHour: node.startHour,
         endHour: node.endHour,
+        ...(node.startMin !== undefined ? { startMin: node.startMin } : {}),
+        ...(node.endMin !== undefined ? { endMin: node.endMin } : {}),
         ...(node.daysOfWeek !== undefined ? { daysOfWeek: node.daysOfWeek } : {}),
       };
       if (isWindowOpen(now, win, tz)) {
