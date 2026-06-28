@@ -61,11 +61,15 @@ test('build the full-node journey in the browser and publish it to active', asyn
   await drawer.getByTestId('node-save').click();
   await expect(drawer).toBeHidden();
 
-  // Attach the sendable seeded "Welcome" template to the send node.
+  // Attach the sendable seeded "Welcome" template to the send node. After attaching,
+  // the editor STAYS OPEN and shows the email instance (envelope + Design email); close
+  // it via the drawer's ✕.
   await page.getByTestId('node-send').getByTestId(/node-open-/).first().click();
   drawer = page.getByTestId('node-editor-send');
   await drawer.getByTestId('send-template-pick').selectOption({ label: 'Welcome' });
   await drawer.getByTestId('send-attach-template').click();
+  await expect(drawer.getByTestId('send-email-instance')).toBeVisible();
+  await drawer.getByTestId('drawer-close').click();
   await expect(drawer).toBeHidden();
 
   // Configure the webhook node URL to the seeded-allowlisted host.
