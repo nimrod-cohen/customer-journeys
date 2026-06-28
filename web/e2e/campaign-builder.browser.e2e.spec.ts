@@ -280,6 +280,52 @@ test('assemble trigger→wait→send→exit via the (+) palette, then save', asy
   await expect(page.getByTestId('campaign-list')).toContainText('Assembled linear');
 });
 
+test('a NESTED If lets you add a node AFTER the inner closure (before the outer closure)', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-canvas').waitFor();
+
+  // Outer If, then an inner If on the outer's first (left) arm, then a node on each
+  // inner arm — the inner arms rejoin the SAME continuation the outer's other arm reaches.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toHaveCount(1);
+  let arms = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(arms[0]!).click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toHaveCount(2);
+  const condTops = await page.getByTestId('node-condition').evaluateAll((els) => els.map((e) => (e as HTMLElement).getBoundingClientRect().top));
+  const innerY = Math.max(...condTops); // the inner (deeper) condition sits lower
+  let iarms = await armInsertIndices(page, innerY);
+  await page.getByTestId('campaign-edge-insert').nth(iarms[0]!).click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toHaveCount(1);
+  iarms = await armInsertIndices(page, innerY);
+  await page.getByTestId('campaign-edge-insert').nth(iarms[iarms.length - 1]!).click();
+  await page.getByTestId('palette-send').click();
+  await expect(page.getByTestId('node-send')).toBeVisible();
+
+  // The two nested Ifs SHARE a continuation, so only ONE merge (+) renders (the inner's,
+  // deepest) — they no longer stack at the same point.
+  await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(1);
+
+  // Insert an hour-window AFTER the inner If's closure via that merge (+).
+  await page.getByTestId('campaign-merge-insert').first().click();
+  await page.getByTestId('palette-hour-window').click();
+  await expect(page.getByTestId('node-hour_of_day_window')).toHaveCount(1);
+
+  // The new node sits BELOW both inner-arm nodes (after the inner convergence)…
+  const armsBottom = Math.max(
+    (await page.getByTestId('node-wait').boundingBox())!.y + (await page.getByTestId('node-wait').boundingBox())!.height,
+    (await page.getByTestId('node-send').boundingBox())!.y + (await page.getByTestId('node-send').boundingBox())!.height,
+  );
+  const newTop = (await page.getByTestId('node-hour_of_day_window').boundingBox())!.y;
+  expect(newTop).toBeGreaterThan(armsBottom);
+  // …and now TWO merge (+)s exist (the inner's at the new node + the outer's) — the
+  // merges have SEPARATED, so you can add after the outer closure too.
+  await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(2);
+});
+
 test('BOTH arms of an If get a closing (+) below their last node, before the merge', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();

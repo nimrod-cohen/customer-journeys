@@ -98,6 +98,23 @@ export function CampaignCanvas({
 }): JSX.Element {
   const layout = layoutDefinition(buildDefinition(model));
 
+  // When NESTED Ifs share a single continuation C (an inner If's arms rejoin the same
+  // node an outer If's arm also reaches), each would render a merge (+) at the SAME
+  // spot — stacked, so you can't reach the inner one. Render the merge (+) only for the
+  // DEEPEST condition per continuation (the largest y = the innermost). Clicking it
+  // inserts a node BETWEEN the inner arms and C (insertAfterBranch), which SEPARATES the
+  // merges — then the outer If's continuation differs and ITS merge (+) appears.
+  const mergeOwnerByCont = new Map<string, string>();
+  for (const cn of model.nodes) {
+    if (cn.node.type !== 'condition') continue;
+    const c = branchContinuation(model, cn.id);
+    if (!c) continue;
+    const cury = layout.positions.get(cn.id)?.y ?? -Infinity;
+    const prev = mergeOwnerByCont.get(c);
+    const prevy = prev ? (layout.positions.get(prev)?.y ?? -Infinity) : -Infinity;
+    if (!prev || cury > prevy) mergeOwnerByCont.set(c, cn.id);
+  }
+
   // While placing (Move or Duplicate), a (+) is only a valid destination if
   // canDropOnEdge allows it. In SINGLE mode that's every edge except the moving
   // node's own out-edge (so a parent/arm edge pointing AT the node is offered — e.g.
@@ -448,6 +465,9 @@ export function CampaignCanvas({
               .map((cn) => {
                 const contId = branchContinuation(model, cn.id);
                 if (!contId) return null; // no single continuation → no merge (+)
+                // Only the DEEPEST condition sharing this continuation renders the merge
+                // (+) (else nested Ifs stack their (+)s at the same point — see above).
+                if (mergeOwnerByCont.get(contId) !== cn.id) return null;
                 const contPos = layout.positions.get(contId);
                 if (!contPos) return null;
                 // During a DUPLICATE placement the merge (+) becomes a drop target —
