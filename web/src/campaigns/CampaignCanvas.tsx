@@ -7,10 +7,10 @@
 import type { JSX } from 'preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { ActionMenu } from '../ui/kit.js';
-import { layoutDefinition, mergeAnchor, LAYOUT, type LayoutEdge } from './layout.js';
+import { layoutDefinition, conditionMergeAnchors, LAYOUT, type LayoutEdge } from './layout.js';
 import { orthogonalPath, verticalAnchor } from './orthogonal-path.js';
 import { buildDefinition, displayType, type CanvasModel, type CanvasEdge, type CanvasNode } from './model.js';
-import { nodeSummary, canDropOnEdge, branchContinuation, canPlaceAfterBranch } from './mutate.js';
+import { nodeSummary, canDropOnEdge, canPlaceAfterBranch } from './mutate.js';
 
 /** An in-progress placement (Move / Duplicate): pick a destination + to splice at. */
 export interface Placement {
@@ -98,22 +98,12 @@ export function CampaignCanvas({
 }): JSX.Element {
   const layout = layoutDefinition(buildDefinition(model));
 
-  // When NESTED Ifs share a single continuation C (an inner If's arms rejoin the same
-  // node an outer If's arm also reaches), each would render a merge (+) at the SAME
-  // spot — stacked, so you can't reach the inner one. Render the merge (+) only for the
-  // DEEPEST condition per continuation (the largest y = the innermost). Clicking it
-  // inserts a node BETWEEN the inner arms and C (insertAfterBranch), which SEPARATES the
-  // merges — then the outer If's continuation differs and ITS merge (+) appears.
-  const mergeOwnerByCont = new Map<string, string>();
-  for (const cn of model.nodes) {
-    if (cn.node.type !== 'condition') continue;
-    const c = branchContinuation(model, cn.id);
-    if (!c) continue;
-    const cury = layout.positions.get(cn.id)?.y ?? -Infinity;
-    const prev = mergeOwnerByCont.get(c);
-    const prevy = prev ? (layout.positions.get(prev)?.y ?? -Infinity) : -Infinity;
-    if (!prev || cury > prevy) mergeOwnerByCont.set(c, cn.id);
-  }
+  // The merge (+) anchor for EVERY condition whose arms rejoin a single continuation —
+  // ONE per owning If, each on its OWN staggered sub-run. When NESTED Ifs share a
+  // continuation the inner If's (+) sits HIGHER (between its closure and the outer
+  // join) and the outer If's (+) sits LOWER (between the outer join and the exit), so
+  // BOTH are reachable instead of stacked at one point.
+  const mergeAnchors = conditionMergeAnchors(buildDefinition(model), layout.positions, layout.edges);
 
   // While placing (Move or Duplicate), a (+) is only a valid destination if
   // canDropOnEdge allows it. In SINGLE mode that's every edge except the moving
@@ -456,20 +446,16 @@ export function CampaignCanvas({
           );
         })}
 
-        {/* Merge (+) controls — one per condition that has a single rejoin (C).
-            Anchored on the MERGED VERTICAL TRUNK just above the continuation card,
-            it inserts a step AFTER the branch (both arms flow through it before C).
-            Hidden during placement (a different interaction). */}
+        {/* Merge (+) controls — ONE per condition that has a single rejoin (C), anchored
+            on ITS OWN sub-run of the merged trunk. For NESTED Ifs sharing a continuation
+            the inner If's (+) sits higher and the outer's lower (distinct points, not
+            stacked). Clicking inserts a step AFTER that branch (both arms flow through it
+            before C). A placement (Move/Duplicate) turns it into a drop target. */}
         {model.nodes
               .filter((cn) => cn.node.type === 'condition')
               .map((cn) => {
-                const contId = branchContinuation(model, cn.id);
-                if (!contId) return null; // no single continuation → no merge (+)
-                // Only the DEEPEST condition sharing this continuation renders the merge
-                // (+) (else nested Ifs stack their (+)s at the same point — see above).
-                if (mergeOwnerByCont.get(contId) !== cn.id) return null;
-                const contPos = layout.positions.get(contId);
-                if (!contPos) return null;
+                const anchor = mergeAnchors.get(cn.id);
+                if (!anchor) return null; // no single continuation → no merge (+)
                 // During a MOVE or DUPLICATE placement the merge (+) becomes a drop
                 // target — "place the branch/copy AFTER this branch's convergence". Gated
                 // by the op-aware canPlaceAfterBranch (move = relocate a single step after
@@ -478,12 +464,6 @@ export function CampaignCanvas({
                 const asPlacement =
                   placing && placement != null && canPlaceAfterBranch(model, placement.rootId, cn.id, placement.op);
                 if (placing && !asPlacement) return null;
-                // The arms CLOSE into the continuation high (top-knee), leaving a tall
-                // central vertical run; anchor the merge (+) in its MIDDLE so a visible
-                // line sits ABOVE it (closure corner → +) and BELOW it (+ → card).
-                const anchor = mergeAnchor(layout.edges, layout.positions, contId);
-                const x = anchor.x;
-                const y = anchor.y;
                 return (
                   <button
                     key={`merge-${cn.id}`}
@@ -496,7 +476,7 @@ export function CampaignCanvas({
                         ? 'animate-pulse border-brand-500 bg-brand-500 text-white ring-2 ring-brand-200 hover:bg-brand-600'
                         : 'border-violet-300 bg-white text-violet-500 hover:border-violet-500 hover:text-violet-700'
                     }`}
-                    style={{ left: `${x}px`, top: `${y}px` }}
+                    style={{ left: `${anchor.x}px`, top: `${anchor.y}px` }}
                   >
                     +
                   </button>

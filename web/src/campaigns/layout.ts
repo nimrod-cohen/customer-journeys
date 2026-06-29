@@ -862,63 +862,81 @@ export function mergeAnchor(
   edges: readonly LayoutEdge[],
   positions: ReadonlyMap<string, NodePosition>,
   joinId: string,
+  ownerCrossY?: number,
 ): { x: number; y: number; closureCornerY: number } {
   const join = positions.get(joinId);
-  // The closing edges that land ON the join via a close-knee jog on the join's own
-  // column. With UNEQUAL arms each arm's closing edge has a DIFFERENT drop (a short arm
-  // spans the empty tail down to the merge depth), so their lower runs start at
-  // different y. We pick the SHALLOWEST closure corner (the highest run top) so the
-  // central convergence run is the TALLEST — and anchor the merge (+) LOW on it, a
-  // fixed gap above the join card, so it sits on the post-convergence run (v0.41.8)
-  // and stays clearly BELOW every arm's append-(+) (which now sit high, right under
-  // their own last node — v0.41.9), never adjacent to them.
+  // ALL the edges that CLOSE into the join on its own column — a populated arm's
+  // close-knee jog AND an empty arm's side-lane (both carry a crossY). With UNEQUAL arms
+  // a short arm's closing edge has a different drop, so their lower runs start at slightly
+  // different y; with NESTED Ifs each owner If closes at a DISTINCT crossY LEVEL. We group
+  // by level so each owner's merge (+) can anchor on ITS OWN sub-run.
   const closings = edges.filter(
     (e) =>
       e.to === joinId &&
-      e.closeKnee === true &&
+      e.crossY !== undefined &&
+      (e.closeKnee === true || e.emptyArm === true) &&
       join !== undefined &&
       Math.abs(e.toPoint.x - join.x) < 1e-6,
   );
   if (closings.length > 0 && join) {
-    const runTops = closings.map((c) => closeKneeLowerRun(c.fromPoint, c.toPoint, c.crossY).y0);
-    // With RULE 2 a SINGLE-If's arms share one crossY, so the runs coincide; the top is the
-    // shared closure corner. (Math.min is robust if a run differs, e.g. a clamp.)
-    const top = Math.min(...runTops);
     const cardTop = join.y;
-    // Bottom of the rendered (DEEPEST) owner's sub-run: for a join shared by NESTED Ifs the
-    // shallower owner's arm closes LOWER (a strictly larger run top), so anchor the merge
-    // (+) BETWEEN this owner's closure and that next-lower join — never down at the card
-    // (which would put it below where the outer arm joins). Single-If → no lower run →
-    // bottom = the join card (IDENTICAL to the prior behavior).
-    const below = runTops.filter((y0) => y0 > top + 1e-6).sort((a, b) => a - b);
-    const bottom = below[0] ?? cardTop;
+    // The lower-run TOP for a closing edge — closeKnee jog vs empty-arm side lane use
+    // different run geometry, but both descend to the join's column.
+    const runTop = (e: LayoutEdge): number =>
+      (e.emptyArm
+        ? emptyLaneMergeRun(e.fromPoint, e.toPoint, e.laneX, e.crossY!)
+        : closeKneeLowerRun(e.fromPoint, e.toPoint, e.crossY)
+      ).y0;
+    // Distinct close LEVELS (crossY), shallow→deep order on screen = high→low y = small→large
+    // crossY. `ownerCrossY` selects which owner If's run to anchor on; absent ⇒ the deepest
+    // (smallest crossY, highest on screen) — the single-(+) default for one-owner joins.
+    const levels = [...new Set(closings.map((c) => c.crossY as number))].sort((a, b) => a - b);
+    const level = ownerCrossY ?? levels[0]!;
+    const runTopAt = (cy: number): number => Math.min(...closings.filter((c) => c.crossY === cy).map(runTop));
+    // Top = this owner's closure corner. Bottom = the NEXT-lower owner's corner (a strictly
+    // larger crossY) so each owner's (+) sits BETWEEN its convergence and the one below it
+    // — or the join card when none (the shallowest owner / a single-If: IDENTICAL to before).
+    const top = runTopAt(level);
+    const nextLevel = levels.find((l) => l > level + 1e-6);
+    const bottom = nextLevel !== undefined ? runTopAt(nextLevel) : cardTop;
     // Center the merge (+) on that run so it has ≥ PLUS_PAD line ABOVE and BELOW (RULE 1).
     const y = (top + bottom) / 2;
-    return { x: join.x, y, closureCornerY: top };
-  }
-  // EMPTY DIAMOND (both arms empty → straight to the directly-below join, v0.42.3): the
-  // arms route down side lanes and CLOSE back to the center at the shared crossY, leaving
-  // a tall CENTRAL run at the join column. Anchor the merge (+) CENTERED on it (≥ PLUS_PAD
-  // above + below, RULE 1) — the SAME padded central run as the populated case, NOT the
-  // old no-pad just-above-the-join fallback.
-  const emptyArms = edges.filter(
-    (e) =>
-      e.to === joinId &&
-      e.emptyArm === true &&
-      e.crossY !== undefined &&
-      join !== undefined &&
-      Math.abs(e.toPoint.x - join.x) < 1e-6,
-  );
-  if (emptyArms.length > 0 && join) {
-    const runs = emptyArms.map((c) => emptyLaneMergeRun(c.fromPoint, c.toPoint, c.laneX, c.crossY!));
-    const top = Math.min(...runs.map((r) => r.y0));
-    const cardTop = join.y;
-    const y = (top + cardTop) / 2;
     return { x: join.x, y, closureCornerY: top };
   }
   // Fallback (no central run at all): just above the join card.
   const y = (join?.y ?? 0) - 14;
   return { x: join?.x ?? 0, y, closureCornerY: y };
+}
+
+/**
+ * conditionMergeAnchors(def, positions, edges) — the merge (+) anchor for EVERY condition
+ * whose two arms rejoin a single continuation, keyed by the CONDITION id. A single-If gets
+ * one entry; a join shared by NESTED Ifs gets one entry PER owning If, each anchored on its
+ * OWN staggered sub-run (the deeper If's (+) sits higher, between its closure and the next
+ * owner's join) — so nested merges no longer stack at a single point. The canvas renders one
+ * `campaign-merge-insert` per entry. Conditions whose arms don't share a rejoin (terminal
+ * branches) get NO entry (no merge +), matching branchContinuation === undefined.
+ */
+export function conditionMergeAnchors(
+  def: CampaignDefinition,
+  positions: ReadonlyMap<string, NodePosition>,
+  edges: readonly LayoutEdge[],
+): Map<string, { x: number; y: number; closureCornerY: number }> {
+  const depthFromPos = new Map<string, number>();
+  for (const [pid, p] of positions) depthFromPos.set(pid, p.depth);
+  const ownerLevels = joinOwnerLevels(def, depthFromPos);
+  const out = new Map<string, { x: number; y: number; closureCornerY: number }>();
+  for (const [joinId, owners] of ownerLevels) {
+    const join = positions.get(joinId);
+    if (!join) continue;
+    // owners are SHALLOW→DEEP; owner i closes at crossY = join.y − MERGE_LOWER_RUN − i·DROP
+    // (the SAME formula computeEdges staggers each closing edge by). Anchor each on its run.
+    owners.forEach((condId, i) => {
+      const ownerCrossY = join.y - MERGE_LOWER_RUN - i * NESTED_LEVEL_DROP;
+      out.set(condId, mergeAnchor(edges, positions, joinId, ownerCrossY));
+    });
+  }
+  return out;
 }
 
 /**

@@ -305,12 +305,18 @@ test('a NESTED If lets you add a node AFTER the inner closure (before the outer 
   await page.getByTestId('palette-send').click();
   await expect(page.getByTestId('node-send')).toBeVisible();
 
-  // The two nested Ifs SHARE a continuation, so only ONE merge (+) renders (the inner's,
-  // deepest) — they no longer stack at the same point.
-  await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(1);
+  // The two nested Ifs share a continuation but each gets its OWN merge (+) on its own
+  // staggered sub-run (the inner's HIGHER, the outer's LOWER) — TWO distinct (+)s, no
+  // longer stacked at one point.
+  await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(2);
+  // The INNER merge (+) is the topmost (smallest y); pick it to add after the inner closure.
+  const mergeYs = await page.getByTestId('campaign-merge-insert').evaluateAll((els) =>
+    els.map((e) => (e as HTMLElement).getBoundingClientRect().top),
+  );
+  const innerIdx = mergeYs.indexOf(Math.min(...mergeYs));
 
   // Insert an hour-window AFTER the inner If's closure via that merge (+).
-  await page.getByTestId('campaign-merge-insert').first().click();
+  await page.getByTestId('campaign-merge-insert').nth(innerIdx).click();
   await page.getByTestId('palette-hour-window').click();
   await expect(page.getByTestId('node-hour_of_day_window')).toHaveCount(1);
 
@@ -321,8 +327,7 @@ test('a NESTED If lets you add a node AFTER the inner closure (before the outer 
   );
   const newTop = (await page.getByTestId('node-hour_of_day_window').boundingBox())!.y;
   expect(newTop).toBeGreaterThan(armsBottom);
-  // …and now TWO merge (+)s exist (the inner's at the new node + the outer's) — the
-  // merges have SEPARATED, so you can add after the outer closure too.
+  // …and TWO merge (+)s still exist (the inner's now at the new node + the outer's).
   await expect(page.getByTestId('campaign-merge-insert')).toHaveCount(2);
 });
 

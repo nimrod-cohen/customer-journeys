@@ -3,7 +3,7 @@
 // outer If's closure (the user's spec). Guarded to multi-owner joins; single-If geometry
 // is covered by layout.test.ts / branch-invariants.test.ts (unchanged).
 import { describe, it, expect } from 'vitest';
-import { layoutDefinition, mergeAnchor, NESTED_LEVEL_DROP, type CampaignDefinition } from './layout.js';
+import { layoutDefinition, mergeAnchor, conditionMergeAnchors, NESTED_LEVEL_DROP, type CampaignDefinition } from './layout.js';
 import { MIN_SEGMENT } from './orthogonal-path.js';
 import { parseDefinition, buildDefinition } from './model.js';
 import { branchContinuation, insertAfterBranch, moveAfterBranch, canPlaceAfterBranch } from './mutate.js';
@@ -46,6 +46,24 @@ describe('nested-If shared join staggers the close levels', () => {
     expect(anchor.y).toBeLessThan(outer.crossY!);
     // RULE 1: room for a line above AND below the + (≥ ~MIN_SEGMENT of run around it).
     expect(outer.crossY! - anchor.closureCornerY).toBeGreaterThanOrEqual(MIN_SEGMENT);
+  });
+
+  it('renders a merge (+) for BOTH the inner AND the outer If, at DISTINCT positions', () => {
+    const layout = layoutDefinition(NESTED);
+    const anchors = conditionMergeAnchors(buildDefinition(parseDefinition(NESTED)), layout.positions, layout.edges);
+    // Both nested owners get their own merge (+) — the outer one is no longer dropped.
+    expect(anchors.has('saturday')).toBe(true);
+    expect(anchors.has('earlier')).toBe(true);
+    const inner = anchors.get('saturday')!;
+    const outer = anchors.get('earlier')!;
+    // Distinct points (not stacked): the inner (+) sits clearly ABOVE the outer (+)
+    // (each centered on its own sub-run, so the gap ≈ NESTED_LEVEL_DROP minus run slack).
+    expect(outer.y - inner.y).toBeGreaterThan(MIN_SEGMENT);
+    // The outer (+) sits below the outer arm's join (where wait1 closes) and above exit.
+    const wait1 = layout.edges.find((e) => e.from === 'wait1' && e.to === 'exit')!;
+    const exitY = layout.positions.get('exit')!.y;
+    expect(outer.y).toBeGreaterThan(wait1.crossY!);
+    expect(outer.y).toBeLessThan(exitY);
   });
 
   it('clicking the inner merge (+) adds a step AFTER the inner closure, leaving the outer arm direct', () => {
