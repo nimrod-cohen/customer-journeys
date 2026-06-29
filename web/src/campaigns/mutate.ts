@@ -421,8 +421,17 @@ export function canDropOnEdge(
   const plan = movePlan(model, rootId);
   if (plan.mode === 'single') {
     // A single node's OWN out-edge is degenerate for both ops (duplicateSubtree/
-    // moveSubtree reject it); every other edge — incl. a parent edge — is valid.
-    return destEdge.from !== rootId;
+    // moveSubtree reject it).
+    if (destEdge.from === rootId) return false;
+    // MOVE: the node's SOLE incoming edge (immediately BEFORE it) is also a no-op —
+    // dropping the node right where it already sits changes nothing — so hide that (+)
+    // too. With 2+ parents (an empty-If shared continuation) dropping on ONE arm DOES
+    // relocate the node, so those arm edges stay valid. (Duplicate keeps the in-edge:
+    // a copy placed just before the original is a meaningful A→copy→node.)
+    if (op === 'move' && destEdge.to === rootId && countIncoming(buildDefinition(model), rootId) === 1) {
+      return false;
+    }
+    return true;
   }
   // DUPLICATE: the copy has FRESH ids, so it can never cycle with the originals —
   // dropping it on ANY edge (incl. one inside the branch's own arms) is structurally

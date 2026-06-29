@@ -672,6 +672,26 @@ describe('movePlan + canDropOnEdge (single-out non-condition node moves JUST its
     const ownEdge = m.edges.find((e) => e.from === updateId)!;
     expect(() => moveSubtree(m, updateId, ownEdge)).toThrow(MutationError);
   });
+
+  it("MOVE hides the SOLE-parent node's edges immediately BEFORE and AFTER it (both no-ops)", () => {
+    // trigger → wait → send → exit_1. The SEND has ONE parent (wait) and one child (exit).
+    let m = starterModel();
+    m = insertOnEdge(m, m.edges.find((e) => e.from === 'trigger')!, 'wait', NOW);
+    const waitId = m.nodes.find((n) => n.node.type === 'wait')!.id;
+    m = insertOnEdge(m, m.edges.find((e) => e.from === waitId)!, 'send', NOW);
+    const sendId = m.nodes.find((n) => n.node.type === 'action')!.id;
+
+    const inEdge = m.edges.find((e) => e.to === sendId)!; // wait → send (immediately BEFORE)
+    const outEdge = m.edges.find((e) => e.from === sendId)!; // send → exit (immediately AFTER)
+    // MOVE: both adjacent edges are no-op destinations → hidden.
+    expect(canDropOnEdge(m, sendId, inEdge, 'move')).toBe(false);
+    expect(canDropOnEdge(m, sendId, outEdge, 'move')).toBe(false);
+    // A non-adjacent edge (trigger → wait) is still a valid move destination.
+    const farEdge = m.edges.find((e) => e.from === 'trigger')!;
+    expect(canDropOnEdge(m, sendId, farEdge, 'move')).toBe(true);
+    // DUPLICATE keeps the incoming edge (a copy placed just before the original is meaningful).
+    expect(canDropOnEdge(m, sendId, inEdge, 'duplicate')).toBe(true);
+  });
 });
 
 describe('duplicateSubtree', () => {
