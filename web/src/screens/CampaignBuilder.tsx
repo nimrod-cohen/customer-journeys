@@ -43,6 +43,7 @@ import {
   insertAfterBranch,
   deleteNode,
   moveSubtree,
+  moveAfterBranch,
   duplicateSubtree,
   duplicateAfterBranch,
   MutationError,
@@ -593,15 +594,16 @@ export function CampaignDetail({ id }: { id?: string }) {
     }
   };
 
-  // The user picked a branch's MERGE (+) while DUPLICATE-placing: drop the copy AFTER
-  // that branch (it runs the branch, then the copy, then the continuation). Same
-  // persist/revert flow as pickTarget.
+  // The user picked a branch's MERGE (+) while placing: drop the moved node / copy AFTER
+  // that branch's convergence (it runs the branch, then this node, then the continuation).
+  // MOVE relocates the single node (moveAfterBranch); DUPLICATE drops a copy
+  // (duplicateAfterBranch). Same persist/revert flow as pickTarget.
   const pickMergeTarget = async (conditionId: string): Promise<void> => {
-    if (!placement || placement.op !== 'duplicate') return;
-    const { rootId } = placement;
+    if (!placement) return;
+    const { op, rootId } = placement;
     let next: CanvasModel;
     try {
-      next = duplicateAfterBranch(model, rootId, conditionId);
+      next = op === 'move' ? moveAfterBranch(model, rootId, conditionId) : duplicateAfterBranch(model, rootId, conditionId);
     } catch (e) {
       const msg = e instanceof MutationError || e instanceof Error ? e.message : String(e);
       showToast(msg, { tone: 'error' });
@@ -613,7 +615,7 @@ export function CampaignDetail({ id }: { id?: string }) {
     try {
       await persist(next);
       await reloadList();
-      showToast('Branch duplicated.', { tone: 'success' });
+      showToast(op === 'move' ? 'Branch moved.' : 'Branch duplicated.', { tone: 'success' });
     } catch (err) {
       const msg = (err as { error?: string })?.error ?? String(err);
       setModel(model);

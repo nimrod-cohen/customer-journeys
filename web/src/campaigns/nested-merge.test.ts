@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { layoutDefinition, mergeAnchor, NESTED_LEVEL_DROP, type CampaignDefinition } from './layout.js';
 import { MIN_SEGMENT } from './orthogonal-path.js';
 import { parseDefinition, buildDefinition } from './model.js';
-import { branchContinuation, insertAfterBranch } from './mutate.js';
+import { branchContinuation, insertAfterBranch, moveAfterBranch, canPlaceAfterBranch } from './mutate.js';
 
 // outer If "earlier": onTrue → set_dow → inner If "saturday" → hw1/hw2 → exit
 //                     onFalse → wait1 → exit   (both Ifs rejoin the SAME exit)
@@ -65,5 +65,45 @@ describe('nested-If shared join staggers the close levels', () => {
     // Continuations are now DISTINCT — the merges have separated.
     expect(branchContinuation(after, 'saturday')).toBe(newId);
     expect(branchContinuation(after, 'earlier')).toBe('exit');
+  });
+});
+
+// MOVE placement now offers the merge (+) (after-branch) too — not just DUPLICATE — so a
+// single node can be RELOCATED to run after a branch's convergence (the user's report:
+// during Move, the "after the inner/outer convergence" drop spots were missing).
+describe('move a node AFTER a branch convergence (moveAfterBranch)', () => {
+  const nextOf = (def: ReturnType<typeof buildDefinition>, id: string): string | undefined =>
+    (def.nodes[id] as { next?: string }).next;
+  const onFalseOf = (def: ReturnType<typeof buildDefinition>, id: string): string | undefined =>
+    (def.nodes[id] as { onFalse?: string }).onFalse;
+
+  it('the merge (+) is offered for BOTH nested Ifs while moving a single node', () => {
+    const model = parseDefinition(NESTED);
+    // hw2 is the moving node; both the inner (saturday) and outer (earlier) merges accept it.
+    expect(canPlaceAfterBranch(model, 'hw2', 'saturday', 'move')).toBe(true);
+    expect(canPlaceAfterBranch(model, 'hw2', 'earlier', 'move')).toBe(true);
+    // A CONDITION (branch root) can't be moved as a single step after a branch.
+    expect(canPlaceAfterBranch(model, 'saturday', 'earlier', 'move')).toBe(false);
+  });
+
+  it('moving a node after the INNER convergence places it before the inner rejoin, outer arm untouched', () => {
+    const model = parseDefinition(NESTED);
+    const def = buildDefinition(moveAfterBranch(model, 'hw2', 'saturday'));
+    // Both inner arms now flow through hw2 (its old No-arm slot is now empty → straight to hw2)…
+    expect(nextOf(def, 'hw1')).toBe('hw2');
+    expect(onFalseOf(def, 'saturday')).toBe('hw2');
+    expect(nextOf(def, 'hw2')).toBe('exit');
+    // …the outer arm (wait1) still joins at exit, BELOW hw2 (after inner, before outer).
+    expect(nextOf(def, 'wait1')).toBe('exit');
+  });
+
+  it('moving a node after the OUTER convergence places it on the final trunk before exit', () => {
+    const model = parseDefinition(NESTED);
+    const def = buildDefinition(moveAfterBranch(model, 'hw2', 'earlier'));
+    // Every arm converges on hw2, which alone precedes exit.
+    expect(nextOf(def, 'hw1')).toBe('hw2');
+    expect(nextOf(def, 'wait1')).toBe('hw2');
+    expect(onFalseOf(def, 'saturday')).toBe('hw2');
+    expect(nextOf(def, 'hw2')).toBe('exit');
   });
 });

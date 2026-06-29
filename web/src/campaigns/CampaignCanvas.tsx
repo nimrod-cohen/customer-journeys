@@ -470,12 +470,13 @@ export function CampaignCanvas({
                 if (mergeOwnerByCont.get(contId) !== cn.id) return null;
                 const contPos = layout.positions.get(contId);
                 if (!contPos) return null;
-                // During a DUPLICATE placement the merge (+) becomes a drop target —
-                // "place the copy AFTER this branch". During a MOVE placement (or an
-                // invalid duplicate target) it's hidden. In normal mode it inserts a
-                // step after the branch.
+                // During a MOVE or DUPLICATE placement the merge (+) becomes a drop
+                // target — "place the branch/copy AFTER this branch's convergence". Gated
+                // by the op-aware canPlaceAfterBranch (move = relocate a single step after
+                // the merge; duplicate = drop a copy after the merge). In normal mode it
+                // inserts a NEW step after the branch.
                 const asPlacement =
-                  placing && placement?.op === 'duplicate' && canPlaceAfterBranch(model, placement.rootId, cn.id);
+                  placing && placement != null && canPlaceAfterBranch(model, placement.rootId, cn.id, placement.op);
                 if (placing && !asPlacement) return null;
                 // The arms CLOSE into the continuation high (top-knee), leaving a tall
                 // central vertical run; anchor the merge (+) in its MIDDLE so a visible

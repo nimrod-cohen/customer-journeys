@@ -579,11 +579,25 @@ export function insertAfterBranch(
  * OUTSIDE the moving subtree (placing a copy after some other branch). A condition
  * strictly INSIDE the subtree being copied (other than the root) would self-nest.
  */
-export function canPlaceAfterBranch(model: CanvasModel, rootId: string, condId: string): boolean {
+export function canPlaceAfterBranch(
+  model: CanvasModel,
+  rootId: string,
+  condId: string,
+  op: 'move' | 'duplicate' = 'duplicate',
+): boolean {
   const def = buildDefinition(model);
   const cond = def.nodes[condId];
   if (!cond || cond.type !== 'condition') return false;
-  if (branchContinuation(model, condId) === undefined) return false;
+  const cont = branchContinuation(model, condId);
+  if (cont === undefined) return false;
+  if (op === 'move') {
+    // moveAfterBranch relocates a SINGLE node only, and can't drop it onto a branch whose
+    // rejoin IS that node (degenerate). A branch root (condition) is never single-mode.
+    if (movePlan(model, rootId).mode !== 'single') return false;
+    return cont !== rootId;
+  }
+  // DUPLICATE: a copy may run after the branch ITSELF (condId === rootId), or after any
+  // OTHER branch outside the moving subtree (a fresh-id clone never cycles).
   if (condId === rootId) return true;
   return !movePlan(model, rootId).ids.has(condId);
 }
@@ -635,6 +649,48 @@ export function duplicateAfterBranch(model: CanvasModel, rootId: string, condId:
 
   const nextDef = { startNode: def.startNode, nodes };
   assertWellFormed(nextDef, 'That copy would break the journey.');
+  return parseDefinition(nextDef);
+}
+
+/**
+ * moveAfterBranch(model, rootId, condId) — RELOCATE the single node `rootId` to run
+ * AFTER `condId`'s branch convergence, BEFORE its continuation C (the MOVE analogue of
+ * duplicateAfterBranch + the after-branch target of a placement). rootId is SPLICED OUT
+ * of its current spot (its parents re-link to rootId.next), then every boundary edge of
+ * condId's branch (an in-branch node → C) re-points to rootId and rootId.next = C — so
+ * BOTH arms flow THROUGH rootId before reaching C. Single-node move only (a whole branch
+ * is not relocated after another branch here). Re-validated locally + server-side.
+ */
+export function moveAfterBranch(model: CanvasModel, rootId: string, condId: string): CanvasModel {
+  if (rootId === model.start) throw new MutationError("The trigger can't be moved.");
+  const def = buildDefinition(model);
+  const cond = def.nodes[condId];
+  if (!cond || cond.type !== 'condition') throw new MutationError('Move a step after an If branch.');
+  const plan = movePlan(model, rootId);
+  if (plan.mode !== 'single') throw new MutationError('Only a single step can be moved after a branch.');
+  const successor = plan.continuation; // rootId.next
+  if (successor === undefined) throw new MutationError('That move would break the journey.');
+
+  // 1) SPLICE OUT rootId: every parent edge pointing at it re-links to its successor.
+  //    rootId is carried through (re-pointed in step 3); it is momentarily orphaned.
+  const spliced: Record<string, DslNode> = {};
+  for (const [nid, node] of Object.entries(def.nodes)) {
+    spliced[nid] = nid === rootId ? { ...node } : repointParents(node, rootId, successor);
+  }
+  // 2) Compute condId's branch (S, C) on the SPLICED graph (so rootId — now detached —
+  //    is never miscounted as a branch member).
+  const { S, C } = conditionMerge({ startNode: def.startNode, nodes: spliced }, condId);
+  if (!C) throw new MutationError('This branch has no single rejoin point to move after.');
+  if (C === rootId) throw new MutationError("Choose a spot outside the step you're moving.");
+  // 3) REATTACH: boundary edges (an S-node → C) → rootId; rootId.next = C.
+  const nodes: Record<string, DslNode> = {};
+  for (const [nid, node] of Object.entries(spliced)) {
+    nodes[nid] = S.has(nid) ? repointParents(node, C, rootId) : { ...node };
+  }
+  nodes[rootId] = repointSlot(spliced[rootId]!, 'next', C);
+
+  const nextDef = { startNode: def.startNode, nodes };
+  assertWellFormed(nextDef, 'That move would break the journey.');
   return parseDefinition(nextDef);
 }
 

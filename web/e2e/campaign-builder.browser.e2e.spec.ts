@@ -1518,6 +1518,42 @@ test('DUPLICATE a branch AFTER itself via the merge (+) — the copy runs after 
   await expect(page.getByTestId('toast').first()).toBeVisible();
 });
 
+test('MOVE a node AFTER a branch via the merge (+) — relocates it past the convergence', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-name').fill('Move after branch');
+
+  // A single branch whose arms rejoin the only exit, with a wait on the Yes arm:
+  //   trigger → cond(onTrue → wait → exit_1, onFalse → exit_1).
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('palette-if').click();
+  await expect(page.getByTestId('node-condition')).toHaveCount(1);
+  const arms = await armInsertIndices(page, await conditionBottom(page));
+  await page.getByTestId('campaign-edge-insert').nth(arms[0]!).click();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toHaveCount(1);
+
+  // ⋮ on the wait → "Move…" → the merge (+) below the branch is now a drop target IN MOVE
+  // MODE (the fix: it used to be offered only for Duplicate).
+  const waitCard = page.getByTestId('node-wait');
+  await waitCard.getByLabel('Step actions').click();
+  await waitCard.getByTestId('node-move').click();
+  await expect(page.getByTestId('placement-banner')).toContainText(/move/i);
+  await expect(page.getByTestId('placement-merge-target')).toBeVisible();
+  await page.getByTestId('placement-merge-target').click();
+  await expect(page.getByTestId('placement-banner')).toHaveCount(0);
+  await expect(page.getByTestId('toast')).toContainText(/moved/i);
+
+  // Still ONE wait (relocated, not copied) and it now sits BELOW the condition's arms —
+  // i.e. after the convergence, before the exit.
+  await expect(page.getByTestId('node-wait')).toHaveCount(1);
+  const condBottom = (await page.getByTestId('node-condition').boundingBox())!.y + (await page.getByTestId('node-condition').boundingBox())!.height;
+  expect((await page.getByTestId('node-wait').boundingBox())!.y).toBeGreaterThan(condBottom);
+
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast').first()).toBeVisible();
+});
+
 test('deleting the last exit is refused with a styled toast (no native dialog)', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click(); // trigger → exit_1 (the only exit)
