@@ -477,6 +477,42 @@ function joinOwners(def: CampaignDefinition, depth: Map<string, number>): Map<st
   return owner;
 }
 
+/**
+ * For each JOIN, ALL conditions whose two arms rejoin it, ordered SHALLOW→DEEP. A join
+ * shared by NESTED Ifs (an inner If on an arm of an outer If, both rejoining the same
+ * continuation) has >1 owner. We use this to STAGGER the closing levels: the inner
+ * (deeper) If's arms close HIGHER than the outer If's other arm, so there is a visible
+ * vertical run — and a correctly-placed merge (+) — BETWEEN the inner closure and where
+ * the outer arm joins. A single-If join has exactly ONE owner (→ no stagger, unchanged).
+ */
+function joinOwnerLevels(def: CampaignDefinition, depth: Map<string, number>): Map<string, string[]> {
+  const owners = new Map<string, string[]>(); // join id → owning condition ids, shallow→deep
+  for (const id of Object.keys(def.nodes)) {
+    const node = def.nodes[id];
+    if (!node || node.type !== 'condition') continue;
+    const c = node as { onTrue?: string; onFalse?: string };
+    if (typeof c.onTrue !== 'string' || typeof c.onFalse !== 'string') continue;
+    const a = reachableFrom(def, c.onTrue);
+    const b = reachableFrom(def, c.onFalse);
+    let merge: string | undefined;
+    let best = Infinity;
+    for (const n of a) {
+      if (!b.has(n)) continue;
+      const d = depth.get(n) ?? Infinity;
+      if (d < best) {
+        best = d;
+        merge = n;
+      }
+    }
+    if (merge === undefined) continue;
+    const list = owners.get(merge) ?? [];
+    list.push(id);
+    owners.set(merge, list);
+  }
+  for (const list of owners.values()) list.sort((x, y) => (depth.get(x) ?? 0) - (depth.get(y) ?? 0));
+  return owners;
+}
+
 /** Shift every node in the subtree rooted at `id` by `delta` columns, STOPPING at a
  *  shared join (a multi-parent node) — it belongs to no single arm and is recentered
  *  later. Diamond-safe via `seen`. */
@@ -585,6 +621,16 @@ function computeJoinDrops(def: CampaignDefinition, depth: Map<string, number>): 
   // The depth of each join's row — every depth strictly GREATER gets the extra drop.
   const joinDepths = new Set<number>();
   for (const id of joins) joinDepths.add(depth.get(id) ?? 0);
+  // A join shared by NESTED Ifs reserves an extra (owners − 1) levels of vertical room
+  // at its own row so the staggered inner closure has space (joinOwnerLevels). Per depth
+  // we take the MAX reserve among any joins on that row. A single-owner join reserves 0.
+  const nestedExtraAtDepth = new Map<number, number>();
+  for (const [jid, owners] of joinOwnerLevels(def, depth)) {
+    if (owners.length < 2) continue;
+    const d = depth.get(jid) ?? 0;
+    const reserve = (owners.length - 1) * NESTED_LEVEL_DROP;
+    nestedExtraAtDepth.set(d, Math.max(nestedExtraAtDepth.get(d) ?? 0, reserve));
+  }
   const maxDepth = Math.max(0, ...[...depth.values()]);
   const extra = new Map<number, number>();
   let acc = 0;
@@ -592,8 +638,9 @@ function computeJoinDrops(def: CampaignDefinition, depth: Map<string, number>): 
     // The JOIN's OWN row (d is a join row) opens the INTO-join gap (JOIN_MERGE_DROP):
     // the arms close HIGH and a tall central vertical runs down to the join, with the
     // merge (+) centered on it (clear line above AND below). This stacks BEFORE the
-    // below-join gap so the join card itself drops further from its parents.
-    if (joinDepths.has(d)) acc += JOIN_MERGE_DROP;
+    // below-join gap so the join card itself drops further from its parents. A NESTED-If
+    // shared join also reserves (owners − 1)·NESTED_LEVEL_DROP here for its staggered close.
+    if (joinDepths.has(d)) acc += JOIN_MERGE_DROP + (nestedExtraAtDepth.get(d) ?? 0);
     // The row immediately below a join (d-1 is a join row) opens the extra gap.
     if (joinDepths.has(d - 1)) acc += JOIN_EXTRA_DROP;
     extra.set(d, acc);
@@ -624,6 +671,18 @@ export const JOIN_EXTRA_DROP = 48;
  * ≥ PLUS_PAD below. (Bumped 56 → 92; held at 92 in v0.42.2.)
  */
 export const JOIN_MERGE_DROP = 92;
+
+/**
+ * NESTED_LEVEL_DROP — extra vertical px reserved PER EXTRA OWNER on a join shared by
+ * NESTED Ifs (joinOwnerLevels). When an inner If sits on an arm of an outer If and BOTH
+ * rejoin the same continuation, their convergences would otherwise FUSE at one depth (a
+ * 3-way merge), leaving no room to add a step "after the inner closure, before the outer
+ * closure". We push the shared join DOWN by `(owners − 1) · NESTED_LEVEL_DROP` and stagger
+ * each owner-level's close (computeEdges) so the inner arms close one level HIGHER — a
+ * visible run with its own merge (+) opens between them. ≥ MIN_SEGMENT + pad so that run
+ * comfortably carries a (+). Single-If joins (one owner) are untouched.
+ */
+export const NESTED_LEVEL_DROP = 140;
 
 /**
  * MERGE_PLUS_GAP — DEPRECATED (v0.42.0). The merge (+) is now CENTERED on the central
@@ -690,6 +749,32 @@ export function computeEdges(
   // the central join. A POPULATED arm (its target is its own column node) gets a
   // single top knee down its child column.
   const joins = multiParentNodes(def);
+  // Owner-staggering for joins shared by NESTED Ifs: derive depth from positions (no
+  // signature change), find each join's owner conditions shallow→deep, and rank each
+  // closing edge by the DEEPEST owner that contains its source. A single-owner join
+  // ranks everything 0 (crossY unchanged). reachableFrom is memoized per owner.
+  const depthFromPos = new Map<string, number>();
+  for (const [pid, p] of positions) depthFromPos.set(pid, p.depth);
+  const ownerLevels = joinOwnerLevels(def, depthFromPos);
+  const reachMemo = new Map<string, Set<string>>();
+  const reachOf = (c: string): Set<string> => {
+    let r = reachMemo.get(c);
+    if (!r) {
+      r = reachableFrom(def, c);
+      reachMemo.set(c, r);
+    }
+    return r;
+  };
+  const closeRank = (leaf: string, joinId: string): number => {
+    const owners = ownerLevels.get(joinId);
+    if (!owners || owners.length < 2) return 0;
+    let rank = 0; // deepest owner (highest index, owners are shallow→deep) containing `leaf`
+    for (let i = 0; i < owners.length; i++) {
+      const c = owners[i];
+      if (c !== undefined && reachOf(c).has(leaf)) rank = i;
+    }
+    return rank;
+  };
   for (const id of Object.keys(def.nodes)) {
     const node: DslNode | undefined = def.nodes[id];
     if (!node) continue;
@@ -736,7 +821,13 @@ export function computeEdges(
       // LONGER arm's last node, so this y lands just below that node; for an empty arm
       // the join sits a full row + JOIN_MERGE_DROP below the If, so the close happens
       // HIGH and a tall central run carries the merge (+). BOTH arms close at the SAME y.
-      const crossY = closeKnee || isEmptyArm ? toPoint.y - MERGE_LOWER_RUN : undefined;
+      // RULE 2 base = MERGE_LOWER_RUN above the join. For a join shared by NESTED Ifs the
+      // edge's owner-level RANK lifts its close one NESTED_LEVEL_DROP per level, so the
+      // inner (deeper) If's arms close HIGHER than the outer arm — a visible run opens
+      // between them (rank 0 = unchanged single-If behavior).
+      const rank = closeKnee || isEmptyArm ? closeRank(id, e.to) : 0;
+      const crossY =
+        closeKnee || isEmptyArm ? toPoint.y - MERGE_LOWER_RUN - rank * NESTED_LEVEL_DROP : undefined;
       const base = {
         from: id,
         to: e.to,
@@ -789,15 +880,20 @@ export function mergeAnchor(
       Math.abs(e.toPoint.x - join.x) < 1e-6,
   );
   if (closings.length > 0 && join) {
-    const runs = closings.map((c) => closeKneeLowerRun(c.fromPoint, c.toPoint, c.crossY));
-    // With RULE 2 all arms share the same crossY, so the runs coincide; the top is the
+    const runTops = closings.map((c) => closeKneeLowerRun(c.fromPoint, c.toPoint, c.crossY).y0);
+    // With RULE 2 a SINGLE-If's arms share one crossY, so the runs coincide; the top is the
     // shared closure corner. (Math.min is robust if a run differs, e.g. a clamp.)
-    const top = Math.min(...runs.map((r) => r.y0));
+    const top = Math.min(...runTops);
     const cardTop = join.y;
-    // Center the merge (+) on the central run so it has ≥ PLUS_PAD line ABOVE and BELOW
-    // (RULE 1). The run [top, cardTop] is ≥ MERGE_LOWER_RUN ≥ MIN_SEGMENT, so its
-    // midpoint satisfies the pad on both sides.
-    const y = (top + cardTop) / 2;
+    // Bottom of the rendered (DEEPEST) owner's sub-run: for a join shared by NESTED Ifs the
+    // shallower owner's arm closes LOWER (a strictly larger run top), so anchor the merge
+    // (+) BETWEEN this owner's closure and that next-lower join — never down at the card
+    // (which would put it below where the outer arm joins). Single-If → no lower run →
+    // bottom = the join card (IDENTICAL to the prior behavior).
+    const below = runTops.filter((y0) => y0 > top + 1e-6).sort((a, b) => a - b);
+    const bottom = below[0] ?? cardTop;
+    // Center the merge (+) on that run so it has ≥ PLUS_PAD line ABOVE and BELOW (RULE 1).
+    const y = (top + bottom) / 2;
     return { x: join.x, y, closureCornerY: top };
   }
   // EMPTY DIAMOND (both arms empty → straight to the directly-below join, v0.42.3): the
