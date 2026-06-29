@@ -661,7 +661,7 @@ describe('branch arm spacing is FIXED at ±BRANCH_HALF_GAP and DEPTH-CONSISTENT 
     expect(Math.abs(positions.get('sendN')!.x - cond.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
   });
 
-  it('an arm with a NESTED If is widened ONLY as much as the nested branch needs (no overlap), the other arm stays ±BRANCH_HALF_GAP', () => {
+  it('an arm with a NESTED If is CONTOUR-packed: tight (not over-widened), no per-depth overlap, simple arms at ±BRANCH_HALF_GAP', () => {
     const def: CampaignDefinition = {
       startNode: 'trigger',
       nodes: {
@@ -678,19 +678,26 @@ describe('branch arm spacing is FIXED at ±BRANCH_HALF_GAP and DEPTH-CONSISTENT 
     };
     const { positions } = layoutDefinition(def);
     const cond = positions.get('cond')!;
-    // The Yes arm (the nested If's root) sits FARTHER than BRANCH_HALF_GAP (widened by the
-    // nested branch), but no more than the nested branch's half-extent demands.
+    // CONTOUR PACKING: the nested-If arm is NO LONGER over-widened — since its content
+    // clears the No arm at every depth, it sits at the SAME compact ±BRANCH_HALF_GAP a
+    // simple arm would (the whole point of the change). It must never widen PAST what a
+    // nested branch needs.
     const yesOffset = Math.abs(positions.get('inner')!.x - cond.x);
-    expect(yesOffset).toBeGreaterThan(BRANCH_HALF_GAP);
-    // The nested If's OWN arms must NOT overlap the OTHER (No) arm: the nested arms stay
-    // left of the outer center, the No card stays clear to the right.
-    const innerRight = Math.max(positions.get('iy')!.x, positions.get('inn')!.x);
-    const noLeft = positions.get('sendN')!.x;
-    expect(noLeft - innerRight).toBeGreaterThanOrEqual(LAYOUT.cardWidth - 1e-6); // no overlap
+    expect(yesOffset).toBeLessThanOrEqual(BRANCH_HALF_GAP + 1e-6);
+    expect(Math.abs(positions.get('sendN')!.x - cond.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
     // The nested If itself uses the SAME fixed ±BRANCH_HALF_GAP between its two simple arms.
     const innerC = positions.get('inner')!;
     expect(Math.abs(positions.get('iy')!.x - innerC.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
     expect(Math.abs(positions.get('inn')!.x - innerC.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
+    // NO COLLISION: at EVERY depth, the cards keep ≥ one column (the compact gap) apart.
+    const byDepth = new Map<number, number[]>();
+    for (const p of positions.values()) (byDepth.get(p.depth) ?? byDepth.set(p.depth, []).get(p.depth)!).push(p.x);
+    for (const xs of byDepth.values()) {
+      xs.sort((a, b) => a - b);
+      for (let i = 1; i < xs.length; i++) {
+        expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(LAYOUT.colWidth - 1e-6);
+      }
+    }
   });
 });
 

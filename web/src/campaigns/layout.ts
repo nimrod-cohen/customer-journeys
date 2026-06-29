@@ -246,7 +246,7 @@ export function layoutDefinition(def: CampaignDefinition): Layout {
   // re-centered under their parents at the end (recenterJoins), so leaving them put
   // keeps each arm's shift exclusive to its own column.
   const joins = multiParentNodes(def);
-  assignColumns(def, def.startNode, 0, col, memo, new Set(), joins);
+  assignColumns(def, def.startNode, 0, col, memo, new Set(), joins, depth);
 
   // Re-center a diamond join under the midpoint of its parents so the connectors
   // stay symmetric (its first-pass column may sit under only one arm) — AND drag the
@@ -334,8 +334,59 @@ function computeDepths(def: CampaignDefinition): Map<string, number> {
  */
 export const BRANCH_HALF_GAP = 120;
 
-/** The branch half-gap expressed in column units (col → x is c·colWidth). */
+/**
+ * MIN_COL_SEP — the minimum center-to-center COLUMN separation between two cards at the
+ * SAME depth (so they don't overlap and keep a comfortable gap). 1 col = colWidth (240px)
+ * ⇒ two 200px cards have a 40px gap — the SAME compact gap two simple arm cards use, i.e.
+ * 2·BRANCH_HALF_GAP. The contour packer (assignColumns) separates sibling subtrees by
+ * exactly this where their facing contours touch, so a simple arm sits at ±BRANCH_HALF_GAP
+ * and a nested arm only widens where its content actually collides.
+ */
+const MIN_COL_SEP = (2 * BRANCH_HALF_GAP) / LAYOUT.colWidth;
+
+/** Half the branch gap in column units — a POPULATED arm root sits this far from the
+ *  condition's center so the arm edge is a real jog (not a same-column straight) and the
+ *  merge (+) / side lane has room. (2·this = MIN_COL_SEP, the simple-arm separation.) */
 const HALF_GAP_COLS = BRANCH_HALF_GAP / LAYOUT.colWidth;
+
+/** The exclusive subtree of one arm: everything reachable from `armRoot` that the SIBLING
+ *  arm does NOT also reach (so the merge join + shared downstream — which belong to neither
+ *  arm — are excluded; they are recentered later). */
+function exclusiveArmSet(def: CampaignDefinition, armRoot: string, otherArmRoot: string): Set<string> {
+  const shared = reachableForward(def, otherArmRoot);
+  const out = new Set<string>();
+  for (const n of reachableForward(def, armRoot)) if (!shared.has(n)) out.add(n);
+  return out;
+}
+
+/** Per-depth contour of a node set: the MIN (left) or MAX (right) column at each depth. */
+function contourOf(
+  ids: Iterable<string>,
+  col: Map<string, number>,
+  depth: Map<string, number>,
+  side: 'min' | 'max',
+): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const id of ids) {
+    const c = col.get(id);
+    const d = depth.get(id);
+    if (c === undefined || d === undefined) continue;
+    const prev = out.get(d);
+    if (prev === undefined) out.set(d, c);
+    else out.set(d, side === 'min' ? Math.min(prev, c) : Math.max(prev, c));
+  }
+  return out;
+}
+
+/** The maximum column among a node set (its right edge), or -Infinity when empty. */
+function maxColOf(ids: Iterable<string>, col: Map<string, number>): number {
+  let m = -Infinity;
+  for (const id of ids) {
+    const c = col.get(id);
+    if (c !== undefined && c > m) m = c;
+  }
+  return m;
+}
 
 /**
  * Recursive column packing; returns the next free left column. A CONDITION places
@@ -351,6 +402,7 @@ function assignColumns(
   memo: Map<string, number>,
   placed: Set<string>,
   joins: Set<string>,
+  depth: Map<string, number>,
 ): number {
   if (placed.has(id)) return left; // diamond — already placed via another path
   placed.add(id);
@@ -361,51 +413,62 @@ function assignColumns(
     return left + 1;
   }
 
-  // A CONDITION with exactly its two (un-placed) arms → compact symmetric columns.
-  // We lay each arm's subtree out in its own band, then SHIFT the whole arm band so
-  // its ROOT sits at center ± offset, where offset = max(HALF_GAP_COLS, half the
-  // arm's own subtree width) — i.e. a nested branch widens the gap, a leaf keeps it
-  // tight. The condition itself centers between the two arm roots.
+  // A CONDITION with its two (un-placed) arms → CONTOUR-PACKED compact columns. We lay
+  // each arm out SEQUENTIALLY (non-overlapping bands), then PULL the right arm LEFT until
+  // its left contour just clears the left arm's right contour by MIN_COL_SEP at every
+  // shared depth — so a SIMPLE arm sits at exactly ±HALF_GAP (1 col apart) while a nested
+  // arm widens ONLY where its content actually collides, and a linear top above a deep
+  // branch hugs the trunk instead of reserving the deep width all the way up (the user's
+  // "narrow it down where there's space"). The condition centers between the two arm roots.
   if (node?.type === 'condition' && children.length === 2) {
-    // EXCLUSIVE arm widths — count ONLY each arm's own subtree, STOPPING at the merge
-    // join + shared downstream trunk (which belong to neither arm). A LINEAR arm = 1,
-    // so it sits at exactly ±HALF_GAP_COLS (the fixed BRANCH_HALF_GAP) at every depth;
-    // only an arm CONTAINING a nested branch widens, by that branch's exclusive span.
-    const widths = [
-      exclusiveArmWidth(def, id, children[0]!, children[1]!),
-      exclusiveArmWidth(def, id, children[1]!, children[0]!),
-    ];
-    // Each arm's own half-subtree must clear the center; a nested-branch arm needs
-    // (width − 1)/2 columns of clearance BEYOND its root column, so its half-extent is
-    // HALF_GAP_COLS + (width − 1)/2. A simple arm (width 1) keeps exactly HALF_GAP_COLS.
-    // ASYMMETRIC: each arm is offset by its OWN half-extent, so a nested-branch arm
-    // widens only ITS side — a simple SIBLING arm stays at exactly ±HALF_GAP_COLS.
-    const armHalf = (w: number): number => HALF_GAP_COLS + Math.max(0, (w - 1) / 2);
-    const leftOffset = armHalf(widths[0]!);
-    const rightOffset = armHalf(widths[1]!);
-    const center = left + leftOffset; // place center far enough right for the left arm
-    const armRootTargets = [center - leftOffset, center + rightOffset];
-    let cursor = center - leftOffset; // left band starts here
-    for (let i = 0; i < children.length; i++) {
-      const c = children[i]!;
-      const before = cursor;
-      cursor = assignColumns(def, c, cursor, col, memo, placed, joins);
-      const placedAt = col.get(c) ?? before;
-      // Shift this arm's whole subtree so its ROOT lands on the target column (a
-      // shared join is skipped — recenterJoins repositions it under both parents).
-      const delta = armRootTargets[i]! - placedAt;
-      if (delta !== 0) shiftSubtree(def, c, delta, col, new Set(), joins);
-      cursor = Math.max(cursor, placedAt + delta + 1);
+    const c0 = children[0]!;
+    const c1 = children[1]!;
+    // Lay both arms out left→right with a 1-col seed gap (so they start disjoint).
+    assignColumns(def, c0, left, col, memo, placed, joins, depth);
+    const SL = exclusiveArmSet(def, c0, c1);
+    const rightOfSL = maxColOf(SL, col);
+    const c1Start = (Number.isFinite(rightOfSL) ? rightOfSL : left) + MIN_COL_SEP;
+    assignColumns(def, c1, c1Start, col, memo, placed, joins, depth);
+    const SR = exclusiveArmSet(def, c1, c0);
+    // CONTOUR MERGE — pull the right arm LEFT until it nearly touches the left arm.
+    const rcL = contourOf(SL, col, depth, 'max'); // left arm's RIGHT contour per depth
+    const lcR = contourOf(SR, col, depth, 'min'); // right arm's LEFT contour per depth
+    let pull = Infinity;
+    for (const [d, lc] of lcR) {
+      const rr = rcL.get(d);
+      if (rr !== undefined) pull = Math.min(pull, lc - rr - MIN_COL_SEP);
     }
+    // Keep the two arm ROOTS at least MIN_COL_SEP apart (the simple-arm compact gap).
+    const rootC0 = col.get(c0) ?? left;
+    const rootC1 = col.get(c1) ?? c1Start;
+    pull = Math.min(pull, rootC1 - rootC0 - MIN_COL_SEP);
+    if (Number.isFinite(pull) && pull > 0) {
+      shiftSubtree(def, c1, -pull, col, new Set(), joins);
+    }
+    // Place the condition's center. A POPULATED arm root must stay HALF_GAP from center so
+    // its edge is a real jog (a same-column child would mis-read as an empty/passthrough
+    // arm). An EMPTY arm (no exclusive content — it points straight at the shared join) is
+    // NOT a real root, so we offset HALF_GAP from the populated arm instead of averaging in
+    // the join's column (which would collapse the condition onto the populated arm).
+    const r0 = col.get(c0) ?? left;
+    const r1 = col.get(c1) ?? c1Start;
+    const c0Empty = SL.size === 0;
+    const c1Empty = SR.size === 0;
+    let center: number;
+    if (!c0Empty && !c1Empty) center = (r0 + r1) / 2; // both populated → midpoint (≥ HALF_GAP each)
+    else if (c0Empty && !c1Empty) center = r1 - HALF_GAP_COLS; // populated on the right
+    else if (!c0Empty && c1Empty) center = r0 + HALF_GAP_COLS; // populated on the left
+    else center = (r0 + r1) / 2; // fully-empty If → directly above the (shared) join
     col.set(id, center);
-    return cursor;
+    // Right edge of the whole packed subtree (so a parent sibling won't overlap it).
+    return Math.max(maxColOf(SL, col), maxColOf(SR, col), center) + 1;
   }
 
   let cursor = left;
   const childCenters: number[] = [];
   for (const c of children) {
     const before = cursor;
-    cursor = assignColumns(def, c, cursor, col, memo, placed, joins);
+    cursor = assignColumns(def, c, cursor, col, memo, placed, joins, depth);
     // The child's own center column (it may itself have packed its subtree).
     childCenters.push(col.get(c) ?? before);
   }

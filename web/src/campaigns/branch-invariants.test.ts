@@ -20,6 +20,7 @@ import {
   branchClosureY,
   PLUS_PAD,
   LAYOUT,
+  BRANCH_HALF_GAP,
   type CampaignDefinition,
 } from './layout.js';
 import { orthogonalPath, verticalAnchor, MIN_SEGMENT, PLUS_TOP_GAP, PLUS_DIAMETER } from './orthogonal-path.js';
@@ -201,6 +202,25 @@ const mergeThenTrunk: CampaignDefinition = {
   },
 };
 
+// deepArmChain: one arm is a LINEAR chain that only branches DEEP — contour packing must
+// keep the linear top hugging the trunk (not reserve the deep branch's width all the way up).
+const deepArmChain: CampaignDefinition = {
+  startNode: 'trigger',
+  nodes: {
+    trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+    cond: { type: 'condition', ast: { field: 'a', operator: '=', value: 'v' }, onTrue: 'chain1', onFalse: 'sendN' },
+    chain1: { type: 'action', kind: 'send', template_id: 't1', next: 'chain2' },
+    chain2: { type: 'action', kind: 'send', template_id: 't2', next: 'deepIf' },
+    deepIf: { type: 'condition', ast: { field: 'x', operator: '=', value: '1' }, onTrue: 'da', onFalse: 'db' },
+    da: { type: 'action', kind: 'send', template_id: 'tda', next: 'exitA' },
+    db: { type: 'action', kind: 'send', template_id: 'tdb', next: 'exitB' },
+    exitA: { type: 'exit' },
+    exitB: { type: 'exit' },
+    sendN: { type: 'action', kind: 'send', template_id: 'tN', next: 'exitN' },
+    exitN: { type: 'exit' },
+  },
+};
+
 const ALL_FIXTURES: Array<[string, CampaignDefinition]> = [
   ['linear', linear],
   ['equalArms', equalArms],
@@ -209,6 +229,7 @@ const ALL_FIXTURES: Array<[string, CampaignDefinition]> = [
   ['no1yes3', no1yes3],
   ['nestedInArm', nestedInArm],
   ['mergeThenTrunk', mergeThenTrunk],
+  ['deepArmChain', deepArmChain],
 ];
 
 /** Every `+` anchor in a layout: edge-insert anchors + merge-insert anchors. */
@@ -487,4 +508,50 @@ describe('preserved invariants over all fixtures (down-only, axis-aligned)', () 
       }
     });
   }
+
+  // CONTOUR PACKING (the user's "narrow it down where there's space") must NEVER let two
+  // cards at the SAME depth overlap — they keep ≥ one column (the compact gap) apart.
+  for (const [name, def] of ALL_FIXTURES) {
+    it(`${name}: no two cards at the same depth overlap (≥ 1 col apart)`, () => {
+      const { positions } = layoutDefinition(def);
+      const byDepth = new Map<number, number[]>();
+      for (const p of positions.values()) (byDepth.get(p.depth) ?? byDepth.set(p.depth, []).get(p.depth)!).push(p.x);
+      for (const xs of byDepth.values()) {
+        xs.sort((a, b) => a - b);
+        for (let i = 1; i < xs.length; i++) {
+          expect(xs[i]! - xs[i - 1]!, `${name} depth-overlap`).toBeGreaterThanOrEqual(LAYOUT.colWidth - 1e-6);
+        }
+      }
+    });
+  }
+});
+
+describe('contour packing tightens a linear top above a deep branch (v0.90.0)', () => {
+  it('a linear chain leading to a DEEP If hugs the trunk — it does NOT reserve the deep width at the top', () => {
+    const def: CampaignDefinition = {
+      startNode: 'trigger',
+      nodes: {
+        trigger: { type: 'trigger', kind: 'manual', next: 'cond' },
+        cond: { type: 'condition', ast: { field: 'a', operator: '=', value: 'v' }, onTrue: 'chain1', onFalse: 'sendN' },
+        chain1: { type: 'action', kind: 'send', template_id: 't1', next: 'chain2' },
+        chain2: { type: 'action', kind: 'send', template_id: 't2', next: 'deepIf' },
+        deepIf: { type: 'condition', ast: { field: 'x', operator: '=', value: '1' }, onTrue: 'da', onFalse: 'db' },
+        da: { type: 'action', kind: 'send', template_id: 'tda', next: 'exitA' },
+        db: { type: 'action', kind: 'send', template_id: 'tdb', next: 'exitB' },
+        exitA: { type: 'exit' },
+        exitB: { type: 'exit' },
+        sendN: { type: 'action', kind: 'send', template_id: 'tN', next: 'exitN' },
+        exitN: { type: 'exit' },
+      },
+    };
+    const { positions } = layoutDefinition(def);
+    const cond = positions.get('cond')!;
+    // The linear top of the arm (chain1) sits at the COMPACT ±BRANCH_HALF_GAP — NOT pushed
+    // out by the deep If's width below it (the bug: the deep branch reserved width all the
+    // way up, flinging the linear top far from the trunk).
+    expect(Math.abs(positions.get('chain1')!.x - cond.x)).toBeCloseTo(BRANCH_HALF_GAP, 5);
+    // The linear chain stays STRAIGHT (chain1, chain2, deepIf share one column).
+    expect(positions.get('chain2')!.x).toBeCloseTo(positions.get('chain1')!.x, 5);
+    expect(positions.get('deepIf')!.x).toBeCloseTo(positions.get('chain1')!.x, 5);
+  });
 });
