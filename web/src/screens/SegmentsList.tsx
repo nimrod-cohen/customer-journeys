@@ -54,6 +54,16 @@ export function SegmentsList() {
         />
       </div>
 
+      <Pagination
+        testid="pagination-top"
+        alwaysShowSummary
+        class="mb-3 flex flex-wrap items-center justify-between gap-3"
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPage={list.setPage}
+      />
+
       <Card class="overflow-x-auto">
         <table class="w-full text-sm" data-testid="segment-list">
           <thead class="border-b border-stone-200 bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">

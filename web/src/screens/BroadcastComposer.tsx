@@ -276,6 +276,16 @@ export function BroadcastComposer() {
         />
       </div>
 
+      <Pagination
+        testid="pagination-top"
+        alwaysShowSummary
+        class="mb-3 flex flex-wrap items-center justify-between gap-3"
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPage={list.setPage}
+      />
+
       {broadcasts === null ? (
         <p class="text-sm text-stone-500">Loading…</p>
       ) : broadcasts.length ? (

@@ -522,24 +522,37 @@ export function EmptyState({ children }: { children: ComponentChildren }): JSX.E
 
 /**
  * Numbered-page pagination control: "1–50 of 1,000" + ‹ Prev · page numbers · Next ›.
- * Controlled — the owner holds `page` and reloads on `onPage`. Renders nothing when
- * there's a single page (or none). Shows a windowed set of page buttons around the
- * current page so the control stays compact at large totals.
+ * Controlled — the owner holds `page` and reloads on `onPage`. Shows a windowed set of
+ * page buttons around the current page so it stays compact at large totals.
+ *
+ * Renders top AND bottom of a list: pass `testid` to disambiguate the two instances
+ * (default 'pagination'; child testids derive from it — `${testid}-summary/-prev/-next/
+ * -number`). By default it hides when there's a single page; pass `alwaysShowSummary`
+ * (used at the TOP) to keep the "N total" count visible even on one page (the nav buttons
+ * still only appear when there's more than one page). An empty list renders nothing.
  */
 export function Pagination({
   page,
   pageSize,
   total,
   onPage,
+  alwaysShowSummary = false,
+  testid = 'pagination',
+  class: cls,
 }: {
   page: number;
   pageSize: number;
   total: number;
   onPage: (page: number) => void;
+  alwaysShowSummary?: boolean;
+  testid?: string;
+  class?: string;
 }): JSX.Element | null {
   const pageCount = Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
-  if (pageCount <= 1) return null;
-  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  if (total === 0) return null;
+  const multi = pageCount > 1;
+  if (!multi && !alwaysShowSummary) return null;
+  const from = (page - 1) * pageSize + 1;
   const to = Math.min(total, page * pageSize);
   // A compact window of page numbers around the current page (±2), always incl. 1 + last.
   const nums: number[] = [];
@@ -553,49 +566,51 @@ export function Pagination({
 
   const btn = 'min-w-8 rounded-md border px-2 py-1 text-sm transition-colors disabled:opacity-40';
   return (
-    <div data-testid="pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3">
-      <span data-testid="pagination-summary" class="text-xs text-stone-500">
+    <div data-testid={testid} class={cls ?? 'mt-4 flex flex-wrap items-center justify-between gap-3'}>
+      <span data-testid={`${testid}-summary`} class="text-xs text-stone-500">
         {from.toLocaleString()}–{to.toLocaleString()} of {total.toLocaleString()}
       </span>
-      <div class="flex items-center gap-1">
-        <button
-          data-testid="page-prev"
-          class={`${btn} border-stone-300 hover:border-brand-400`}
-          disabled={page <= 1}
-          aria-label="Previous page"
-          onClick={() => onPage(page - 1)}
-        >
-          ‹
-        </button>
-        {nums.map((n, i) => {
-          const gap = i > 0 && n - nums[i - 1]! > 1;
-          return (
-            <span key={n} class="flex items-center gap-1">
-              {gap ? <span class="px-1 text-stone-400">…</span> : null}
-              <button
-                data-testid="page-number"
-                data-page={n}
-                aria-current={n === page ? 'page' : undefined}
-                class={`${btn} ${
-                  n === page ? 'border-brand-500 bg-brand-500 font-semibold text-white' : 'border-stone-300 hover:border-brand-400'
-                }`}
-                onClick={() => onPage(n)}
-              >
-                {n}
-              </button>
-            </span>
-          );
-        })}
-        <button
-          data-testid="page-next"
-          class={`${btn} border-stone-300 hover:border-brand-400`}
-          disabled={page >= pageCount}
-          aria-label="Next page"
-          onClick={() => onPage(page + 1)}
-        >
-          ›
-        </button>
-      </div>
+      {multi ? (
+        <div class="flex items-center gap-1">
+          <button
+            data-testid={`${testid}-prev`}
+            class={`${btn} border-stone-300 hover:border-brand-400`}
+            disabled={page <= 1}
+            aria-label="Previous page"
+            onClick={() => onPage(page - 1)}
+          >
+            ‹
+          </button>
+          {nums.map((n, i) => {
+            const gap = i > 0 && n - nums[i - 1]! > 1;
+            return (
+              <span key={n} class="flex items-center gap-1">
+                {gap ? <span class="px-1 text-stone-400">…</span> : null}
+                <button
+                  data-testid={`${testid}-number`}
+                  data-page={n}
+                  aria-current={n === page ? 'page' : undefined}
+                  class={`${btn} ${
+                    n === page ? 'border-brand-500 bg-brand-500 font-semibold text-white' : 'border-stone-300 hover:border-brand-400'
+                  }`}
+                  onClick={() => onPage(n)}
+                >
+                  {n}
+                </button>
+              </span>
+            );
+          })}
+          <button
+            data-testid={`${testid}-next`}
+            class={`${btn} border-stone-300 hover:border-brand-400`}
+            disabled={page >= pageCount}
+            aria-label="Next page"
+            onClick={() => onPage(page + 1)}
+          >
+            ›
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

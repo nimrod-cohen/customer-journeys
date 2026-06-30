@@ -32,27 +32,32 @@ test('broadcasts list pages through 60+ rows and searches server-side across pag
   await page.getByTestId('nav-broadcasts').click();
   await page.getByTestId('broadcast-composer').waitFor();
 
-  // Page 1: exactly 50 rows, and the summary reads "1–50 of N" (N ≥ 60).
+  // Page 1: exactly 50 rows. The TOP summary (always shown) reads "1–50 of N" (N ≥ 60),
+  // and the same count appears at the BOTTOM. Counts + paging show top AND bottom.
   await expect(page.getByTestId('broadcast-item')).toHaveCount(50);
-  const summary = page.getByTestId('pagination-summary');
-  await expect(summary).toContainText(/^1–50 of \d+/);
-  const total = Number((await summary.textContent())!.replace(/.*of\s+([\d,]+).*/, '$1').replace(/,/g, ''));
+  const topSummary = page.getByTestId('pagination-top-summary');
+  await expect(topSummary).toContainText(/^1–50 of \d+/);
+  await expect(page.getByTestId('pagination-summary')).toContainText(/^1–50 of \d+/); // bottom
+  const total = Number((await topSummary.textContent())!.replace(/.*of\s+([\d,]+).*/, '$1').replace(/,/g, ''));
   expect(total).toBeGreaterThanOrEqual(60);
 
-  // Go to page 2 via Next → the remaining rows; summary advances to "51–…".
-  await page.getByTestId('page-next').click();
-  await expect(summary).toContainText(/^51–/);
+  // Go to page 2 via the TOP Next → the remaining rows; both summaries advance to "51–…".
+  await page.getByTestId('pagination-top-next').click();
+  await expect(topSummary).toContainText(/^51–/);
   await expect(page.getByTestId('broadcast-item')).toHaveCount(total - 50);
 
-  // Back to page 1 via the page-1 number button.
-  await page.getByTestId('page-number').filter({ hasText: /^1$/ }).first().click();
-  await expect(summary).toContainText(/^1–50/);
+  // Back to page 1 via the BOTTOM page-1 number button (proves both controls drive paging).
+  await page.getByTestId('pagination-number').filter({ hasText: /^1$/ }).first().click();
+  await expect(topSummary).toContainText(/^1–50/);
 
   // Server-side search finds the needle even though it's on a later page (created last →
   // oldest → would be on page 2 without search). One match, paging collapses to one page.
   await page.getByTestId('broadcast-search').fill('zzz-needle');
   await expect(page.getByTestId('broadcast-item')).toHaveCount(1);
   await expect(page.getByTestId('broadcast-item').first()).toContainText('zzz-needle');
-  // A single result ⇒ the pagination control hides (≤ 1 page).
+  // A single result ⇒ the TOP still shows the count ("1–1 of 1") but the nav buttons are
+  // gone, and the BOTTOM control hides entirely (≤ 1 page).
+  await expect(topSummary).toContainText('1–1 of 1');
+  await expect(page.getByTestId('pagination-top-next')).toHaveCount(0);
   await expect(page.getByTestId('pagination')).toHaveCount(0);
 });

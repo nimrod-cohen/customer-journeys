@@ -773,12 +773,21 @@ export function ProfileExplorer() {
             ) : (
               <span class="text-ink-900">
                 <strong>{filterSize.toLocaleString()}</strong> matching profile{filterSize === 1 ? '' : 's'}
-                {filterSize > 200 ? ' (showing the first 200)' : ''}
               </span>
             )}
           </p>
         </Card>
       ) : null}
+
+      <Pagination
+        testid="pagination-top"
+        alwaysShowSummary
+        class="mb-3 flex flex-wrap items-center justify-between gap-3"
+        page={page}
+        pageSize={PROFILE_PAGE_SIZE}
+        total={total}
+        onPage={setPage}
+      />
 
       <Card class="overflow-x-auto">
         <table class="w-full text-sm">
