@@ -519,3 +519,83 @@ export function EmptyState({ children }: { children: ComponentChildren }): JSX.E
     </div>
   );
 }
+
+/**
+ * Numbered-page pagination control: "1–50 of 1,000" + ‹ Prev · page numbers · Next ›.
+ * Controlled — the owner holds `page` and reloads on `onPage`. Renders nothing when
+ * there's a single page (or none). Shows a windowed set of page buttons around the
+ * current page so the control stays compact at large totals.
+ */
+export function Pagination({
+  page,
+  pageSize,
+  total,
+  onPage,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPage: (page: number) => void;
+}): JSX.Element | null {
+  const pageCount = Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
+  if (pageCount <= 1) return null;
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(total, page * pageSize);
+  // A compact window of page numbers around the current page (±2), always incl. 1 + last.
+  const nums: number[] = [];
+  const push = (n: number): void => {
+    if (n >= 1 && n <= pageCount && !nums.includes(n)) nums.push(n);
+  };
+  push(1);
+  for (let n = page - 2; n <= page + 2; n++) push(n);
+  push(pageCount);
+  nums.sort((a, b) => a - b);
+
+  const btn = 'min-w-8 rounded-md border px-2 py-1 text-sm transition-colors disabled:opacity-40';
+  return (
+    <div data-testid="pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <span data-testid="pagination-summary" class="text-xs text-stone-500">
+        {from.toLocaleString()}–{to.toLocaleString()} of {total.toLocaleString()}
+      </span>
+      <div class="flex items-center gap-1">
+        <button
+          data-testid="page-prev"
+          class={`${btn} border-stone-300 hover:border-brand-400`}
+          disabled={page <= 1}
+          aria-label="Previous page"
+          onClick={() => onPage(page - 1)}
+        >
+          ‹
+        </button>
+        {nums.map((n, i) => {
+          const gap = i > 0 && n - nums[i - 1]! > 1;
+          return (
+            <span key={n} class="flex items-center gap-1">
+              {gap ? <span class="px-1 text-stone-400">…</span> : null}
+              <button
+                data-testid="page-number"
+                data-page={n}
+                aria-current={n === page ? 'page' : undefined}
+                class={`${btn} ${
+                  n === page ? 'border-brand-500 bg-brand-500 font-semibold text-white' : 'border-stone-300 hover:border-brand-400'
+                }`}
+                onClick={() => onPage(n)}
+              >
+                {n}
+              </button>
+            </span>
+          );
+        })}
+        <button
+          data-testid="page-next"
+          class={`${btn} border-stone-300 hover:border-brand-400`}
+          disabled={page >= pageCount}
+          aria-label="Next page"
+          onClick={() => onPage(page + 1)}
+        >
+          ›
+        </button>
+      </div>
+    </div>
+  );
+}

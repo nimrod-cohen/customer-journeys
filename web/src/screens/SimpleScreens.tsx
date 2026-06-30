@@ -15,6 +15,7 @@ import {
   Field,
   Input,
   PageHeader,
+  Pagination,
   Select,
   Sparkline,
   Stat,
@@ -310,6 +311,11 @@ export function ProfileExplorer() {
   const [filterGroups, setFilterGroups] = useState<RuleGroup[]>([]);
   const [filterSize, setFilterSize] = useState<number | null>(null);
   const [filterErr, setFilterErr] = useState('');
+  // Server-side numbered paging: total matching count + the current page. `q` (search)
+  // is now applied SERVER-SIDE so it spans the whole table, not just the loaded page.
+  const PROFILE_PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   // Manual "add profile" drawer state. Email is the identity key (required);
   // any other id (e.g. external_id) is just another attribute.
   const [adding, setAdding] = useState(false);
@@ -424,41 +430,52 @@ export function ProfileExplorer() {
     void api.get<{ segments: SegmentOption[] }>('/segments').then((r) => setSegments(r.segments));
   }, []);
   const [importing, setImporting] = useState(false);
-  const reloadProfiles = async () => {
+  const reloadProfiles = async (toPage = page) => {
     // The advanced rule filter (when it has conditions) is the source of truth — it
     // compiles server-side (workspace_id = $1) and can express attribute/event AND
-    // segment-membership criteria, so it supersedes the single-segment dropdown.
+    // segment-membership criteria, so it supersedes the single-segment dropdown. Both
+    // paths are SERVER-PAGED + SERVER-SEARCHED (q spans the whole table).
     const group = { combinator: filterCombinator, rows: filterRows, groups: filterGroups };
     const filterAst = groupHasCriteria(group) ? buildAstFromGroup(group) : null;
     if (filterAst !== null) {
       try {
-        const r = await api.post<{ profiles: Profile[]; size: number }>('/profiles/query', {
-          body: { definition: filterAst },
+        const r = await api.post<{ profiles: Profile[]; size: number; total: number }>('/profiles/query', {
+          body: { definition: filterAst, page: toPage, limit: PROFILE_PAGE_SIZE, q: q.trim() },
         });
         setProfiles(r.profiles);
         setFilterSize(r.size);
+        setTotal(r.total);
         setFilterErr('');
       } catch (e) {
         setProfiles([]);
         setFilterSize(null);
+        setTotal(0);
         setFilterErr((e as { error?: string })?.error ?? 'Could not apply the filter.');
       }
       return;
     }
     setFilterSize(null);
     setFilterErr('');
-    const opts = segmentId ? { query: { segment_id: segmentId } } : undefined;
-    const r = await api.get<{ profiles: Profile[] }>('/profiles', opts);
+    const query: Record<string, string> = { page: String(toPage), limit: String(PROFILE_PAGE_SIZE) };
+    if (segmentId) query.segment_id = segmentId;
+    if (q.trim()) query.q = q.trim();
+    const r = await api.get<{ profiles: Profile[]; total: number }>('/profiles', { query });
     setProfiles(r.profiles);
+    setTotal(r.total);
   };
-  // Reload whenever the segment filter OR the advanced rule changes. Debounced so
-  // editing the rule live updates the list (server-side); text search stays
-  // client-side on top of the result.
+  // Reload whenever the segment filter, advanced rule, search, OR page changes. Changing
+  // a filter/search resets to page 1 (a separate effect); this one fetches. Debounced so
+  // editing the rule / typing live-updates the list server-side.
   useEffect(() => {
     const t = setTimeout(() => void reloadProfiles(), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segmentId, filterRows, filterCombinator, filterGroups]);
+  }, [segmentId, filterRows, filterCombinator, filterGroups, q, page]);
+  // A new filter/search/segment always starts at page 1.
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segmentId, filterRows, filterCombinator, filterGroups, q]);
 
   const createProfile = async () => {
     setAddError('');
@@ -474,9 +491,8 @@ export function ProfileExplorer() {
       // Stay on the list: close the drawer and refresh so the new row appears,
       // and refresh the attribute-key picker (a new attribute may have been added).
       setAdding(false);
-      const opts = segmentId ? { query: { segment_id: segmentId } } : undefined;
-      const r = await api.get<{ profiles: Profile[] }>('/profiles', opts);
-      setProfiles(r.profiles);
+      await reloadProfiles(1);
+      setPage(1);
       void reloadAttrKeys();
     } catch (e) {
       setAddError((e as { error?: string })?.error ?? 'could not create profile');
@@ -494,14 +510,9 @@ export function ProfileExplorer() {
     setFilterGroups([]);
     setFilterErr('');
   };
-  const needle = q.trim().toLowerCase();
-  const shown = needle
-    ? profiles.filter(
-        (p) =>
-          (p.email ?? '').toLowerCase().includes(needle) ||
-          (p.external_id ?? '').toLowerCase().includes(needle),
-      )
-    : profiles;
+  // Search is applied SERVER-SIDE (spans the whole table, not just the loaded page), so
+  // render the fetched page directly — no client-side narrowing.
+  const shown = profiles;
   return (
     <section data-testid="profile-explorer">
       <PageHeader
@@ -832,15 +843,16 @@ export function ProfileExplorer() {
         {shown.length === 0 ? (
           <div class="p-4">
             <EmptyState>
-              {profiles.length === 0
-                ? segmentId
-                  ? 'No profiles in this segment.'
-                  : 'No profiles yet.'
-                : 'No profiles match your search.'}
+              {q.trim()
+                ? 'No profiles match your search.'
+                : segmentId || filterActive
+                  ? 'No profiles match this filter.'
+                  : 'No profiles yet.'}
             </EmptyState>
           </div>
         ) : null}
       </Card>
+      <Pagination page={page} pageSize={PROFILE_PAGE_SIZE} total={total} onPage={setPage} />
     </section>
   );
 }

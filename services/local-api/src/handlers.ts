@@ -27,6 +27,7 @@ import {
   type WorkspaceContext,
 } from '@cdp/shared';
 import { scopedQuery, encryptSecret, decryptSecret, isEncryptedSecret } from '@cdp/db';
+import { parsePageParams, pageClause, pageMeta } from './pagination.js';
 
 // Resolve an app user's email from the dev credential fixture (in production this
 // is the Supabase user's email). userId → email for display; email → userId for
@@ -1692,13 +1693,29 @@ export const deleteTextTemplate: Handler = async (ctx, pool, req) => {
   return ok({ deleted: rowCount });
 };
 
-export const listSegments: Handler = async (ctx, pool) => {
-  const q = scopedQuery(
-    ctx.workspaceId,
-    'SELECT id, name, kind, status, definition FROM segments',
+export const listSegments: Handler = async (ctx, pool, req) => {
+  // Paging is OPT-IN (the Segments LIST screen passes ?limit&page&q). When `limit` is
+  // absent the WHOLE list is returned — the segment dropdowns (broadcast audience,
+  // profile filter, campaign IF) depend on getting every segment. Search is server-side.
+  const p = parsePageParams(req.query);
+  const params: unknown[] = [ctx.workspaceId];
+  let where = 'workspace_id = $1';
+  if (p.q) {
+    params.push(`%${p.q}%`);
+    where += ` AND name ILIKE $${params.length}`;
+  }
+  const pc = pageClause(p, params.length + 1);
+  const { rows } = await pool.query(
+    `SELECT id, name, kind, status, definition FROM segments WHERE ${where} ORDER BY name${pc.text}`,
+    [...params, ...pc.values],
   );
-  const { rows } = await pool.query(q.text, q.values);
-  return ok({ segments: rows });
+  // Total = a count when paged (so the UI can render "1–50 of N"); else just the row count.
+  let total = rows.length;
+  if (p.limit !== null) {
+    const c = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM segments WHERE ${where}`, params);
+    total = c.rows[0]?.n ?? 0;
+  }
+  return ok({ segments: rows, ...pageMeta(p, total) });
 };
 
 /** GET /segments/:id — one segment (with its definition) for the editor. Scoped. */
@@ -2208,14 +2225,29 @@ export const createAssetFolder: Handler = async (ctx, pool, req) => {
 // broadcasts (manage_content)
 // ---------------------------------------------------------------------------
 
-export const listBroadcasts: Handler = async (ctx, pool) => {
-  // ORDER BY is appended AFTER scopedQuery builds the WHERE (scopedQuery would
-  // otherwise inject its WHERE after the ORDER BY → invalid SQL).
-  const q = scopedQuery(
-    ctx.workspaceId,
-    'SELECT id, name, status, medium, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz, sent_at, updated_at FROM broadcasts',
+export const listBroadcasts: Handler = async (ctx, pool, req) => {
+  // Opt-in numbered paging + server-side name search (the LIST screen passes ?limit&page&q).
+  // Workspace scoping is explicit ($1) since the query carries ORDER BY/LIMIT/OFFSET that
+  // scopedQuery's WHERE-rewriter can't wrap. The per-broadcast metric aggregates below stay
+  // workspace-wide (cheap, independent of broadcast count) and are joined onto the page rows.
+  const p = parsePageParams(req.query);
+  const params: unknown[] = [ctx.workspaceId];
+  let where = 'workspace_id = $1';
+  if (p.q) {
+    params.push(`%${p.q}%`);
+    where += ` AND name ILIKE $${params.length}`;
+  }
+  const pc = pageClause(p, params.length + 1);
+  const { rows } = await pool.query<Record<string, unknown>>(
+    `SELECT id, name, status, medium, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz, sent_at, updated_at
+       FROM broadcasts WHERE ${where} ORDER BY created_at DESC${pc.text}`,
+    [...params, ...pc.values],
   );
-  const { rows } = await pool.query<Record<string, unknown>>(`${q.text} ORDER BY created_at DESC`, q.values);
+  let total = rows.length;
+  if (p.limit !== null) {
+    const c = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM broadcasts WHERE ${where}`, params);
+    total = c.rows[0]?.n ?? 0;
+  }
 
   // Per-broadcast metrics. Delivered/Failed come from SES feedback (email_events
   // joined to messages_log by ses_message_id); Clicked sums our tracked-link hits.
@@ -2288,7 +2320,7 @@ export const listBroadcasts: Handler = async (ctx, pool) => {
       },
     };
   });
-  return ok({ broadcasts });
+  return ok({ broadcasts, ...pageMeta(p, total) });
 };
 
 /** GET /broadcasts/:id — one broadcast for the editor (scoped). */
@@ -2791,21 +2823,22 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
 // campaigns (manage_content)
 // ---------------------------------------------------------------------------
 
-export const listCampaigns: Handler = async (ctx, pool) => {
-  // ORDER BY is appended AFTER scopedQuery builds the WHERE (scopedQuery anchors
-  // the workspace_id clause at the tail when the fragment has no WHERE of its own).
-  // `published` (active_version_id IS NOT NULL) lets the UI choose Delete (a
-  // never-published draft) vs Archive (a published campaign — history, never
-  // hard-deleted). It rides the same workspace-scoped SELECT.
-  // `hasDraft` mirrors getCampaign: an unsaved draft exists when draft_definition
-  // is NOT NULL and differs from the live definition (a no-op draft reads as none).
-  // It (and status === 'draft') drives the list's "Publish…" affordance.
-  const q = scopedQuery(
-    ctx.workspaceId,
-    `SELECT id, name, status, (active_version_id IS NOT NULL) AS published,
-            (draft_definition IS NOT NULL AND draft_definition::text IS DISTINCT FROM definition::text) AS "hasDraft"
-     FROM campaigns`,
-  );
+export const listCampaigns: Handler = async (ctx, pool, req) => {
+  // Opt-in numbered paging + server-side name search (the LIST screen passes ?limit&page&q).
+  // `published` (active_version_id IS NOT NULL) lets the UI choose Delete (a never-published
+  // draft) vs Archive (a published campaign). `hasDraft` mirrors getCampaign (an unsaved
+  // draft differing from live) and drives the "Publish…" affordance. Explicit workspace
+  // scoping ($1) since the query carries ORDER BY/LIMIT/OFFSET.
+  const p = parsePageParams(req.query);
+  // Archived campaigns drop from the default list (filtered SERVER-SIDE so paging totals
+  // are consistent — a page is never silently shrunk by a client-side archived filter).
+  const params: unknown[] = [ctx.workspaceId];
+  let where = "workspace_id = $1 AND status <> 'archived'";
+  if (p.q) {
+    params.push(`%${p.q}%`);
+    where += ` AND name ILIKE $${params.length}`;
+  }
+  const pc = pageClause(p, params.length + 1);
   const { rows } = await pool.query<{
     id: string;
     name: string;
@@ -2813,9 +2846,16 @@ export const listCampaigns: Handler = async (ctx, pool) => {
     published: boolean;
     hasDraft: boolean;
   }>(
-    `${q.text} ORDER BY created_at DESC`,
-    q.values,
+    `SELECT id, name, status, (active_version_id IS NOT NULL) AS published,
+            (draft_definition IS NOT NULL AND draft_definition::text IS DISTINCT FROM definition::text) AS "hasDraft"
+       FROM campaigns WHERE ${where} ORDER BY created_at DESC${pc.text}`,
+    [...params, ...pc.values],
   );
+  let total = rows.length;
+  if (p.limit !== null) {
+    const c = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM campaigns WHERE ${where}`, params);
+    total = c.rows[0]?.n ?? 0;
+  }
   // Per-campaign enrollment counts in ONE workspace-scoped round-trip: GROUP BY
   // (campaign_id, status) over campaign_enrollments, then fold into {active,
   // completed, exited, failed} (defaulting all-zero) via the pure shaper. Scoped
@@ -2830,7 +2870,7 @@ export const listCampaigns: Handler = async (ctx, pool) => {
   const byCampaign = campaignCountsShape(countRows);
   const zero = { active: 0, completed: 0, exited: 0, failed: 0 };
   const campaigns = rows.map((c) => ({ ...c, counts: byCampaign[c.id] ?? zero }));
-  return ok({ campaigns });
+  return ok({ campaigns, ...pageMeta(p, total) });
 };
 
 /**
@@ -3550,69 +3590,78 @@ export const listCampaignEnrollments: Handler = async (ctx, pool, req) => {
 // profiles (manage_content)
 // ---------------------------------------------------------------------------
 
+/** The profile row shape returned by every profiles list/query path (alias `p`). */
+const PROFILE_COLS = `p.id, p.external_id, p.email, p.email_status, p.created_at,
+                floor(extract(epoch from p.created_at) * 1000)::double precision AS created_at_unix, p.attributes,
+                (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed`;
+
+/** Append a server-side text-search predicate (email/external_id ILIKE) to a profile WHERE,
+ *  binding `%q%` as the next param. Returns the new WHERE text (unchanged when q is blank). */
+function appendProfileSearch(q: string, whereText: string, values: unknown[]): string {
+  if (!q) return whereText;
+  values.push(`%${q}%`);
+  return `${whereText} AND (p.email ILIKE $${values.length} OR p.external_id ILIKE $${values.length})`;
+}
+
+/** Run one PAGE of a profile query (count + page) over `FROM <fromJoin> WHERE <whereText>`.
+ *  Shared by every profiles path so paging/total/ordering are identical. */
+async function runProfilePage(
+  pool: Pool,
+  p: ReturnType<typeof parsePageParams>,
+  fromJoin: string,
+  whereText: string,
+  whereValues: unknown[],
+): Promise<{ profiles: unknown[]; total: number }> {
+  const pc = pageClause(p, whereValues.length + 1);
+  const { rows } = await pool.query(
+    `SELECT ${PROFILE_COLS} FROM ${fromJoin} WHERE ${whereText} ORDER BY p.created_at DESC${pc.text}`,
+    [...whereValues, ...pc.values],
+  );
+  let total = rows.length;
+  if (p.limit !== null) {
+    const c = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${fromJoin} WHERE ${whereText}`, whereValues);
+    total = c.rows[0]?.n ?? 0;
+  }
+  return { profiles: rows, total };
+}
+
 export const listProfiles: Handler = async (ctx, pool, req) => {
-  // Optional ?segment_id=… narrows to that segment's members. Both the profile
-  // AND the membership are scoped to the token's workspace (workspace_id = $1),
-  // so a cross-workspace segment id can never surface another tenant's profiles.
+  // Numbered paging (default 50/page — profiles are never a dropdown so always bounded) +
+  // server-side text search (?q, email/external_id) + optional ?segment_id membership filter.
+  // Every path is workspace-scoped ($1) — a cross-workspace segment id surfaces nothing.
+  const p = parsePageParams(req.query, 50);
   const segmentId = req.query.segment_id;
   if (segmentId) {
-    // Resolve the segment first (scoped) — its kind decides the source of truth.
-    // A dynamic (rule-based) segment is evaluated LIVE via the §8 compiler (the
-    // same source the size preview uses), so the filter reflects who matches the
-    // rule right now — not whatever the evaluator last materialized. A manual
-    // segment uses its membership rows. A cross-workspace id resolves to nothing.
-    const segQ = scopedQuery(
-      ctx.workspaceId,
-      'SELECT definition FROM segments WHERE id = $1',
-      [segmentId],
-    );
+    const segQ = scopedQuery(ctx.workspaceId, 'SELECT definition FROM segments WHERE id = $1', [segmentId]);
     const seg = await pool.query(segQ.text, segQ.values);
-    if (!seg.rows[0]) return ok({ profiles: [] });
+    if (!seg.rows[0]) return ok({ profiles: [], ...pageMeta(p, 0) });
     const definition = (seg.rows[0].definition ?? null) as AstNode | null;
 
     if (definition) {
-      // Dynamic: profiles currently matching the rule (workspace_id is $1, bound
-      // structurally by the compiler — can never match another tenant).
+      // Dynamic: profiles currently matching the rule (compiler binds workspace_id at $1).
       const where = compileWhere(ctx.workspaceId, definition);
-      const { rows } = await pool.query(
-        `SELECT p.id, p.external_id, p.email, p.email_status, p.created_at,
-                floor(extract(epoch from p.created_at) * 1000)::double precision AS created_at_unix, p.attributes,
-                (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed
-           FROM profiles p
-           LEFT JOIN profile_features pf ON pf.profile_id = p.id
-          WHERE ${where.text}
-          ORDER BY p.created_at DESC
-          LIMIT 200`,
-        where.values,
-      );
-      return ok({ profiles: rows });
+      const values = [...where.values];
+      const whereText = appendProfileSearch(p.q, where.text, values);
+      const res = await runProfilePage(pool, p, 'profiles p LEFT JOIN profile_features pf ON pf.profile_id = p.id', whereText, values);
+      return ok({ profiles: res.profiles, ...pageMeta(p, res.total) });
     }
-
     // Manual (no rule): the materialized membership rows.
-    const { rows } = await pool.query(
-      `SELECT p.id, p.external_id, p.email, p.email_status, p.created_at,
-                floor(extract(epoch from p.created_at) * 1000)::double precision AS created_at_unix, p.attributes,
-              (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed
-         FROM profiles p
-         JOIN segment_memberships sm
-           ON sm.profile_id = p.id AND sm.workspace_id = p.workspace_id
-        WHERE p.workspace_id = $1 AND sm.segment_id = $2
-        ORDER BY p.created_at DESC
-        LIMIT 200`,
-      [ctx.workspaceId, segmentId],
+    const values: unknown[] = [ctx.workspaceId, segmentId];
+    const whereText = appendProfileSearch(p.q, 'p.workspace_id = $1 AND sm.segment_id = $2', values);
+    const res = await runProfilePage(
+      pool,
+      p,
+      'profiles p JOIN segment_memberships sm ON sm.profile_id = p.id AND sm.workspace_id = p.workspace_id',
+      whereText,
+      values,
     );
-    return ok({ profiles: rows });
+    return ok({ profiles: res.profiles, ...pageMeta(p, res.total) });
   }
-  // Explicit workspace_id = $1 scoping (the token's workspace), since this query
-  // carries ORDER BY/LIMIT that scopedQuery's WHERE-rewriter cannot wrap.
-  const { rows } = await pool.query(
-    `SELECT id, external_id, email, email_status, created_at,
-            floor(extract(epoch from created_at) * 1000)::double precision AS created_at_unix, attributes,
-            (attributes ->> 'unsubscribed' = 'true') AS unsubscribed
-       FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200`,
-    [ctx.workspaceId],
-  );
-  return ok({ profiles: rows });
+  // The whole workspace.
+  const values: unknown[] = [ctx.workspaceId];
+  const whereText = appendProfileSearch(p.q, 'p.workspace_id = $1', values);
+  const res = await runProfilePage(pool, p, 'profiles p', whereText, values);
+  return ok({ profiles: res.profiles, ...pageMeta(p, res.total) });
 };
 
 /**
@@ -3623,27 +3672,21 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
  * segments are inlined LIVE (so "is a member of a dynamic segment" reflects who matches
  * NOW), then compiled via `compileWhere` (workspace_id = $1, inv. 6). A null/empty rule →
  * the whole workspace, newest-first. Returns the SAME profile shape as GET /profiles plus
- * a total `size` (so the screen can show "N matching"). Hard LIMIT 200 like the list.
+ * the page rows + a `total` (aliased `size` for the filter panel's live "N matching" count).
+ * Numbered paging via `page`/`limit` in the BODY (default 50/page); optional `q` text search.
  */
 export const queryProfiles: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const definition = b.definition === undefined ? null : (b.definition as AstNode | null);
   const audErr = await validateAudienceRule(pool, ctx.workspaceId, definition);
   if (audErr) return ok({ error: audErr }, 400);
+  // Paging/search come from the body (POST), not the query string.
+  const p = parsePageParams({ limit: b.limit != null ? String(b.limit) : '', page: b.page != null ? String(b.page) : '', q: typeof b.q === 'string' ? b.q : '' }, 50);
   const where = compileWhere(ctx.workspaceId, await liveAudienceAst(pool, ctx.workspaceId, definition));
-  const cols = `p.id, p.external_id, p.email, p.email_status, p.created_at,
-                floor(extract(epoch from p.created_at) * 1000)::double precision AS created_at_unix, p.attributes,
-                (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed`;
-  const { rows } = await pool.query(
-    `SELECT ${cols} FROM profiles p LEFT JOIN profile_features pf ON pf.profile_id = p.id
-      WHERE ${where.text} ORDER BY p.created_at DESC LIMIT 200`,
-    where.values,
-  );
-  const countRes = await pool.query<{ size: number }>(
-    `SELECT count(*)::int AS size FROM profiles p LEFT JOIN profile_features pf ON pf.profile_id = p.id WHERE ${where.text}`,
-    where.values,
-  );
-  return ok({ profiles: rows, size: countRes.rows[0]?.size ?? 0 });
+  const values = [...where.values];
+  const whereText = appendProfileSearch(p.q, where.text, values);
+  const res = await runProfilePage(pool, p, 'profiles p LEFT JOIN profile_features pf ON pf.profile_id = p.id', whereText, values);
+  return ok({ profiles: res.profiles, size: res.total, ...pageMeta(p, res.total) });
 };
 
 /**

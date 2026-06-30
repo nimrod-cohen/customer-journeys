@@ -3,11 +3,11 @@
 // and editing happen on a DESIGNATED screen (SegmentBuilder at /segments/new and
 // /segments/:id); this screen is read-only + navigation. It re-fetches on mount,
 // so returning here after a save always shows the latest list (reactive).
-import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
 import { useStore } from '../store/store.js';
 import { navigate } from '../router.js';
-import { Badge, Button, Card, EmptyState, Input, PageHeader, toneFor } from '../ui/kit.js';
+import { Badge, Button, Card, EmptyState, Input, PageHeader, Pagination, toneFor } from '../ui/kit.js';
+import { usePagedList } from '../ui/usePagedList.js';
 
 interface Segment {
   id: string;
@@ -17,32 +17,20 @@ interface Segment {
 }
 
 export function SegmentsList() {
-  const [segments, setSegments] = useState<Segment[]>([]);
-  const [q, setQ] = useState('');
   // Re-fetch on the active workspace too: switching workspaces must re-scope the
   // list in place (the route stays /segments, so this screen does not remount).
   const session = useStore(sessionStore);
-  useEffect(() => {
-    let cancelled = false;
-    if (!session.workspaceId) {
-      setSegments([]);
-      return;
-    }
-    void api
-      .get<{ segments: Segment[] }>('/segments')
-      .then((r) => {
-        if (!cancelled) setSegments(r.segments);
-      })
-      .catch(() => {
-        if (!cancelled) setSegments([]);
+  const list = usePagedList<Segment>(
+    async ({ limit, page, q }) => {
+      if (!session.workspaceId) return { rows: [], total: 0 };
+      const r = await api.get<{ segments: Segment[]; total: number }>('/segments', {
+        query: { limit: String(limit), page: String(page), q },
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [session.workspaceId]);
-
-  const needle = q.trim().toLowerCase();
-  const shown = needle ? segments.filter((s) => s.name.toLowerCase().includes(needle)) : segments;
+      return { rows: r.segments, total: r.total };
+    },
+    { deps: [session.workspaceId] },
+  );
+  const shown = list.rows;
 
   return (
     <section data-testid="segments-list">
@@ -61,8 +49,8 @@ export function SegmentsList() {
           data-testid="segment-search"
           type="search"
           placeholder="Search segments by name…"
-          value={q}
-          onInput={(e: Event) => setQ((e.target as HTMLInputElement).value)}
+          value={list.q}
+          onInput={(e: Event) => list.setQ((e.target as HTMLInputElement).value)}
         />
       </div>
 
@@ -111,11 +99,12 @@ export function SegmentsList() {
         {shown.length === 0 ? (
           <div class="p-4">
             <EmptyState>
-              {segments.length === 0 ? 'No segments yet — create your first.' : 'No segments match your search.'}
+              {list.q ? 'No segments match your search.' : 'No segments yet — create your first.'}
             </EmptyState>
           </div>
         ) : null}
       </Card>
+      <Pagination page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} />
     </section>
   );
 }

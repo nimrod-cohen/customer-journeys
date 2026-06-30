@@ -8,7 +8,8 @@ import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { takeReturnedTemplate, takeReturnedTo } from '../store/editorReturn.js';
 import { openEmailDesigner } from '../store/emailDesignerDrawer.js';
-import { ActionMenu, Badge, Button, Card, Field, Input, PageHeader, Select, DirectionalTextarea, EmptyState, toneFor } from '../ui/kit.js';
+import { ActionMenu, Badge, Button, Card, Field, Input, PageHeader, Pagination, Select, DirectionalTextarea, EmptyState, toneFor } from '../ui/kit.js';
+import { usePagedList } from '../ui/usePagedList.js';
 import type { ActionMenuItem } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
@@ -147,7 +148,14 @@ function FunnelCell({
 // --- List screen ------------------------------------------------------------
 
 export function BroadcastComposer() {
-  const [broadcasts, setBroadcasts] = useState<Broadcast[] | null>(null);
+  // Server-paged + server-searched list (numbered pages).
+  const list = usePagedList<Broadcast>(async ({ limit, page, q }) => {
+    const b = await api.get<{ broadcasts: Broadcast[]; total: number }>('/broadcasts', {
+      query: { limit: String(limit), page: String(page), q },
+    });
+    return { rows: b.broadcasts, total: b.total };
+  });
+  const broadcasts = list.loaded ? list.rows : null;
   // Sending is refused server-side (409) unless the workspace has a verified
   // sending domain. We learn this up front so we can warn + disable Send rather
   // than letting the user click into the refusal. null = not yet known.
@@ -163,12 +171,8 @@ export function BroadcastComposer() {
     return () => clearInterval(t);
   }, []);
 
-  const reload = async () => {
-    const b = await api.get<{ broadcasts: Broadcast[] }>('/broadcasts');
-    setBroadcasts(b.broadcasts);
-  };
+  const reload = async () => list.reload();
   useEffect(() => {
-    void reload();
     void api
       .get<{ domains: Array<{ verified: boolean }> }>('/sending-domains')
       .then((r) => setHasVerifiedDomain(r.domains.some((d) => d.verified)))
@@ -261,6 +265,16 @@ export function BroadcastComposer() {
           </button>
         </div>
       ) : null}
+
+      <div class="mb-4 max-w-sm">
+        <Input
+          data-testid="broadcast-search"
+          type="search"
+          placeholder="Search broadcasts by name…"
+          value={list.q}
+          onInput={(e: Event) => list.setQ((e.target as HTMLInputElement).value)}
+        />
+      </div>
 
       {broadcasts === null ? (
         <p class="text-sm text-stone-500">Loading…</p>
@@ -382,10 +396,11 @@ export function BroadcastComposer() {
         </ul>
       ) : (
         <div data-testid="broadcast-list">
-          <EmptyState>No broadcasts yet — create one with “New broadcast”.</EmptyState>
+          <EmptyState>{list.q ? 'No broadcasts match your search.' : 'No broadcasts yet — create one with “New broadcast”.'}</EmptyState>
         </div>
       )}
 
+      <Pagination page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} />
     </section>
   );
 }

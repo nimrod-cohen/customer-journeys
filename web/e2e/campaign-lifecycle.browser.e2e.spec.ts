@@ -29,7 +29,9 @@ async function buildSendableCampaign(page: import('@playwright/test').Page, name
   const drawer = page.getByTestId('node-editor-send');
   await drawer.getByTestId('send-template-pick').selectOption({ label: 'Welcome' });
   await drawer.getByTestId('send-attach-template').click();
-  // The drawer closes once the copy is attached.
+  // After attaching, the editor STAYS OPEN showing the email instance; close it explicitly.
+  await expect(drawer.getByTestId('send-email-instance')).toBeVisible();
+  await drawer.getByTestId('drawer-close').click();
   await expect(drawer).toBeHidden();
 }
 

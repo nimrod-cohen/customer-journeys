@@ -19,7 +19,8 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
-import { Badge, Button, Card, Input, PageHeader, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
+import { Badge, Button, Card, Input, PageHeader, Pagination, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
+import { usePagedList } from '../ui/usePagedList.js';
 import type { ActionMenuItem } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.js';
 import { showToast } from '../ui/toast.js';
@@ -110,19 +111,20 @@ const ARCHIVED = 'archived';
 // --- The LIST page -----------------------------------------------------------
 
 export function CampaignsList() {
-  const [campaigns, setCampaigns] = useState<CampaignListItem[] | null>(null);
+  // Server-paged + server-searched (numbered pages). Archived campaigns are filtered
+  // SERVER-SIDE now (so paging totals are correct), so the client no longer drops them.
+  const list = usePagedList<CampaignListItem>(async ({ limit, page, q }) => {
+    const c = await api.get<{ campaigns: CampaignListItem[]; total: number }>('/campaigns', {
+      query: { limit: String(limit), page: String(page), q },
+    });
+    return { rows: c.campaigns, total: c.total };
+  });
+  const campaigns = list.loaded ? list.rows : null;
+  const reload = async (): Promise<void> => list.reload();
   // The campaign whose "Publish…" dialog is open (its def decides backfill), plus a
   // publish-gate reason surfaced inline in the same modal the detail screen uses.
   const [publishing, setPublishing] = useState<{ id: string; name: string; canBackfill: boolean } | null>(null);
   const [publishReason, setPublishReason] = useState('');
-
-  const reload = async (): Promise<void> => {
-    const c = await api.get<{ campaigns: CampaignListItem[] }>('/campaigns');
-    setCampaigns(c.campaigns);
-  };
-  useEffect(() => {
-    void reload();
-  }, []);
 
   // Lifecycle transitions — each RETURNS its promise so the ActionMenu spins +
   // locks the item until the response (no double-submits). Archive is confirmed
@@ -166,7 +168,7 @@ export function CampaignsList() {
     if (!ok) return;
     try {
       await api.del(`/campaigns/${id}`);
-      setCampaigns((prev) => (prev ?? []).filter((c) => c.id !== id));
+      await reload();
       showToast('Campaign deleted.', { tone: 'success' });
     } catch (e) {
       showToast((e as { error?: string })?.error ?? 'Could not delete the campaign.', { tone: 'error' });
@@ -213,6 +215,7 @@ export function CampaignsList() {
     }
   };
 
+  // Archived are already excluded server-side; keep the guard as defense-in-depth.
   const visible = (campaigns ?? []).filter((c) => c.status !== ARCHIVED);
 
   return (
@@ -226,6 +229,16 @@ export function CampaignsList() {
           </Button>
         }
       />
+
+      <div class="mb-4 max-w-sm">
+        <Input
+          data-testid="campaign-search"
+          type="search"
+          placeholder="Search campaigns by name…"
+          value={list.q}
+          onInput={(e: Event) => list.setQ((e.target as HTMLInputElement).value)}
+        />
+      </div>
 
       {campaigns === null ? (
         <p class="text-sm text-stone-500">Loading…</p>
@@ -347,9 +360,11 @@ export function CampaignsList() {
         </ul>
       ) : (
         <div data-testid="campaign-list">
-          <EmptyState>No campaigns yet — create one with “New campaign”.</EmptyState>
+          <EmptyState>{list.q ? 'No campaigns match your search.' : 'No campaigns yet — create one with “New campaign”.'}</EmptyState>
         </div>
       )}
+
+      <Pagination page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} />
 
       {/* Publish from the list — the same modal the detail builder uses. */}
       {publishing ? (

@@ -33,6 +33,9 @@ async function createDraftCampaign(page: Page, name: string): Promise<void> {
   const drawer = page.getByTestId('node-editor-send');
   await drawer.getByTestId('send-template-pick').selectOption({ label: 'Welcome' });
   await drawer.getByTestId('send-attach-template').click();
+  // After attaching, the editor STAYS OPEN showing the email instance; close it explicitly.
+  await expect(drawer.getByTestId('send-email-instance')).toBeVisible();
+  await drawer.getByTestId('drawer-close').click();
   await expect(drawer).toBeHidden();
 
   await page.getByTestId('campaigns-back').click();
