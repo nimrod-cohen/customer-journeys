@@ -14,7 +14,14 @@
 //   - all sends go through the Dispatcher (we only enqueue outbox ids); we never
 //     re-implement suppression/cap/quiet-hours here.
 import type { SendMessageCommand } from '@aws-sdk/client-sqs';
-import { resolveAudience, buildSegmentMatch, type AstNode } from '@cdp/segments';
+import {
+  resolveAudience,
+  buildSegmentMatch,
+  collectAudienceSegmentIds,
+  inlineDynamicSegments,
+  type AstNode,
+  type AudienceSegmentDef,
+} from '@cdp/segments';
 import {
   buildBroadcastOutboxInsert,
   buildBroadcastStatusUpdate,
@@ -62,8 +69,10 @@ interface BroadcastRow {
   readonly id: string;
   readonly workspace_id: string;
   readonly template_id: string | null;
-  readonly audience_kind: string;
-  readonly audience_ref: string;
+  readonly audience_kind: string | null;
+  readonly audience_ref: string | null;
+  /** The comprehensive audience RULE (§8 AST). When set it supersedes audience_ref. */
+  readonly audience: AstNode | null;
   readonly scheduled_at: string | Date | null;
   readonly status: string;
   /** The sending channel (email default; sms/whatsapp for text broadcasts). */
@@ -87,7 +96,7 @@ export async function runBroadcast(
 ): Promise<RunBroadcastResult> {
   // 1. Load the broadcast row. workspace_id comes FROM the row (CLAUDE.md inv.2).
   const { rows } = await deps.reader.query<BroadcastRow>(
-    `SELECT id, workspace_id, template_id, audience_kind, audience_ref, scheduled_at, status, medium, text_body
+    `SELECT id, workspace_id, template_id, audience_kind, audience_ref, audience, scheduled_at, status, medium, text_body
      FROM broadcasts WHERE id = $1`,
     [broadcastId],
   );
@@ -138,29 +147,51 @@ export async function runBroadcast(
   // 'sending' (uneditable AND unsendable). Then re-throw so the caller surfaces
   // the real error.
   try {
-    // 4. Resolve the audience AT SEND TIME. A DYNAMIC segment is resolved LIVE by
-    //    running its compiled rule now (so time-windowed audiences are exact and we
-    //    don't depend on a materialized cache); a MANUAL list reads its curated
-    //    membership rows. audience_ref is a segment_id in both cases.
-    const { rows: segRows } = await deps.reader.query<{ kind: string; definition: AstNode | null }>(
-      `SELECT kind, definition FROM segments WHERE workspace_id = $1 AND id = $2`,
-      [workspaceId, bc.audience_ref],
-    );
-    const seg = segRows[0];
+    // 4. Resolve the audience AT SEND TIME.
     let profileIds: string[];
-    if (seg && seg.kind !== 'manual') {
-      // Dynamic: a null definition is an inactive draft → no audience (never blast all).
-      if (!seg.definition) {
-        profileIds = [];
+    if (bc.audience) {
+      // COMPREHENSIVE RULE (§9A): a segment-style AST mixing attribute/event conditions
+      // with segment-membership leaves (include/exclude) under AND/OR. Resolved LIVE:
+      // DYNAMIC referenced segments are inlined to their rule (so include/exclude reflect
+      // who matches NOW), MANUAL ones stay membership lookups. compileWhere prepends
+      // workspace_id = $1 (inv. 6), so this inherits tenant isolation.
+      const segIds = collectAudienceSegmentIds(bc.audience);
+      const defs = new Map<string, AudienceSegmentDef>();
+      if (segIds.length > 0) {
+        const { rows: defRows } = await deps.reader.query<{ id: string; kind: string; definition: AstNode | null }>(
+          `SELECT id, kind, definition FROM segments WHERE workspace_id = $1 AND id = ANY($2)`,
+          [workspaceId, segIds],
+        );
+        for (const r of defRows) defs.set(r.id, { kind: r.kind, definition: r.definition });
+      }
+      const match = buildSegmentMatch(workspaceId, inlineDynamicSegments(bc.audience, defs));
+      const { rows: matchRows } = await deps.reader.query<{ id: string }>(match.text, match.values);
+      profileIds = matchRows.map((r) => r.id);
+    } else if (bc.audience_ref) {
+      // LEGACY single-segment pointer (back-compat). A DYNAMIC segment is resolved LIVE
+      // by running its compiled rule now; a MANUAL list reads its curated membership rows.
+      const { rows: segRows } = await deps.reader.query<{ kind: string; definition: AstNode | null }>(
+        `SELECT kind, definition FROM segments WHERE workspace_id = $1 AND id = $2`,
+        [workspaceId, bc.audience_ref],
+      );
+      const seg = segRows[0];
+      if (seg && seg.kind !== 'manual') {
+        // Dynamic: a null definition is an inactive draft → no audience (never blast all).
+        if (!seg.definition) {
+          profileIds = [];
+        } else {
+          const match = buildSegmentMatch(workspaceId, seg.definition);
+          const { rows } = await deps.reader.query<{ id: string }>(match.text, match.values);
+          profileIds = rows.map((r) => r.id);
+        }
       } else {
-        const match = buildSegmentMatch(workspaceId, seg.definition);
-        const { rows } = await deps.reader.query<{ id: string }>(match.text, match.values);
-        profileIds = rows.map((r) => r.id);
+        const aud = resolveAudience(workspaceId, bc.audience_ref);
+        const { rows: members } = await deps.reader.query<{ profile_id: string }>(aud.text, aud.values);
+        profileIds = members.map((m) => m.profile_id);
       }
     } else {
-      const aud = resolveAudience(workspaceId, bc.audience_ref);
-      const { rows: members } = await deps.reader.query<{ profile_id: string }>(aud.text, aud.values);
-      profileIds = members.map((m) => m.profile_id);
+      // No audience configured at all → send to nobody (never blast-all).
+      profileIds = [];
     }
 
     // The envelope (subject / From / To) lives on the email instance (template),

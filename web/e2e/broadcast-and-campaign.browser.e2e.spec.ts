@@ -4,7 +4,7 @@
 // campaign builder assembles a trigger→wait→send→exit graph that the server
 // validates and persists. Proven in a real browser against real Postgres.
 import { test, expect } from '@playwright/test';
-import { loginAs } from './helpers.js';
+import { loginAs, pickAudienceSegment } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
 test('create a broadcast via the wizard and Send now sends it immediately', async ({ page }) => {
@@ -18,7 +18,7 @@ test('create a broadcast via the wizard and Send now sends it immediately', asyn
 
   // Step 1 — audience: the seeded manual segment is the first non-empty option.
   await page.getByTestId('broadcast-name').fill('Spring sale');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
   // Step 2 — content: start from a template. Choosing one CLONES it into this
   // broadcast's own email instance — after which the picker is gone (no swapping
@@ -63,7 +63,7 @@ test('duplicate a broadcast, then delete an unsent one from the list', async ({ 
   await page.getByTestId('new-broadcast').click();
   await page.getByTestId('broadcast-wizard').waitFor();
   await page.getByTestId('broadcast-name').fill('Dup source');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('broadcast-template').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
@@ -94,7 +94,7 @@ test('clicking a SENT broadcast opens a read-only email preview', async ({ page 
   await page.getByTestId('broadcast-wizard').waitFor();
 
   await page.getByTestId('broadcast-name').fill('Preview me');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('broadcast-template').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
@@ -121,7 +121,7 @@ test('Save as draft creates a draft — not sent, not scheduled', async ({ page 
   await page.getByTestId('broadcast-wizard').waitFor();
 
   await page.getByTestId('broadcast-name').fill('Draft me');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('broadcast-template').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
@@ -147,7 +147,7 @@ test('edit a scheduled broadcast (rename) — only drafts/scheduled are editable
   await page.getByTestId('new-broadcast').click();
   await page.getByTestId('broadcast-wizard').waitFor();
   await page.getByTestId('broadcast-name').fill('Editable');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('broadcast-template').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
@@ -180,7 +180,7 @@ test('scheduling lets you pick a timezone and round-trips the send time in it', 
   await page.getByTestId('broadcast-wizard').waitFor();
 
   await page.getByTestId('broadcast-name').fill('Tokyo send');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('broadcast-template').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
@@ -217,7 +217,7 @@ test('a broadcast cannot be scheduled sooner than 5 minutes from now', async ({ 
   await page.getByTestId('broadcast-wizard').waitFor();
 
   await page.getByTestId('broadcast-name').fill('Too soon');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('broadcast-template').selectOption({ index: 1 });
   await page.getByTestId('wizard-next').click();
@@ -248,7 +248,7 @@ test('the step breadcrumbs jump to any reachable step (no clicking Next repeated
 
   // Complete Audience → step 2 becomes reachable; jump straight to it.
   await page.getByTestId('broadcast-name').fill('Breadcrumbs');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await expect(page.getByTestId('wizard-step-1')).toBeEnabled();
   await page.getByTestId('wizard-step-1').click();
   await expect(page.getByTestId('broadcast-template')).toBeVisible(); // on Content now
@@ -274,7 +274,7 @@ test('design an email from the broadcast wizard and return with it selected', as
 
   // Step 1 — audience.
   await page.getByTestId('broadcast-name').fill('With design');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
 
   // Step 2 — no email yet, so choose a starting point. "Start from a blank design"
@@ -329,7 +329,7 @@ test('the From is mandatory — the Content step is gated until a sender is inte
   await page.getByTestId('broadcast-wizard').waitFor();
 
   await page.getByTestId('broadcast-name').fill('Needs a sender');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
 
   // Design a blank email with a subject but DON'T choose a From.
@@ -374,7 +374,7 @@ test('returning from the email designer lands back on the Content step (not Audi
 
   // Step 1 — audience, then on to Content.
   await page.getByTestId('broadcast-name').fill('Return to content');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
 
   // Open the blank designer and immediately go Back WITHOUT designing/saving.

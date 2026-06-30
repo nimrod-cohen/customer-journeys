@@ -61,7 +61,10 @@ import {
   removeManualMembers,
   evaluateRealtimeSegmentsForProfile,
   buildSegmentMatch,
+  collectAudienceSegmentIds,
+  inlineDynamicSegments,
   type AstNode,
+  type AudienceSegmentDef,
 } from '@cdp/segments';
 import {
   validateCampaignDefinition,
@@ -2293,12 +2296,34 @@ export const getBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, medium, text_body, topic_id, audience_kind, audience_ref, template_id, scheduled_at, scheduled_tz FROM broadcasts WHERE id = $1',
+    'SELECT id, name, status, medium, text_body, topic_id, audience_kind, audience_ref, audience, template_id, scheduled_at, scheduled_tz FROM broadcasts WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
   if (!rows[0]) return ok({ error: 'not found' }, 404);
   return ok({ broadcast: rows[0] });
+};
+
+/**
+ * POST /broadcasts/audience-preview — a LIVE recipient count + sample for an INLINE
+ * audience rule (§8 AST), used by the wizard before the broadcast is saved. Compiles
+ * the rule with `compileWhere` (workspace_id = $1 always prepended) over
+ * `profiles p LEFT JOIN profile_features pf`. Segment-membership leaves resolve via the
+ * compiler's `EXISTS (segment_memberships …)`; the rule's segment refs are validated to
+ * belong to the workspace (inv. 2). Mirrors `previewSegment`.
+ */
+export const previewBroadcastAudience: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const audience = b.audience === undefined ? null : (b.audience as AstNode | null);
+  const audErr = await validateAudienceRule(pool, ctx.workspaceId, audience);
+  if (audErr) return ok({ error: audErr }, 400);
+  // Resolve dynamic segments LIVE (inlined) so the count matches what will actually send.
+  const where = compileWhere(ctx.workspaceId, await liveAudienceAst(pool, ctx.workspaceId, audience));
+  const countSql = `SELECT count(*)::int AS n FROM profiles p LEFT JOIN profile_features pf ON pf.profile_id = p.id WHERE ${where.text}`;
+  const { rows: countRows } = await pool.query<{ n: number }>(countSql, where.values);
+  const sampleSql = `SELECT p.id, p.email FROM profiles p LEFT JOIN profile_features pf ON pf.profile_id = p.id WHERE ${where.text} ORDER BY p.created_at DESC LIMIT 20`;
+  const { rows: sample } = await pool.query<{ id: string; email: string | null }>(sampleSql, where.values);
+  return ok({ count: countRows[0]?.n ?? 0, sample });
 };
 
 /**
@@ -2321,7 +2346,7 @@ export const previewBroadcast: Handler = async (ctx, pool, req) => {
         sent_at: string | null;
         scheduled_at: string | null;
         scheduled_tz: string | null;
-        audience_kind: string;
+        audience_kind: string | null;
         audience_ref: string | null;
         template_id: string | null;
         medium: string | null;
@@ -2371,7 +2396,9 @@ export const previewBroadcast: Handler = async (ctx, pool, req) => {
   }
 
   let audience = '—';
-  if (b.audience_kind === 'segment' && b.audience_ref) {
+  if (b.audience_kind === 'rule') {
+    audience = 'Custom audience rule';
+  } else if (b.audience_kind === 'segment' && b.audience_ref) {
     const segq = scopedQuery(ctx.workspaceId, 'SELECT name FROM segments WHERE id = $1', [b.audience_ref]);
     const seg = (await pool.query(segq.text, segq.values)).rows[0] as { name: string } | undefined;
     audience = seg?.name ?? '—';
@@ -2434,6 +2461,53 @@ async function validateSenderId(
   return { senderId };
 }
 
+/**
+ * Validate a broadcast audience RULE (§8 AST): shape via `validateAst`, AND every
+ * segment-membership leaf must reference a segment in the TOKEN's workspace (inv. 2 — a
+ * foreign/garbage segment id in the body is rejected, never trusted). Returns an error
+ * message, or null when the audience is absent or valid. The compiled rule itself is
+ * always workspace-scoped at $1 by `compileWhere`; this guard additionally stops a
+ * cross-workspace segment id from being persisted/leaked into the audience.
+ */
+async function validateAudienceRule(
+  pool: Pool,
+  workspaceId: string,
+  audience: unknown,
+): Promise<string | null> {
+  if (audience === null || audience === undefined) return null;
+  try {
+    validateAst(audience as AstNode);
+  } catch (e) {
+    return `invalid audience: ${(e as Error).message}`;
+  }
+  const segIds = collectAudienceSegmentIds(audience as AstNode);
+  if (segIds.length === 0) return null;
+  const q = scopedQuery(workspaceId, 'SELECT id FROM segments WHERE id = ANY($1)', [segIds]);
+  const { rows } = await pool.query<{ id: string }>(q.text, q.values);
+  const found = new Set(rows.map((r) => r.id));
+  const missing = segIds.filter((id) => !found.has(id));
+  if (missing.length > 0) return `unknown segment(s) in audience: ${missing.join(', ')}`;
+  return null;
+}
+
+/**
+ * Rewrite an audience AST so DYNAMIC referenced segments resolve LIVE (their rule inlined),
+ * MANUAL ones via membership — the SAME resolution the send path uses (so a preview count
+ * matches what will actually send). Loads the referenced segments' {kind, definition}
+ * workspace-scoped.
+ */
+async function liveAudienceAst(pool: Pool, workspaceId: string, audience: AstNode | null): Promise<AstNode | null> {
+  if (!audience) return audience;
+  const segIds = collectAudienceSegmentIds(audience);
+  const defs = new Map<string, AudienceSegmentDef>();
+  if (segIds.length > 0) {
+    const q = scopedQuery(workspaceId, 'SELECT id, kind, definition FROM segments WHERE id = ANY($1)', [segIds]);
+    const { rows } = await pool.query<{ id: string; kind: string; definition: AstNode | null }>(q.text, q.values);
+    for (const r of rows) defs.set(r.id, { kind: r.kind, definition: r.definition });
+  }
+  return inlineDynamicSegments(audience, defs);
+}
+
 export const createBroadcast: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
@@ -2451,9 +2525,16 @@ export const createBroadcast: Handler = async (ctx, pool, req) => {
   const topicId = b.topic_id != null ? String(b.topic_id) : null;
   if (topicId && !(await topicBelongsToWorkspace(pool, ctx.workspaceId, topicId)))
     return ok({ error: 'unknown topic' }, 400);
+  // The comprehensive audience RULE (§8 AST). When present it supersedes the legacy
+  // single-segment pointer; audience_kind becomes 'rule' and audience_ref stays null.
+  const audience = b.audience === undefined ? null : (b.audience as AstNode | null);
+  const audErr = await validateAudienceRule(pool, ctx.workspaceId, audience);
+  if (audErr) return ok({ error: audErr }, 400);
+  const audienceKind = audience ? 'rule' : String(b.audience_kind ?? 'segment');
+  const audienceRef = audience ? null : (b.audience_ref ?? null);
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, medium, text_body, template_id, topic_id, audience_kind, audience_ref, scheduled_at, scheduled_tz, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, name, status, medium`,
+    `INSERT INTO broadcasts (workspace_id, name, medium, text_body, template_id, topic_id, audience_kind, audience_ref, audience, scheduled_at, scheduled_tz, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13) RETURNING id, name, status, medium`,
     [
       ctx.workspaceId,
       String(b.name ?? 'Untitled'),
@@ -2461,8 +2542,9 @@ export const createBroadcast: Handler = async (ctx, pool, req) => {
       textBody,
       b.template_id ?? null,
       topicId,
-      String(b.audience_kind ?? 'segment'),
-      b.audience_ref ?? null,
+      audienceKind,
+      audienceRef,
+      audience ? JSON.stringify(audience) : null,
       scheduledAt,
       scheduledTz,
       scheduleStatus(scheduledAt),
@@ -2503,12 +2585,23 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
   const topicId = topicProvided && b.topic_id != null ? String(b.topic_id) : null;
   if (topicId && !(await topicBelongsToWorkspace(pool, ctx.workspaceId, topicId)))
     return ok({ error: 'unknown topic' }, 400);
+  // The comprehensive audience RULE. When the key is present (the new builder always
+  // sends it), a non-null AST takes over: audience set, audience_kind='rule',
+  // audience_ref cleared. Validated (shape + workspace-owned segment refs, inv. 2).
+  const audienceProvided = b.audience !== undefined;
+  const audience = audienceProvided ? (b.audience as AstNode | null) : null;
+  if (audienceProvided) {
+    const audErr = await validateAudienceRule(pool, ctx.workspaceId, audience);
+    if (audErr) return ok({ error: audErr }, 400);
+  }
+  const audienceRule = audienceProvided && audience ? true : false;
   const upd = scopedQuery(
     ctx.workspaceId,
     `UPDATE broadcasts SET
        name = COALESCE($1, name),
-       audience_kind = COALESCE($2, audience_kind),
-       audience_ref = COALESCE($3, audience_ref),
+       audience_kind = CASE WHEN $14 THEN 'rule' ELSE COALESCE($2, audience_kind) END,
+       audience_ref = CASE WHEN $14 THEN NULL ELSE COALESCE($3, audience_ref) END,
+       audience = CASE WHEN $15::boolean THEN $16::jsonb ELSE audience END,
        template_id = $4,
        scheduled_at = $5,
        scheduled_tz = $6,
@@ -2532,6 +2625,9 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
       textBody,
       topicProvided,
       topicId,
+      audienceRule,
+      audienceProvided,
+      audienceProvided && audience ? JSON.stringify(audience) : null,
     ],
   );
   const { rowCount } = await pool.query(upd.text, upd.values);
@@ -2548,15 +2644,16 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const src = scopedQuery(
     ctx.workspaceId,
-    'SELECT name, template_id, audience_kind, audience_ref, medium, text_body, topic_id FROM broadcasts WHERE id = $1',
+    'SELECT name, template_id, audience_kind, audience_ref, audience, medium, text_body, topic_id FROM broadcasts WHERE id = $1',
     [id],
   );
   const b = (await pool.query(src.text, src.values)).rows[0] as
     | {
         name: string;
         template_id: string | null;
-        audience_kind: string;
-        audience_ref: string;
+        audience_kind: string | null;
+        audience_ref: string | null;
+        audience: unknown;
         medium: string;
         text_body: string | null;
         topic_id: string | null;
@@ -2577,14 +2674,15 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
     templateId = t?.id ?? null;
   }
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, medium, text_body, topic_id, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9) RETURNING id, name, status, medium`,
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, audience, medium, text_body, topic_id, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, 'draft', $10) RETURNING id, name, status, medium`,
     [
       ctx.workspaceId,
       `${b.name} (copy)`,
       templateId,
       b.audience_kind,
       b.audience_ref,
+      b.audience ? JSON.stringify(b.audience) : null,
       b.medium,
       b.text_body,
       b.topic_id,
@@ -4856,6 +4954,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'DELETE /asset-folders': deleteAssetFolder,
   'GET /broadcasts': listBroadcasts,
   'POST /broadcasts': createBroadcast,
+  'POST /broadcasts/audience-preview': previewBroadcastAudience,
   'GET /broadcasts/:id': getBroadcast,
   'GET /broadcasts/:id/preview': previewBroadcast,
   'PUT /broadcasts/:id': updateBroadcast,

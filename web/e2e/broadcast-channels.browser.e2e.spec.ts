@@ -6,7 +6,7 @@
 // shows the channel Badge. Email's own flow is asserted unaffected by the existing
 // broadcast spec. Proven in a real browser against real Postgres.
 import { test, expect } from '@playwright/test';
-import { loginAs } from './helpers.js';
+import { loginAs, pickAudienceSegment } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
 test('compose + send an SMS broadcast via the wizard (mock provider, no domain needed)', async ({ page }) => {
@@ -24,7 +24,7 @@ test('compose + send an SMS broadcast via the wizard (mock provider, no domain n
   // segment (index 1; its member a1 has a phone so the send has a recipient).
   await page.getByTestId('broadcast-name').fill(name);
   await page.getByTestId('broadcast-medium').selectOption('sms');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
 
   // Step 2 — Content for a text channel is a plain-text body (NO template picker,
@@ -72,7 +72,7 @@ test('compose + send a WhatsApp broadcast (text body, channel badge)', async ({ 
   const name = `WA blast ${Date.now()}`;
   await page.getByTestId('broadcast-name').fill(name);
   await page.getByTestId('broadcast-medium').selectOption('whatsapp');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
 
   await page.getByTestId('broadcast-text-body').fill('Your order shipped, {{customer.first_name}}.');

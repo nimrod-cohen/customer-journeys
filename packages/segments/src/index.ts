@@ -52,3 +52,9 @@ export {
 } from './evaluate.js';
 
 export { addManualMembers, removeManualMembers, resolveAudience } from './manual.js';
+
+export {
+  collectAudienceSegmentIds,
+  inlineDynamicSegments,
+  type AudienceSegmentDef,
+} from './audience.js';

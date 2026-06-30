@@ -244,9 +244,11 @@ const EVENT_OP_LABEL: Record<EventCountOp, string> = {
  * onChange(rows) and renders the per-rule UI (field/event, operators, payload
  * filters, autosuggest). Reused by the root group and each sub-group.
  */
-/** Campaign-context extras: which rule kinds are available + the data they need. */
+/** Context extras: which rule kinds are available + the data they need. `audience`
+ *  (broadcast audience) is like `segment` PLUS the segment-membership rule kind, but
+ *  WITHOUT the campaign-only trigger-event / journey kinds. */
 interface RuleBuilderCtx {
-  context: 'segment' | 'campaign';
+  context: 'segment' | 'campaign' | 'audience';
   triggerIsEvent: boolean;
   segments: { id: string; name: string }[];
   triggerEventType: string;
@@ -314,7 +316,9 @@ function RuleListEditor({
                 {ctx.context === 'campaign' && ctx.triggerIsEvent ? (
                   <option value="trigger_event">Trigger event</option>
                 ) : null}
-                {ctx.context === 'campaign' ? <option value="segment">Segment</option> : null}
+                {ctx.context === 'campaign' || ctx.context === 'audience' ? (
+                  <option value="segment">Segment</option>
+                ) : null}
                 {ctx.context === 'campaign' ? <option value="journey">Journey attribute</option> : null}
                 <option value="event">Event</option>
               </Select>
@@ -608,8 +612,9 @@ export function RuleBuilder({
   group: RuleGroup;
   onChange: (group: RuleGroup) => void;
   allowEmptyRootRules?: boolean;
-  /** 'campaign' unlocks the Trigger-event + Segment rule kinds (IF nodes only). */
-  context?: 'segment' | 'campaign';
+  /** 'campaign' unlocks Trigger-event + Segment + Journey rule kinds (IF nodes only);
+   *  'audience' (broadcast) unlocks the Segment rule kind only. */
+  context?: 'segment' | 'campaign' | 'audience';
   /** Campaign IF: the trigger is an EVENT trigger → offer "Trigger event". */
   triggerIsEvent?: boolean;
   /** Campaign IF: the workspace segments, for the "Segment" membership picker. */

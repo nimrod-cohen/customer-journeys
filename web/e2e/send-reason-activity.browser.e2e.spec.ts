@@ -7,7 +7,7 @@
 // invalid phone / no email — is proven against real Postgres in the integration
 // tier; here we prove the channel TYPE renders in the unified feed.)
 import { test, expect } from '@playwright/test';
-import { loginAs } from './helpers.js';
+import { loginAs, pickAudienceSegment } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
 test('a sent SMS appears in the Activity log typed by its channel ("sms")', async ({ page }) => {
@@ -20,7 +20,7 @@ test('a sent SMS appears in the Activity log typed by its channel ("sms")', asyn
   await page.getByTestId('broadcast-wizard').waitFor();
   await page.getByTestId('broadcast-name').fill('Activity SMS');
   await page.getByTestId('broadcast-medium').selectOption('sms');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('broadcast-text-body').fill('Hi {{customer.first_name}}!');
   await page.getByTestId('wizard-next').click();

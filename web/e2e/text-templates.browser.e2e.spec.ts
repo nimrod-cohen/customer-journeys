@@ -4,7 +4,7 @@
 // body (copy-on-select) — and the broadcast still sends for real via the local
 // mock provider. Proven in a real browser against real Postgres.
 import { test, expect } from '@playwright/test';
-import { loginAs } from './helpers.js';
+import { loginAs, pickAudienceSegment } from './helpers.js';
 import { DEV_MKT } from './seed.js';
 
 test('create a text template, then pick it to fill an SMS broadcast body + send', async ({ page }) => {
@@ -30,7 +30,7 @@ test('create a text template, then pick it to fill an SMS broadcast body + send'
 
   await page.getByTestId('broadcast-name').fill('Templated SMS');
   await page.getByTestId('broadcast-medium').selectOption('sms');
-  await page.getByTestId('broadcast-segment').selectOption({ index: 1 });
+  await pickAudienceSegment(page);
   await page.getByTestId('wizard-next').click();
 
   // The text-body step shows the template picker; selecting fills the body.

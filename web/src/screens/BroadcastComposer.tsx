@@ -13,6 +13,16 @@ import type { ActionMenuItem } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
 import { timeZoneList, zonedInputToUtcIso, utcIsoToZonedInput } from '@cdp/shared';
+import { RuleBuilder } from '../segments/RuleBuilder.js';
+import {
+  emptyRow,
+  buildAstFromGroup,
+  groupFromAst,
+  type RuleRow,
+  type RuleGroup,
+  type Combinator,
+  type AstNode,
+} from '../segments/ast-builder.js';
 
 interface Segment {
   id: string;
@@ -411,7 +421,17 @@ export function BroadcastWizard({ id }: { id?: string }) {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [name, setName] = useState('');
-  const [segId, setSegId] = useState('');
+  // The AUDIENCE is now a comprehensive segment-style RULE (§9A): attribute + event
+  // conditions AND segment-membership leaves ("is / is NOT a member of segment X")
+  // combined with AND/OR groups. State mirrors SegmentBuilder; compiled with
+  // buildAstFromGroup → sent as `audience`. A legacy single-segment broadcast hydrates
+  // as one "is a member of <segment>" row.
+  const [audRows, setAudRows] = useState<RuleRow[]>([emptyRow()]);
+  const [audCombinator, setAudCombinator] = useState<Combinator>('and');
+  const [audGroups, setAudGroups] = useState<RuleGroup[]>([]);
+  // Live recipient estimate for the current rule (debounced /broadcasts/audience-preview).
+  const [audCount, setAudCount] = useState<number | null>(null);
+  const [audCountErr, setAudCountErr] = useState('');
   // The sending channel. Email uses the email-instance/envelope flow; sms/whatsapp
   // use a plain-text body (merge-tag enabled) sent to the recipient phone.
   const [medium, setMedium] = useState<Medium>('email');
@@ -470,7 +490,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
   useEffect(() => {
     if (!id) return;
     void api
-      .get<{ broadcast: Broadcast & { audience_ref: string; template_id: string | null; text_body: string | null; topic_id: string | null } }>(`/broadcasts/${id}`)
+      .get<{ broadcast: Broadcast & { audience_ref: string | null; audience: AstNode | null; template_id: string | null; text_body: string | null; topic_id: string | null } }>(`/broadcasts/${id}`)
       .then((r) => {
         const b = r.broadcast;
         if (!EDITABLE.has(b.status)) {
@@ -478,7 +498,13 @@ export function BroadcastWizard({ id }: { id?: string }) {
           return;
         }
         setName(b.name);
-        setSegId(b.audience_ref ?? '');
+        // Hydrate the audience rule: a new broadcast carries the `audience` AST; a LEGACY
+        // single-segment one (audience_ref, no audience) opens as one "is a member of X" row.
+        const audAst: AstNode | null = b.audience ?? (b.audience_ref ? { segment: b.audience_ref } : null);
+        const g = groupFromAst(audAst);
+        setAudRows(g.rows);
+        setAudCombinator(g.combinator);
+        setAudGroups(g.groups);
         setMedium((b.medium ?? 'email') as Medium);
         setTextBody(b.text_body ?? '');
         setTplId(b.template_id ?? '');
@@ -512,6 +538,38 @@ export function BroadcastWizard({ id }: { id?: string }) {
       })
       .catch(() => navigate('/broadcasts'));
   }, [id]);
+
+  // Live recipient estimate for the current audience rule (debounced). A null rule (no
+  // conditions) shows no count; a compile/validation error surfaces inline.
+  useEffect(() => {
+    const ast = buildAstFromGroup({ combinator: audCombinator, rows: audRows, groups: audGroups });
+    if (ast === null) {
+      setAudCount(null);
+      setAudCountErr('');
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void api
+        .post<{ count: number }>('/broadcasts/audience-preview', { body: { audience: ast } })
+        .then((r) => {
+          if (!cancelled) {
+            setAudCount(r.count);
+            setAudCountErr('');
+          }
+        })
+        .catch((e: unknown) => {
+          if (!cancelled) {
+            setAudCount(null);
+            setAudCountErr((e as { error?: string })?.error ?? 'Could not estimate the audience.');
+          }
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [audRows, audCombinator, audGroups]);
 
   // Load the attached email's envelope (From/To/Subject) so the Content step can
   // require all three before advancing. Re-runs whenever the instance changes
@@ -589,8 +647,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
       name: name || 'Untitled broadcast',
       medium,
       text_body: medium === 'email' ? null : textBody,
-      audience_kind: 'segment',
-      audience_ref: segId,
+      audience: buildAstFromGroup({ combinator: audCombinator, rows: audRows, groups: audGroups }),
       template_id: tplId || null,
       topic_id: topicId || null,
       scheduled_at: scheduledIso,
@@ -620,15 +677,19 @@ export function BroadcastWizard({ id }: { id?: string }) {
     });
   };
 
-  const segName = segments.find((s) => s.id === segId)?.name ?? '—';
+  // The compiled audience rule (null = no conditions yet). Recomputed each render — pure.
+  const audienceAst = buildAstFromGroup({ combinator: audCombinator, rows: audRows, groups: audGroups });
+  const audienceSummary =
+    audienceAst === null ? '—' : audCount !== null ? `${audCount.toLocaleString()} recipient${audCount === 1 ? '' : 's'}` : 'Custom audience rule';
   const tplName =
     tplId === attachedCopy?.id && attachedCopy
       ? `${attachedCopy.name} (this broadcast's copy)`
       : (templates.find((t) => t.id === tplId)?.name ?? '—');
 
   // Per-step validity → which steps the breadcrumbs can jump to (you can always
-  // go back; you can jump forward only as far as the entered data is valid).
-  const step0Valid = name.trim().length > 0 && segId !== '';
+  // go back; you can jump forward only as far as the entered data is valid). The
+  // audience must have at least one condition (never blast-all by accident).
+  const step0Valid = name.trim().length > 0 && audienceAst !== null;
   // To leave Content, the attached email must have ALL of From (a real named
   // sender — no no-reply fallback), To, and Subject filled. The list of what's
   // still missing drives the inline hint.
@@ -675,8 +736,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
         name: name || 'Untitled broadcast',
         medium,
         text_body: medium === 'email' ? null : textBody,
-        audience_kind: 'segment',
-        audience_ref: segId,
+        audience: buildAstFromGroup({ combinator: audCombinator, rows: audRows, groups: audGroups }),
         template_id: medium === 'email' ? tplId : null,
         topic_id: topicId || null,
         scheduled_at: scheduledIso,
@@ -787,19 +847,37 @@ export function BroadcastWizard({ id }: { id?: string }) {
                 </p>
               ) : null}
             </Field>
-            <Field label="Audience (segment)">
-              <Select
-                data-testid="broadcast-segment"
-                value={segId}
-                onChange={(e: Event) => setSegId((e.target as HTMLSelectElement).value)}
-              >
-                <option value="">Select segment</option>
-                {segments.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
+            <Field label="Audience">
+              <p class="mb-2 text-xs text-stone-500">
+                Build the audience like a segment — combine profile attributes, events, and
+                segment membership (include with &ldquo;is a member of&rdquo;, exclude with
+                &ldquo;is NOT a member of&rdquo;) under AND/OR groups.
+              </p>
+              <div data-testid="broadcast-audience">
+                <RuleBuilder
+                  context="audience"
+                  segments={segments}
+                  group={{ combinator: audCombinator, rows: audRows, groups: audGroups }}
+                  onChange={(g) => {
+                    setAudCombinator(g.combinator);
+                    setAudRows(g.rows);
+                    setAudGroups(g.groups);
+                  }}
+                />
+              </div>
+              <p class="mt-2 text-sm" data-testid="broadcast-audience-count">
+                {audienceAst === null ? (
+                  <span class="text-stone-500">Add at least one condition to define the audience.</span>
+                ) : audCountErr ? (
+                  <span class="text-rose-600">{audCountErr}</span>
+                ) : audCount === null ? (
+                  <span class="text-stone-400">Estimating recipients…</span>
+                ) : (
+                  <span class="text-ink-900">
+                    ≈ <strong>{audCount.toLocaleString()}</strong> recipient{audCount === 1 ? '' : 's'}
+                  </span>
+                )}
+              </p>
             </Field>
             <Field label="Topic (optional)">
               <Select
@@ -1003,7 +1081,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
               <dt class="text-stone-500">Channel</dt>
               <dd class="text-ink-900" data-testid="review-medium">{MEDIUM_LABEL[medium]}</dd>
               <dt class="text-stone-500">Audience</dt>
-              <dd class="text-ink-900">{segName}</dd>
+              <dd class="text-ink-900">{audienceSummary}</dd>
               {medium === 'email' ? (
                 <>
                   <dt class="text-stone-500">Email</dt>
