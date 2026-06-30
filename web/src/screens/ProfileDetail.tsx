@@ -11,6 +11,7 @@ import { useStore } from '../store/store.js';
 import { navigate } from '../router.js';
 import { ActionMenu, type ActionMenuItem, Badge, Button, Card, EmptyState, Field, Input, Select, toneFor } from '../ui/kit.js';
 import { JsonView } from '../ui/JsonView.js';
+import { formatDateTime } from '../ui/datetime.js';
 import { showToast } from '../ui/toast.tsx';
 import { MergeProfileDrawer } from './MergeProfileDrawer.js';
 import { SendEventDrawer } from './SendEventDrawer.js';
@@ -82,7 +83,7 @@ function stringToValue(s: string): unknown {
 function fmt(ts: number | string | null | undefined): string {
   if (ts === null || ts === undefined || ts === '') return '—';
   const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? String(ts) : formatDateTime(d);
 }
 
 export function ProfileDetail({ id }: { id: string }) {

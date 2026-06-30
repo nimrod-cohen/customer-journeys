@@ -71,7 +71,8 @@ function whenLabel(ts: string, tz?: string | null): string {
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: zone });
   const day0 = (x: Date) => Math.floor(new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime() / 86_400_000);
   const diff = day0(d) - day0(new Date());
-  const rel = diff === 0 ? 'today' : diff === 1 ? 'tomorrow' : diff === -1 ? 'yesterday' : d.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: zone });
+  // en-GB → day-first ("7 Jun"), consistent with the dd/mm date format used system-wide.
+  const rel = diff === 0 ? 'today' : diff === 1 ? 'tomorrow' : diff === -1 ? 'yesterday' : d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric', timeZone: zone });
   const tzName = new Intl.DateTimeFormat([], { timeZoneName: 'short', timeZone: zone }).formatToParts(d).find((p) => p.type === 'timeZoneName')?.value ?? '';
   return `${rel} at ${time}${tzName ? ` (${tzName})` : ''}`;
 }

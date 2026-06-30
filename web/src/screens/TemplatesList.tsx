@@ -7,6 +7,7 @@ import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { clearEditorReturn } from '../store/editorReturn.js';
 import { Button, Card, PageHeader, EmptyState } from '../ui/kit.js';
+import { formatDateTime } from '../ui/datetime.js';
 import { askConfirm } from '../ui/dialog.tsx';
 import { AssetManagerPanel } from '../email-designer/AssetManager.tsx';
 import { TextTemplatesPanel } from './TextTemplates.tsx';
@@ -20,7 +21,7 @@ interface Template {
 function fmtDate(ts: string | null): string {
   if (!ts) return '';
   const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? '' : formatDateTime(d);
 }
 
 export function TemplatesList() {

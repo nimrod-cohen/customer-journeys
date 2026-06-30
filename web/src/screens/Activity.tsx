@@ -9,6 +9,7 @@ import { useStore } from '../store/store.js';
 import { navigate } from '../router.js';
 import { Badge, Button, Card, EmptyState, Field, Input, PageHeader, Select } from '../ui/kit.js';
 import { JsonView } from '../ui/JsonView.js';
+import { formatDateTime } from '../ui/datetime.js';
 
 interface ActivityRow {
   at: string;
@@ -47,7 +48,7 @@ function outcomeTone(o: string): 'success' | 'danger' | 'neutral' {
 }
 function fmt(ts: string): string {
   const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? ts : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? ts : formatDateTime(d);
 }
 /** datetime-local value (no seconds/zone) → ISO string for the API. */
 function toIso(local: string): string | undefined {

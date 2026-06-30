@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { Badge, Button, Drawer, Field, Select } from '../ui/kit.js';
+import { formatDateTime } from '../ui/datetime.js';
 
 interface P {
   id: string;
@@ -32,7 +33,7 @@ function fmt(v: unknown): string {
 function fmtDate(v: number | string | null | undefined): string {
   if (v === null || v === undefined || v === '') return '—';
   const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? String(v) : formatDateTime(d);
 }
 
 export function MergeProfileDrawer({

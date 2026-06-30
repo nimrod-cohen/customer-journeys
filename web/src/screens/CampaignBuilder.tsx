@@ -21,6 +21,7 @@ import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Badge, Button, Card, Input, PageHeader, Pagination, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
 import { usePagedList } from '../ui/usePagedList.js';
+import { formatDateTime } from '../ui/datetime.js';
 import type { ActionMenuItem } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.js';
 import { showToast } from '../ui/toast.js';
@@ -102,7 +103,7 @@ interface CampaignEnrollment {
 function whenLabel(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return iso;
-  return new Date(t).toLocaleString();
+  return formatDateTime(new Date(t));
 }
 
 /** Lifecycle statuses that hide a campaign from the default (non-archived) list. */

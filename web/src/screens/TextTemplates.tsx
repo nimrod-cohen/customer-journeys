@@ -8,6 +8,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
 import { useStore } from '../store/store.js';
 import { Button, Card, EmptyState, Input, DirectionalTextarea, ActionMenu, type ActionMenuItem } from '../ui/kit.js';
+import { formatDateTime } from '../ui/datetime.js';
 import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
 
@@ -21,7 +22,7 @@ interface TextTemplate {
 function fmtDate(ts: string | null): string {
   if (!ts) return '';
   const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? '' : formatDateTime(d);
 }
 
 /** The text-template library — rendered inside the Asset management "Text templates" tab. */

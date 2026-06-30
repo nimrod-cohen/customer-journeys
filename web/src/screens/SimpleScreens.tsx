@@ -22,6 +22,7 @@ import {
   toneFor,
 } from '../ui/kit.js';
 import { ImportProfilesDrawer } from './ImportProfilesDrawer.js';
+import { formatDateTime } from '../ui/datetime.js';
 import { RuleBuilder } from '../segments/RuleBuilder.js';
 import { emptyRow, buildAstFromGroup, groupHasCriteria, type RuleRow, type RuleGroup, type Combinator } from '../segments/ast-builder.js';
 
@@ -201,7 +202,7 @@ function fmtAttr(v: unknown): string {
 function fmtDate(v: number | string | null | undefined): string {
   if (v === null || v === undefined || v === '') return '—';
   const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? String(v) : formatDateTime(d);
 }
 
 // Configurable column ids: built-ins (Status / External ID / Created) or an
