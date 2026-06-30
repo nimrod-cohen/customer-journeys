@@ -423,6 +423,30 @@ export function buildAstFromGroup(group: RuleGroup): AstNode | null {
   return { op: group.combinator, conditions: all };
 }
 
+/**
+ * Whether a group holds at least one MEANINGFULLY-CONFIGURED rule — used to decide
+ * "is this an active filter / audience?" (vs. an untouched starter row). It is STRICTER
+ * than `buildAstFromGroup() !== null`: the default starter row has a pre-filled field
+ * (`attributes.tier`) but an EMPTY value, which `buildAstFromGroup` would still compile to
+ * `tier = ''` (matching nobody). Here a `field` row counts only when it has a value (or a
+ * value-less operator like exists/not-exists); a `segment`/`event`/other row counts when
+ * `rowToNode` yields a node (those builders already require their key/id). Recurses into
+ * sub-groups.
+ */
+export function groupHasCriteria(group: RuleGroup): boolean {
+  const rowConfigured = (row: RuleRow): boolean => {
+    if (rowToNode(row) === null) return false;
+    if ((row.kind ?? 'field') === 'field') {
+      const shape = OPERATOR_META[row.operator]?.valueShape ?? 'text';
+      if (shape === 'none') return true; // exists / not exists need no value
+      return String(row.value ?? '').trim().length > 0;
+    }
+    return true; // event/segment/trigger/journey already gated by rowToNode
+  };
+  if (group.rows.some(rowConfigured)) return true;
+  return (group.groups ?? []).some(groupHasCriteria);
+}
+
 function isCondition(n: AstNode): n is ConditionNode {
   return (n as ConditionNode).field !== undefined;
 }

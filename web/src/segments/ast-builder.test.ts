@@ -5,6 +5,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildAstFromGroup,
+  groupHasCriteria,
+  emptyRow,
   groupFromAst,
   emptySegmentRow,
   emptyTriggerEventRow,
@@ -21,6 +23,33 @@ import {
 } from './ast-builder.js';
 
 const groupOf = (rows: RuleGroup['rows']): RuleGroup => ({ combinator: 'and', rows, groups: [] });
+
+describe('groupHasCriteria (active filter / audience detection)', () => {
+  it('the STARTER row (default field, empty value) is NOT configured', () => {
+    // emptyRow() pre-fills field=attributes.tier but value='' → buildAstFromGroup is
+    // non-null (tier='') yet the filter must read as EMPTY (match-all).
+    expect(buildAstFromGroup(groupOf([emptyRow()]))).not.toBeNull();
+    expect(groupHasCriteria(groupOf([emptyRow()]))).toBe(false);
+  });
+  it('a field row WITH a value is configured', () => {
+    expect(groupHasCriteria(groupOf([{ ...emptyRow(), value: 'vip' }]))).toBe(true);
+  });
+  it('a value-less operator (exists / not exists) is configured with no value', () => {
+    expect(groupHasCriteria(groupOf([{ ...emptyRow(), operator: 'exists', value: '' }]))).toBe(true);
+    expect(groupHasCriteria(groupOf([{ ...emptyRow(), operator: 'not exists', value: '' }]))).toBe(true);
+  });
+  it('a segment row counts only once a segment is chosen', () => {
+    expect(groupHasCriteria(groupOf([emptySegmentRow()]))).toBe(false);
+    expect(groupHasCriteria(groupOf([{ ...emptySegmentRow(), segmentId: 'seg-1' }]))).toBe(true);
+  });
+  it('a configured rule inside a SUB-GROUP counts', () => {
+    const g: RuleGroup = { combinator: 'and', rows: [emptyRow()], groups: [groupOf([{ ...emptyRow(), value: 'gold' }])] };
+    expect(groupHasCriteria(g)).toBe(true);
+  });
+  it('an all-empty group is not configured', () => {
+    expect(groupHasCriteria(groupOf([emptyRow(), emptyRow()]))).toBe(false);
+  });
+});
 
 describe('segment-membership row', () => {
   it('builds a SegmentNode ("is a member")', () => {

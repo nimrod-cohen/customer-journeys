@@ -21,6 +21,8 @@ import {
   toneFor,
 } from '../ui/kit.js';
 import { ImportProfilesDrawer } from './ImportProfilesDrawer.js';
+import { RuleBuilder } from '../segments/RuleBuilder.js';
+import { emptyRow, buildAstFromGroup, groupHasCriteria, type RuleRow, type RuleGroup, type Combinator } from '../segments/ast-builder.js';
 
 /** A key/value attribute row in the new-profile drawer. */
 interface AttrPair {
@@ -299,6 +301,15 @@ export function ProfileExplorer() {
   const [segments, setSegments] = useState<SegmentOption[]>([]);
   const [segmentId, setSegmentId] = useState('');
   const [q, setQ] = useState('');
+  // On-the-fly ADVANCED FILTER: a comprehensive segment-style rule (attributes +
+  // events + segment membership) compiled server-side. When it has ≥1 condition it
+  // is the source of the list (live, debounced); empty → the segment dropdown / all.
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterRows, setFilterRows] = useState<RuleRow[]>([emptyRow()]);
+  const [filterCombinator, setFilterCombinator] = useState<Combinator>('and');
+  const [filterGroups, setFilterGroups] = useState<RuleGroup[]>([]);
+  const [filterSize, setFilterSize] = useState<number | null>(null);
+  const [filterErr, setFilterErr] = useState('');
   // Manual "add profile" drawer state. Email is the identity key (required);
   // any other id (e.g. external_id) is just another attribute.
   const [adding, setAdding] = useState(false);
@@ -414,16 +425,40 @@ export function ProfileExplorer() {
   }, []);
   const [importing, setImporting] = useState(false);
   const reloadProfiles = async () => {
+    // The advanced rule filter (when it has conditions) is the source of truth — it
+    // compiles server-side (workspace_id = $1) and can express attribute/event AND
+    // segment-membership criteria, so it supersedes the single-segment dropdown.
+    const group = { combinator: filterCombinator, rows: filterRows, groups: filterGroups };
+    const filterAst = groupHasCriteria(group) ? buildAstFromGroup(group) : null;
+    if (filterAst !== null) {
+      try {
+        const r = await api.post<{ profiles: Profile[]; size: number }>('/profiles/query', {
+          body: { definition: filterAst },
+        });
+        setProfiles(r.profiles);
+        setFilterSize(r.size);
+        setFilterErr('');
+      } catch (e) {
+        setProfiles([]);
+        setFilterSize(null);
+        setFilterErr((e as { error?: string })?.error ?? 'Could not apply the filter.');
+      }
+      return;
+    }
+    setFilterSize(null);
+    setFilterErr('');
     const opts = segmentId ? { query: { segment_id: segmentId } } : undefined;
     const r = await api.get<{ profiles: Profile[] }>('/profiles', opts);
     setProfiles(r.profiles);
   };
-  // Reload profiles whenever the segment filter changes (server-side membership
-  // filter; text search stays client-side on top of the result).
+  // Reload whenever the segment filter OR the advanced rule changes. Debounced so
+  // editing the rule live updates the list (server-side); text search stays
+  // client-side on top of the result.
   useEffect(() => {
-    void reloadProfiles();
+    const t = setTimeout(() => void reloadProfiles(), 300);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segmentId]);
+  }, [segmentId, filterRows, filterCombinator, filterGroups]);
 
   const createProfile = async () => {
     setAddError('');
@@ -450,6 +485,15 @@ export function ProfileExplorer() {
     }
   };
 
+  // The advanced filter is "active" once at least one rule is meaningfully configured
+  // (a field row with a value, or a segment/event row) — NOT merely the starter row.
+  const filterActive = groupHasCriteria({ combinator: filterCombinator, rows: filterRows, groups: filterGroups });
+  const clearFilter = () => {
+    setFilterRows([emptyRow()]);
+    setFilterCombinator('and');
+    setFilterGroups([]);
+    setFilterErr('');
+  };
   const needle = q.trim().toLowerCase();
   const shown = needle
     ? profiles.filter(
@@ -582,6 +626,8 @@ export function ProfileExplorer() {
           data-testid="profile-segment-filter"
           class="w-56"
           value={segmentId}
+          disabled={filterActive}
+          title={filterActive ? 'Clear the advanced filter to use the segment dropdown' : undefined}
           onChange={(e: Event) => setSegmentId((e.target as HTMLSelectElement).value)}
         >
           <option value="">All segments</option>
@@ -591,6 +637,13 @@ export function ProfileExplorer() {
             </option>
           ))}
         </Select>
+        <Button
+          data-testid="profile-filter-toggle"
+          variant={filterActive ? 'primary' : 'secondary'}
+          onClick={() => setFilterOpen((v) => !v)}
+        >
+          ⌗ Filter{filterActive ? ' •' : ''}
+        </Button>
 
         {/* Column picker */}
         <div ref={colsRef} class="relative ml-auto">
@@ -676,6 +729,46 @@ export function ProfileExplorer() {
           ) : null}
         </div>
       </div>
+
+      {filterOpen ? (
+        <Card data-testid="profile-filter-panel" class="mb-4 p-4">
+          <div class="mb-2 flex items-center justify-between">
+            <span class="label">Advanced filter</span>
+            <Button data-testid="profile-filter-clear" variant="ghost" size="sm" onClick={clearFilter}>
+              Clear
+            </Button>
+          </div>
+          <p class="mb-3 text-xs text-stone-500">
+            Filter profiles like a segment — combine attributes, events, and segment membership (&ldquo;is / is
+            NOT a member of&rdquo;) under AND/OR.
+          </p>
+          <RuleBuilder
+            context="audience"
+            segments={segments}
+            group={{ combinator: filterCombinator, rows: filterRows, groups: filterGroups }}
+            onChange={(g) => {
+              setFilterCombinator(g.combinator);
+              setFilterRows(g.rows);
+              setFilterGroups(g.groups);
+            }}
+          />
+          <p class="mt-2 text-sm" data-testid="profile-filter-count">
+            {!filterActive ? (
+              <span class="text-stone-500">Add a condition to filter the profiles.</span>
+            ) : filterErr ? (
+              <span class="text-rose-600">{filterErr}</span>
+            ) : filterSize === null ? (
+              <span class="text-stone-400">Filtering…</span>
+            ) : (
+              <span class="text-ink-900">
+                <strong>{filterSize.toLocaleString()}</strong> matching profile{filterSize === 1 ? '' : 's'}
+                {filterSize > 200 ? ' (showing the first 200)' : ''}
+              </span>
+            )}
+          </p>
+        </Card>
+      ) : null}
+
       <Card class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="border-b border-stone-200 bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">

@@ -17,6 +17,7 @@ import { RuleBuilder } from '../segments/RuleBuilder.js';
 import {
   emptyRow,
   buildAstFromGroup,
+  groupHasCriteria,
   groupFromAst,
   type RuleRow,
   type RuleGroup,
@@ -542,7 +543,8 @@ export function BroadcastWizard({ id }: { id?: string }) {
   // Live recipient estimate for the current audience rule (debounced). A null rule (no
   // conditions) shows no count; a compile/validation error surfaces inline.
   useEffect(() => {
-    const ast = buildAstFromGroup({ combinator: audCombinator, rows: audRows, groups: audGroups });
+    const grp = { combinator: audCombinator, rows: audRows, groups: audGroups };
+    const ast = groupHasCriteria(grp) ? buildAstFromGroup(grp) : null;
     if (ast === null) {
       setAudCount(null);
       setAudCountErr('');
@@ -647,7 +649,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
       name: name || 'Untitled broadcast',
       medium,
       text_body: medium === 'email' ? null : textBody,
-      audience: buildAstFromGroup({ combinator: audCombinator, rows: audRows, groups: audGroups }),
+      audience: audienceAst,
       template_id: tplId || null,
       topic_id: topicId || null,
       scheduled_at: scheduledIso,
@@ -677,8 +679,11 @@ export function BroadcastWizard({ id }: { id?: string }) {
     });
   };
 
-  // The compiled audience rule (null = no conditions yet). Recomputed each render — pure.
-  const audienceAst = buildAstFromGroup({ combinator: audCombinator, rows: audRows, groups: audGroups });
+  // The compiled audience rule (null = no MEANINGFUL conditions yet). `groupHasCriteria`
+  // is stricter than `!= null`: the starter row has a pre-filled field but empty value,
+  // which would otherwise compile to `tier = ''` and gate the step as "valid".
+  const audienceGroup = { combinator: audCombinator, rows: audRows, groups: audGroups };
+  const audienceAst = groupHasCriteria(audienceGroup) ? buildAstFromGroup(audienceGroup) : null;
   const audienceSummary =
     audienceAst === null ? '—' : audCount !== null ? `${audCount.toLocaleString()} recipient${audCount === 1 ? '' : 's'}` : 'Custom audience rule';
   const tplName =
@@ -736,7 +741,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
         name: name || 'Untitled broadcast',
         medium,
         text_body: medium === 'email' ? null : textBody,
-        audience: buildAstFromGroup({ combinator: audCombinator, rows: audRows, groups: audGroups }),
+        audience: audienceAst,
         template_id: medium === 'email' ? tplId : null,
         topic_id: topicId || null,
         scheduled_at: scheduledIso,

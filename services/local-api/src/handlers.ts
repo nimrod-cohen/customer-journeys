@@ -3616,6 +3616,37 @@ export const listProfiles: Handler = async (ctx, pool, req) => {
 };
 
 /**
+ * POST /profiles/query — list profiles matching an AD-HOC rule (§8 AST), for on-the-fly
+ * filtering in the Profiles screen. The rule is the SAME shape segments + broadcast
+ * audiences use (attribute + event conditions AND segment-membership leaves under AND/OR).
+ * It is validated (shape + workspace-owned segment refs, inv. 2), DYNAMIC referenced
+ * segments are inlined LIVE (so "is a member of a dynamic segment" reflects who matches
+ * NOW), then compiled via `compileWhere` (workspace_id = $1, inv. 6). A null/empty rule →
+ * the whole workspace, newest-first. Returns the SAME profile shape as GET /profiles plus
+ * a total `size` (so the screen can show "N matching"). Hard LIMIT 200 like the list.
+ */
+export const queryProfiles: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const definition = b.definition === undefined ? null : (b.definition as AstNode | null);
+  const audErr = await validateAudienceRule(pool, ctx.workspaceId, definition);
+  if (audErr) return ok({ error: audErr }, 400);
+  const where = compileWhere(ctx.workspaceId, await liveAudienceAst(pool, ctx.workspaceId, definition));
+  const cols = `p.id, p.external_id, p.email, p.email_status, p.created_at,
+                floor(extract(epoch from p.created_at) * 1000)::double precision AS created_at_unix, p.attributes,
+                (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed`;
+  const { rows } = await pool.query(
+    `SELECT ${cols} FROM profiles p LEFT JOIN profile_features pf ON pf.profile_id = p.id
+      WHERE ${where.text} ORDER BY p.created_at DESC LIMIT 200`,
+    where.values,
+  );
+  const countRes = await pool.query<{ size: number }>(
+    `SELECT count(*)::int AS size FROM profiles p LEFT JOIN profile_features pf ON pf.profile_id = p.id WHERE ${where.text}`,
+    where.values,
+  );
+  return ok({ profiles: rows, size: countRes.rows[0]?.size ?? 0 });
+};
+
+/**
  * POST /profiles — manually create (or upsert) a profile in the active workspace.
  * external_id is the per-workspace unique key (required); email + attributes are
  * optional. New profiles seed unsubscribed=false; a re-create merges. Scoped to
@@ -4978,6 +5009,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /campaigns/:id/send-nodes/:nodeId/attach-template': attachCampaignSendTemplate,
   'POST /campaigns/:id/enroll': enrollIntoCampaign,
   'GET /profiles': listProfiles,
+  'POST /profiles/query': queryProfiles,
   'POST /profiles': createProfile,
   'POST /profiles/import-csv': importProfilesCsv,
   'GET /profiles/attribute-keys': listAttributeKeys,

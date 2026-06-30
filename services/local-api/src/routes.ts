@@ -134,6 +134,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
 
   // --- profiles (manage_content) ---
   'GET /profiles': 'manage_content',
+  'POST /profiles/query': 'manage_content',
   'POST /profiles': 'manage_content',
   'POST /profiles/import-csv': 'manage_content',
   'GET /profiles/attribute-keys': 'manage_content',
