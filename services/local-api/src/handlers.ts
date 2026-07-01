@@ -502,7 +502,7 @@ async function dispatchBroadcastNow(
     // company configured it (bearer decrypted at send time), else the deterministic
     // MOCK (so dev/e2e text sends work offline). The injected channelHttp lets tests
     // assert the exact 019 request without touching the network.
-    resolveChannelConfig: (ws) => channelConfigForWorkspace(reader, ws),
+    resolveChannelConfig: (ws, medium) => channelConfigForWorkspace(reader, ws, medium),
     channelHttp: deps.channelHttp,
     runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
     now: () => new Date(),
@@ -590,7 +590,7 @@ async function dispatchCampaignOutboxNow(pool: Pool, deps: LocalApiDeps): Promis
           reader,
           ses,
           // Per-company text-channel config (real '019' when configured, else MOCK).
-          resolveChannelConfig: (ws) => channelConfigForWorkspace(reader, ws),
+          resolveChannelConfig: (ws, medium) => channelConfigForWorkspace(reader, ws, medium),
           channelHttp: deps.channelHttp,
           runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
           now: () => new Date(),
@@ -842,6 +842,71 @@ export const deleteCompanyChannelConfig: Handler = async (ctx, pool) => {
   const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
   if (!companyId) return ok({ deleted: 0 });
   const { rowCount } = await pool.query('DELETE FROM company_channel_config WHERE company_id = $1', [companyId]);
+  return ok({ deleted: rowCount });
+};
+
+/** GET /company/whatsapp-config — Meta WhatsApp settings + whether configured (NEVER the token). */
+export const getCompanyWhatsappConfig: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ configured: false });
+  const { rows } = await pool.query<{
+    phone_number_id: string;
+    api_version: string | null;
+    default_country: string | null;
+  }>(
+    'SELECT phone_number_id, api_version, default_country FROM company_whatsapp_config WHERE company_id = $1',
+    [companyId],
+  );
+  const c = rows[0];
+  return ok(
+    c
+      ? {
+          configured: true,
+          phone_number_id: c.phone_number_id,
+          api_version: c.api_version,
+          default_country: c.default_country,
+        }
+      : { configured: false },
+  );
+};
+
+/** PUT /company/whatsapp-config — set the company's Meta WhatsApp Cloud API credentials.
+ *  A blank access_token on update keeps the stored one (so phone-number id / version /
+ *  country can change without re-entering the token). The token is envelope-encrypted. */
+export const putCompanyWhatsappConfig: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ error: 'no company for this workspace' }, 400);
+  const b = asObject(req.body);
+  const phoneNumberId = String(b.phone_number_id ?? '').trim();
+  const apiVersion = typeof b.api_version === 'string' && b.api_version.trim() ? b.api_version.trim() : null;
+  const token = typeof b.access_token === 'string' ? b.access_token.trim() : '';
+  const rawCountry = typeof b.default_country === 'string' ? b.default_country.trim().toUpperCase() : '';
+  if (rawCountry && !/^[A-Z]{2}$/.test(rawCountry)) {
+    return ok({ error: 'default_country must be a 2-letter ISO country code' }, 400);
+  }
+  const defaultCountry = rawCountry || null;
+  if (!phoneNumberId) return ok({ error: 'a phone number id is required' }, 400);
+  const existing = await pool.query<{ access_token: string }>(
+    'SELECT access_token FROM company_whatsapp_config WHERE company_id = $1',
+    [companyId],
+  );
+  const effectiveToken = token ? encryptSecret(token) : existing.rows[0]?.access_token;
+  if (!effectiveToken) return ok({ error: 'an access token is required' }, 400);
+  await pool.query(
+    `INSERT INTO company_whatsapp_config (company_id, phone_number_id, access_token, api_version, default_country, updated_at)
+     VALUES ($1, $2, $3, $4, $5, now())
+     ON CONFLICT (company_id)
+     DO UPDATE SET phone_number_id = $2, access_token = $3, api_version = $4, default_country = $5, updated_at = now()`,
+    [companyId, phoneNumberId, effectiveToken, apiVersion, defaultCountry],
+  );
+  return ok({ configured: true, phone_number_id: phoneNumberId, api_version: apiVersion, default_country: defaultCountry });
+};
+
+/** DELETE /company/whatsapp-config — clear the company's WhatsApp credentials. */
+export const deleteCompanyWhatsappConfig: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ deleted: 0 });
+  const { rowCount } = await pool.query('DELETE FROM company_whatsapp_config WHERE company_id = $1', [companyId]);
   return ok({ deleted: rowCount });
 };
 
@@ -4979,6 +5044,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /company/channel-config': getCompanyChannelConfig,
   'PUT /company/channel-config': putCompanyChannelConfig,
   'DELETE /company/channel-config': deleteCompanyChannelConfig,
+  'GET /company/whatsapp-config': getCompanyWhatsappConfig,
+  'PUT /company/whatsapp-config': putCompanyWhatsappConfig,
+  'DELETE /company/whatsapp-config': deleteCompanyWhatsappConfig,
   'GET /company/logo': getCompanyLogo,
   'PUT /company/logo': putCompanyLogo,
   'DELETE /company/logo': deleteCompanyLogo,

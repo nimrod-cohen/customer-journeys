@@ -54,6 +54,7 @@ import {
   type ChannelProviderConfig,
   type ChannelHttpClient,
   type Medium,
+  type TextMedium,
 } from '@cdp/channels';
 
 /** A minimal query reader (returns rows). The orchestrator never opens a tx. */
@@ -84,7 +85,7 @@ export interface DispatchDeps {
    * deterministic + offline). Ignored when `resolveChannel` is injected (the test
    * override takes precedence). The result is fed to `resolveChannelProvider`.
    */
-  readonly resolveChannelConfig?: (workspaceId: string) => Promise<ChannelProviderConfig>;
+  readonly resolveChannelConfig?: (workspaceId: string, medium: 'sms' | 'whatsapp') => Promise<ChannelProviderConfig>;
   /**
    * The injectable HTTP client a REAL channel adapter (019) POSTs through.
    * Injected so integration tests assert the exact provider request WITHOUT
@@ -535,7 +536,7 @@ interface TextSendArgs {
   readonly workspaceId: string;
   readonly outboxId: string;
   readonly ctx: DispatchContext;
-  readonly medium: Medium;
+  readonly medium: TextMedium;
   readonly campaignId: string | null;
   readonly broadcastId: string | null;
   readonly profileId: string;
@@ -567,7 +568,7 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
   // credentials AND the `defaultCountry` used to normalize national numbers. When
   // a test injects `resolveChannel` (a counting fake) we still read the config (if
   // supplied) purely for `defaultCountry`, falling back to the mock config.
-  const cfg = (await deps.resolveChannelConfig?.(workspaceId)) ?? DEFAULT_CHANNEL_CONFIG;
+  const cfg = (await deps.resolveChannelConfig?.(workspaceId, medium)) ?? DEFAULT_CHANNEL_CONFIG;
 
   // Normalize the recipient phone to E.164 using the company default country. An
   // already-+E.164 number is kept; a national number (leading 0 / no +) is

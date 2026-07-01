@@ -101,6 +101,23 @@ export function mediumLabel(m: Medium): string {
   }
 }
 
+/**
+ * A WhatsApp APPROVED TEMPLATE message (§10). Meta forbids free-form outbound
+ * WhatsApp to anyone who hasn't messaged the business in the last 24h, so a
+ * business-INITIATED send (broadcast/campaign) MUST reference a pre-approved
+ * template by `name` + `language` and supply its body variable values (already
+ * merge-rendered). Free-form `ChannelMessage.body` is only valid inside the 24h
+ * customer-service window (and for the mock).
+ */
+export interface WhatsAppTemplate {
+  /** The approved template's name (from WhatsApp Manager). */
+  readonly name: string;
+  /** The template's language/locale code, e.g. 'en_US' or 'he'. */
+  readonly language: string;
+  /** The body `{{1}}`,`{{2}}`,… variable values IN ORDER, already merge-rendered. */
+  readonly bodyParams: readonly string[];
+}
+
 /** A single outbound text message, fully prepared by the Dispatcher core. */
 export interface ChannelMessage {
   /** Recipient address (a phone number for sms/whatsapp), already merge-rendered. */
@@ -109,6 +126,12 @@ export interface ChannelMessage {
   readonly body: string;
   /** Optional sender id/number (e.g. a Twilio number) — unused by the mock. */
   readonly from?: string;
+  /**
+   * WhatsApp only: send an approved TEMPLATE instead of free-form text. Required
+   * for business-initiated WhatsApp (a broadcast/campaign to a cold contact); the
+   * real Meta adapter sends a `type:'template'` payload. Absent → free-form text.
+   */
+  readonly template?: WhatsAppTemplate;
 }
 
 /** Result of a successful provider send — the provider's message id. */
@@ -155,11 +178,13 @@ export class MockWhatsAppProvider implements ChannelProvider {
   }
 }
 
-/** Build the deterministic mock provider message id for a message. */
+/** Build the deterministic mock provider message id for a message. A template send
+ *  folds the template name + params into the hash (its body may be empty). */
 function mockMessageId(medium: TextMedium, msg: ChannelMessage): string {
   const prefix = medium === 'sms' ? 'mock-sms' : 'mock-wa';
+  const tpl = msg.template ? `|tpl:${msg.template.name}|${msg.template.bodyParams.join('|')}` : '';
   const hash = createHash('sha256')
-    .update(`${medium}|${msg.to}|${msg.body}`)
+    .update(`${medium}|${msg.to}|${msg.body}${tpl}`)
     .digest('hex')
     .slice(0, 16);
   return `${prefix}-${hash}`;
@@ -216,6 +241,19 @@ export type ChannelProviderConfig =
       readonly source: string;
       readonly bearer: string;
       /** ISO 3166-1 alpha-2 default country for normalizing national numbers (e.g. 'IL'). */
+      readonly defaultCountry?: string | null;
+    }
+  | {
+      /** Real Meta WhatsApp Cloud API (per-company creds from company_whatsapp_config). */
+      readonly kind: 'meta';
+      /** API base — defaults to https://graph.facebook.com when omitted. */
+      readonly apiUrl?: string | null;
+      /** Graph API version, e.g. 'v21.0' (defaults to a pinned version when omitted). */
+      readonly apiVersion?: string | null;
+      /** The WhatsApp phone-number ID the message is sent FROM. */
+      readonly phoneNumberId: string;
+      /** The permanent system-user access token (decrypted at send time). */
+      readonly accessToken: string;
       readonly defaultCountry?: string | null;
     };
 
@@ -301,22 +339,107 @@ export class Sms019Provider implements ChannelProvider {
   }
 }
 
+/** Default Graph API version for the Meta adapter when a company doesn't pin one. */
+export const DEFAULT_META_API_VERSION = 'v21.0';
+const DEFAULT_META_HTTP: ChannelHttpOptions = { timeoutMs: 10_000, maxRetries: 1 };
+
 /**
- * Resolve a `ChannelProvider` for a text medium — the SEAM where a real adapter
- * slots in. This phase ALWAYS returns the deterministic mock (so dev/e2e send
- * for real, locally, without any credentials — unlike email which needs real
- * SES creds). `email` is NOT a channel here (it has its own SES pipeline);
- * asking for it throws so a mis-route is caught loudly.
- *
- * TODO(real-providers, follow-up): when bringing real Twilio (SMS) / Meta
- * (WhatsApp) credentials, extend `ChannelProviderConfig` with a per-provider
- * variant (e.g. `{ kind: 'twilio', accountSid, authToken, messagingServiceSid }`,
- * `{ kind: 'meta', phoneNumberId, accessToken }`) and add a `case` here that
- * constructs a real adapter implementing `ChannelProvider.send` over the
- * provider's HTTP API (with timeouts + bounded retries, mirroring
- * @cdp/runner-webhook). Per-company credentials would live in a `company_*_config`
- * table (like `company_ses_config`) and be passed in as the `config`. NO real
- * HTTP is implemented in this phase — mock only.
+ * Real WhatsApp provider over the Meta Cloud API. ONE JSON POST with a Bearer token:
+ *   POST <apiUrl>/<version>/<phoneNumberId>/messages   Authorization: Bearer <accessToken>
+ * The recipient is E.164 WITHOUT a leading '+' (Cloud API convention). A message with
+ * `msg.template` sends a `type:'template'` payload (name + language + ordered body params)
+ * — REQUIRED for business-initiated sends; otherwise a `type:'text'` payload (only valid
+ * inside the 24h customer window). Success = 2xx AND a `messages[0].id` in the response;
+ * a non-2xx, a missing id, or a network error THROWS (the dispatcher's retry/DLQ then
+ * applies). Retries ONLY on 5xx / network (never 4xx). HTTP client injected — tests never
+ * hit graph.facebook.com.
+ */
+export class MetaWhatsAppProvider implements ChannelProvider {
+  readonly medium = 'whatsapp' as const;
+  constructor(
+    private readonly cfg: {
+      apiUrl?: string | null;
+      apiVersion?: string | null;
+      phoneNumberId: string;
+      accessToken: string;
+    },
+    private readonly http: ChannelHttpClient = fetchChannelHttpClient(),
+    private readonly opts: ChannelHttpOptions = DEFAULT_META_HTTP,
+  ) {}
+
+  async send(msg: ChannelMessage): Promise<ChannelSendResult> {
+    const base = (this.cfg.apiUrl && this.cfg.apiUrl.trim() ? this.cfg.apiUrl : 'https://graph.facebook.com').replace(/\/+$/, '');
+    const version = this.cfg.apiVersion && this.cfg.apiVersion.trim() ? this.cfg.apiVersion : DEFAULT_META_API_VERSION;
+    const url = `${base}/${version}/${this.cfg.phoneNumberId}/messages`;
+    const to = msg.to.replace(/^\+/, ''); // Cloud API wants digits, no leading '+'
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${this.cfg.accessToken}`,
+    };
+    const payload = msg.template
+      ? {
+          messaging_product: 'whatsapp',
+          to,
+          type: 'template',
+          template: {
+            name: msg.template.name,
+            language: { code: msg.template.language },
+            ...(msg.template.bodyParams.length > 0
+              ? {
+                  components: [
+                    {
+                      type: 'body',
+                      parameters: msg.template.bodyParams.map((t) => ({ type: 'text', text: t })),
+                    },
+                  ],
+                }
+              : {}),
+          },
+        }
+      : { messaging_product: 'whatsapp', to, type: 'text', text: { preview_url: false, body: msg.body } };
+    const body = JSON.stringify(payload);
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= this.opts.maxRetries; attempt++) {
+      let res: ChannelHttpResponse;
+      try {
+        res = await this.http.post(url, headers, body, this.opts.timeoutMs);
+      } catch (e) {
+        lastErr = e; // network/timeout → retry
+        continue;
+      }
+      if (res.status >= 500) {
+        lastErr = new Error(`Meta WhatsApp: HTTP ${res.status}`);
+        continue; // server error → retry
+      }
+      let json: { messages?: Array<{ id?: unknown }>; error?: { message?: unknown }; [k: string]: unknown };
+      try {
+        json = JSON.parse(res.body) as typeof json;
+      } catch {
+        if (res.status < 200 || res.status >= 300) throw new Error(`Meta WhatsApp: HTTP ${res.status} — ${res.body.slice(0, 200)}`);
+        throw new Error('Meta WhatsApp: response was not JSON');
+      }
+      if (res.status < 200 || res.status >= 300) {
+        // 4xx → no retry; surface Meta's error message (bad template, expired token, …).
+        const detail = typeof json.error?.message === 'string' ? json.error.message : res.body.slice(0, 200);
+        throw new Error(`Meta WhatsApp: HTTP ${res.status} — ${detail}`);
+      }
+      const id = json.messages?.[0]?.id;
+      if (typeof id !== 'string' || id.length === 0) {
+        throw new Error(`Meta WhatsApp: no message id in response — ${res.body.slice(0, 200)}`);
+      }
+      return { providerMessageId: id };
+    }
+    throw lastErr instanceof Error ? lastErr : new Error('Meta WhatsApp: send failed');
+  }
+}
+
+/**
+ * Resolve a `ChannelProvider` for a text medium — the seam where a real adapter slots in.
+ * Returns the deterministic MOCK whenever a company has no real credentials (so dev/e2e
+ * send for real, locally, without any creds — unlike email, which needs real SES); a real
+ * adapter is returned when the resolved `config` carries that provider's credentials.
+ * `email` is NOT a channel here (it has its own SES pipeline); asking for it throws so a
+ * mis-route is caught loudly.
  */
 export function resolveChannelProvider(
   medium: Medium,
@@ -328,15 +451,17 @@ export function resolveChannelProvider(
       `resolveChannelProvider: '${medium}' is not a text channel (email uses the SES pipeline in @cdp/email)`,
     );
   }
-  // WhatsApp has no real adapter yet (Meta Cloud API is a follow-up) — always mock.
-  if (medium === 'whatsapp') return new MockWhatsAppProvider();
+  if (medium === 'whatsapp') {
+    // Real Meta adapter when the company configured WhatsApp creds, else the mock.
+    return config.kind === 'meta' ? new MetaWhatsAppProvider(config, http ?? fetchChannelHttpClient()) : new MockWhatsAppProvider();
+  }
   // SMS: a real 019 adapter when the company configured it, else the mock.
   switch (config.kind) {
     case '019':
       return new Sms019Provider(config, http ?? fetchChannelHttpClient());
+    case 'meta':
     case 'mock':
       return new MockSmsProvider();
-    // TODO(real-providers): case 'meta': return new MetaWhatsAppProvider(config) for whatsapp.
     default: {
       const exhaustive: never = config;
       throw new Error(`resolveChannelProvider: unsupported provider kind '${String((exhaustive as { kind?: unknown }).kind)}'`);

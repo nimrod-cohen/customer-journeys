@@ -71,6 +71,37 @@ extend `ChannelProviderConfig` with the provider's fields, and resolve the confi
 `company_channel_config` instead of `DEFAULT_CHANNEL_CONFIG` (`{kind:'mock'}`). Keep the
 mock as the default for local dev + tests.
 
+## WhatsApp via Meta Cloud API — WIRED (real provider + per-company creds)
+
+The real WhatsApp adapter is implemented (`MetaWhatsAppProvider` in `@cdp/channels`) and
+per-company credentials are stored + resolved exactly like the 019 SMS path. WhatsApp
+sends route through the real provider when a company has credentials, else the mock.
+
+**Meta account onboarding (human — the platform can't do these):**
+1. **Meta Business account** (business.facebook.com) → a **Meta App** (developers.facebook.com)
+   with the **WhatsApp** product added.
+2. **Phone number**: WhatsApp → API Setup gives a free **test number**; production needs your
+   own verified business number. Note the **Phone number ID** + the **WABA ID**.
+3. **Permanent access token**: Business Settings → **System Users** → create one → generate a
+   **non-expiring** token with `whatsapp_business_messaging` + `whatsapp_business_management`.
+   (The dashboard token expires in 24h — useless for a server.)
+4. **Approve a message template** in WhatsApp Manager (Marketing/Utility, a language, body with
+   `{{1}} {{2}}` variables). **Business-initiated (broadcast/campaign) WhatsApp can ONLY send an
+   approved template** — free-form text is blocked outside a 24h customer-service window. Note
+   the template **name** + **language code**.
+5. Add a **payment method** to the WABA.
+
+**Enter credentials:** Company settings → Sending → **WhatsApp (Meta Cloud API)** card
+(`PUT /company/whatsapp-config`: phone number id + access token (write-only, envelope-encrypted)
++ optional API version + default country). Table: `company_whatsapp_config` (migration `0046`).
+
+**How it sends:** the dispatcher resolves `channelConfigForWorkspace(reader, ws, 'whatsapp')`
+→ a `{kind:'meta',…}` config (token decrypted at send time), and `resolveChannelProvider`
+returns `MetaWhatsAppProvider` → `POST graph.facebook.com/<v>/<phoneNumberId>/messages`. A send
+with a template (name + language + ordered params) posts `type:'template'`; without one it posts
+`type:'text'` (valid only inside the 24h window). On failure it throws → the dispatcher's
+retry/DLQ applies. Opt-out is already covered (WhatsApp is in the `sms_whatsapp` medium group).
+
 ## Required prod secret (v0.56.0)
 `UNSUBSCRIBE_LINK_SECRET` — the HMAC key that signs/verifies the tokenized
 unsubscribe + manage-subscription links. MUST be set (a strong random value) on

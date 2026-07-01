@@ -15,17 +15,44 @@ import type { Reader } from './dispatch.js';
 
 /**
  * Resolve the per-COMPANY text-channel provider config for a sending workspace —
- * the channel twin of local-api's `sesForWorkspace`. Reads the workspace's
- * company `company_channel_config` row; a '019' row → a real `Sms019Provider`
- * config with the bearer DECRYPTED at call time only (the wire/log never carry
- * plaintext, the stored secret stays an envelope). NO row (or an unknown
- * provider) → the deterministic MOCK config, so dev/tests stay green offline.
- * Service-role scoping: the lookup binds `workspace_id` and never trusts a body.
+ * the channel twin of local-api's `sesForWorkspace`. MEDIUM-AWARE: a WhatsApp send
+ * reads `company_whatsapp_config` (→ a real `MetaWhatsAppProvider` config), an SMS
+ * send reads `company_channel_config` (→ a real `Sms019Provider` config). The
+ * secret (bearer / access token) is DECRYPTED at call time only (the wire/log never
+ * carry plaintext; the stored value stays an envelope). NO row → the deterministic
+ * MOCK config, so dev/tests stay green offline. Service-role scoping: the lookup
+ * binds `workspace_id` and never trusts a body.
  */
 export async function channelConfigForWorkspace(
   reader: Reader,
   workspaceId: string,
+  medium: 'sms' | 'whatsapp' = 'sms',
 ): Promise<ChannelProviderConfig> {
+  if (medium === 'whatsapp') {
+    const { rows } = await reader.query<{
+      phone_number_id: string;
+      access_token: string;
+      api_version: string | null;
+      default_country: string | null;
+    }>(
+      `SELECT c.phone_number_id, c.access_token, c.api_version, c.default_country
+         FROM company_whatsapp_config c JOIN workspaces w ON w.company_id = c.company_id
+        WHERE w.id = $1`,
+      [workspaceId],
+    );
+    const cfg = rows[0];
+    if (cfg) {
+      const accessToken = isEncryptedSecret(cfg.access_token) ? decryptSecret(cfg.access_token) : cfg.access_token;
+      return {
+        kind: 'meta',
+        phoneNumberId: cfg.phone_number_id,
+        accessToken,
+        apiVersion: cfg.api_version,
+        defaultCountry: cfg.default_country ?? null,
+      };
+    }
+    return DEFAULT_CHANNEL_CONFIG;
+  }
   const { rows } = await reader.query<{
     provider: string;
     api_url: string;
@@ -40,9 +67,6 @@ export async function channelConfigForWorkspace(
     [workspaceId],
   );
   const cfg = rows[0];
-  // The default country is used to NORMALIZE national numbers regardless of which
-  // provider sends (it rides BOTH the real-019 config and the mock fallback so a
-  // company can set a default country even before configuring a real gateway).
   const defaultCountry = cfg?.default_country ?? null;
   if (cfg && cfg.provider === '019') {
     const bearer = isEncryptedSecret(cfg.secret) ? decryptSecret(cfg.secret) : cfg.secret;
@@ -108,7 +132,7 @@ export function makeProdDeps(): HandlerDeps {
     ses: new ProdSesEmailClient(),
     // Per-company text-channel provider config (a real '019' SMS gateway when the
     // sending workspace's company configured it, else the deterministic MOCK).
-    resolveChannelConfig: (workspaceId) => channelConfigForWorkspace(reader, workspaceId),
+    resolveChannelConfig: (workspaceId, medium) => channelConfigForWorkspace(reader, workspaceId, medium),
     channelHttp: fetchChannelHttpClient(),
     runInWorkspaceTx: (workspaceId, statements) =>
       runStatementsInWorkspaceTx(pool, workspaceId, statements),
