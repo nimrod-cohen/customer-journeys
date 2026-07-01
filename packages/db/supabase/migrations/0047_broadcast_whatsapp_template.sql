@@ -1,0 +1,12 @@
+-- 0047_broadcast_whatsapp_template.sql
+-- A WhatsApp broadcast can reference an approved Meta message TEMPLATE (required for
+-- business-initiated WhatsApp — free-form text only works inside the 24h customer window).
+-- The template selection lives in one jsonb column on the broadcast:
+--   { "name": "<approved template name>", "language": "<lang code, e.g. en_US>",
+--     "params": ["{{customer.first_name}}", "{{event.code}}", …] }
+-- `params` are merge-tag expressions rendered per recipient at send time and mapped IN
+-- ORDER to the template's {{1}},{{2}},… body variables. NULL → a plain text_body send
+-- (mock, or a real session-window text message).
+--
+-- Additive column, no new RLS (broadcasts.workspace_id already scopes it).
+ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS whatsapp_template jsonb;

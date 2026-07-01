@@ -2393,7 +2393,7 @@ export const getBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, status, medium, text_body, topic_id, audience_kind, audience_ref, audience, template_id, scheduled_at, scheduled_tz FROM broadcasts WHERE id = $1',
+    'SELECT id, name, status, medium, text_body, whatsapp_template, topic_id, audience_kind, audience_ref, audience, template_id, scheduled_at, scheduled_tz FROM broadcasts WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -2605,6 +2605,25 @@ async function liveAudienceAst(pool: Pool, workspaceId: string, audience: AstNod
   return inlineDynamicSegments(audience, defs);
 }
 
+/**
+ * Parse a WhatsApp template selection from a request body into the jsonb we store on
+ * `broadcasts.whatsapp_template` (or a campaign send node). Shape:
+ *   { name, language, params: string[] }  (params = merge-tag expressions, in order).
+ * Returns `{ value }` (the normalized object or null), or `{ error }` when a partial
+ * template is given (a name without a language or vice versa).
+ */
+function parseWhatsAppTemplateBody(raw: unknown): { value: { name: string; language: string; params: string[] } | null } | { error: string } {
+  if (raw === null || raw === undefined) return { value: null };
+  if (typeof raw !== 'object') return { error: 'whatsapp_template must be an object' };
+  const o = raw as Record<string, unknown>;
+  const name = typeof o.name === 'string' ? o.name.trim() : '';
+  const language = typeof o.language === 'string' ? o.language.trim() : '';
+  if (!name && !language) return { value: null }; // an empty selection → no template
+  if (!name || !language) return { error: 'a WhatsApp template needs both a name and a language' };
+  const params = Array.isArray(o.params) ? o.params.filter((p): p is string => typeof p === 'string') : [];
+  return { value: { name, language, params } };
+}
+
 export const createBroadcast: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const scheduledAt = b.scheduled_at ? String(b.scheduled_at) : null;
@@ -2617,6 +2636,10 @@ export const createBroadcast: Handler = async (ctx, pool, req) => {
   // back to email (the check constraint also enforces it).
   const medium = b.medium === 'sms' || b.medium === 'whatsapp' ? String(b.medium) : 'email';
   const textBody = medium === 'email' ? null : b.text_body != null ? String(b.text_body) : null;
+  // WhatsApp-only approved TEMPLATE selection (Meta requires it for business-initiated sends).
+  const waParsed = medium === 'whatsapp' ? parseWhatsAppTemplateBody(b.whatsapp_template) : { value: null };
+  if ('error' in waParsed) return ok({ error: waParsed.error }, 400);
+  const waTemplate = waParsed.value;
   // An optional TOPIC tag (subscription gating). A cross-workspace topic id is
   // rejected — workspace from the token, never trusted from the body (inv.2).
   const topicId = b.topic_id != null ? String(b.topic_id) : null;
@@ -2630,13 +2653,14 @@ export const createBroadcast: Handler = async (ctx, pool, req) => {
   const audienceKind = audience ? 'rule' : String(b.audience_kind ?? 'segment');
   const audienceRef = audience ? null : (b.audience_ref ?? null);
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, medium, text_body, template_id, topic_id, audience_kind, audience_ref, audience, scheduled_at, scheduled_tz, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13) RETURNING id, name, status, medium`,
+    `INSERT INTO broadcasts (workspace_id, name, medium, text_body, whatsapp_template, template_id, topic_id, audience_kind, audience_ref, audience, scheduled_at, scheduled_tz, status, created_by)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14) RETURNING id, name, status, medium`,
     [
       ctx.workspaceId,
       String(b.name ?? 'Untitled'),
       medium,
       textBody,
+      waTemplate ? JSON.stringify(waTemplate) : null,
       b.template_id ?? null,
       topicId,
       audienceKind,
@@ -2682,6 +2706,15 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
   const topicId = topicProvided && b.topic_id != null ? String(b.topic_id) : null;
   if (topicId && !(await topicBelongsToWorkspace(pool, ctx.workspaceId, topicId)))
     return ok({ error: 'unknown topic' }, 400);
+  // WhatsApp template — updated only when the key is present; validated (name+language
+  // both or neither). A provided email medium clears it (below via the medium CASE).
+  const waTemplateProvided = b.whatsapp_template !== undefined;
+  let waTemplateJson: string | null = null;
+  if (waTemplateProvided) {
+    const parsed = parseWhatsAppTemplateBody(b.whatsapp_template);
+    if ('error' in parsed) return ok({ error: parsed.error }, 400);
+    waTemplateJson = parsed.value ? JSON.stringify(parsed.value) : null;
+  }
   // The comprehensive audience RULE. When the key is present (the new builder always
   // sends it), a non-null AST takes over: audience set, audience_kind='rule',
   // audience_ref cleared. Validated (shape + workspace-owned segment refs, inv. 2).
@@ -2706,6 +2739,7 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
        medium = COALESCE($9, medium),
        text_body = CASE WHEN $9 = 'email' THEN NULL WHEN $10 THEN $11 ELSE text_body END,
        topic_id = CASE WHEN $12::boolean THEN $13 ELSE topic_id END,
+       whatsapp_template = CASE WHEN $9 = 'email' THEN NULL WHEN $17::boolean THEN $18::jsonb ELSE whatsapp_template END,
        updated_at = now()
      WHERE id = $8`,
     [
@@ -2725,6 +2759,8 @@ export const updateBroadcast: Handler = async (ctx, pool, req) => {
       audienceRule,
       audienceProvided,
       audienceProvided && audience ? JSON.stringify(audience) : null,
+      waTemplateProvided,
+      waTemplateJson,
     ],
   );
   const { rowCount } = await pool.query(upd.text, upd.values);
@@ -2741,7 +2777,7 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const src = scopedQuery(
     ctx.workspaceId,
-    'SELECT name, template_id, audience_kind, audience_ref, audience, medium, text_body, topic_id FROM broadcasts WHERE id = $1',
+    'SELECT name, template_id, audience_kind, audience_ref, audience, medium, text_body, whatsapp_template, topic_id FROM broadcasts WHERE id = $1',
     [id],
   );
   const b = (await pool.query(src.text, src.values)).rows[0] as
@@ -2753,6 +2789,7 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
         audience: unknown;
         medium: string;
         text_body: string | null;
+        whatsapp_template: unknown;
         topic_id: string | null;
       }
     | undefined;
@@ -2771,8 +2808,8 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
     templateId = t?.id ?? null;
   }
   const { rows } = await pool.query(
-    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, audience, medium, text_body, topic_id, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, 'draft', $10) RETURNING id, name, status, medium`,
+    `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, audience, medium, text_body, whatsapp_template, topic_id, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb, $10, 'draft', $11) RETURNING id, name, status, medium`,
     [
       ctx.workspaceId,
       `${b.name} (copy)`,
@@ -2782,6 +2819,7 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
       b.audience ? JSON.stringify(b.audience) : null,
       b.medium,
       b.text_body,
+      b.whatsapp_template ? JSON.stringify(b.whatsapp_template) : null,
       b.topic_id,
       ctx.userId ?? null,
     ],
@@ -2833,22 +2871,31 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
   const { rows: guardRows } = await pool.query<{
     medium: string;
     text_body: string | null;
+    whatsapp_template: unknown;
     template_id: string | null;
     subject: string | null;
     sender_id: string | null;
     to_address: string | null;
   }>(
-    `SELECT b.medium, b.text_body, b.template_id, t.subject, t.sender_id, t.to_address FROM broadcasts b
+    `SELECT b.medium, b.text_body, b.whatsapp_template, b.template_id, t.subject, t.sender_id, t.to_address FROM broadcasts b
        LEFT JOIN email_templates t ON t.id = b.template_id AND t.workspace_id = b.workspace_id
       WHERE b.workspace_id = $1 AND b.id = $2`,
     [ctx.workspaceId, id],
   );
   if (!guardRows[0]) return ok({ error: 'not found' }, 404);
   const medium = guardRows[0].medium;
-  if (medium === 'sms' || medium === 'whatsapp') {
-    // TEXT channels: the ONLY gate is a non-blank message body. No envelope (From/
-    // To/Subject) and NO verified-domain gate — those are email-only (a verified
-    // sending domain is meaningless for SMS/WhatsApp; the provider always resolves).
+  if (medium === 'whatsapp') {
+    // WhatsApp: a message body OR an approved TEMPLATE is required (a business-initiated
+    // send to a cold contact NEEDS a template; a plain body is only for the 24h window /
+    // mock). No envelope + NO verified-domain gate (email-only).
+    const hasBody = !!guardRows[0].text_body && !!guardRows[0].text_body.trim();
+    const waParsed = parseWhatsAppTemplateBody(guardRows[0].whatsapp_template);
+    const hasTemplate = !('error' in waParsed) && waParsed.value !== null;
+    if (!hasBody && !hasTemplate) {
+      return ok({ error: 'Add a message body or choose an approved WhatsApp template before sending.' }, 409);
+    }
+  } else if (medium === 'sms') {
+    // SMS: the ONLY gate is a non-blank message body. No envelope, no domain gate.
     if (!guardRows[0].text_body || !guardRows[0].text_body.trim()) {
       return ok({ error: 'Add a message body before sending.' }, 409);
     }

@@ -147,6 +147,18 @@ function asStringRecord(raw: unknown): Record<string, string> {
   return out;
 }
 
+/** Parse a WhatsApp template selection (from a broadcast column or a campaign payload) into
+ *  `{ name, language, params }`, or null when absent/malformed (→ a plain text_body send). */
+function parseWhatsAppTemplate(raw: unknown): { name: string; language: string; params: string[] } | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const o = raw as Record<string, unknown>;
+  const name = typeof o.name === 'string' ? o.name.trim() : '';
+  const language = typeof o.language === 'string' ? o.language.trim() : '';
+  if (!name || !language) return null;
+  const params = Array.isArray(o.params) ? o.params.filter((p): p is string => typeof p === 'string') : [];
+  return { name, language, params };
+}
+
 /**
  * Dispatch one outbox id. Returns a DispatchOutcome the handler maps to
  * ack/retry. Never sends real mail (SES is injected). The atomic claim makes
@@ -273,17 +285,22 @@ export async function dispatchOutbox(
     // campaign send-node config); email is the default for anything untagged.
     let medium: Medium = 'email';
     let textBody: string | null = null;
+    // A WhatsApp APPROVED TEMPLATE (Meta requires it for business-initiated sends). For a
+    // broadcast it lives on the row (`whatsapp_template` jsonb); for a campaign it rides the
+    // outbox payload (`wa_template`). null → a plain text_body send.
+    let whatsappTemplate: { name: string; language: string; params: string[] } | null = null;
     // The message's optional TOPIC (CLAUDE.md topic-subscriptions): lives on the
     // broadcast/campaign row. A recipient unsubscribed from it is skipped.
     let topicId: string | null = null;
     const payloadMedium = payload['medium'];
     if (broadcastId) {
-      // Load the broadcast row once: it carries text_body (sms/whatsapp) AND topic_id.
+      // Load the broadcast row once: it carries text_body (sms/whatsapp) + whatsapp_template + topic_id.
       const { rows: bcRows } = await deps.reader.query<{
         medium: string;
         text_body: string | null;
+        whatsapp_template: unknown;
         topic_id: string | null;
-      }>(`SELECT medium, text_body, topic_id FROM broadcasts WHERE workspace_id = $1 AND id = $2`, [
+      }>(`SELECT medium, text_body, whatsapp_template, topic_id FROM broadcasts WHERE workspace_id = $1 AND id = $2`, [
         workspaceId,
         broadcastId,
       ]);
@@ -295,18 +312,20 @@ export async function dispatchOutbox(
         ) {
           medium = bcRows[0].medium;
           textBody = bcRows[0].text_body;
+          if (medium === 'whatsapp') whatsappTemplate = parseWhatsAppTemplate(bcRows[0].whatsapp_template);
         }
       }
     } else if (ob.campaign_id) {
-      // Campaign send: the medium + text body + per-node topic ride the OUTBOX
+      // Campaign send: the medium + text body + per-node topic + wa_template ride the OUTBOX
       // PAYLOAD. Campaigns don't carry a topic_id column — the runner stamps
-      // the send-node's topic_id directly onto the payload at enqueue time.
+      // the send-node's config directly onto the payload at enqueue time.
       const payloadTopic = payload['topic_id'];
       topicId = typeof payloadTopic === 'string' && payloadTopic.length > 0 ? payloadTopic : null;
       if (payloadMedium === 'sms' || payloadMedium === 'whatsapp') {
         medium = payloadMedium;
         const pt = payload['text_body'];
         textBody = typeof pt === 'string' ? pt : null;
+        if (medium === 'whatsapp') whatsappTemplate = parseWhatsAppTemplate(payload['wa_template']);
       }
     }
 
@@ -437,6 +456,7 @@ export async function dispatchOutbox(
       subject,
       medium,
       textBody,
+      whatsappTemplate,
       phone,
       merge,
       frequencyCapPerDays,

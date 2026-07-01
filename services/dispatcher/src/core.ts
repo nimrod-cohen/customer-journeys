@@ -65,6 +65,13 @@ export interface DispatchContext {
   readonly medium?: Medium;
   /** The plain-text SMS/WhatsApp body (merge-tag enabled). Email uses `template`. */
   readonly textBody?: string | null;
+  /**
+   * WhatsApp only: an approved Meta message TEMPLATE for a business-initiated send.
+   * `params` are merge-tag expressions rendered per recipient and mapped IN ORDER to
+   * the template's {{1}},{{2}},… body variables. When present the WhatsApp send is a
+   * `type:'template'` message; absent → free-form `textBody` text (24h window / mock).
+   */
+  readonly whatsappTemplate?: { readonly name: string; readonly language: string; readonly params: readonly string[] } | null;
   /** The recipient's phone (`customer.phone`) for sms/whatsapp. */
   readonly phone?: string | null;
   /** Merge values substituted into the compiled HTML. */
@@ -695,9 +702,21 @@ export function resolveTextRecipient(ctx: DispatchContext): string {
 export function buildChannelMessage(ctx: DispatchContext): ChannelMessage {
   const to = resolveTextRecipient(ctx);
   if (!to) throw new Error('buildChannelMessage: recipient has no phone');
+  // WhatsApp template: render each param expression per recipient (customer.*/event.* etc.)
+  // and map IN ORDER to the template's body variables. Applies to whatsapp only.
+  const tpl = ctx.medium === 'whatsapp' && ctx.whatsappTemplate ? ctx.whatsappTemplate : null;
   return {
     to,
     body: renderTemplateBody(ctx.textBody ?? '', ctx.merge),
+    ...(tpl
+      ? {
+          template: {
+            name: tpl.name,
+            language: tpl.language,
+            bodyParams: tpl.params.map((p) => renderTemplateBody(p, ctx.merge)),
+          },
+        }
+      : {}),
   };
 }
 

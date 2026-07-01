@@ -79,6 +79,8 @@ interface BroadcastRow {
   readonly medium: string;
   /** The SMS/WhatsApp body (null for email, which uses its template instance). */
   readonly text_body: string | null;
+  /** WhatsApp approved-template selection ({name, language, params}) or null. */
+  readonly whatsapp_template: unknown;
 }
 
 const DEFAULT_BATCH_SIZE = 500;
@@ -96,7 +98,7 @@ export async function runBroadcast(
 ): Promise<RunBroadcastResult> {
   // 1. Load the broadcast row. workspace_id comes FROM the row (CLAUDE.md inv.2).
   const { rows } = await deps.reader.query<BroadcastRow>(
-    `SELECT id, workspace_id, template_id, audience_kind, audience_ref, audience, scheduled_at, status, medium, text_body
+    `SELECT id, workspace_id, template_id, audience_kind, audience_ref, audience, scheduled_at, status, medium, text_body, whatsapp_template
      FROM broadcasts WHERE id = $1`,
     [broadcastId],
   );
@@ -120,7 +122,15 @@ export async function runBroadcast(
   if (!isText && !bc.template_id) {
     return { result: 'skipped', reason: 'broadcast has no template' };
   }
-  if (isText && (!bc.text_body || bc.text_body.trim() === '')) {
+  // WhatsApp may send an approved TEMPLATE instead of a text body (the dispatcher reads
+  // whatsapp_template from the row); SMS still requires a non-blank body.
+  const hasBody = !!bc.text_body && bc.text_body.trim() !== '';
+  const hasWaTemplate =
+    medium === 'whatsapp' &&
+    typeof bc.whatsapp_template === 'object' &&
+    bc.whatsapp_template !== null &&
+    typeof (bc.whatsapp_template as { name?: unknown }).name === 'string';
+  if (isText && !hasBody && !hasWaTemplate) {
     return { result: 'skipped', reason: 'broadcast has no message body' };
   }
 
