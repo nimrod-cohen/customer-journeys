@@ -464,6 +464,14 @@ export function BroadcastWizard({ id }: { id?: string }) {
   const [medium, setMedium] = useState<Medium>('email');
   const [textBody, setTextBody] = useState('');
   const [tplId, setTplId] = useState('');
+  // WhatsApp message type: an approved Meta TEMPLATE (required for business-initiated /
+  // cold sends) or free-form text (only within the 24h customer window). Template mode
+  // carries a name + language + ordered param expressions mapped to the template's
+  // {{1}},{{2}},… body placeholders (each rendered per recipient at send).
+  const [waMode, setWaMode] = useState<'template' | 'text'>('template');
+  const [waTplName, setWaTplName] = useState('');
+  const [waTplLang, setWaTplLang] = useState('en_US');
+  const [waTplParams, setWaTplParams] = useState<string[]>([]);
   // Optional TOPIC tag (subscription gating): a recipient unsubscribed from this
   // topic is skipped at send. '' = no topic (sends to everyone not opted out).
   const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
@@ -517,7 +525,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
   useEffect(() => {
     if (!id) return;
     void api
-      .get<{ broadcast: Broadcast & { audience_ref: string | null; audience: AstNode | null; template_id: string | null; text_body: string | null; topic_id: string | null } }>(`/broadcasts/${id}`)
+      .get<{ broadcast: Broadcast & { audience_ref: string | null; audience: AstNode | null; template_id: string | null; text_body: string | null; whatsapp_template: unknown; topic_id: string | null } }>(`/broadcasts/${id}`)
       .then((r) => {
         const b = r.broadcast;
         if (!EDITABLE.has(b.status)) {
@@ -536,6 +544,16 @@ export function BroadcastWizard({ id }: { id?: string }) {
         setTextBody(b.text_body ?? '');
         setTplId(b.template_id ?? '');
         setTopicId(b.topic_id ?? '');
+        // Hydrate a stored WhatsApp template (else default to template mode with blanks).
+        const wa = b.whatsapp_template as { name?: string; language?: string; params?: string[] } | null | undefined;
+        if (wa && wa.name) {
+          setWaMode('template');
+          setWaTplName(wa.name);
+          setWaTplLang(wa.language ?? 'en_US');
+          setWaTplParams(Array.isArray(wa.params) ? wa.params : []);
+        } else if (b.medium === 'whatsapp' && b.text_body) {
+          setWaMode('text'); // a legacy text-only WhatsApp broadcast
+        }
         if (b.scheduled_at) {
           const tz = b.scheduled_tz || BROWSER_TZ;
           setScheduleMode('later');
@@ -674,7 +692,8 @@ export function BroadcastWizard({ id }: { id?: string }) {
     const body = {
       name: name || 'Untitled broadcast',
       medium,
-      text_body: medium === 'email' ? null : textBody,
+      text_body: textBodyForSave,
+      whatsapp_template: medium === 'whatsapp' ? waTemplateForSave : null,
       audience: audienceAst,
       template_id: tplId || null,
       topic_id: topicId || null,
@@ -717,6 +736,20 @@ export function BroadcastWizard({ id }: { id?: string }) {
       ? `${attachedCopy.name} (this broadcast's copy)`
       : (templates.find((t) => t.id === tplId)?.name ?? '—');
 
+  // WhatsApp template mode is active only for whatsapp + 'template'. The saved template
+  // (null when not in template mode or no name yet); when it's active, text_body is null
+  // (the template IS the content — a plain body only applies to text mode / SMS).
+  const waTemplateActive = medium === 'whatsapp' && waMode === 'template';
+  const waTemplateForSave =
+    waTemplateActive && waTplName.trim()
+      ? {
+          name: waTplName.trim(),
+          language: waTplLang.trim() || 'en_US',
+          params: waTplParams.map((p) => p.trim()).filter((p) => p.length > 0),
+        }
+      : null;
+  const textBodyForSave = medium === 'email' || waTemplateActive ? null : textBody;
+
   // Per-step validity → which steps the breadcrumbs can jump to (you can always
   // go back; you can jump forward only as far as the entered data is valid). The
   // audience must have at least one condition (never blast-all by accident).
@@ -731,9 +764,14 @@ export function BroadcastWizard({ id }: { id?: string }) {
         envelope && envelope.to_address.trim() !== '' ? null : 'To',
         envelope && envelope.subject.trim() !== '' ? null : 'Subject',
       ].filter((x): x is string => x !== null);
-  // EMAIL needs a complete email instance; the TEXT channels need a non-blank body.
+  // EMAIL needs a complete email instance; a WhatsApp TEMPLATE send needs a template name;
+  // otherwise the TEXT channels need a non-blank body.
   const step1Valid =
-    medium === 'email' ? tplId !== '' && missingEnvelope.length === 0 : textBody.trim() !== '';
+    medium === 'email'
+      ? tplId !== '' && missingEnvelope.length === 0
+      : waTemplateActive
+        ? waTplName.trim() !== ''
+        : textBody.trim() !== '';
   const canReach = (target: number): boolean =>
     target === 0 ? true : target === 1 ? step0Valid : step0Valid && step1Valid;
 
@@ -766,7 +804,8 @@ export function BroadcastWizard({ id }: { id?: string }) {
       const body = {
         name: name || 'Untitled broadcast',
         medium,
-        text_body: medium === 'email' ? null : textBody,
+        text_body: textBodyForSave,
+      whatsapp_template: medium === 'whatsapp' ? waTemplateForSave : null,
         audience: audienceAst,
         template_id: medium === 'email' ? tplId : null,
         topic_id: topicId || null,
@@ -930,53 +969,149 @@ export function BroadcastWizard({ id }: { id?: string }) {
           </div>
         ) : step === 1 && medium !== 'email' ? (
           <div class="space-y-3">
-            <p class="text-sm text-stone-600">
-              Write the {MEDIUM_LABEL[medium]} message. It's sent as plain text to each recipient's phone. Use merge
-              tags like <code class="rounded bg-stone-100 px-1">{'{{customer.first_name}}'}</code> to personalize.
-            </p>
-            {textTemplates.length ? (
-              <Field label="Use a text template (optional)">
+            {/* WhatsApp: choose an approved TEMPLATE (required for cold/marketing sends)
+                or free-form text (only within the 24h customer window). SMS is text-only. */}
+            {medium === 'whatsapp' ? (
+              <Field label="Message type">
                 <Select
-                  data-testid="text-template-pick"
-                  value=""
-                  onChange={(e: Event) => {
-                    const tid = (e.target as HTMLSelectElement).value;
-                    const tpl = textTemplates.find((t) => t.id === tid);
-                    if (tpl) setTextBody(tpl.body);
-                    (e.target as HTMLSelectElement).value = '';
-                  }}
+                  data-testid="whatsapp-message-type"
+                  value={waMode}
+                  onChange={(e: Event) => setWaMode((e.target as HTMLSelectElement).value as 'template' | 'text')}
                 >
-                  <option value="">— none —</option>
-                  {textTemplates.map((t) => (
-                    <option value={t.id} key={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
+                  <option value="template">Approved template (for marketing / cold contacts)</option>
+                  <option value="text">Free-form text (only within a 24-hour reply window)</option>
                 </Select>
-                <p class="mt-1 text-xs text-stone-500">
-                  Fills the message below with the template's body. You can still edit it.
-                </p>
+                {waMode === 'text' ? (
+                  <p class="mt-1 text-xs text-amber-700">
+                    Free-form WhatsApp only reaches people who messaged you in the last 24h. For a broadcast to cold
+                    contacts, use an approved template.
+                  </p>
+                ) : null}
               </Field>
             ) : null}
-            <Field label={`${MEDIUM_LABEL[medium]} message`}>
-              <DirectionalTextarea
-                data-testid="broadcast-text-body"
-                testIdPrefix="broadcast-text-dir"
-                storageKey="broadcast-text-body"
-                rows={6}
-                placeholder={'Hi {{customer.first_name}}, your order has shipped!'}
-                value={textBody}
-                onInput={(e: Event) => setTextBody((e.target as HTMLTextAreaElement).value)}
-              />
-            </Field>
-            {textBody.trim() === '' ? (
-              <p data-testid="text-body-incomplete" class="text-xs font-medium text-amber-700">
-                Add a message body before continuing.
-              </p>
+
+            {medium === 'whatsapp' && waMode === 'template' ? (
+              <div data-testid="whatsapp-template" class="space-y-3 rounded-xl border border-stone-200 bg-stone-50/60 p-3">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field label="Template name">
+                    <Input
+                      data-testid="wa-template-name"
+                      class="font-mono text-sm"
+                      placeholder="e.g. order_update"
+                      value={waTplName}
+                      onInput={(e: Event) => setWaTplName((e.target as HTMLInputElement).value)}
+                    />
+                  </Field>
+                  <Field label="Language">
+                    <Input
+                      data-testid="wa-template-lang"
+                      class="font-mono text-sm"
+                      placeholder="e.g. en_US"
+                      value={waTplLang}
+                      onInput={(e: Event) => setWaTplLang((e.target as HTMLInputElement).value)}
+                    />
+                  </Field>
+                </div>
+                <p class="text-xs text-stone-500">
+                  The template must be APPROVED in your Meta WhatsApp Manager. Map its body placeholders{' '}
+                  <code class="rounded bg-stone-100 px-1">{'{{1}}'}</code>,{' '}
+                  <code class="rounded bg-stone-100 px-1">{'{{2}}'}</code>… to a value below (use merge tags like{' '}
+                  <code class="rounded bg-stone-100 px-1">{'{{customer.first_name}}'}</code> to personalize).
+                </p>
+                <div class="space-y-2">
+                  {waTplParams.map((p, i) => (
+                    <div data-testid="wa-template-param-row" key={i} class="flex items-center gap-2">
+                      <span class="w-10 shrink-0 font-mono text-sm text-stone-500">{`{{${i + 1}}}`}</span>
+                      <Input
+                        data-testid="wa-template-param"
+                        class="min-w-0 flex-1 font-mono text-sm"
+                        placeholder="{{customer.first_name}}"
+                        value={p}
+                        onInput={(e: Event) =>
+                          setWaTplParams((ps) => ps.map((x, j) => (j === i ? (e.target as HTMLInputElement).value : x)))
+                        }
+                      />
+                      <Button
+                        data-testid="wa-template-param-remove"
+                        variant="ghost"
+                        size="sm"
+                        aria-label="Remove variable"
+                        onClick={() => setWaTplParams((ps) => ps.filter((_, j) => j !== i))}
+                      >
+                        ✕
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    data-testid="wa-template-param-add"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setWaTplParams((ps) => [...ps, ''])}
+                  >
+                    + Add variable ({`{{${waTplParams.length + 1}}}`})
+                  </Button>
+                </div>
+                {waTplName.trim() === '' ? (
+                  <p data-testid="wa-template-incomplete" class="text-xs font-medium text-amber-700">
+                    Enter the approved template name to continue.
+                  </p>
+                ) : (
+                  <p data-testid="wa-template-complete" class="text-xs text-emerald-700">
+                    Template ready.
+                  </p>
+                )}
+              </div>
             ) : (
-              <p data-testid="text-body-complete" class="text-xs text-emerald-700">
-                Message ready.
-              </p>
+              <>
+                <p class="text-sm text-stone-600">
+                  Write the {MEDIUM_LABEL[medium]} message. It's sent as plain text to each recipient's phone. Use merge
+                  tags like <code class="rounded bg-stone-100 px-1">{'{{customer.first_name}}'}</code> to personalize.
+                </p>
+                {textTemplates.length ? (
+                  <Field label="Use a text template (optional)">
+                    <Select
+                      data-testid="text-template-pick"
+                      value=""
+                      onChange={(e: Event) => {
+                        const tid = (e.target as HTMLSelectElement).value;
+                        const tpl = textTemplates.find((t) => t.id === tid);
+                        if (tpl) setTextBody(tpl.body);
+                        (e.target as HTMLSelectElement).value = '';
+                      }}
+                    >
+                      <option value="">— none —</option>
+                      {textTemplates.map((t) => (
+                        <option value={t.id} key={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </Select>
+                    <p class="mt-1 text-xs text-stone-500">
+                      Fills the message below with the template's body. You can still edit it.
+                    </p>
+                  </Field>
+                ) : null}
+                <Field label={`${MEDIUM_LABEL[medium]} message`}>
+                  <DirectionalTextarea
+                    data-testid="broadcast-text-body"
+                    testIdPrefix="broadcast-text-dir"
+                    storageKey="broadcast-text-body"
+                    rows={6}
+                    placeholder={'Hi {{customer.first_name}}, your order has shipped!'}
+                    value={textBody}
+                    onInput={(e: Event) => setTextBody((e.target as HTMLTextAreaElement).value)}
+                  />
+                </Field>
+                {textBody.trim() === '' ? (
+                  <p data-testid="text-body-incomplete" class="text-xs font-medium text-amber-700">
+                    Add a message body before continuing.
+                  </p>
+                ) : (
+                  <p data-testid="text-body-complete" class="text-xs text-emerald-700">
+                    Message ready.
+                  </p>
+                )}
+              </>
             )}
           </div>
         ) : step === 1 ? (
@@ -1117,6 +1252,16 @@ export function BroadcastWizard({ id }: { id?: string }) {
                 <>
                   <dt class="text-stone-500">Email</dt>
                   <dd class="text-ink-900">{tplName}</dd>
+                </>
+              ) : waTemplateActive ? (
+                <>
+                  <dt class="text-stone-500">Template</dt>
+                  <dd class="text-ink-900" data-testid="review-wa-template">
+                    {waTplName || '—'} {waTplName ? <span class="text-stone-400">({waTplLang})</span> : null}
+                    {waTemplateForSave && waTemplateForSave.params.length > 0 ? (
+                      <span class="text-stone-400"> · {waTemplateForSave.params.length} variable(s)</span>
+                    ) : null}
+                  </dd>
                 </>
               ) : (
                 <>
