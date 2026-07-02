@@ -1,9 +1,12 @@
-// Text templates (CLAUDE.md text_templates): a reusable plain-text message
-// library usable for BOTH SMS and WhatsApp (one template serves both mediums).
-// Picking a template in the broadcast/campaign text-body step COPIES its body
-// into the send (copy-on-select, no live reference) — this is the LIBRARY admin
-// (create / edit name+body / delete). It lives as a TAB on the Asset management
-// screen, beside Email templates. Re-fetches on the active workspace.
+// SMS templates (CLAUDE.md text_templates): a reusable plain-text message library for
+// SMS sends. (WhatsApp uses its OWN approved Meta message templates — the "WhatsApp
+// templates" tab — because Meta requires template approval for business-initiated sends;
+// so this library is SMS-only.) Picking a template in the broadcast/campaign SMS body
+// step COPIES its body into the send (copy-on-select, no live reference) — this is the
+// LIBRARY admin (create / edit name+body / delete). It lives as a TAB on the Asset
+// management screen, beside Email templates. Re-fetches on the active workspace.
+// The underlying table/route stay `text_templates` (data model unchanged); only the
+// product framing is SMS.
 import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
 import { useStore } from '../store/store.js';
@@ -25,7 +28,7 @@ function fmtDate(ts: string | null): string {
   return Number.isNaN(d.getTime()) ? '' : formatDateTime(d);
 }
 
-/** The text-template library — rendered inside the Asset management "Text templates" tab. */
+/** The SMS-template library — rendered inside the Asset management "SMS templates" tab. */
 export function TextTemplatesPanel() {
   const session = useStore(sessionStore);
   const [templates, setTemplates] = useState<TextTemplate[]>([]);
@@ -70,10 +73,10 @@ export function TextTemplatesPanel() {
     try {
       if (editId) {
         await api.put(`/text-templates/${editId}`, { body: { name: trimmedName, body: trimmedBody } });
-        showToast('Text template updated.', { tone: 'success' });
+        showToast('SMS template updated.', { tone: 'success' });
       } else {
         await api.post('/text-templates', { body: { name: trimmedName, body: trimmedBody } });
-        showToast('Text template created.', { tone: 'success' });
+        showToast('SMS template created.', { tone: 'success' });
       }
       resetForm();
       await load();
@@ -84,7 +87,7 @@ export function TextTemplatesPanel() {
 
   const remove = async (t: TextTemplate) => {
     const ok = await askConfirm({
-      title: 'Delete text template?',
+      title: 'Delete SMS template?',
       message: `“${t.name}” will be removed. Broadcasts and campaigns keep their own copied body, so they're unaffected.`,
       confirmLabel: 'Delete',
       danger: true,
@@ -92,7 +95,7 @@ export function TextTemplatesPanel() {
     if (!ok) return;
     try {
       await api.del(`/text-templates/${t.id}`);
-      showToast('Text template deleted.', { tone: 'success' });
+      showToast('SMS template deleted.', { tone: 'success' });
       if (editId === t.id) resetForm();
       await load();
     } catch (e) {
@@ -103,9 +106,10 @@ export function TextTemplatesPanel() {
   return (
     <section data-testid="text-templates-screen">
       <p class="mb-4 text-sm text-stone-500">
-        Reusable plain-text messages for SMS &amp; WhatsApp. Pick one when composing a text broadcast or a campaign send
-        step to fill the message body. Use merge tags like{' '}
-        <code class="rounded bg-stone-100 px-1">{'{{customer.first_name}}'}</code> to personalize.
+        Reusable messages for <strong>SMS</strong>. Pick one when composing an SMS broadcast or a campaign SMS step to
+        fill the message body. Use merge tags like{' '}
+        <code class="rounded bg-stone-100 px-1">{'{{customer.first_name}}'}</code> to personalize. (WhatsApp uses its own
+        approved templates — see the <strong>WhatsApp templates</strong> tab.)
       </p>
 
       <Card class="mb-4 p-4">
@@ -143,7 +147,7 @@ export function TextTemplatesPanel() {
               </Button>
             ) : null}
             <Button data-testid="text-template-create" disabled={!name.trim() || !body.trim()} onClick={save}>
-              {editId ? 'Save changes' : '+ Add text template'}
+              {editId ? 'Save changes' : '+ Add SMS template'}
             </Button>
           </div>
         </div>
@@ -186,7 +190,7 @@ export function TextTemplatesPanel() {
         </ul>
       ) : (
         <div data-testid="text-templates-list">
-          <EmptyState>No text templates yet — add your first above.</EmptyState>
+          <EmptyState>No SMS templates yet — add your first above.</EmptyState>
         </div>
       )}
     </section>

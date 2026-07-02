@@ -750,7 +750,7 @@ function SendEditor(props: NodeEditorProps) {
   const [waTplName, setWaTplName] = useState(() => initialWa?.name ?? '');
   const [waTplLang, setWaTplLang] = useState(() => initialWa?.language ?? 'en_US');
   const [waTplParams, setWaTplParams] = useState<string[]>(() => initialWa?.params ?? []);
-  // Reusable text templates (SMS/WhatsApp). Picking one COPIES its body into the
+  // Reusable SMS templates. Picking one COPIES its body into the
   // body field (copy-on-select — the user can still edit). No live reference.
   const [textTemplates, setTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
   // Bumped when the email-designer drawer closes, so the envelope display re-fetches
@@ -909,8 +909,8 @@ function SendEditor(props: NodeEditorProps) {
           </div>
         ) : (
           <>
-        {textTemplates.length ? (
-          <Field label="Use a text template (optional)">
+        {medium === 'sms' && textTemplates.length ? (
+          <Field label="Use an SMS template (optional)">
             <Select
               data-testid="text-template-pick"
               value=""

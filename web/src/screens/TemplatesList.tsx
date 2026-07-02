@@ -93,7 +93,7 @@ export function TemplatesList() {
           }`}
           onClick={() => setTab('text')}
         >
-          Text templates
+          SMS templates
         </button>
         <button
           type="button"

@@ -476,7 +476,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
   // topic is skipped at send. '' = no topic (sends to everyone not opted out).
   const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
   const [topicId, setTopicId] = useState('');
-  // Reusable text templates (SMS/WhatsApp). Picking one COPIES its body into the
+  // Reusable SMS templates. Picking one COPIES its body into the
   // text-body field below (copy-on-select — the user can still edit). No live ref.
   const [textTemplates, setTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
   // The broadcast's WORKING COPY of a template (kind='copy'): picking a library
@@ -1067,8 +1067,8 @@ export function BroadcastWizard({ id }: { id?: string }) {
                   Write the {MEDIUM_LABEL[medium]} message. It's sent as plain text to each recipient's phone. Use merge
                   tags like <code class="rounded bg-stone-100 px-1">{'{{customer.first_name}}'}</code> to personalize.
                 </p>
-                {textTemplates.length ? (
-                  <Field label="Use a text template (optional)">
+                {medium === 'sms' && textTemplates.length ? (
+                  <Field label="Use an SMS template (optional)">
                     <Select
                       data-testid="text-template-pick"
                       value=""
@@ -1087,7 +1087,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
                       ))}
                     </Select>
                     <p class="mt-1 text-xs text-stone-500">
-                      Fills the message below with the template's body. You can still edit it.
+                      Fills the message below with the SMS template's body. You can still edit it.
                     </p>
                   </Field>
                 ) : null}
