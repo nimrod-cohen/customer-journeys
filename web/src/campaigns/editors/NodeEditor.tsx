@@ -741,6 +741,15 @@ function SendEditor(props: NodeEditorProps) {
   // Per-node TOPIC the dispatcher gates this send on. null = no topic, never
   // gated. Persisted into the node's `topic_id` field on save (writeSendConfig).
   const [topicId, setTopicId] = useState<string | null>(() => readSendConfig(props.node.node).topicId ?? null);
+  // WhatsApp message type + approved-template selection (mirrors the broadcast composer).
+  // Default to TEMPLATE (the marketing path) unless the node already carries a text body.
+  const initialWa = readSendConfig(props.node.node).waTemplate;
+  const [waMode, setWaMode] = useState<'template' | 'text'>(() =>
+    initialWa ? 'template' : readSendConfig(props.node.node).textBody.trim() ? 'text' : 'template',
+  );
+  const [waTplName, setWaTplName] = useState(() => initialWa?.name ?? '');
+  const [waTplLang, setWaTplLang] = useState(() => initialWa?.language ?? 'en_US');
+  const [waTplParams, setWaTplParams] = useState<string[]>(() => initialWa?.params ?? []);
   // Reusable text templates (SMS/WhatsApp). Picking one COPIES its body into the
   // body field (copy-on-select — the user can still edit). No live reference.
   const [textTemplates, setTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
@@ -804,19 +813,102 @@ function SendEditor(props: NodeEditorProps) {
     </div>
   );
 
-  // A TEXT send (sms/whatsapp): a plain merge-tag body, saved into the node config.
+  // A TEXT send (sms/whatsapp): a plain merge-tag body, saved into the node config. For
+  // WhatsApp, an approved TEMPLATE is offered (the default — required for cold sends).
   if (medium === 'sms' || medium === 'whatsapp') {
+    const waTemplateMode = medium === 'whatsapp' && waMode === 'template';
     const saveText = async (): Promise<void> => {
+      if (waTemplateMode) {
+        if (!waTplName.trim()) {
+          showToast('Enter the approved WhatsApp template name.', { tone: 'error' });
+          return;
+        }
+        await props.onSaveNode(
+          writeSendConfig({ medium, textBody: '', topicId, waTemplate: { name: waTplName, language: waTplLang, params: waTplParams } }),
+        );
+        props.onDone();
+        return;
+      }
       if (!textBody.trim()) {
         showToast('Add a message body before saving.', { tone: 'error' });
         return;
       }
-      await props.onSaveNode(writeSendConfig({ medium, textBody, topicId }));
+      await props.onSaveNode(writeSendConfig({ medium, textBody, topicId, waTemplate: null }));
       props.onDone();
     };
     return (
       <div class="space-y-4">
         {mediumSelect}
+        {medium === 'whatsapp' ? (
+          <Field label="Message type">
+            <Select
+              data-testid="send-whatsapp-message-type"
+              value={waMode}
+              onChange={(e: Event) => setWaMode((e.target as HTMLSelectElement).value as 'template' | 'text')}
+            >
+              <option value="template">Approved template (for marketing / cold contacts)</option>
+              <option value="text">Free-form text (only within a 24-hour reply window)</option>
+            </Select>
+          </Field>
+        ) : null}
+        {waTemplateMode ? (
+          <div data-testid="send-whatsapp-template" class="space-y-3 rounded-xl border border-stone-200 bg-stone-50/60 p-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Template name">
+                <Input
+                  data-testid="send-wa-template-name"
+                  class="font-mono text-sm"
+                  placeholder="e.g. order_update"
+                  value={waTplName}
+                  onInput={(e: Event) => setWaTplName((e.target as HTMLInputElement).value)}
+                />
+              </Field>
+              <Field label="Language">
+                <Input
+                  data-testid="send-wa-template-lang"
+                  class="font-mono text-sm"
+                  placeholder="e.g. en_US"
+                  value={waTplLang}
+                  onInput={(e: Event) => setWaTplLang((e.target as HTMLInputElement).value)}
+                />
+              </Field>
+            </div>
+            <p class="text-xs text-stone-500">
+              Approved in your Meta WhatsApp Manager. Map its {'{{1}}'},{'{{2}}'}… placeholders to a value (merge tags
+              like {'{{customer.first_name}}'} render per recipient).
+            </p>
+            <div class="space-y-2">
+              {waTplParams.map((p, i) => (
+                <div data-testid="send-wa-param-row" key={i} class="flex items-center gap-2">
+                  <span class="w-10 shrink-0 font-mono text-sm text-stone-500">{`{{${i + 1}}}`}</span>
+                  <Input
+                    data-testid="send-wa-param"
+                    class="min-w-0 flex-1 font-mono text-sm"
+                    placeholder="{{customer.first_name}}"
+                    value={p}
+                    onInput={(e: Event) => setWaTplParams((ps) => ps.map((x, j) => (j === i ? (e.target as HTMLInputElement).value : x)))}
+                  />
+                  <Button
+                    data-testid="send-wa-param-remove"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Remove variable"
+                    onClick={() => setWaTplParams((ps) => ps.filter((_, j) => j !== i))}
+                  >
+                    ✕
+                  </Button>
+                </div>
+              ))}
+              <Button data-testid="send-wa-param-add" variant="secondary" size="sm" onClick={() => setWaTplParams((ps) => [...ps, ''])}>
+                + Add variable ({`{{${waTplParams.length + 1}}}`})
+              </Button>
+            </div>
+            <Button data-testid="send-save-text" onClick={saveText}>
+              Save
+            </Button>
+          </div>
+        ) : (
+          <>
         {textTemplates.length ? (
           <Field label="Use a text template (optional)">
             <Select
@@ -855,6 +947,8 @@ function SendEditor(props: NodeEditorProps) {
         <Button data-testid="send-save-text" onClick={saveText}>
           Save
         </Button>
+          </>
+        )}
       </div>
     );
   }

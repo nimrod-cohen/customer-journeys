@@ -339,6 +339,9 @@ async function chainTick(
           eff.medium !== 'email'
             ? { medium: eff.medium, text_body: eff.textBody ?? '' }
             : {};
+        // A WhatsApp TEMPLATE send stamps `wa_template` (name/language/params) so the
+        // dispatcher renders a type:'template' message (params rendered per recipient).
+        if (eff.medium === 'whatsapp' && eff.waTemplate) payload.wa_template = eff.waTemplate;
         if (eff.topicId) payload.topic_id = eff.topicId;
         // Fold event.* + journey.* into payload.merge so the dispatcher's render
         // pass can substitute {{event.x}} / {{journey.x}} in templates / text

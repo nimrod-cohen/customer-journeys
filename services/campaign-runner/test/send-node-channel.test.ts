@@ -44,6 +44,17 @@ describe('validateCampaignDefinition — channel send nodes', () => {
     expect(() => validateCampaignDefinition(defWith({ medium: 'whatsapp', text_body: '   ' }))).toThrow(/text_body/i);
     expect(() => validateCampaignDefinition(defWith({ medium: 'sms', text_body: 42 }))).toThrow(/text_body/i);
   });
+
+  it('accepts a WhatsApp send with an approved TEMPLATE instead of a body', () => {
+    expect(() =>
+      validateCampaignDefinition(defWith({ medium: 'whatsapp', wa_template: { name: 'order_update', language: 'en_US', params: ['{{customer.first_name}}'] } })),
+    ).not.toThrow();
+  });
+
+  it('rejects a WhatsApp template MISSING a name or language', () => {
+    expect(() => validateCampaignDefinition(defWith({ medium: 'whatsapp', wa_template: { name: '', language: 'en_US' } }))).toThrow(/name and language/i);
+    expect(() => validateCampaignDefinition(defWith({ medium: 'whatsapp', wa_template: { name: 'order_update', language: '' } }))).toThrow(/name and language/i);
+  });
 });
 
 describe('collectSendNodeEnvelopeGaps — channel-aware', () => {
@@ -63,5 +74,8 @@ describe('collectSendNodeEnvelopeGaps — channel-aware', () => {
     expect(collectSendNodeEnvelopeGaps(blank, {})).toEqual([{ nodeId: 's', missing: 'body' }]);
     const missing = defWith({ medium: 'whatsapp' });
     expect(collectSendNodeEnvelopeGaps(missing, {})).toEqual([{ nodeId: 's', missing: 'body' }]);
+    // A WhatsApp send with an approved template satisfies the gate WITHOUT a body.
+    const tpl = defWith({ medium: 'whatsapp', wa_template: { name: 'order_update', language: 'en_US' } });
+    expect(collectSendNodeEnvelopeGaps(tpl, {})).toEqual([]);
   });
 });

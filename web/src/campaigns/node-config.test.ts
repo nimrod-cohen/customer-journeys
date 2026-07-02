@@ -468,7 +468,7 @@ describe('SEND channel (medium + text_body)', () => {
 
   it('reads a text send back (medium + body, topic null by default)', () => {
     const form = readSendConfig({ type: 'action', kind: 'send', medium: 'sms', text_body: 'Hi' });
-    expect(form).toEqual({ medium: 'sms', textBody: 'Hi', topicId: null });
+    expect(form).toEqual({ medium: 'sms', textBody: 'Hi', topicId: null, waTemplate: null });
   });
 
   it('reads a send carrying a per-node topic_id', () => {
@@ -499,6 +499,26 @@ describe('SEND channel (medium + text_body)', () => {
   it('a text send with a blank body is rejected by the runner validator', () => {
     const node = writeSendConfig({ medium: 'whatsapp', textBody: '   ' });
     expect(() => validateCampaignDefinition(wrapSend(node))).toThrow(/text_body/i);
+  });
+
+  it('writes a WhatsApp TEMPLATE send (name/language/params, no body); round-trips + runner accepts', () => {
+    const node = writeSendConfig({
+      medium: 'whatsapp',
+      textBody: '',
+      waTemplate: { name: '  order_update  ', language: 'en_US', params: ['  {{customer.first_name}}  ', '', '{{event.code}}'] },
+    });
+    expect(node).toMatchObject({
+      type: 'action',
+      kind: 'send',
+      medium: 'whatsapp',
+      wa_template: { name: 'order_update', language: 'en_US', params: ['{{customer.first_name}}', '{{event.code}}'] },
+    });
+    expect((node as { text_body?: string }).text_body).toBe('');
+    // Round-trips back to the form (template mode).
+    const back = readSendConfig(node);
+    expect(back.waTemplate).toEqual({ name: 'order_update', language: 'en_US', params: ['{{customer.first_name}}', '{{event.code}}'] });
+    // The runner validator accepts a WhatsApp send with a template + NO body.
+    expect(() => validateCampaignDefinition(wrapSend(node))).not.toThrow();
   });
 
   it('flipping channels through applyNodeConfig clears the OTHER channel\'s stale field (merge)', () => {

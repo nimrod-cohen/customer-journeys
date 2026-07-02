@@ -507,6 +507,9 @@ export interface SendForm {
   readonly textBody: string;
   /** Optional — defaults to null (no topic). */
   readonly topicId?: string | null;
+  /** WhatsApp approved-TEMPLATE selection (null = a free-form text_body send). `params`
+   *  are merge-tag expressions mapped in order to the template's {{1}},{{2}},… body vars. */
+  readonly waTemplate?: { name: string; language: string; params: string[] } | null;
 }
 
 /** A send node's per-node TOPIC id (null when none set). The dispatcher gates the
@@ -516,13 +519,25 @@ export function sendNodeTopicId(node: DslNode): string | null {
   return typeof t === 'string' && t.length > 0 ? t : null;
 }
 
-/** Read a send node into its channel form (medium + body + topic). */
+/** Read a send node into its channel form (medium + body + topic + WhatsApp template). */
 export function readSendConfig(node: DslNode): SendForm {
   const tb = (node as { text_body?: unknown }).text_body;
+  const wt = (node as { wa_template?: unknown }).wa_template as
+    | { name?: unknown; language?: unknown; params?: unknown }
+    | undefined;
+  const waTemplate =
+    wt && typeof wt.name === 'string' && wt.name
+      ? {
+          name: wt.name,
+          language: typeof wt.language === 'string' ? wt.language : 'en_US',
+          params: Array.isArray(wt.params) ? wt.params.filter((p): p is string => typeof p === 'string') : [],
+        }
+      : null;
   return {
     medium: sendNodeMedium(node),
     textBody: typeof tb === 'string' ? tb : '',
     topicId: sendNodeTopicId(node),
+    waTemplate,
   };
 }
 
@@ -540,9 +555,26 @@ export function writeSendConfig(form: SendForm, keepTemplateId?: string | null):
   // dropped on JSON persist) — otherwise a stale template_id/text_body strands.
   const topic_id = form.topicId ?? undefined;
   if (isTextSendMedium(form.medium)) {
-    return { type: 'action', kind: 'send', medium: form.medium, text_body: form.textBody.trim(), template_id: undefined, topic_id } as unknown as DslNode;
+    // WhatsApp may send an approved TEMPLATE (name + language + params) instead of a body.
+    const wt =
+      form.medium === 'whatsapp' && form.waTemplate && form.waTemplate.name.trim()
+        ? {
+            name: form.waTemplate.name.trim(),
+            language: form.waTemplate.language.trim() || 'en_US',
+            params: form.waTemplate.params.map((p) => p.trim()).filter((p) => p.length > 0),
+          }
+        : undefined;
+    return {
+      type: 'action',
+      kind: 'send',
+      medium: form.medium,
+      text_body: wt ? '' : form.textBody.trim(),
+      wa_template: wt,
+      template_id: undefined,
+      topic_id,
+    } as unknown as DslNode;
   }
-  return { type: 'action', kind: 'send', medium: 'email', template_id: keepTemplateId ?? undefined, text_body: undefined, topic_id } as unknown as DslNode;
+  return { type: 'action', kind: 'send', medium: 'email', template_id: keepTemplateId ?? undefined, text_body: undefined, wa_template: undefined, topic_id } as unknown as DslNode;
 }
 
 // ── UPDATE-PROFILE (set_attribute) ──────────────────────────────────────────────

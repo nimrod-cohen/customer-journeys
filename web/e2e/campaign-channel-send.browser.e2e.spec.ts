@@ -45,3 +45,39 @@ test('build an SMS send node + a campaign topic, then publish to active', async 
   await publishCampaign(page, 'SMS v1');
   await expect(page.getByTestId('campaign-status')).toContainText('active');
 });
+
+test('build a WhatsApp TEMPLATE send node, then publish to active', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-campaigns').click();
+  await page.getByTestId('campaigns-list-screen').waitFor();
+  await page.getByTestId('campaign-new').click();
+  await page.getByTestId('campaign-canvas').waitFor();
+  await page.getByTestId('campaign-name').fill('WA template journey');
+
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('campaign-palette').waitFor();
+  await page.getByTestId('palette-send').click();
+  await expect(page.getByTestId('node-send')).toBeVisible();
+
+  // Open the send editor → WhatsApp → the message type defaults to TEMPLATE → fill the
+  // approved template name + language + a {{1}} variable → Save.
+  await page.getByTestId('node-send').getByTestId(/node-open-/).first().click();
+  const drawer = page.getByTestId('node-editor-send');
+  await drawer.getByTestId('send-medium').selectOption('whatsapp');
+  await expect(drawer.getByTestId('send-whatsapp-template')).toBeVisible();
+  await drawer.getByTestId('send-wa-template-name').fill('order_update');
+  await drawer.getByTestId('send-wa-template-lang').fill('en_US');
+  await drawer.getByTestId('send-wa-param-add').click();
+  await drawer.getByTestId('send-wa-param').first().fill('{{customer.first_name}}');
+  await drawer.getByTestId('send-save-text').click();
+  await expect(drawer).toBeHidden();
+
+  await expect(page.getByTestId('node-send')).toContainText('Send WhatsApp');
+
+  // Publish — a WhatsApp template send needs NO email envelope / verified domain, and the
+  // template satisfies the gate WITHOUT a body.
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast')).toBeVisible();
+  await publishCampaign(page, 'WA v1');
+  await expect(page.getByTestId('campaign-status')).toContainText('active');
+});

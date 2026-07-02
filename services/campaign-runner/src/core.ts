@@ -59,6 +59,10 @@ export type SideEffect =
       readonly templateId: string | null;
       /** For a TEXT send (sms/whatsapp): the plain-text body (merge-tag enabled). */
       readonly textBody: string | null;
+      /** For a WhatsApp TEMPLATE send: the approved template (name + language + ordered
+       *  param expressions). Stamped onto the outbox payload as `wa_template`; the
+       *  dispatcher renders the params per recipient into a type:'template' message. */
+      readonly waTemplate: { name: string; language: string; params: string[] } | null;
       /** The per-node TOPIC the dispatcher gates this send on (null = no topic,
        *  never gated). Stamped on the outbox payload so the dispatcher reads it
        *  directly instead of querying the campaigns table. */
@@ -547,15 +551,24 @@ function actionSideEffect(node: ActionNode | WebhookAction): SideEffect | null {
     // payload and gates the send on the recipient's subscription. null = none.
     const topicId = typeof node.topic_id === 'string' && node.topic_id.length > 0 ? node.topic_id : null;
     if (isTextMedium(medium)) {
-      // A TEXT send carries the plain body (no template). A blank body emits no
-      // effect (the publish gate blocks activation; this is defense-in-depth).
+      // A WhatsApp send may carry an approved TEMPLATE instead of a text body.
+      const wt = node.wa_template;
+      const waTemplate =
+        medium === 'whatsapp' && wt && typeof wt.name === 'string' && wt.name.trim() && typeof wt.language === 'string' && wt.language.trim()
+          ? {
+              name: wt.name.trim(),
+              language: wt.language.trim(),
+              params: Array.isArray(wt.params) ? wt.params.filter((p): p is string => typeof p === 'string') : [],
+            }
+          : null;
       const body = typeof node.text_body === 'string' ? node.text_body : '';
-      if (!body.trim()) return null;
-      return { kind: 'send', medium, templateId: null, textBody: body, topicId, nodeId: '' };
+      // A blank body AND no template emits no effect (the publish gate blocks activation).
+      if (!body.trim() && !waTemplate) return null;
+      return { kind: 'send', medium, templateId: null, textBody: body, waTemplate, topicId, nodeId: '' };
     }
     // EMAIL: needs an attached template copy (else nothing to send).
     if (!node.template_id) return null;
-    return { kind: 'send', medium: 'email', templateId: node.template_id, textBody: null, topicId, nodeId: '' };
+    return { kind: 'send', medium: 'email', templateId: node.template_id, textBody: null, waTemplate: null, topicId, nodeId: '' };
   }
   if (node.kind === 'set_attribute') {
     // Normalize to a LIST of keyed assignments. An `assignments` array (Feature B)

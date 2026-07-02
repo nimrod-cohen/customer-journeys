@@ -178,6 +178,13 @@ export interface ActionNode {
    * blank) for a text send; ignored for email (which uses template_id).
    */
   readonly text_body?: string;
+  /**
+   * For kind='send' with a WhatsApp medium: an approved Meta message TEMPLATE (required
+   * for business-initiated sends). `params` are merge-tag expressions mapped in order to
+   * the template's {{1}},{{2}},… body placeholders. Present → a template send (text_body
+   * optional); absent → a plain text_body send (24h window).
+   */
+  readonly wa_template?: { readonly name: string; readonly language: string; readonly params?: readonly string[] };
   /** For kind='send' (email): the email template to enqueue through the Dispatcher.
    * The envelope (subject / From / To) lives ON that template, not here. */
   readonly template_id?: string;
@@ -481,6 +488,14 @@ function validateSendNode(id: string, act: ActionNode): void {
   }
   const medium: Medium = act.medium ?? 'email';
   if (isTextMedium(medium)) {
+    // WhatsApp may send an approved TEMPLATE (name + language) INSTEAD of a text body.
+    if (medium === 'whatsapp' && act.wa_template !== undefined) {
+      const t = act.wa_template;
+      if (typeof t !== 'object' || t === null || typeof t.name !== 'string' || !t.name.trim() || typeof t.language !== 'string' || !t.language.trim()) {
+        throw new Error(`validateCampaignDefinition: whatsapp send action "${id}" wa_template needs a name and language`);
+      }
+      return;
+    }
     if (typeof act.text_body !== 'string' || act.text_body.trim().length === 0) {
       throw new Error(`validateCampaignDefinition: ${medium} send action "${id}" needs a non-blank text_body`);
     }
@@ -800,8 +815,15 @@ export function collectSendNodeEnvelopeGaps(
       const medium: Medium = act.medium ?? 'email';
       if (isTextMedium(medium)) {
         // A TEXT send (sms/whatsapp) is gated ONLY on a non-blank body — the email
-        // envelope (From/To/Subject) + verified-domain gate are email-only.
-        if (typeof act.text_body !== 'string' || act.text_body.trim().length === 0) {
+        // envelope (From/To/Subject) + verified-domain gate are email-only. A WhatsApp
+        // send with an approved TEMPLATE (name+language) satisfies the gate WITHOUT a body.
+        const hasWaTemplate =
+          medium === 'whatsapp' &&
+          typeof act.wa_template === 'object' &&
+          act.wa_template !== null &&
+          typeof act.wa_template.name === 'string' &&
+          act.wa_template.name.trim().length > 0;
+        if (!hasWaTemplate && (typeof act.text_body !== 'string' || act.text_body.trim().length === 0)) {
           gaps.push({ nodeId: id, missing: 'body' });
         }
       } else {
