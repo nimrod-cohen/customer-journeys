@@ -42,6 +42,10 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /company/whatsapp-config': 'manage_sending_domain',
   'PUT /company/whatsapp-config': 'manage_sending_domain',
   'DELETE /company/whatsapp-config': 'manage_sending_domain',
+  // WhatsApp message templates (managed in Asset management by marketers).
+  'GET /whatsapp/templates': 'manage_content',
+  'POST /whatsapp/templates': 'manage_content',
+  'DELETE /whatsapp/templates/:name': 'manage_content',
   'GET /company/logo': 'manage_sending_domain',
   'PUT /company/logo': 'manage_sending_domain',
   'DELETE /company/logo': 'manage_sending_domain',

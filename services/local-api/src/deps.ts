@@ -23,7 +23,7 @@ import {
   type ProdOnboardingDeps,
 } from '@cdp/service-onboarding';
 import { runStatementsInWorkspaceTx, type BroadcastDeps } from '@cdp/service-broadcast';
-import { fetchChannelHttpClient, type ChannelHttpClient } from '@cdp/channels';
+import { fetchChannelHttpClient, fetchGraphHttpClient, type ChannelHttpClient, type GraphHttpClient } from '@cdp/channels';
 
 /** The full dependency set the handlers consume. */
 export interface LocalApiDeps {
@@ -41,6 +41,13 @@ export interface LocalApiDeps {
    * uses it (the mock provider is offline).
    */
   readonly channelHttp: ChannelHttpClient;
+  /**
+   * The HTTP client for the Meta Graph API — used to manage WhatsApp message TEMPLATES
+   * (list/create/delete over graph.facebook.com/<WABA>/message_templates). Injected so
+   * integration tests assert the exact Graph request WITHOUT the network; defaults to a
+   * real fetch-based client.
+   */
+  readonly graphHttp: GraphHttpClient;
 }
 
 /**
@@ -121,6 +128,7 @@ function makeIdentityReader(pool: Pool): ProdOnboardingDeps['identity'] {
 export function makeLocalDeps(
   pool: Pool = getPool(),
   channelHttp: ChannelHttpClient = fetchChannelHttpClient(),
+  graphHttp: GraphHttpClient = fetchGraphHttpClient(),
 ): LocalApiDeps {
   const region = process.env.AWS_REGION ?? 'us-east-1';
   const ses = makeLocalSes();
@@ -146,5 +154,5 @@ export function makeLocalDeps(
     now: () => new Date(),
     dispatchQueueUrl: process.env.DISPATCH_QUEUE_URL ?? 'local://dispatch',
   };
-  return { pool, compileMjml, onboarding, broadcast, channelHttp };
+  return { pool, compileMjml, onboarding, broadcast, channelHttp, graphHttp };
 }

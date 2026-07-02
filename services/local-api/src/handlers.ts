@@ -27,6 +27,12 @@ import {
   type WorkspaceContext,
 } from '@cdp/shared';
 import { scopedQuery, encryptSecret, decryptSecret, isEncryptedSecret } from '@cdp/db';
+import {
+  listWhatsAppTemplates,
+  createWhatsAppTemplate,
+  deleteWhatsAppTemplate,
+  type WhatsAppTemplatesConfig,
+} from '@cdp/channels';
 import { parsePageParams, pageClause, pageMeta } from './pagination.js';
 
 // Resolve an app user's email from the dev credential fixture (in production this
@@ -851,10 +857,11 @@ export const getCompanyWhatsappConfig: Handler = async (ctx, pool) => {
   if (!companyId) return ok({ configured: false });
   const { rows } = await pool.query<{
     phone_number_id: string;
+    waba_id: string | null;
     api_version: string | null;
     default_country: string | null;
   }>(
-    'SELECT phone_number_id, api_version, default_country FROM company_whatsapp_config WHERE company_id = $1',
+    'SELECT phone_number_id, waba_id, api_version, default_country FROM company_whatsapp_config WHERE company_id = $1',
     [companyId],
   );
   const c = rows[0];
@@ -863,6 +870,7 @@ export const getCompanyWhatsappConfig: Handler = async (ctx, pool) => {
       ? {
           configured: true,
           phone_number_id: c.phone_number_id,
+          waba_id: c.waba_id,
           api_version: c.api_version,
           default_country: c.default_country,
         }
@@ -878,6 +886,7 @@ export const putCompanyWhatsappConfig: Handler = async (ctx, pool, req) => {
   if (!companyId) return ok({ error: 'no company for this workspace' }, 400);
   const b = asObject(req.body);
   const phoneNumberId = String(b.phone_number_id ?? '').trim();
+  const wabaId = typeof b.waba_id === 'string' && b.waba_id.trim() ? b.waba_id.trim() : null;
   const apiVersion = typeof b.api_version === 'string' && b.api_version.trim() ? b.api_version.trim() : null;
   const token = typeof b.access_token === 'string' ? b.access_token.trim() : '';
   const rawCountry = typeof b.default_country === 'string' ? b.default_country.trim().toUpperCase() : '';
@@ -893,13 +902,13 @@ export const putCompanyWhatsappConfig: Handler = async (ctx, pool, req) => {
   const effectiveToken = token ? encryptSecret(token) : existing.rows[0]?.access_token;
   if (!effectiveToken) return ok({ error: 'an access token is required' }, 400);
   await pool.query(
-    `INSERT INTO company_whatsapp_config (company_id, phone_number_id, access_token, api_version, default_country, updated_at)
-     VALUES ($1, $2, $3, $4, $5, now())
+    `INSERT INTO company_whatsapp_config (company_id, phone_number_id, waba_id, access_token, api_version, default_country, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
      ON CONFLICT (company_id)
-     DO UPDATE SET phone_number_id = $2, access_token = $3, api_version = $4, default_country = $5, updated_at = now()`,
-    [companyId, phoneNumberId, effectiveToken, apiVersion, defaultCountry],
+     DO UPDATE SET phone_number_id = $2, waba_id = $3, access_token = $4, api_version = $5, default_country = $6, updated_at = now()`,
+    [companyId, phoneNumberId, wabaId, effectiveToken, apiVersion, defaultCountry],
   );
-  return ok({ configured: true, phone_number_id: phoneNumberId, api_version: apiVersion, default_country: defaultCountry });
+  return ok({ configured: true, phone_number_id: phoneNumberId, waba_id: wabaId, api_version: apiVersion, default_country: defaultCountry });
 };
 
 /** DELETE /company/whatsapp-config — clear the company's WhatsApp credentials. */
@@ -908,6 +917,81 @@ export const deleteCompanyWhatsappConfig: Handler = async (ctx, pool) => {
   if (!companyId) return ok({ deleted: 0 });
   const { rowCount } = await pool.query('DELETE FROM company_whatsapp_config WHERE company_id = $1', [companyId]);
   return ok({ deleted: rowCount });
+};
+
+/**
+ * Resolve the Meta Graph TEMPLATES config for the active workspace's company: the WABA id
+ * + the DECRYPTED access token (decrypted at call time only) + api version. Returns null
+ * when the company hasn't configured WhatsApp OR has no WABA id (templates are a WABA-level
+ * resource). Company resolved from the workspace (never the body — inv.2).
+ */
+async function whatsappTemplatesConfig(pool: Pool, workspaceId: string): Promise<WhatsAppTemplatesConfig | null> {
+  const companyId = await companyIdForWorkspace(pool, workspaceId);
+  if (!companyId) return null;
+  const { rows } = await pool.query<{ waba_id: string | null; access_token: string; api_version: string | null }>(
+    'SELECT waba_id, access_token, api_version FROM company_whatsapp_config WHERE company_id = $1',
+    [companyId],
+  );
+  const c = rows[0];
+  if (!c || !c.waba_id) return null;
+  const accessToken = isEncryptedSecret(c.access_token) ? decryptSecret(c.access_token) : c.access_token;
+  return { wabaId: c.waba_id, accessToken, apiVersion: c.api_version };
+}
+
+/**
+ * GET /whatsapp/templates — the company's Meta message templates (all approval statuses),
+ * fetched LIVE from the Graph API. `configured:false` (empty list) when no WABA id is set,
+ * so the Asset-management tab can prompt to add credentials. A Graph error surfaces as 502.
+ */
+export const listWhatsappTemplates: Handler = async (ctx, pool, _req, deps) => {
+  const cfg = await whatsappTemplatesConfig(pool, ctx.workspaceId);
+  if (!cfg) return ok({ configured: false, templates: [] });
+  try {
+    const templates = await listWhatsAppTemplates(cfg, deps.graphHttp);
+    return ok({ configured: true, templates });
+  } catch (e) {
+    return ok({ error: (e as Error).message }, 502);
+  }
+};
+
+/**
+ * POST /whatsapp/templates — CREATE + submit a template to Meta for approval (BODY-only v1).
+ * Body: { name, language, category, body, examples[] }. The name must be lowercase letters/
+ * digits/underscores (Meta requirement). Returns the new id + status ('PENDING').
+ */
+export const createWhatsappTemplate: Handler = async (ctx, pool, req, deps) => {
+  const cfg = await whatsappTemplatesConfig(pool, ctx.workspaceId);
+  if (!cfg) return ok({ error: 'Add your WhatsApp Business account id (WABA) in Company settings first.' }, 400);
+  const b = asObject(req.body);
+  const name = String(b.name ?? '').trim().toLowerCase();
+  const language = String(b.language ?? '').trim();
+  const category = String(b.category ?? '').trim().toUpperCase();
+  const body = String(b.body ?? '').trim();
+  const examples = Array.isArray(b.examples) ? b.examples.filter((x): x is string => typeof x === 'string') : [];
+  if (!/^[a-z0-9_]+$/.test(name)) return ok({ error: 'Template name must be lowercase letters, digits, and underscores only.' }, 400);
+  if (!language) return ok({ error: 'A language is required.' }, 400);
+  if (!['MARKETING', 'UTILITY', 'AUTHENTICATION'].includes(category)) return ok({ error: 'Category must be MARKETING, UTILITY or AUTHENTICATION.' }, 400);
+  if (!body) return ok({ error: 'A message body is required.' }, 400);
+  try {
+    const created = await createWhatsAppTemplate(cfg, { name, language, category, body, examples }, deps.graphHttp);
+    return ok({ template: created }, 201);
+  } catch (e) {
+    return ok({ error: (e as Error).message }, 502);
+  }
+};
+
+/** DELETE /whatsapp/templates/:name — remove a template (all its language versions) from Meta. */
+export const deleteWhatsappTemplate: Handler = async (ctx, pool, req, deps) => {
+  const cfg = await whatsappTemplatesConfig(pool, ctx.workspaceId);
+  if (!cfg) return ok({ error: 'WhatsApp is not configured.' }, 400);
+  const name = String(req.params.name ?? '').trim();
+  if (!name) return ok({ error: 'not found' }, 404);
+  try {
+    await deleteWhatsAppTemplate(cfg, name, deps.graphHttp);
+    return ok({ deleted: 1 });
+  } catch (e) {
+    return ok({ error: (e as Error).message }, 502);
+  }
 };
 
 // --- sending domains (the LIST; a workspace may have several, §10) -------------
@@ -5094,6 +5178,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /company/whatsapp-config': getCompanyWhatsappConfig,
   'PUT /company/whatsapp-config': putCompanyWhatsappConfig,
   'DELETE /company/whatsapp-config': deleteCompanyWhatsappConfig,
+  'GET /whatsapp/templates': listWhatsappTemplates,
+  'POST /whatsapp/templates': createWhatsappTemplate,
+  'DELETE /whatsapp/templates/:name': deleteWhatsappTemplate,
   'GET /company/logo': getCompanyLogo,
   'PUT /company/logo': putCompanyLogo,
   'DELETE /company/logo': deleteCompanyLogo,

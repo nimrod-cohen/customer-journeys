@@ -11,6 +11,7 @@ import { formatDateTime } from '../ui/datetime.js';
 import { askConfirm } from '../ui/dialog.tsx';
 import { AssetManagerPanel } from '../email-designer/AssetManager.tsx';
 import { TextTemplatesPanel } from './TextTemplates.tsx';
+import { WhatsAppTemplatesPanel } from './WhatsAppTemplates.tsx';
 
 interface Template {
   id: string;
@@ -25,7 +26,7 @@ function fmtDate(ts: string | null): string {
 }
 
 export function TemplatesList() {
-  const [tab, setTab] = useState<'templates' | 'text' | 'gallery'>('templates');
+  const [tab, setTab] = useState<'templates' | 'text' | 'whatsapp' | 'gallery'>('templates');
   const [templates, setTemplates] = useState<Template[] | null>(null);
   const [error, setError] = useState('');
 
@@ -96,6 +97,16 @@ export function TemplatesList() {
         </button>
         <button
           type="button"
+          data-testid="assets-tab-whatsapp"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'whatsapp' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => setTab('whatsapp')}
+        >
+          WhatsApp templates
+        </button>
+        <button
+          type="button"
           data-testid="assets-tab-gallery"
           class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
             tab === 'gallery' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
@@ -114,6 +125,8 @@ export function TemplatesList() {
 
       {tab === 'text' ? (
         <TextTemplatesPanel />
+      ) : tab === 'whatsapp' ? (
+        <WhatsAppTemplatesPanel />
       ) : tab === 'gallery' ? (
         <Card class="flex h-[70vh] flex-col overflow-hidden p-2">
           <AssetManagerPanel />

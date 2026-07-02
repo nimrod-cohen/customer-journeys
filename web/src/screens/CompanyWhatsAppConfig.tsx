@@ -10,6 +10,7 @@ import { Button, Card, Field, Input, Select } from '../ui/kit.js';
 interface WhatsAppConfig {
   configured: boolean;
   phone_number_id?: string;
+  waba_id?: string | null;
   api_version?: string | null;
   default_country?: string | null;
 }
@@ -34,6 +35,7 @@ const COUNTRY_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
 export function CompanyWhatsAppConfig() {
   const [cfg, setCfg] = useState<WhatsAppConfig | null>(null);
   const [phoneNumberId, setPhoneNumberId] = useState('');
+  const [wabaId, setWabaId] = useState('');
   const [apiVersion, setApiVersion] = useState('');
   const [defaultCountry, setDefaultCountry] = useState('');
   const [token, setToken] = useState('');
@@ -45,6 +47,7 @@ export function CompanyWhatsAppConfig() {
     const r = await api.get<WhatsAppConfig>('/company/whatsapp-config');
     setCfg(r);
     setPhoneNumberId(r.phone_number_id ?? '');
+    setWabaId(r.waba_id ?? '');
     setApiVersion(r.api_version ?? '');
     setDefaultCountry(r.default_country ?? '');
     setToken('');
@@ -61,6 +64,7 @@ export function CompanyWhatsAppConfig() {
       await api.put('/company/whatsapp-config', {
         body: {
           phone_number_id: phoneNumberId.trim(),
+          waba_id: wabaId.trim(),
           api_version: apiVersion.trim(),
           default_country: defaultCountry,
           access_token: token,
@@ -82,6 +86,7 @@ export function CompanyWhatsAppConfig() {
     try {
       await api.del('/company/whatsapp-config');
       setPhoneNumberId('');
+      setWabaId('');
       setApiVersion('');
       setDefaultCountry('');
       setToken('');
@@ -125,6 +130,19 @@ export function CompanyWhatsAppConfig() {
             value={phoneNumberId}
             onInput={(e: Event) => setPhoneNumberId((e.target as HTMLInputElement).value)}
           />
+        </Field>
+        <Field label="WhatsApp Business account ID (WABA) — for managing templates">
+          <Input
+            data-testid="channel-whatsapp-waba-id"
+            class="font-mono text-sm"
+            placeholder="e.g. 102290129340398"
+            value={wabaId}
+            onInput={(e: Event) => setWabaId((e.target as HTMLInputElement).value)}
+          />
+          <p class="mt-1 text-xs text-stone-500">
+            Found in WhatsApp Manager next to your account name. Required to create/manage message templates in Asset
+            management.
+          </p>
         </Field>
         <Field label="API version (optional)">
           <Input

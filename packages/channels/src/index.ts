@@ -468,3 +468,6 @@ export function resolveChannelProvider(
     }
   }
 }
+
+// WhatsApp message-template MANAGEMENT (Meta Graph API — list/create/delete).
+export * from './whatsapp-templates.js';
