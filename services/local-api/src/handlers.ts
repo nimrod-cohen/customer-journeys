@@ -133,6 +133,28 @@ function asObject(body: unknown): Record<string, unknown> {
 }
 
 /**
+ * Run `fn` inside a single BEGIN/COMMIT transaction on a dedicated client,
+ * rolling back on any throw and always releasing the client. Used by multi-write
+ * handlers (a row + its features + activity + enrollment) so a mid-sequence
+ * failure never leaves partial state. Compose enrollment into the SAME tx via
+ * `enrollDepsOnClient(client)`.
+ */
+async function withTx<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Confirm a row with `id` exists in the given table AND belongs to the token's
  * active workspace. Tenant-isolation guard for path-id handlers whose underlying
  * builders/cores don't themselves verify the id belongs to ctx.workspaceId
@@ -154,6 +176,32 @@ async function topicBelongsToWorkspace(pool: Pool, workspaceId: string, topicId:
   const q = scopedQuery(workspaceId, 'SELECT 1 FROM topics WHERE id = $1', [topicId]);
   const { rowCount } = await pool.query(q.text, q.values);
   return (rowCount ?? 0) > 0;
+}
+
+/**
+ * CLONE a library template into an independently-editable WORKING COPY
+ * (kind='copy', source_template_id = the original), copying the design AND the
+ * envelope (subject / sender_id / to_address / from_selected). The SELECT is
+ * workspace-scoped, so a cross-workspace `sourceId` clones nothing → returns null.
+ * The single home for the clone SQL used by cloneTemplate / duplicateBroadcast /
+ * attachCampaignSendTemplate. Pass `nameOverride` to rename the copy (else the
+ * original name is kept).
+ */
+async function cloneEmailTemplate(
+  pool: Pool,
+  workspaceId: string,
+  sourceId: string,
+  nameOverride?: string | null,
+): Promise<{ id: string; name: string } | null> {
+  const q = scopedQuery(
+    workspaceId,
+    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address, from_selected)
+     SELECT workspace_id, COALESCE($2, name), mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address, from_selected
+     FROM email_templates WHERE id = $1`,
+    [sourceId, nameOverride ?? null],
+  );
+  const { rows } = await pool.query<{ id: string; name: string }>(`${q.text} RETURNING id, name`, q.values);
+  return rows[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2180,17 +2228,9 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
 export const cloneTemplate: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
-  const q = scopedQuery(
-    ctx.workspaceId,
-    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address, from_selected)
-     SELECT workspace_id, COALESCE($2, name), mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address, from_selected
-     FROM email_templates WHERE id = $1`,
-    [id, b.name !== undefined ? String(b.name) : null],
-  );
-  // scopedQuery scopes the SELECT; RETURNING rides after the statement text.
-  const { rows } = await pool.query(`${q.text} RETURNING id, name`, q.values);
-  if (!rows[0]) return ok({ error: 'not found' }, 404);
-  return ok({ template: rows[0] }, 201);
+  const copy = await cloneEmailTemplate(pool, ctx.workspaceId, id, b.name !== undefined ? String(b.name) : null);
+  if (!copy) return ok({ error: 'not found' }, 404);
+  return ok({ template: copy }, 201);
 };
 
 /**
@@ -2911,15 +2951,8 @@ export const duplicateBroadcast: Handler = async (ctx, pool, req) => {
 
   let templateId: string | null = null;
   if (b.template_id) {
-    const cl = scopedQuery(
-      ctx.workspaceId,
-      `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address, from_selected)
-       SELECT workspace_id, name, mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address, from_selected
-       FROM email_templates WHERE id = $1`,
-      [b.template_id],
-    );
-    const t = (await pool.query(`${cl.text} RETURNING id`, cl.values)).rows[0] as { id: string } | undefined;
-    templateId = t?.id ?? null;
+    const copy = await cloneEmailTemplate(pool, ctx.workspaceId, String(b.template_id));
+    templateId = copy?.id ?? null;
   }
   const { rows } = await pool.query(
     `INSERT INTO broadcasts (workspace_id, name, template_id, audience_kind, audience_ref, audience, medium, text_body, whatsapp_template, topic_id, status, created_by)
@@ -3398,17 +3431,10 @@ export const attachCampaignSendTemplate: Handler = async (ctx, pool, req) => {
   }
 
   // Clone the SOURCE template (scoped to this workspace → cross-workspace refusal)
-  // into a working copy, mirroring cloneTemplate's INSERT...SELECT (kind='copy').
-  const cq = scopedQuery(
-    ctx.workspaceId,
-    `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address, from_selected)
-     SELECT workspace_id, name, mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address, from_selected
-     FROM email_templates WHERE id = $1`,
-    [templateId],
-  );
-  const cloned = await pool.query<{ id: string }>(`${cq.text} RETURNING id`, cq.values);
-  if (!cloned.rows[0]) return ok({ error: 'not found' }, 404); // source not in this workspace
-  const copyId = cloned.rows[0].id;
+  // into a working copy (kind='copy'), the shared cloneEmailTemplate helper.
+  const copy = await cloneEmailTemplate(pool, ctx.workspaceId, templateId);
+  if (!copy) return ok({ error: 'not found' }, 404); // source not in this workspace
+  const copyId = copy.id;
 
   // Repoint the send node's template_id at the copy and persist the definition.
   const nextDef: CampaignDefinition = {
@@ -3938,14 +3964,43 @@ export const createProfile: Handler = async (ctx, pool, req) => {
   // CONFLICT DO NOTHING returns no row when the email already exists (race-safe
   // against the unique index); we then surface a 409 with the existing id so the
   // UI can offer to open it instead of silently overwriting.
-  const { rows } = await pool.query(
-    `INSERT INTO profiles (workspace_id, email, external_id, attributes)
-     VALUES ($1, $2, $3, '{"unsubscribed": false}'::jsonb || $4::jsonb)
-     ON CONFLICT (workspace_id, email) DO NOTHING
-     RETURNING id, external_id, email, email_status`,
-    [ctx.workspaceId, email, externalId, JSON.stringify(attrs)],
-  );
-  if (!rows[0]) {
+  // ONE transaction: the profile row + its features row + the activity entry +
+  // profile-trigger enrollment, so a mid-sequence failure never leaves a profile
+  // without features / an activity row without enrollment. The INSERT ... ON
+  // CONFLICT DO NOTHING returns no row on an email conflict → nothing is written
+  // and we surface a 409 (with the existing id) below.
+  const created = await withTx(pool, async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO profiles (workspace_id, email, external_id, attributes)
+       VALUES ($1, $2, $3, '{"unsubscribed": false}'::jsonb || $4::jsonb)
+       ON CONFLICT (workspace_id, email) DO NOTHING
+       RETURNING id, external_id, email, email_status`,
+      [ctx.workspaceId, email, externalId, JSON.stringify(attrs)],
+    );
+    if (!rows[0]) return null; // conflict — nothing written, roll forward to the 409
+    const profileId = (rows[0] as { id: string }).id;
+    await client.query(
+      `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2)
+       ON CONFLICT (profile_id) DO NOTHING`,
+      [profileId, ctx.workspaceId],
+    );
+    // Surface the creation in the workspace Activity log.
+    await client.query(
+      `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
+       VALUES ($1, $2, 'profile', 'profile_created', 'info', 'created manually')`,
+      [ctx.workspaceId, profileId],
+    );
+    // PROFILE-TRIGGER ENROLLMENT (§9B): enroll this new profile into active
+    // profile-trigger campaigns whose profileChange is created/any. Idempotent (ON
+    // CONFLICT 'once'). Composed into the SAME tx; never trusts a body workspace_id.
+    await enrollFromProfileChange(enrollDepsOnClient(client), {
+      workspace_id: ctx.workspaceId,
+      profile_id: profileId,
+      change: 'created',
+    });
+    return rows[0];
+  });
+  if (!created) {
     const existing = await pool.query('SELECT id FROM profiles WHERE workspace_id = $1 AND email = $2', [
       ctx.workspaceId,
       email,
@@ -3955,27 +4010,7 @@ export const createProfile: Handler = async (ctx, pool, req) => {
       409,
     );
   }
-  const profileId = (rows[0] as { id: string }).id;
-  await pool.query(
-    `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2)
-     ON CONFLICT (profile_id) DO NOTHING`,
-    [profileId, ctx.workspaceId],
-  );
-  // Surface the creation in the workspace Activity log.
-  await pool.query(
-    `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
-     VALUES ($1, $2, 'profile', 'profile_created', 'info', 'created manually')`,
-    [ctx.workspaceId, profileId],
-  );
-  // PROFILE-TRIGGER ENROLLMENT (§9B): enroll this new profile into active
-  // profile-trigger campaigns whose profileChange is created/any. Idempotent (ON
-  // CONFLICT 'once'). Workspace-scoped; never trusts a body workspace_id.
-  await enrollFromProfileChange(enrollDepsOnPool(pool), {
-    workspace_id: ctx.workspaceId,
-    profile_id: profileId,
-    change: 'created',
-  });
-  return ok({ profile: rows[0] }, 201);
+  return ok({ profile: created }, 201);
 };
 
 /**
@@ -4205,81 +4240,82 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
       return ok({ error: 'attributes must be an object' }, 400);
     attributes = JSON.stringify(a);
   }
-  // Explicit workspace_id in the WHERE (scopedQuery can't host a trailing
-  // RETURNING). Email is unique per workspace — changing it to one already in use
-  // surfaces a friendly 409 instead of the raw unique violation (Postgres 23505).
-  let rows: Array<Record<string, unknown>>;
+  // ONE transaction: the UPDATE + suppression reconcile + activity entry +
+  // profile-trigger enrollment, so a failure never leaves the suppression list or
+  // enrollment out of sync with the edited profile. Email is unique per workspace —
+  // changing it to one already in use raises 23505, which rolls the tx back and
+  // surfaces a friendly 409. A cross-workspace id matches nothing → 404.
+  const changed: string[] = [];
+  if (b.email !== undefined) changed.push('email');
+  if (b.external_id !== undefined) changed.push('external_id');
+  if (emailStatus !== null) changed.push('email_status');
+  if (hasAttrs) changed.push('attributes');
+  let outcome: { profile: Record<string, unknown> } | { notFound: true };
   try {
-    ({ rows } = await pool.query(
-      `UPDATE profiles SET
-         email = COALESCE($1, email),
-         external_id = COALESCE($2, external_id),
-         email_status = COALESCE($3, email_status),
-         attributes = CASE WHEN $5::boolean THEN $4::jsonb ELSE attributes END,
-         updated_at = now()
-       WHERE id = $6 AND workspace_id = $7
-       RETURNING id, external_id, email, email_status, attributes`,
-      [email, externalId, emailStatus, attributes, hasAttrs, id, ctx.workspaceId],
-    ));
+    outcome = await withTx(pool, async (client) => {
+      const { rows } = await client.query(
+        `UPDATE profiles SET
+           email = COALESCE($1, email),
+           external_id = COALESCE($2, external_id),
+           email_status = COALESCE($3, email_status),
+           attributes = CASE WHEN $5::boolean THEN $4::jsonb ELSE attributes END,
+           updated_at = now()
+         WHERE id = $6 AND workspace_id = $7
+         RETURNING id, external_id, email, email_status, attributes`,
+        [email, externalId, emailStatus, attributes, hasAttrs, id, ctx.workspaceId],
+      );
+      if (!rows[0]) return { notFound: true };
+      // Reconcile the suppression list to the profile's new state (like the real
+      // pipelines). A manual edit marking the address bounced/complained or
+      // unsubscribed adds a source='manual' suppression; clearing those states
+      // removes the consent/manual suppression (never a pipeline-written bounce).
+      const updated = rows[0] as {
+        email: string | null;
+        email_status: string;
+        attributes: Record<string, unknown> | null;
+      };
+      if (updated.email) {
+        const unsub = updated.attributes?.unsubscribed === true || updated.attributes?.unsubscribed === 'true';
+        const reason =
+          unsub ? 'unsubscribe' : updated.email_status === 'bounced' ? 'hard_bounce' : updated.email_status === 'complained' ? 'complaint' : null;
+        if (reason) {
+          await client.query(
+            `INSERT INTO suppressions (workspace_id, email, reason, source)
+             VALUES ($1, $2, $3, 'manual') ON CONFLICT (workspace_id, email) DO NOTHING`,
+            [ctx.workspaceId, updated.email, reason],
+          );
+        } else {
+          await client.query(
+            `DELETE FROM suppressions WHERE workspace_id = $1 AND email = $2 AND (reason = 'unsubscribe' OR source = 'manual')`,
+            [ctx.workspaceId, updated.email],
+          );
+        }
+      }
+      // Record the edit in the workspace Activity log (NOT the behavioral `events`
+      // table — that's producer-ingested + feeds segments). Names changed fields.
+      await client.query(
+        `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
+         VALUES ($1, $2, 'profile', 'profile_updated', 'info', $3)`,
+        [ctx.workspaceId, id, changed.length ? `edited ${changed.join(', ')}` : 'edited'],
+      );
+      // PROFILE-TRIGGER ENROLLMENT (§9B): enroll into active profile-trigger
+      // campaigns whose profileChange is updated/any (ON CONFLICT 'once'), on the
+      // SAME tx client. Scoped; never trusts a body workspace_id.
+      await enrollFromProfileChange(enrollDepsOnClient(client), {
+        workspace_id: ctx.workspaceId,
+        profile_id: id,
+        change: 'updated',
+      });
+      return { profile: rows[0] };
+    });
   } catch (e) {
     if ((e as { code?: string }).code === '23505') {
       return ok({ error: `A profile with email ${email} already exists.` }, 409);
     }
     throw e;
   }
-  if (!rows[0]) return ok({ error: 'not found' }, 404);
-
-  // Act like the real pipelines: reconcile the suppression list to the profile's
-  // new state. A manual edit that marks the address bounced/complained or
-  // unsubscribed must put it on the do-not-send list (source='manual'); clearing
-  // those states removes the MANUAL suppression (never a pipeline-written one).
-  const updated = rows[0] as {
-    email: string | null;
-    email_status: string;
-    attributes: Record<string, unknown> | null;
-  };
-  if (updated.email) {
-    const unsub = updated.attributes?.unsubscribed === true || updated.attributes?.unsubscribed === 'true';
-    const reason =
-      unsub ? 'unsubscribe' : updated.email_status === 'bounced' ? 'hard_bounce' : updated.email_status === 'complained' ? 'complaint' : null;
-    if (reason) {
-      await pool.query(
-        `INSERT INTO suppressions (workspace_id, email, reason, source)
-         VALUES ($1, $2, $3, 'manual') ON CONFLICT (workspace_id, email) DO NOTHING`,
-        [ctx.workspaceId, updated.email, reason],
-      );
-    } else {
-      // Subscribed + deliverable again → lift the consent (unsubscribe) suppression
-      // REGARDLESS of source — it may have been written by the recipient's own
-      // unsubscribe link (source='one-click'), not just a manual edit — plus any
-      // manual suppression. A pipeline-written bounce/complaint (reason not
-      // 'unsubscribe', source not 'manual') is preserved.
-      await pool.query(
-        `DELETE FROM suppressions WHERE workspace_id = $1 AND email = $2 AND (reason = 'unsubscribe' OR source = 'manual')`,
-        [ctx.workspaceId, updated.email],
-      );
-    }
-  }
-  // Record the edit in the workspace Activity log (NOT the behavioral `events`
-  // table — that's producer-ingested + feeds segments). Names the changed fields.
-  const changed: string[] = [];
-  if (b.email !== undefined) changed.push('email');
-  if (b.external_id !== undefined) changed.push('external_id');
-  if (emailStatus !== null) changed.push('email_status');
-  if (hasAttrs) changed.push('attributes');
-  await pool.query(
-    `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
-     VALUES ($1, $2, 'profile', 'profile_updated', 'info', $3)`,
-    [ctx.workspaceId, id, changed.length ? `edited ${changed.join(', ')}` : 'edited'],
-  );
-  // PROFILE-TRIGGER ENROLLMENT (§9B): enroll into active profile-trigger campaigns
-  // whose profileChange is updated/any. Idempotent (ON CONFLICT 'once'). Scoped.
-  await enrollFromProfileChange(enrollDepsOnPool(pool), {
-    workspace_id: ctx.workspaceId,
-    profile_id: id,
-    change: 'updated',
-  });
-  return ok({ profile: rows[0] });
+  if ('notFound' in outcome) return ok({ error: 'not found' }, 404);
+  return ok({ profile: outcome.profile });
 };
 
 /**
