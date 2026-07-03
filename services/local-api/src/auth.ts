@@ -14,6 +14,7 @@
 // from a request body (CLAUDE.md inv.2).
 import { authorize, buildAuthorizerPolicy, type DecodedJwt } from '@cdp/service-authorizer';
 import type { Membership } from '@cdp/shared';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /** The authorizer-injected request context (string values), as API GW produces. */
 export interface AuthorizerContext {
@@ -31,17 +32,55 @@ export interface DevTokenPayload {
   readonly workspace_id: string | null;
 }
 
-/** Encode a dev token: base64url(JSON). NOT a real signed JWT — dev/e2e only. */
-export function encodeDevToken(payload: DevTokenPayload): string {
-  const json = JSON.stringify(payload);
-  return Buffer.from(json, 'utf8').toString('base64url');
+// The session token is HMAC-SIGNED (`<base64url(payload)>.<base64url(sig)>`), so a
+// client CANNOT forge or alter (sub, workspace_id) without the secret. This is the
+// authentication boundary for the containerized API — an unsigned token here would
+// let anyone impersonate any user in any workspace.
+
+/** A well-known dev/test fallback for the signing secret — NOT a real secret. */
+const DEV_SESSION_SECRET = 'dev-session-secret-do-not-use-in-prod';
+
+/** Resolve the HMAC signing secret. Fail-fast in production (mirrors the other
+ *  prod secrets): a missing secret must never fall back to the public dev value. */
+function sessionSecret(): string {
+  const env = process.env.SESSION_JWT_SECRET;
+  if (env) return env;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('SESSION_JWT_SECRET must be set in production (refusing the dev fallback).');
+  }
+  return DEV_SESSION_SECRET;
 }
 
-/** Decode + validate a dev token's bearer string. Returns null when malformed. */
+/** Session lifetime — 30 days, after which the token is rejected (re-login). */
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+function signPart(encoded: string): string {
+  return createHmac('sha256', sessionSecret()).update(encoded).digest('base64url');
+}
+
+/** Encode a SIGNED session token: base64url(payload incl. iat/exp) + '.' + HMAC. */
+export function encodeDevToken(payload: DevTokenPayload): string {
+  const now = Math.floor(Date.now() / 1000);
+  const body = { ...payload, iat: now, exp: now + SESSION_TTL_SECONDS };
+  const encoded = Buffer.from(JSON.stringify(body), 'utf8').toString('base64url');
+  return `${encoded}.${signPart(encoded)}`;
+}
+
+/**
+ * Verify + decode a session token. Returns null when the signature is missing/
+ * invalid (a forged or tampered token) or the token has expired. Constant-time
+ * signature comparison.
+ */
 export function decodeDevToken(token: string): DecodedJwt | null {
   try {
-    const json = Buffer.from(token, 'base64url').toString('utf8');
-    const obj = JSON.parse(json) as Record<string, unknown>;
+    const dot = token.lastIndexOf('.');
+    if (dot <= 0) return null;
+    const encoded = token.slice(0, dot);
+    const sig = Buffer.from(token.slice(dot + 1));
+    const expected = Buffer.from(signPart(encoded));
+    if (sig.length !== expected.length || !timingSafeEqual(sig, expected)) return null;
+    const obj = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Record<string, unknown>;
+    if (typeof obj.exp === 'number' && obj.exp * 1000 < Date.now()) return null;
     const sub = typeof obj.sub === 'string' ? obj.sub : '';
     if (!sub) return null;
     const ws = obj.workspace_id;
