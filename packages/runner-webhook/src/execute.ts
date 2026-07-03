@@ -8,7 +8,7 @@
 //   3. Call the client with a per-attempt timeout; retry on ≥500 / network error
 //      up to maxRetries (bounded by 1+maxRetries); NEVER retry a 4xx.
 //   4. NEVER throw — return a structured outcome the caller maps to activity_log.
-import { customerMerge, expandCustomerToken, type CustomerProfile } from '@cdp/shared';
+import { customerMerge, renderExpression, type CustomerProfile } from '@cdp/shared';
 import { assertWebhookTargetAllowed, BlockedTargetError } from './ssrf.js';
 
 /** A webhook action node's fields the executor needs (structural — no import cycle). */
@@ -63,11 +63,11 @@ export const DEFAULT_WEBHOOK_TIMEOUT_MS = 10_000;
 export function renderWebhookBody(node: WebhookActionLike, profile: CustomerProfile): string {
   const tpl = node.bodyTemplate ?? '';
   if (tpl.length === 0) return '';
-  const merge = customerMerge(profile);
-  return tpl.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, key: string) => {
-    const value = merge[expandCustomerToken(key)] ?? merge[key];
-    return value === undefined ? match : value;
-  });
+  // Delegate to the shared token engine so webhooks render IDENTICALLY to every
+  // other namespace (same expansion + whitespace tolerance) and, crucially, an
+  // UNKNOWN token resolves to '' rather than leaking a raw `{{token}}` over the
+  // wire to a third-party endpoint.
+  return renderExpression(tpl, customerMerge(profile));
 }
 
 /**

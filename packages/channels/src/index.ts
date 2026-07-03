@@ -64,6 +64,29 @@ export function isTextMedium(m: unknown): m is TextMedium {
 }
 
 /**
+ * A provider send failure that carries whether it is worth RETRYING. Permanent
+ * failures (HTTP 4xx, a business rejection, an unparseable response) set
+ * `retryable=false`; a transient failure that survived the provider's own bounded
+ * retries (network/timeout, HTTP 5xx) sets `retryable=true` so the caller (the
+ * dispatcher) can re-queue via its outbox/DLQ machinery instead of dropping the
+ * send. Duck-typed via the `retryable` field so cross-package `instanceof` is not
+ * required.
+ */
+export class ChannelSendError extends Error {
+  readonly retryable: boolean;
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = 'ChannelSendError';
+    this.retryable = retryable;
+  }
+}
+
+/** Whether a caught error asks to be retried (a transient ChannelSendError). */
+export function isRetryableSendError(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { retryable?: unknown }).retryable === true;
+}
+
+/**
  * A subscription MEDIUM GROUP — the granularity at which a recipient opts out of
  * a whole channel family (CLAUDE.md topic-subscriptions). The user's model groups
  * WhatsApp + SMS together: `email` and `sms_whatsapp`. A `channel_optouts` row is
@@ -317,16 +340,16 @@ export class Sms019Provider implements ChannelProvider {
         continue; // server error → retry
       }
       if (res.status < 200 || res.status >= 300) {
-        throw new Error(`019 SMS: HTTP ${res.status} — ${res.body.slice(0, 200)}`); // 4xx → no retry
+        throw new ChannelSendError(`019 SMS: HTTP ${res.status} — ${res.body.slice(0, 200)}`, false); // 4xx → no retry
       }
       let json: { status?: unknown; [k: string]: unknown };
       try {
         json = JSON.parse(res.body) as typeof json;
       } catch {
-        throw new Error('019 SMS: response was not JSON');
+        throw new ChannelSendError('019 SMS: response was not JSON', false);
       }
       if (json.status !== 0) {
-        throw new Error(`019 SMS: send rejected — ${res.body.slice(0, 200)}`);
+        throw new ChannelSendError(`019 SMS: send rejected — ${res.body.slice(0, 200)}`, false);
       }
       const id =
         (typeof json.message_id === 'string' && json.message_id) ||
@@ -335,7 +358,8 @@ export class Sms019Provider implements ChannelProvider {
         `019-${createHash('sha256').update(`${msg.to}|${msg.body}`).digest('hex').slice(0, 16)}`;
       return { providerMessageId: id };
     }
-    throw lastErr instanceof Error ? lastErr : new Error('019 SMS: send failed');
+    // Exhausted all retries on transient (network/timeout/5xx) failures → retryable.
+    throw new ChannelSendError(lastErr instanceof Error ? lastErr.message : '019 SMS: send failed', true);
   }
 }
 
@@ -415,21 +439,23 @@ export class MetaWhatsAppProvider implements ChannelProvider {
       try {
         json = JSON.parse(res.body) as typeof json;
       } catch {
-        if (res.status < 200 || res.status >= 300) throw new Error(`Meta WhatsApp: HTTP ${res.status} — ${res.body.slice(0, 200)}`);
-        throw new Error('Meta WhatsApp: response was not JSON');
+        if (res.status < 200 || res.status >= 300)
+          throw new ChannelSendError(`Meta WhatsApp: HTTP ${res.status} — ${res.body.slice(0, 200)}`, false);
+        throw new ChannelSendError('Meta WhatsApp: response was not JSON', false);
       }
       if (res.status < 200 || res.status >= 300) {
         // 4xx → no retry; surface Meta's error message (bad template, expired token, …).
         const detail = typeof json.error?.message === 'string' ? json.error.message : res.body.slice(0, 200);
-        throw new Error(`Meta WhatsApp: HTTP ${res.status} — ${detail}`);
+        throw new ChannelSendError(`Meta WhatsApp: HTTP ${res.status} — ${detail}`, false);
       }
       const id = json.messages?.[0]?.id;
       if (typeof id !== 'string' || id.length === 0) {
-        throw new Error(`Meta WhatsApp: no message id in response — ${res.body.slice(0, 200)}`);
+        throw new ChannelSendError(`Meta WhatsApp: no message id in response — ${res.body.slice(0, 200)}`, false);
       }
       return { providerMessageId: id };
     }
-    throw lastErr instanceof Error ? lastErr : new Error('Meta WhatsApp: send failed');
+    // Exhausted all retries on transient (network/timeout/5xx) failures → retryable.
+    throw new ChannelSendError(lastErr instanceof Error ? lastErr.message : 'Meta WhatsApp: send failed', true);
   }
 }
 

@@ -72,4 +72,46 @@ describeMaybe('workspace settings: lowercase_emails (real Postgres)', () => {
     expect(c.status).toBe(201);
     expect(await storedEmail('p-off')).toBe('Mixed.Case@Acme.com');
   });
+
+  // Sending guardrails (CLAUDE.md inv.7): frequency cap + quiet-hours window that
+  // the dispatcher reads from workspaces.settings.
+  type Guard = { frequency_cap_per_days: number; quiet_hours: { startHour: number; endHour: number } | null };
+
+  it('defaults the guardrails to 0 cap / no quiet hours', async () => {
+    const r = await call(world.env, 'GET', '/workspace/settings', { token: tok() });
+    const s = (r.body as { settings: Guard }).settings;
+    expect(s.frequency_cap_per_days).toBe(0);
+    expect(s.quiet_hours).toBeNull();
+  });
+
+  it('persists a valid cap + quiet-hours window and round-trips it', async () => {
+    const put = await call(world.env, 'PUT', '/workspace/settings', {
+      token: tok(),
+      body: { frequency_cap_per_days: 3, quiet_hours: { startHour: 22, endHour: 8 } },
+    });
+    expect(put.status).toBe(200);
+    const get = await call(world.env, 'GET', '/workspace/settings', { token: tok() });
+    const s = (get.body as { settings: Guard }).settings;
+    expect(s.frequency_cap_per_days).toBe(3);
+    expect(s.quiet_hours).toEqual({ startHour: 22, endHour: 8 });
+  });
+
+  it('clears quiet hours when passed null', async () => {
+    await call(world.env, 'PUT', '/workspace/settings', { token: tok(), body: { quiet_hours: null } });
+    const get = await call(world.env, 'GET', '/workspace/settings', { token: tok() });
+    expect((get.body as { settings: Guard }).settings.quiet_hours).toBeNull();
+  });
+
+  it('rejects an invalid cap (negative) and an out-of-range quiet hour (400)', async () => {
+    const badCap = await call(world.env, 'PUT', '/workspace/settings', {
+      token: tok(),
+      body: { frequency_cap_per_days: -1 },
+    });
+    expect(badCap.status).toBe(400);
+    const badHour = await call(world.env, 'PUT', '/workspace/settings', {
+      token: tok(),
+      body: { quiet_hours: { startHour: 24, endHour: 8 } },
+    });
+    expect(badHour.status).toBe(400);
+  });
 });

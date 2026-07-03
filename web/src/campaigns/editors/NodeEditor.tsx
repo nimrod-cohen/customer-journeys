@@ -764,6 +764,28 @@ function SendEditor(props: NodeEditorProps) {
       .catch(() => undefined);
   }, []);
 
+  // Library templates for the picker (only kind!='copy' ones are reusable designs).
+  // Declared here — ABOVE the text-channel early return — so the hook order is
+  // stable across medium flips (rules of hooks); the email UI below consumes it.
+  useEffect(() => {
+    void api
+      .get<{ templates: Template[] }>('/templates')
+      .then((r) => setTemplates(r.templates.filter((t) => t.kind !== 'copy')))
+      .catch(() => undefined);
+  }, []);
+
+  // Load the attached copy's envelope so the instance view can show From/To/Subject.
+  useEffect(() => {
+    if (!attachedId) {
+      setEnvelope(null);
+      return;
+    }
+    void api
+      .get<{ template: { subject: string | null; sender_id: string | null; to_address: string | null } }>(`/templates/${attachedId}`)
+      .then((r) => setEnvelope({ subject: r.template.subject ?? '', sender_id: r.template.sender_id ?? null, to_address: r.template.to_address ?? '' }))
+      .catch(() => setEnvelope(null));
+  }, [attachedId, refreshKey]);
+
   // The medium selector — sits above the per-channel body. Switching TO email is a
   // valid draft, so we persist it immediately (otherwise the flip is lost when the
   // user designs/leaves — the node stayed its old channel). Switching TO a text
@@ -772,7 +794,9 @@ function SendEditor(props: NodeEditorProps) {
   const changeMedium = (next: SendMedium): void => {
     setMedium(next);
     if (next === 'email') {
-      void props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '', topicId }, attachedId)).catch(() => undefined);
+      void props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '', topicId }, attachedId)).catch(() =>
+        showToast('Could not save the channel change — retry.', { tone: 'error' }),
+      );
     }
   };
   // Persist a topic change immediately for an EMAIL send (the same auto-save
@@ -780,7 +804,9 @@ function SendEditor(props: NodeEditorProps) {
   const changeTopic = (next: string | null): void => {
     setTopicId(next);
     if (medium === 'email') {
-      void props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '', topicId: next }, attachedId)).catch(() => undefined);
+      void props.onSaveNode(writeSendConfig({ medium: 'email', textBody: '', topicId: next }, attachedId)).catch(() =>
+        showToast('Could not save the topic change — retry.', { tone: 'error' }),
+      );
     }
   };
   const mediumSelect = (
@@ -952,26 +978,6 @@ function SendEditor(props: NodeEditorProps) {
       </div>
     );
   }
-
-  // Library templates for the picker (only kind!='copy' ones are reusable designs).
-  useEffect(() => {
-    void api
-      .get<{ templates: Template[] }>('/templates')
-      .then((r) => setTemplates(r.templates.filter((t) => t.kind !== 'copy')))
-      .catch(() => undefined);
-  }, []);
-
-  // Load the attached copy's envelope so the instance view can show From/To/Subject.
-  useEffect(() => {
-    if (!attachedId) {
-      setEnvelope(null);
-      return;
-    }
-    void api
-      .get<{ template: { subject: string | null; sender_id: string | null; to_address: string | null } }>(`/templates/${attachedId}`)
-      .then((r) => setEnvelope({ subject: r.template.subject ?? '', sender_id: r.template.sender_id ?? null, to_address: r.template.to_address ?? '' }))
-      .catch(() => setEnvelope(null));
-  }, [attachedId, refreshKey]);
 
   // Attach a LIBRARY template: the server clones it into a kind='copy' and repoints
   // the send node (the same instance flow as broadcasts) — NOT the old placeholder.

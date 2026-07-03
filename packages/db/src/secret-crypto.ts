@@ -39,6 +39,12 @@ function masterKey(): Buffer {
     if (key.length !== 32) throw new Error('CDP_MASTER_KEY must be 32 bytes (base64-encoded)');
     return key;
   }
+  // Fail-fast in production: without a KEK every tenant credential would be
+  // encrypted under a publicly-derivable key, voiding the at-rest protection this
+  // module exists to provide. The deterministic dev key is only for dev/tests.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('CDP_MASTER_KEY must be set in production (refusing the dev fallback KEK).');
+  }
   // Dev/test fallback — deterministic, NOT secret. Real deployments set the env.
   return createHash('sha256').update('cdp-local-dev-master-key').digest();
 }

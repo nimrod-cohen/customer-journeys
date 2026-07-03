@@ -48,6 +48,7 @@ import {
   resolveChannelProvider,
   normalizePhone,
   isTextMedium,
+  isRetryableSendError,
   mediumGroupOf,
   DEFAULT_CHANNEL_CONFIG,
   type ChannelProvider,
@@ -363,11 +364,17 @@ export async function dispatchOutbox(
       merge.unsubscribe_url = unsubUrl;
       merge.unsubscribe = `<a href="${unsubUrl}">Unsubscribe</a>`;
     }
+    // Frequency cap + quiet hours: a per-send payload override wins, else the
+    // per-workspace default from `workspaces.settings` (like `link_tracking`).
+    // Without this fallback these two gating stages (CLAUDE.md invariant 7) never
+    // fire — no send path stamps the payload keys.
     const frequencyCapPerDays =
       typeof payload['frequency_cap_per_days'] === 'number'
         ? (payload['frequency_cap_per_days'] as number)
-        : null;
-    const quietHours = parseQuietHours(payload['quiet_hours']);
+        : typeof ws.settings?.['frequency_cap_per_days'] === 'number'
+          ? (ws.settings['frequency_cap_per_days'] as number)
+          : null;
+    const quietHours = parseQuietHours(payload['quiet_hours'] ?? ws.settings?.['quiet_hours']);
 
     // Text channels send to the recipient PHONE. The To token defaults to
     // {{customer.phone}} (resolves to attributes.phone via the customer.* resolver),
@@ -412,9 +419,13 @@ export async function dispatchOutbox(
     // suppression (DB): per-workspace OR global hard bounce. Only consulted when
     // the gate would pass — but querying is cheap and side-effect-free; the
     // decision pipeline still enforces the ORDER (gate before suppression).
+    // Suppression + soft-bounce are keyed on the EMAIL address, so they only apply
+    // to email sends. Applying them to sms/whatsapp wrongly blocks a text send
+    // because the profile's *email* bounced (a cross-channel false positive), and
+    // a phone-only recipient (no email) would bypass them anyway.
     let isSuppressed = false;
     let lastSoftBounceAt: Date | null = null;
-    if (profile.email) {
+    if (medium === 'email' && profile.email) {
       const supp = buildIsSuppressedQuery(workspaceId, profile.email);
       const { rows } = await deps.reader.query<{ suppressed: boolean }>(supp.text, supp.values);
       isSuppressed = rows[0]?.suppressed === true;
@@ -617,10 +628,18 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
   try {
     ({ providerMessageId } = await provider.send(message));
   } catch (err) {
-    // A real provider send FAILURE — record a 'failed' messages_log row carrying
-    // the captured error message as the reason, then mark the outbox row done
-    // (terminal, never crashing the batch / blocking other recipients).
     const reason = err instanceof Error ? err.message : String(err);
+    // A TRANSIENT provider failure (network/timeout/5xx that survived the provider's
+    // own bounded retries) → reset the claim so the outbox/DLQ machinery re-drives
+    // it, exactly like the email SES path. Never silently drop an SMS on a gateway
+    // blip.
+    if (isRetryableSendError(err)) {
+      await resetClaim(deps, workspaceId, outboxId);
+      return { result: 'retryable-failure', reason };
+    }
+    // A PERMANENT failure (4xx, business rejection, bad response) — record a 'failed'
+    // messages_log row with the reason and mark the outbox row done (terminal, never
+    // crashing the batch / blocking other recipients).
     await deps.runInWorkspaceTx(workspaceId, [
       buildMessagesLogFailure(workspaceId, profileId, campaignId, broadcastId, medium, 'failed', reason),
       buildOutboxMarkSent(workspaceId, outboxId),

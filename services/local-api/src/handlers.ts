@@ -369,6 +369,13 @@ export const getWorkspaceSettings: Handler = async (ctx, pool) => {
       front_facing_language: isFrontFacingLanguage(settings.front_facing_language)
         ? settings.front_facing_language
         : 'auto',
+      // Sending guardrails (CLAUDE.md inv.7), read by the dispatcher.
+      // frequency_cap_per_days: max sends per recipient over that many days
+      // (0 = off). quiet_hours: {startHour,endHour} UTC window (null = never quiet).
+      frequency_cap_per_days:
+        typeof settings.frequency_cap_per_days === 'number' ? settings.frequency_cap_per_days : 0,
+      quiet_hours:
+        settings.quiet_hours && typeof settings.quiet_hours === 'object' ? settings.quiet_hours : null,
     },
   });
 };
@@ -396,6 +403,29 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
       return ok({ error: "invalid front_facing_language (must be 'auto', 'en', or 'he')" }, 400);
     }
     patch.front_facing_language = b.front_facing_language;
+  }
+  if (b.frequency_cap_per_days !== undefined) {
+    // Max sends per recipient over N days; 0 disables the cap. Bounded to a sane
+    // ceiling. workspace_id is from ctx only (inv.2).
+    const n = Number(b.frequency_cap_per_days);
+    if (!Number.isInteger(n) || n < 0 || n > 1000) {
+      return ok({ error: 'frequency_cap_per_days must be a non-negative integer (0 disables)' }, 400);
+    }
+    patch.frequency_cap_per_days = n;
+  }
+  if (b.quiet_hours !== undefined) {
+    // A UTC {startHour,endHour} window (both 0..23); null clears it (never quiet).
+    if (b.quiet_hours === null) {
+      patch.quiet_hours = null;
+    } else {
+      const qh = asObject(b.quiet_hours);
+      const s = Number(qh.startHour);
+      const e = Number(qh.endHour);
+      if (![s, e].every((h) => Number.isInteger(h) && h >= 0 && h <= 23)) {
+        return ok({ error: 'quiet_hours must be {startHour,endHour} integers in 0..23' }, 400);
+      }
+      patch.quiet_hours = { startHour: s, endHour: e };
+    }
   }
   if (Object.keys(patch).length === 0) return ok({ error: 'no recognized settings' }, 400);
   const { rows } = await pool.query(

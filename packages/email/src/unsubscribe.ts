@@ -102,7 +102,16 @@ export const DEV_UNSUBSCRIBE_LINK_SECRET = 'dev-unsubscribe-link-secret-do-not-u
  * the unsubscribe/manage handlers (verifier) resolve the SAME secret.
  */
 export function unsubscribeLinkSecret(): string {
-  return process.env.UNSUBSCRIBE_LINK_SECRET || DEV_UNSUBSCRIBE_LINK_SECRET;
+  const env = process.env.UNSUBSCRIBE_LINK_SECRET;
+  if (env) return env;
+  // Fail-fast in production: a missing secret would silently sign/verify every
+  // unsubscribe token with the repo-committed dev constant, letting anyone forge
+  // a valid opt-out / preference-center link for any recipient. The dev fallback
+  // is only ever acceptable outside production.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('UNSUBSCRIBE_LINK_SECRET must be set in production (refusing the dev fallback).');
+  }
+  return DEV_UNSUBSCRIBE_LINK_SECRET;
 }
 
 /**
