@@ -6,6 +6,8 @@
 // test pool + local deps and drive the SAME server the SPA talks to.
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { readFileSync, existsSync } from 'node:fs';
+import { join, extname, normalize, sep } from 'node:path';
 import type { Pool } from 'pg';
 import { dispatch, type ApiRequest, type DispatchEnv } from './dispatch.js';
 import { devLogin, registerOwner, switchWorkspace, createFirstWorkspace } from './session.js';
@@ -31,7 +33,34 @@ export interface CreateAppOptions {
   readonly deps?: LocalApiDeps;
   /** Optional health deps (DB ping + DLQ probe). Defaults to a pool `SELECT 1`. */
   readonly health?: HealthDeps;
+  /**
+   * Absolute path to the built SPA (`web/dist`). When set, this ONE service also
+   * serves the admin SPA — `/` → index.html, `/static/*` → the hashed bundles — so
+   * production can run a single container for the SPA + API + public endpoints.
+   * Unset in dev/tests (Vite serves the SPA).
+   */
+  readonly webDistDir?: string;
 }
+
+/** Content types for the small set of static file extensions the SPA emits. */
+const STATIC_CONTENT_TYPES: Record<string, string> = {
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
+};
 
 /** Build the Hono app bound to a pool + (optional) injected lookups/deps. */
 export function createApp(opts: CreateAppOptions): Hono {
@@ -208,6 +237,41 @@ export function createApp(opts: CreateAppOptions): Hono {
     const r = await runPrefCenter('POST', c);
     return c.body(r.body, r.statusCode as 200, r.headers ?? {});
   });
+
+  // --- static SPA (production single-container) ---
+  // Served BEFORE the dispatch catch-all so `/` + `/static/*` resolve to files.
+  // The SPA is HASH-routed (#/…), so the server only ever serves `/` (index.html)
+  // and the hashed bundles under `/static/*`; every API path falls through to
+  // dispatch below. Skipped entirely when webDistDir is unset (dev/tests).
+  const webDistDir = opts.webDistDir;
+  if (webDistDir) {
+    const indexPath = join(webDistDir, 'index.html');
+    const indexHtml = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : null;
+    // Hashed, immutable bundles.
+    app.get('/static/*', (c) => {
+      const file = normalize(join(webDistDir, c.req.path.replace(/^\/+/, '')));
+      // Path-traversal guard: the resolved file must stay under webDistDir.
+      if (!file.startsWith(webDistDir + sep) || !existsSync(file)) return c.notFound();
+      const type = STATIC_CONTENT_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream';
+      return new Response(new Uint8Array(readFileSync(file)), {
+        status: 200,
+        headers: { 'content-type': type, 'cache-control': 'public, max-age=31536000, immutable' },
+      });
+    });
+    // A few well-known root files (favicon, manifest, robots) if the SPA emits them.
+    for (const name of ['favicon.ico', 'robots.txt', 'site.webmanifest', 'manifest.json']) {
+      app.get(`/${name}`, (c) => {
+        const file = join(webDistDir, name);
+        if (!existsSync(file)) return c.notFound();
+        const type = STATIC_CONTENT_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream';
+        return new Response(new Uint8Array(readFileSync(file)), { status: 200, headers: { 'content-type': type } });
+      });
+    }
+    // The SPA entry (index.html) — never cached, so a new deploy is picked up.
+    if (indexHtml !== null) {
+      app.get('/', (c) => c.html(indexHtml, 200, { 'cache-control': 'no-store' }));
+    }
+  }
 
   // --- everything else flows through the dispatch pipeline ---
   app.all('*', async (c) => {

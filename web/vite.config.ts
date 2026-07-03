@@ -48,7 +48,10 @@ export default defineConfig({
   plugins: [preact(), watchRootVersion()],
   server: { port: 5173, strictPort: true },
   preview: { port: 4173, strictPort: true },
-  build: { outDir: 'dist' },
+  // assetsDir='static' (not the default 'assets') so the SPA's hashed bundles land
+  // at /static/* and never collide with the API's `/assets/:id` uploaded-image route
+  // when one container serves BOTH the SPA and the API in production.
+  build: { outDir: 'dist', assetsDir: 'static' },
   // Vitest owns test/ (unit + DB-integration). Playwright owns e2e/ (browser),
   // run via `pnpm test:e2e` — keep its specs out of the vitest run.
   test: {
