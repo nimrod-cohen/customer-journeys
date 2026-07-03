@@ -11,6 +11,8 @@
 // So `{{customer.tier}}` ≡ `{{customer.attributes.tier}}`, and in a segment rule
 // `customer.tier` ≡ `attributes.tier`.
 
+import { stringifyMergeValue } from './merge-util.js';
+
 /** Top-level `profiles` columns addressable as `customer.<field>` (NOT attributes). */
 export const RESERVED_CUSTOMER_FIELDS = ['id', 'email', 'external_id', 'email_status', 'created_at'] as const;
 export type ReservedCustomerField = (typeof RESERVED_CUSTOMER_FIELDS)[number];
@@ -85,18 +87,13 @@ export function customerMerge(profile: CustomerProfile): Record<string, string> 
   const rec = profile as Record<string, unknown>;
   for (const f of RESERVED_CUSTOMER_FIELDS) {
     const v = rec[f];
-    if (v !== undefined && v !== null) out[`${CUSTOMER_PREFIX}${f}`] = stringify(v);
+    if (v !== undefined && v !== null) out[`${CUSTOMER_PREFIX}${f}`] = stringifyMergeValue(v);
   }
   const attrs = profile.attributes ?? {};
   for (const [k, v] of Object.entries(attrs)) {
     if (v === undefined || v === null) continue;
     if (typeof v === 'object') continue; // arrays/objects aren't single-tag substitutable
-    out[`${CUSTOMER_PREFIX}${ATTRIBUTES_PREFIX}${k}`] = stringify(v);
+    out[`${CUSTOMER_PREFIX}${ATTRIBUTES_PREFIX}${k}`] = stringifyMergeValue(v);
   }
   return out;
-}
-
-function stringify(v: unknown): string {
-  if (v instanceof Date) return v.toISOString();
-  return String(v);
 }

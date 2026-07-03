@@ -13,6 +13,8 @@
 // (invariant 6 untouched). A missing path resolves to undefined → safe-empty in the
 // renderer.
 
+import { flattenToMergeMap } from './merge-util.js';
+
 /** The namespace prefix for an `event.*` token. */
 export const EVENT_PREFIX = 'event.';
 
@@ -66,26 +68,5 @@ export function expandEventToken(token: string): string {
 export function eventMerge(payload: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (payload === undefined || payload === null || typeof payload !== 'object') return out;
-  walk(payload as Record<string, unknown> | unknown[], EVENT_PREFIX, out);
-  return out;
-}
-
-function walk(node: Record<string, unknown> | unknown[], prefix: string, out: Record<string, string>): void {
-  const entries: [string, unknown][] = Array.isArray(node)
-    ? node.map((v, i) => [String(i), v])
-    : Object.entries(node);
-  for (const [k, v] of entries) {
-    if (v === undefined || v === null) continue;
-    const token = `${prefix}${k}`;
-    if (typeof v === 'object') {
-      walk(v as Record<string, unknown> | unknown[], `${token}.`, out);
-    } else {
-      out[token] = stringify(v);
-    }
-  }
-}
-
-function stringify(v: unknown): string {
-  if (v instanceof Date) return v.toISOString();
-  return String(v);
+  return flattenToMergeMap(payload as Record<string, unknown> | unknown[], EVENT_PREFIX, out);
 }

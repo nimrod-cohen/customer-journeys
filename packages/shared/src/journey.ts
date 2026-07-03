@@ -8,6 +8,8 @@
 // in the renderer. The structural twin of `event.*` and `customer.*` (read-only
 // string substitution at render time; never interpolated into SQL).
 
+import { flattenToMergeMap } from './merge-util.js';
+
 /** The namespace prefix for a `journey.*` token. */
 export const JOURNEY_PREFIX = 'journey.';
 
@@ -58,26 +60,5 @@ export function expandJourneyToken(token: string): string {
 export function journeyMerge(vars: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (vars === undefined || vars === null || typeof vars !== 'object') return out;
-  walk(vars as Record<string, unknown> | unknown[], JOURNEY_PREFIX, out);
-  return out;
-}
-
-function walk(node: Record<string, unknown> | unknown[], prefix: string, out: Record<string, string>): void {
-  const entries: [string, unknown][] = Array.isArray(node)
-    ? node.map((v, i) => [String(i), v])
-    : Object.entries(node);
-  for (const [k, v] of entries) {
-    if (v === undefined || v === null) continue;
-    const token = `${prefix}${k}`;
-    if (typeof v === 'object') {
-      walk(v as Record<string, unknown> | unknown[], `${token}.`, out);
-    } else {
-      out[token] = stringify(v);
-    }
-  }
-}
-
-function stringify(v: unknown): string {
-  if (v instanceof Date) return v.toISOString();
-  return String(v);
+  return flattenToMergeMap(vars as Record<string, unknown> | unknown[], JOURNEY_PREFIX, out);
 }
