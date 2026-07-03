@@ -24,14 +24,29 @@ function resolveConnectionString(): string {
 }
 
 /**
+ * TLS config for the pool. A LOCAL Postgres (localhost/127.0.0.1) speaks
+ * plaintext, so SSL is off. A REMOTE host (e.g. Supabase) requires TLS — pin the
+ * provider CA via `DATABASE_SSL_CA` (PEM) for full verification, otherwise accept
+ * the managed provider's certificate. `DATABASE_SSL=disable` forces it off.
+ */
+export function resolveSsl(url: string): PoolConfig['ssl'] {
+  if (process.env.DATABASE_SSL === 'disable') return undefined;
+  if (/@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(url)) return undefined;
+  const ca = process.env.DATABASE_SSL_CA;
+  return ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false };
+}
+
+/**
  * Get the process-wide pooled client, creating it on first use.
  * Lambda containers are reused, so a module-level singleton pool keeps
  * connection counts bounded across warm invocations.
  */
 export function getPool(overrides: PoolConfig = {}): Pool {
   if (!pool) {
+    const connectionString = resolveConnectionString();
     pool = new Pool({
-      connectionString: resolveConnectionString(),
+      connectionString,
+      ssl: resolveSsl(connectionString),
       // Conservative ceiling: many concurrent Lambda containers share the
       // Supabase pooler, so keep per-container pools small.
       max: 5,
