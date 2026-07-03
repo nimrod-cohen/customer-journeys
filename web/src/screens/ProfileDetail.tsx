@@ -9,7 +9,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
 import { useStore } from '../store/store.js';
 import { navigate } from '../router.js';
-import { ActionMenu, type ActionMenuItem, Badge, Button, Card, EmptyState, Field, Input, Select, toneFor } from '../ui/kit.js';
+import { ActionMenu, type ActionMenuItem, Badge, Button, Card, EmptyState, Field, Input, Select, Switch, toneFor } from '../ui/kit.js';
 import { JsonView } from '../ui/JsonView.js';
 import { formatDateTime } from '../ui/datetime.js';
 import { showToast } from '../ui/toast.tsx';
@@ -396,16 +396,18 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
   // In-flight guard for the Unsubscribed switch (a bare checkbox, so the kit
   // Button auto-lock can't apply) — prevents racing double-toggles.
   const [savingUnsub, setSavingUnsub] = useState(false);
-  // Re-sync from the profile prop after a save + reload (or a merge/normalization)
-  // so the editor never shows stale attributes — without remounting (which would
-  // wipe the Save-status indicator). The only reload is the user's own save.
+  // Re-sync the free-text attribute ROWS from the profile prop after a save +
+  // reload (or a merge/normalization) so the editor never shows stale attributes —
+  // without remounting (which would wipe the Save-status indicator). NOTE: we do
+  // NOT re-sync `unsubscribed` here — it is optimistically toggled + reverted by
+  // toggleUnsubscribed, and a late-arriving profile reload (e.g. after a tab
+  // round-trip) would otherwise clobber an in-flight toggle back to its old value.
   useEffect(() => {
     setPairs(
       Object.entries(profile.attributes ?? {})
         .filter(([k]) => !PROTECTED_ATTR_KEYS.has(k))
         .map(([key, value]) => ({ key, value: valueToString(value) })),
     );
-    setUnsubscribed(Boolean(profile.attributes?.unsubscribed));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile.attributes]);
 
@@ -498,17 +500,14 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
             broadcasts, campaign sends, and topic-gated messages.
           </p>
         </div>
-        <label class="relative inline-flex shrink-0 cursor-pointer items-center" title={unsubscribed ? 'Unsubscribed' : 'Subscribed'}>
-          <input
-            data-testid="attr-unsubscribed"
-            type="checkbox"
-            class="peer sr-only"
-            checked={unsubscribed}
-            onChange={(e) => void toggleUnsubscribed((e.target as HTMLInputElement).checked)}
-          />
-          <span class="h-6 w-11 rounded-full bg-stone-300 transition-colors peer-checked:bg-rose-500 peer-focus:ring-2 peer-focus:ring-brand-400/40" />
-          <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
-        </label>
+        <Switch
+          data-testid="attr-unsubscribed"
+          tone="rose"
+          size="md"
+          checked={unsubscribed}
+          title={unsubscribed ? 'Unsubscribed' : 'Subscribed'}
+          onChange={(c) => void toggleUnsubscribed(c)}
+        />
       </div>
       <div class="space-y-2.5">
         {pairs.length === 0 ? (
@@ -726,26 +725,23 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
           {data.channels.map((c) => {
             const shown = c.subscribed;
             return (
-              <label
+              <div
                 key={c.group}
                 data-testid="channel-subscription-row"
                 data-channel-group={c.group}
                 class="flex items-center justify-between gap-3 rounded-md border border-stone-200 bg-white px-3 py-2"
               >
                 <p class="text-sm font-medium text-ink-900">{c.label}</p>
-                <span class="relative inline-flex shrink-0 cursor-pointer items-center" title={shown ? 'Subscribed' : 'Opted out'}>
-                  <input
-                    data-testid="channel-toggle"
-                    type="checkbox"
-                    class="peer sr-only disabled:cursor-not-allowed"
-                    checked={shown}
-                    disabled={busy}
-                    onChange={(e) => toggleChannel(c.group, (e.target as HTMLInputElement).checked)}
-                  />
-                  <span class="h-5 w-9 rounded-full bg-stone-300 transition-colors peer-checked:bg-emerald-500" />
-                  <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
-                </span>
-              </label>
+                <Switch
+                  data-testid="channel-toggle"
+                  tone="emerald"
+                  size="sm"
+                  checked={shown}
+                  disabled={busy}
+                  title={shown ? 'Subscribed' : 'Opted out'}
+                  onChange={(c2) => toggleChannel(c.group, c2)}
+                />
+              </div>
             );
           })}
         </div>
@@ -762,7 +758,7 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
           {data.topics.map((t) => {
             const shown = t.subscribed;
             return (
-              <label
+              <div
                 key={t.id}
                 data-testid="topic-subscription-row"
                 data-topic-id={t.id}
@@ -772,19 +768,16 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
                   <p class="text-sm font-medium text-ink-900">{t.name}</p>
                   {t.description ? <p class="mt-0.5 text-xs text-stone-500">{t.description}</p> : null}
                 </div>
-                <span class="relative inline-flex shrink-0 cursor-pointer items-center" title={shown ? 'Subscribed' : 'Opted out'}>
-                  <input
-                    data-testid="topic-toggle"
-                    type="checkbox"
-                    class="peer sr-only disabled:cursor-not-allowed"
-                    checked={shown}
-                    disabled={busy}
-                    onChange={(e) => toggleTopic(t.id, (e.target as HTMLInputElement).checked)}
-                  />
-                  <span class="h-5 w-9 rounded-full bg-stone-300 transition-colors peer-checked:bg-emerald-500" />
-                  <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
-                </span>
-              </label>
+                <Switch
+                  data-testid="topic-toggle"
+                  tone="emerald"
+                  size="sm"
+                  checked={shown}
+                  disabled={busy}
+                  title={shown ? 'Subscribed' : 'Opted out'}
+                  onChange={(c) => toggleTopic(t.id, c)}
+                />
+              </div>
             );
           })}
         </div>

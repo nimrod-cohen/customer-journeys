@@ -353,6 +353,48 @@ export function Badge({ tone = 'neutral', children, ...rest }: JSX.IntrinsicElem
   );
 }
 
+/**
+ * A toggle SWITCH (an accessible sr-only checkbox + track + knob). Extracted from
+ * the copies scattered across the profile screens; the caller supplies a
+ * `data-testid` (spread onto the real <input>, preserving the Playwright contract)
+ * plus checked/onChange, and optionally a tone + size + disabled/title. Wrap-free
+ * (renders its own <label>) so it drops into a flex row.
+ */
+export function Switch({
+  checked,
+  onChange,
+  disabled = false,
+  tone = 'brand',
+  size = 'md',
+  title,
+  ...rest
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  tone?: 'brand' | 'emerald' | 'rose';
+  size?: 'sm' | 'md';
+  title?: string;
+} & Omit<JSX.IntrinsicElements['input'], 'onChange' | 'checked' | 'type' | 'size' | 'disabled'>): JSX.Element {
+  const on = { brand: 'peer-checked:bg-brand-500', emerald: 'peer-checked:bg-emerald-500', rose: 'peer-checked:bg-rose-500' }[tone];
+  const track = size === 'sm' ? 'h-5 w-9' : 'h-6 w-11';
+  const knob = size === 'sm' ? 'h-4 w-4 peer-checked:translate-x-4' : 'h-5 w-5 peer-checked:translate-x-5';
+  return (
+    <label class="relative inline-flex shrink-0 cursor-pointer items-center" title={title}>
+      <input
+        type="checkbox"
+        class="peer sr-only disabled:cursor-not-allowed"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange((e.target as HTMLInputElement).checked)}
+        {...rest}
+      />
+      <span class={`${track} rounded-full bg-stone-300 transition-colors peer-focus:ring-2 peer-focus:ring-brand-400/40 ${on}`} />
+      <span class={`absolute left-0.5 top-0.5 ${knob} rounded-full bg-white shadow transition-transform`} />
+    </label>
+  );
+}
+
 /** Map a free-text status to a badge tone (sensible defaults across screens). */
 export function toneFor(status: string | undefined | null): Tone {
   const s = (status ?? '').toLowerCase();
