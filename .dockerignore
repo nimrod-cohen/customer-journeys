@@ -1,0 +1,24 @@
+# Rebuilt inside the image — never copy the host's (wrong-arch) artifacts.
+node_modules
+**/node_modules
+dist
+**/dist
+.turbo
+**/.turbo
+# CRITICAL: never copy stale incremental build state — tsc -b would trust it and
+# SKIP emitting the dists in the clean image, breaking @cdp/* module resolution.
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# VCS + local/dev + test artifacts (not needed at runtime).
+.git
+.github
+web/test-results
+web/playwright-report
+web/e2e
+**/*.log
+infra/cdk.out
+.a5c/runs
+scratchpad
+*.md
+docker-compose.yml
