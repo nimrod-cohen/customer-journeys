@@ -655,9 +655,15 @@ export function BroadcastWizard({ id }: { id?: string }) {
       setTplId(value);
       return;
     }
-    const r = await api.post<{ template: { id: string; name: string } }>(`/templates/${value}/clone`, { body: {} });
-    setAttachedCopy({ id: r.template.id, name: r.template.name });
-    setTplId(r.template.id);
+    // This is wired to a <Select> (not a kit Button), so the auto-lock can't apply
+    // and a rejection would otherwise vanish — surface it as a toast.
+    try {
+      const r = await api.post<{ template: { id: string; name: string } }>(`/templates/${value}/clone`, { body: {} });
+      setAttachedCopy({ id: r.template.id, name: r.template.name });
+      setTplId(r.template.id);
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not start from that template.', { tone: 'error' });
+    }
   };
 
   /**

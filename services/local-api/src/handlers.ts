@@ -4762,7 +4762,9 @@ export const dashboardSummary: Handler = async (ctx, pool) => {
     pool.query(`SELECT count(*)::int AS c FROM profiles WHERE workspace_id = $1`, [ctx.workspaceId]),
     pool.query(`SELECT count(*)::int AS c FROM segments WHERE workspace_id = $1`, [ctx.workspaceId]),
     pool.query(`SELECT count(*)::int AS c FROM broadcasts WHERE workspace_id = $1`, [ctx.workspaceId]),
-    pool.query(`SELECT count(*)::int AS c FROM messages_log WHERE workspace_id = $1`, [ctx.workspaceId]),
+    // Only ACTUAL sends — since v0.63.0 every skip/failure also writes a
+    // messages_log row, so an unfiltered count over-reports "sent".
+    pool.query(`SELECT count(*)::int AS c FROM messages_log WHERE workspace_id = $1 AND status = 'sent'`, [ctx.workspaceId]),
   ]);
   return ok({
     profiles: counts[0].rows[0]?.c ?? 0,

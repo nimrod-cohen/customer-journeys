@@ -97,11 +97,14 @@ describe('MetaWhatsAppProvider (Cloud API, injected HTTP — never network)', ()
     await expect(new MetaWhatsAppProvider(cfg, rec.client).send({ to: '+1', body: 'x' })).rejects.toThrow(/no message id/);
   });
 
-  it('resolveChannelProvider returns the Meta adapter for whatsapp+meta config, mock otherwise', () => {
+  it('resolveChannelProvider returns the Meta adapter for whatsapp+meta config; mock for a mock config', () => {
     const fake = { async post() { return OK; } };
     expect(resolveChannelProvider('whatsapp', { kind: 'meta', ...cfg }, fake)).toBeInstanceOf(MetaWhatsAppProvider);
     expect(resolveChannelProvider('whatsapp', { kind: 'mock' })).toBeInstanceOf(MockWhatsAppProvider);
-    // A meta config is WhatsApp-only — SMS stays mock (019 is its real path).
-    expect(resolveChannelProvider('sms', { kind: 'meta', ...cfg }, fake).medium).toBe('sms');
+  });
+
+  it('THROWS on a real cross-medium config (a meta config asked to send SMS) rather than silently mocking', () => {
+    const fake = { async post() { return OK; } };
+    expect(() => resolveChannelProvider('sms', { kind: 'meta', ...cfg }, fake)).toThrow(/can't send SMS/);
   });
 });

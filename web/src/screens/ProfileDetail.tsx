@@ -294,6 +294,15 @@ function DetailsTab({ profile, onSaved }: { profile: Profile; onSaved: () => Pro
   const [status, setStatus] = useState(profile.email_status);
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [err, setErr] = useState('');
+  // Re-sync the fields when the profile prop changes (after a save + reload, or a
+  // server-side normalization / merge) so they never show stale values — WITHOUT
+  // remounting, so the Save-status indicator survives. The only reload here is the
+  // user's own save, so this can't clobber in-progress typing.
+  useEffect(() => {
+    setEmail(profile.email ?? '');
+    setExternalId(profile.external_id ?? '');
+    setStatus(profile.email_status);
+  }, [profile.email, profile.external_id, profile.email_status]);
 
   const save = async () => {
     setState('saving');
@@ -384,6 +393,21 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
   );
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [err, setErr] = useState('');
+  // In-flight guard for the Unsubscribed switch (a bare checkbox, so the kit
+  // Button auto-lock can't apply) — prevents racing double-toggles.
+  const [savingUnsub, setSavingUnsub] = useState(false);
+  // Re-sync from the profile prop after a save + reload (or a merge/normalization)
+  // so the editor never shows stale attributes — without remounting (which would
+  // wipe the Save-status indicator). The only reload is the user's own save.
+  useEffect(() => {
+    setPairs(
+      Object.entries(profile.attributes ?? {})
+        .filter(([k]) => !PROTECTED_ATTR_KEYS.has(k))
+        .map(([key, value]) => ({ key, value: valueToString(value) })),
+    );
+    setUnsubscribed(Boolean(profile.attributes?.unsubscribed));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile.attributes]);
 
   const setPair = (i: number, patch: Partial<AttrPair>) =>
     setPairs((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
@@ -411,6 +435,8 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
   // and cascades server-side (opt out / resume every channel + topic + the
   // suppression), so it stays consistent with the Subscriptions tab.
   const toggleUnsubscribed = async (checked: boolean): Promise<void> => {
+    if (savingUnsub) return; // ignore a re-toggle while the PUT is in flight
+    setSavingUnsub(true);
     setUnsubscribed(checked); // optimistic
     setErr('');
     try {
@@ -420,6 +446,8 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
       setUnsubscribed(!checked); // revert
       setErr((e as { error?: string })?.error ?? 'could not update');
       setState('error');
+    } finally {
+      setSavingUnsub(false);
     }
   };
 

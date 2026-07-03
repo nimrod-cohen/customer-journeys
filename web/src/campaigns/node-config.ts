@@ -238,7 +238,14 @@ export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilFor
 
 /** True when the form enables at least one gate (a savable rich wait). */
 export function waitUntilFormHasGate(form: WaitUntilForm): boolean {
-  const timeOk = form.timeMode === 'date' ? form.dateInput.length > 0 : form.timeMode === 'relative';
+  // A relative time gate only counts when it actually serializes an untilOffset —
+  // i.e. the anchor is 'now' OR a non-blank expression. Otherwise writeWaitUntilForm
+  // drops it, and a "relative + blank expression" form (no condition / max-wait)
+  // would enable Save yet emit a gate-less node the server rejects (400).
+  const timeOk =
+    form.timeMode === 'date'
+      ? form.dateInput.length > 0
+      : form.timeMode === 'relative' && (form.anchorKind === 'now' || form.anchorExpr.trim().length > 0);
   const condOk = form.hasCondition && !conditionGroupIsEmpty(form.condition);
   return timeOk || condOk || form.hasMaxWait;
 }

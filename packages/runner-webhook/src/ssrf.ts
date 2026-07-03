@@ -29,13 +29,35 @@ function normalizeHost(host: string): string {
   return h;
 }
 
-/** Parse an IPv4 dotted-quad into its four octets, or null if it isn't one. */
+/** Parse a single IPv4 octet in decimal, 0x-hex, or 0-octal, or null. */
+function parseOctet(s: string): number | null {
+  if (/^0x[0-9a-f]+$/i.test(s)) return parseInt(s, 16);
+  if (/^0[0-7]+$/.test(s)) return parseInt(s, 8);
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  return null;
+}
+
+/**
+ * Parse an IPv4 address in ANY of the encodings a URL parser accepts and
+ * `inet_aton` resolves — dotted-quad, but also a single 32-bit integer
+ * (`2130706433`), hex (`0x7f000001`), or octal octets (`0177.0.0.1`) — into its
+ * four canonical octets, or null if it isn't an IPv4 literal. Canonicalizing
+ * BEFORE classifying stops a numeric-encoded loopback/metadata address slipping
+ * past `isPrivateOrReservedHost` as a "regular DNS name".
+ */
 function ipv4Octets(host: string): [number, number, number, number] | null {
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (!m) return null;
-  const o = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])] as const;
-  if (o.some((n) => n > 255)) return null;
-  return [o[0], o[1], o[2], o[3]];
+  const parts = host.split('.');
+  if (parts.length === 1) {
+    const n = parseOctet(parts[0]!);
+    if (n === null || n < 0 || n > 0xffffffff) return null;
+    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+  }
+  if (parts.length === 4) {
+    const nums = parts.map(parseOctet);
+    if (nums.some((n) => n === null || n < 0 || n > 255)) return null;
+    return nums as [number, number, number, number];
+  }
+  return null;
 }
 
 /**
@@ -67,6 +89,9 @@ export function isPrivateOrReservedHost(host: string): boolean {
   if (a === 169 && b === 254) return true; // link-local / metadata
   if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
   if (a === 192 && b === 168) return true; // RFC1918
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT (RFC6598)
+  if (a === 192 && b === 0 && oct[2] === 0) return true; // 192.0.0/24 IETF protocol assignments
+  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18/15 benchmarking
   return false;
 }
 

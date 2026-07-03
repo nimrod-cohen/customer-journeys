@@ -478,16 +478,31 @@ export function resolveChannelProvider(
     );
   }
   if (medium === 'whatsapp') {
-    // Real Meta adapter when the company configured WhatsApp creds, else the mock.
-    return config.kind === 'meta' ? new MetaWhatsAppProvider(config, http ?? fetchChannelHttpClient()) : new MockWhatsAppProvider();
+    switch (config.kind) {
+      case 'meta':
+        return new MetaWhatsAppProvider(config, http ?? fetchChannelHttpClient());
+      case 'mock':
+        return new MockWhatsAppProvider();
+      case '019':
+        // A real but MIS-MATCHED config (019 is SMS-only) — throw rather than
+        // silently sending nothing via the mock, which would look like success.
+        throw new Error("resolveChannelProvider: a '019' (SMS) config can't send WhatsApp — check the company channel config");
+      default: {
+        const exhaustive: never = config;
+        throw new Error(`resolveChannelProvider: unsupported provider kind '${String((exhaustive as { kind?: unknown }).kind)}'`);
+      }
+    }
   }
   // SMS: a real 019 adapter when the company configured it, else the mock.
   switch (config.kind) {
     case '019':
       return new Sms019Provider(config, http ?? fetchChannelHttpClient());
-    case 'meta':
     case 'mock':
       return new MockSmsProvider();
+    case 'meta':
+      // A real but MIS-MATCHED config (meta is WhatsApp-only) — throw rather than
+      // silently mocking, which would look like a successful SMS send.
+      throw new Error("resolveChannelProvider: a 'meta' (WhatsApp) config can't send SMS — check the company channel config");
     default: {
       const exhaustive: never = config;
       throw new Error(`resolveChannelProvider: unsupported provider kind '${String((exhaustive as { kind?: unknown }).kind)}'`);

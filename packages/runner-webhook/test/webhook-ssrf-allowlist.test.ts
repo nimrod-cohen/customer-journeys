@@ -31,6 +31,19 @@ describe('isPrivateOrReservedHost', () => {
     expect(isPrivateOrReservedHost('172.32.0.1')).toBe(false); // just outside 172.16/12
     expect(isPrivateOrReservedHost('11.0.0.1')).toBe(false);
   });
+  it('canonicalizes numeric IPv4 encodings of loopback before classifying', () => {
+    expect(isPrivateOrReservedHost('2130706433')).toBe(true); // decimal 127.0.0.1
+    expect(isPrivateOrReservedHost('0x7f000001')).toBe(true); // hex 127.0.0.1
+    expect(isPrivateOrReservedHost('0177.0.0.1')).toBe(true); // octal-first-octet 127.0.0.1
+    // decimal encoding of the 169.254.169.254 metadata endpoint
+    expect(isPrivateOrReservedHost('2852039166')).toBe(true);
+  });
+  it('classifies the added reserved ranges (CGNAT / protocol / benchmarking)', () => {
+    expect(isPrivateOrReservedHost('100.64.0.1')).toBe(true); // 100.64/10 CGNAT
+    expect(isPrivateOrReservedHost('192.0.0.8')).toBe(true); // 192.0.0/24
+    expect(isPrivateOrReservedHost('198.18.0.1')).toBe(true); // 198.18/15
+    expect(isPrivateOrReservedHost('100.128.0.1')).toBe(false); // outside 100.64/10
+  });
 });
 
 describe('assertWebhookTargetAllowed', () => {
