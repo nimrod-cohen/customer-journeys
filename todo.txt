@@ -98,6 +98,7 @@
 # [~] Connect to the REAL WhatsApp official API — BLOCKED on a Meta WhatsApp Business account + credentials.
 #     Architecture + mock done; see .a5c/PROVIDERS-SETUP.md.
 * make the campaign editor grid use the full space, not wrapped in a bordered container
+* add credits checks and alerts
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).
