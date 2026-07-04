@@ -225,9 +225,15 @@ export const getMe: Handler = async (ctx, pool) => {
   let workspaceName: string | null = null;
   let companyId: string | null = null;
   let companyName: string | null = null;
+  let companyLogoUrl: string | null = null;
   if (ctx.workspaceId) {
-    const wn = await pool.query(
-      `SELECT w.name AS wname, w.company_id, c.name AS cname
+    const wn = await pool.query<{
+      wname: string | null;
+      company_id: string | null;
+      cname: string | null;
+      logo_asset_id: string | null;
+    }>(
+      `SELECT w.name AS wname, w.company_id, c.name AS cname, c.logo_asset_id
          FROM workspaces w JOIN companies c ON c.id = w.company_id
         WHERE w.id = $1`,
       [ctx.workspaceId],
@@ -235,6 +241,10 @@ export const getMe: Handler = async (ctx, pool) => {
     workspaceName = wn.rows[0]?.wname ?? null;
     companyId = wn.rows[0]?.company_id ?? null;
     companyName = wn.rows[0]?.cname ?? null;
+    // The logo asset is served public-by-uuid at /assets/<id> (no auth), so the
+    // header can render it for EVERY role without a capability-gated fetch.
+    const logoId = wn.rows[0]?.logo_asset_id ?? null;
+    companyLogoUrl = logoId ? `/assets/${logoId}` : null;
   }
   // App-owned profile (display name); identity/email live in the auth provider.
   const prof = await pool.query<{ name: string | null }>('SELECT name FROM users WHERE id = $1', [ctx.userId ?? '']);
@@ -246,6 +256,7 @@ export const getMe: Handler = async (ctx, pool) => {
     workspace_name: workspaceName,
     company_id: companyId,
     company_name: companyName,
+    company_logo_url: companyLogoUrl,
     role: ctx.role ?? null,
     is_platform_admin: ctx.isPlatformAdmin,
     memberships: rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role, name: r.name })),

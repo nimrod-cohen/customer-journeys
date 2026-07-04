@@ -5,7 +5,7 @@
 // is pointed at it via PUT /company/logo. The logo is OPTIONAL — Remove clears
 // it. Server-calling buttons return their promise so the kit Button auto-locks.
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { api } from '../store/session.js';
+import { api, refreshMe } from '../store/session.js';
 import { apiBaseUrl } from '../api/client.js';
 import { Button, Card } from '../ui/kit.js';
 
@@ -53,6 +53,7 @@ export function CompanyLogo() {
       const r = await api.put<LogoState>('/company/logo', { body: { asset_id: up.id } });
       setLogoUrl(r.logo_url ?? null);
       setStatus('Logo updated');
+      void refreshMe(); // update the sidebar header logo immediately
     } catch (e) {
       setError((e as { error?: string })?.error ?? 'Could not upload the logo.');
     }
@@ -65,6 +66,7 @@ export function CompanyLogo() {
       await api.del('/company/logo');
       setLogoUrl(null);
       setStatus('Logo removed');
+      void refreshMe(); // clear the sidebar header logo immediately
     } catch (e) {
       setError((e as { error?: string })?.error ?? 'Could not remove the logo.');
     }

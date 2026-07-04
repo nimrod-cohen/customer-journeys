@@ -28,6 +28,8 @@ export interface Session {
   /** The parent company of the active workspace (the hierarchy above workspace). */
   readonly companyId: string | null;
   readonly companyName: string | null;
+  /** The active company's logo (public /assets/<id> path), or null. Shown in the nav header. */
+  readonly companyLogoUrl: string | null;
   /** The effective role for capability checks: workspace role or 'system-admin'. */
   readonly role: Role | null;
   readonly isPlatformAdmin: boolean;
@@ -50,6 +52,7 @@ const EMPTY: Session = {
   workspaceName: null,
   companyId: null,
   companyName: null,
+  companyLogoUrl: null,
   role: null,
   isPlatformAdmin: false,
   memberships: [],
@@ -165,6 +168,7 @@ interface MeResponse {
   workspace_name: string | null;
   company_id: string | null;
   company_name: string | null;
+  company_logo_url?: string | null;
   role: WorkspaceRole | null;
   is_platform_admin: boolean;
   memberships: Membership[];
@@ -233,6 +237,7 @@ export async function refreshMe(): Promise<void> {
     workspaceName: me.workspace_name ?? null,
     companyId: me.company_id ?? null,
     companyName: me.company_name ?? null,
+    companyLogoUrl: me.company_logo_url ?? null,
     role: effectiveRole(me.role, me.is_platform_admin),
     isPlatformAdmin: me.is_platform_admin,
     memberships: me.memberships,

@@ -259,7 +259,7 @@ export function createApp(opts: CreateAppOptions): Hono {
       });
     });
     // A few well-known root files (favicon, manifest, robots) if the SPA emits them.
-    for (const name of ['favicon.ico', 'robots.txt', 'site.webmanifest', 'manifest.json']) {
+    for (const name of ['favicon.svg', 'favicon.ico', 'robots.txt', 'site.webmanifest', 'manifest.json']) {
       app.get(`/${name}`, (c) => {
         const file = join(webDistDir, name);
         if (!existsSync(file)) return c.notFound();

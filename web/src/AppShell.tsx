@@ -173,6 +173,22 @@ export function AppShell(): JSX.Element {
           </div>
         </div>
 
+        {/* Company logo (tenant branding), when one is uploaded in Company
+            settings. On a light backing so a dark/colored logo reads against the
+            dark sidebar; constrained height, aspect preserved. */}
+        {session.companyLogoUrl ? (
+          <div
+            data-testid="company-logo"
+            class="mx-2 mb-2 flex items-center justify-center rounded-lg bg-white/95 px-3 py-2 ring-1 ring-white/10"
+          >
+            <img
+              src={session.companyLogoUrl}
+              alt={session.companyName ?? 'Company logo'}
+              class="max-h-9 w-auto object-contain"
+            />
+          </div>
+        ) : null}
+
         {/* Company name, above the workspace selector. */}
         {session.companyName ? (
           <div
