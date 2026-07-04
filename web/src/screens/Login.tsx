@@ -204,6 +204,11 @@ export function Login() {
             <p class="mt-2 text-[11px] text-stone-400">Click an email to autofill. Password shown on fill.</p>
           </div>
           ) : null}
+
+          <p class="mt-8 text-center text-[11px] text-stone-400" data-testid="app-version">
+            v{__APP_VERSION__}
+            {__APP_COMMIT__ ? ` · ${__APP_COMMIT__}` : ''}
+          </p>
         </div>
       </div>
     </div>

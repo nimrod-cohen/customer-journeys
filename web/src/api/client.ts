@@ -82,7 +82,16 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
 
   async function request<T>(method: string, path: string, ro: RequestOptions = {}): Promise<T> {
     if (ro.body !== undefined && !ro.allowWorkspaceId) assertNoWorkspaceIdInBody(ro.body);
-    const url = new URL(base + path);
+    // A base of '' means "same origin" (the single-container production deploy
+    // where the SPA and API share a host). new URL() needs an absolute base to
+    // resolve a relative path — without one, `new URL('/auth/register')` THROWS
+    // "Invalid URL" and every API call fails. Anchor on the current origin; an
+    // absolute `base` (e.g. dev's http://localhost:8787) still overrides it.
+    const origin =
+      typeof globalThis !== 'undefined' && globalThis.location
+        ? globalThis.location.origin
+        : 'http://localhost';
+    const url = new URL(base + path, origin);
     if (ro.query) for (const [k, v] of Object.entries(ro.query)) url.searchParams.set(k, v);
 
     const headers: Record<string, string> = {};
