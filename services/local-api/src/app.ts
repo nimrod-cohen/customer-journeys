@@ -268,8 +268,11 @@ export function createApp(opts: CreateAppOptions): Hono {
       });
     }
     // The SPA entry (index.html) — never cached, so a new deploy is picked up.
+    // '/docs' also serves the shell so the PUBLIC API-reference route (rendered by
+    // the SPA before its auth gate) loads on a clean URL without a 401.
     if (indexHtml !== null) {
       app.get('/', (c) => c.html(indexHtml, 200, { 'cache-control': 'no-store' }));
+      app.get('/docs', (c) => c.html(indexHtml, 200, { 'cache-control': 'no-store' }));
     }
   }
 

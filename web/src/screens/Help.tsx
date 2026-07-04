@@ -3,6 +3,7 @@
 // Always visible (capability: null). Static content; no API calls.
 import type { ComponentChildren } from 'preact';
 import { Badge, Card, PageHeader } from '../ui/kit.js';
+import { ApiDocs } from './ApiDocs.js';
 
 function Code({ children }: { children: ComponentChildren }) {
   return <code class="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[0.85em] text-ink-900">{children}</code>;
@@ -346,6 +347,25 @@ export function Help() {
           variable) and it already sees it. Use the <Code>▲</Code>/<Code>▼</Code> buttons to reorder.
         </p>
       </Card>
+
+      {/* Developer API — also served publicly (no login) at /docs. */}
+      <div class="mt-10">
+        <h2 class="text-xl font-bold text-ink-950">Developer API</h2>
+        <p class="mb-4 mt-1 text-sm text-stone-600">
+          Push customers and their behaviour into the CDP over HTTP. This reference is also public at{' '}
+          <a
+            href="/docs"
+            target="_blank"
+            rel="noreferrer"
+            data-testid="docs-link"
+            class="font-semibold text-brand-700 hover:underline"
+          >
+            /docs
+          </a>{' '}
+          — no login required, so you can share it with your developers.
+        </p>
+        <ApiDocs />
+      </div>
     </section>
   );
 }
