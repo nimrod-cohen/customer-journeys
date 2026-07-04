@@ -6,6 +6,11 @@ import { DEV_USERS } from '@cdp/shared';
 import { login, register } from '../store/session.js';
 import { Button, Input } from '../ui/kit.js';
 
+// Vite injects import.meta.env; the web tsconfig doesn't include vite/client
+// types, so cast like api/client.ts does. DEV is false in production builds — the
+// public dev credentials are then hidden (and the server also refuses them).
+const IS_DEV = (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV ?? false;
+
 export function Login() {
   const [mode, setMode] = useState<'signin' | 'register'>('signin');
   const [email, setEmail] = useState('');
@@ -177,8 +182,10 @@ export function Login() {
             </p>
           ) : null}
 
-          {/* DEV-ONLY: seeded credentials (replaced by Supabase Auth in prod). */}
-          {!isRegister ? (
+          {/* DEV-ONLY: seeded credentials. Hidden in production builds — the
+              server also refuses the fixture there (devAuthEnabled), so these
+              public creds can neither be shown nor used in prod. */}
+          {!isRegister && IS_DEV ? (
           <div class="mt-8 rounded-lg border border-stone-200 bg-white/60 p-3">
             <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
               Dev credentials

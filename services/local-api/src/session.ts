@@ -18,6 +18,18 @@ export interface SessionResult {
 }
 
 /**
+ * The DEV_USERS fixture (admin@journeys.dev / owner@acme.com / …) is a DEVELOPMENT
+ * convenience — its emails+passwords are PUBLIC in the source, so it MUST be inert
+ * in production (otherwise anyone could sign in as the seeded platform admin).
+ * Gated on NODE_ENV: enabled in dev + tests, disabled in the deployed prod image
+ * (Dockerfile sets NODE_ENV=production). Real registered users (password_hash in
+ * the DB) authenticate on every environment, unaffected by this gate.
+ */
+export function devAuthEnabled(): boolean {
+  return process.env.NODE_ENV !== 'production';
+}
+
+/**
  * POST /auth/dev-login — authenticate and mint a dev token whose active
  * workspace_id defaults to the FIRST membership (or a body-provided workspace_id
  * IF the user is a member / platform admin). Two input shapes (a real Supabase
@@ -41,7 +53,8 @@ export async function devLogin(
   if (typeof b.email === 'string') {
     const email = b.email.trim();
     const password = String(b.password ?? '');
-    const devUser = findDevUser(email, password);
+    // Only consult the seeded fixture outside production (public creds — inv.7).
+    const devUser = devAuthEnabled() ? findDevUser(email, password) : null;
     if (devUser) {
       sub = devUser.userId;
     } else {
@@ -151,8 +164,9 @@ export async function registerOwner(pool: Pool, body: unknown): Promise<SessionR
   if (password.length < 8) return { status: 400, body: { error: 'password must be at least 8 characters' } };
   if (!companyName) return { status: 400, body: { error: 'company name is required' } };
 
-  // Email must be free — across BOTH the seeded dev fixture and registered users.
-  if (DEV_USERS.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
+  // Email must be free — across the registered users, and (dev/test only) the
+  // seeded fixture. In production the fixture is inert, so its emails are normal.
+  if (devAuthEnabled() && DEV_USERS.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
     return { status: 409, body: { error: 'that email is already registered' } };
   }
 
