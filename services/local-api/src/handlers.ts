@@ -11,6 +11,7 @@
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import type { Pool, PoolClient } from 'pg';
 import { promises as dns } from 'node:dns';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   createSesClient,
   buildUnsubscribeUrl,
@@ -5235,9 +5236,201 @@ export const adminGetWorkspace: Handler = async (ctx, pool, req) => {
   return ok({ workspace: rows[0] });
 };
 
+// ---------------------------------------------------------------------------
+// Ingest API (§7) — PUBLIC client-side "write keys" (identify + track), the way
+// Segment/Mixpanel work. The key is public (embedded in front-end JS) and
+// WRITE-ONLY: it can ONLY upsert a profile + record an event for ITS workspace,
+// never read/update/delete. The workspace is derived from the key, NEVER a body
+// field (inv.2). Management (create/list/revoke) is session-authed + workspace-
+// scoped; the ingest lookup uses the request pool and is safe because the key
+// hash maps uniquely to one workspace.
+// ---------------------------------------------------------------------------
+
+const INGEST_KEY_PREFIX = 'pk_live_';
+
+/** sha256 hex — the ingest key's stored + lookup form (the raw key is never stored). */
+function sha256Hex(s: string): string {
+  return createHash('sha256').update(s).digest('hex');
+}
+
+/** Mint a new write key: the raw value (shown ONCE), its hash (stored), a display prefix. */
+function newIngestKey(): { raw: string; hash: string; prefix: string } {
+  const raw = INGEST_KEY_PREFIX + randomBytes(24).toString('base64url');
+  return { raw, hash: sha256Hex(raw), prefix: raw.slice(0, 16) };
+}
+
+/**
+ * Resolve the workspace for a raw ingest key, or null if unknown/revoked. Bumps
+ * last_used_at. Cross-workspace lookup by hash — the key IS the credential; there
+ * is no session workspace context at ingest.
+ */
+async function resolveIngestWorkspace(pool: Pool, rawKey: string): Promise<string | null> {
+  const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+  if (!key.startsWith(INGEST_KEY_PREFIX)) return null;
+  const { rows } = await pool.query<{ workspace_id: string }>(
+    `UPDATE ingest_keys SET last_used_at = now()
+      WHERE key_hash = $1 AND revoked_at IS NULL
+      RETURNING workspace_id`,
+    [sha256Hex(key)],
+  );
+  return rows[0]?.workspace_id ?? null;
+}
+
+/** Upsert a profile by (workspace, email), merging traits; returns id + created-vs-updated. */
+async function upsertProfileByEmail(
+  client: PoolClient,
+  ws: string,
+  email: string,
+  traits: Record<string, unknown>,
+): Promise<{ id: string; created: boolean }> {
+  const { rows } = await client.query<{ id: string; created: boolean }>(
+    `INSERT INTO profiles (workspace_id, email, attributes)
+       VALUES ($1, $2, '{"unsubscribed": false}'::jsonb || $3::jsonb)
+     ON CONFLICT (workspace_id, email)
+       DO UPDATE SET attributes = profiles.attributes || $3::jsonb
+     RETURNING id, (xmax = 0) AS created`,
+    [ws, email, JSON.stringify(traits)],
+  );
+  const row = rows[0]!;
+  await client.query(
+    `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2)
+       ON CONFLICT (profile_id) DO NOTHING`,
+    [row.id, ws],
+  );
+  return { id: row.id, created: row.created };
+}
+
+/** Validate + normalize an ingest email (per the workspace's lowercase policy). */
+async function ingestEmail(pool: Pool, ws: string, raw: unknown): Promise<string | null> {
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  const email = applyEmailPolicy(trimmed, await lowercaseEmailsEnabled(pool, ws));
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : null;
+}
+
+function objOrEmpty(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
+/**
+ * POST /v1/track (public, key-authed) — record an event, upserting the profile by
+ * email first. Body: { email, event, properties?, traits? }. Mirrors the ingested-
+ * event path (features recompute + segment re-eval + event/profile enrollment).
+ */
+export async function ingestTrack(pool: Pool, rawKey: string, body: unknown): Promise<HandlerResponse> {
+  const ws = await resolveIngestWorkspace(pool, rawKey);
+  if (!ws) return ok({ error: 'invalid or revoked API key' }, 401);
+  const b = asObject(body);
+  const email = await ingestEmail(pool, ws, b.email);
+  if (!email) return ok({ error: 'a valid email is required' }, 400);
+  const type = typeof b.event === 'string' ? b.event.trim() : '';
+  if (!type) return ok({ error: 'an event name is required' }, 400);
+  const properties = objOrEmpty(b.properties);
+  const traits = objOrEmpty(b.traits);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { id, created } = await upsertProfileByEmail(client, ws, email, traits);
+    const ins = await client.query<{ event_id: string }>(
+      `INSERT INTO events (event_id, workspace_id, profile_id, type, occurred_at, payload)
+         VALUES (gen_random_uuid(), $1, $2, $3, now(), $4::jsonb) RETURNING event_id`,
+      [ws, id, type, JSON.stringify(properties)],
+    );
+    const eventId = ins.rows[0]!.event_id;
+    await recomputeFeaturesAndSegments(client, ws, id);
+    if (created) {
+      await enrollFromProfileChange(enrollDepsOnClient(client), { workspace_id: ws, profile_id: id, change: 'created' });
+    }
+    await enrollFromEvent(enrollDepsOnClient(client), {
+      workspace_id: ws,
+      profile_id: id,
+      type,
+      payload: properties,
+      event_id: eventId,
+    });
+    await client.query('COMMIT');
+    return ok({ ok: true, profile_id: id, event_id: eventId }, 202);
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * POST /v1/identify (public, key-authed) — upsert a profile + its traits by email.
+ * Body: { email, traits? }.
+ */
+export async function ingestIdentify(pool: Pool, rawKey: string, body: unknown): Promise<HandlerResponse> {
+  const ws = await resolveIngestWorkspace(pool, rawKey);
+  if (!ws) return ok({ error: 'invalid or revoked API key' }, 401);
+  const b = asObject(body);
+  const email = await ingestEmail(pool, ws, b.email);
+  if (!email) return ok({ error: 'a valid email is required' }, 400);
+  const traits = objOrEmpty(b.traits);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { id, created } = await upsertProfileByEmail(client, ws, email, traits);
+    await recomputeFeaturesAndSegments(client, ws, id);
+    await enrollFromProfileChange(enrollDepsOnClient(client), {
+      workspace_id: ws,
+      profile_id: id,
+      change: created ? 'created' : 'updated',
+    });
+    await client.query('COMMIT');
+    return ok({ ok: true, profile_id: id, created }, 202);
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/** POST /ingest-keys — mint a new write key (the raw value is returned ONCE). */
+export const createIngestKey: Handler = async (ctx, pool, req) => {
+  const b = asObject(req.body);
+  const label = typeof b.label === 'string' ? b.label.trim() : '';
+  const { raw, hash, prefix } = newIngestKey();
+  const { rows } = await pool.query<{ id: string; created_at: string }>(
+    `INSERT INTO ingest_keys (workspace_id, key_hash, key_prefix, label)
+       VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+    [ctx.workspaceId, hash, prefix, label || null],
+  );
+  return ok(
+    { id: rows[0]!.id, key: raw, key_prefix: prefix, label: label || null, created_at: rows[0]!.created_at },
+    201,
+  );
+};
+
+/** GET /ingest-keys — list keys (masked; the raw key is never returned again). */
+export const listIngestKeys: Handler = async (ctx, pool) => {
+  const { rows } = await pool.query(
+    `SELECT id, key_prefix, label, created_at, revoked_at, last_used_at
+       FROM ingest_keys WHERE workspace_id = $1 ORDER BY created_at DESC`,
+    [ctx.workspaceId],
+  );
+  return ok({ keys: rows });
+};
+
+/** DELETE /ingest-keys/:id — revoke a key (ingest refuses it immediately). */
+export const revokeIngestKey: Handler = async (ctx, pool, req) => {
+  const { rowCount } = await pool.query(
+    `UPDATE ingest_keys SET revoked_at = now()
+       WHERE id = $1 AND workspace_id = $2 AND revoked_at IS NULL`,
+    [req.params.id, ctx.workspaceId],
+  );
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ revoked: 1 });
+};
+
 /** Map a route key → its handler. */
 export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /me': getMe,
+  'GET /ingest-keys': listIngestKeys,
+  'POST /ingest-keys': createIngestKey,
+  'DELETE /ingest-keys/:id': revokeIngestKey,
   'PATCH /me': updateMe,
   'GET /workspace/members': listMembers,
   'POST /workspaces': createWorkspace,

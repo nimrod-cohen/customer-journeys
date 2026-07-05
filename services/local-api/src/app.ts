@@ -15,6 +15,7 @@ import { makePgLookups } from './lookups.js';
 import { makeLocalDeps, type LocalApiDeps } from './deps.js';
 import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
+import { ingestTrack, ingestIdentify } from './handlers.js';
 import {
   makeUnsubscribeHandler,
   makePreferenceCenterHandler,
@@ -170,6 +171,31 @@ export function createApp(opts: CreateAppOptions): Hono {
       'cache-control': 'no-store, no-cache, must-revalidate, private',
       pragma: 'no-cache',
     });
+  });
+
+  // Ingest API (§7): PUBLIC, key-authed (no session) — safe to call from front-end
+  // JS. The write key resolves the workspace; it can ONLY upsert a profile + record
+  // an event for that workspace. CORS is already permissive (app.use('*', cors())),
+  // so browsers can call these cross-origin. The key comes from an Authorization:
+  // Bearer header, an X-API-Key header, or a body field (for sendBeacon).
+  const ingestKeyFrom = (c: { req: { header: (n: string) => string | undefined } }, body: unknown): string => {
+    const auth = c.req.header('authorization') ?? '';
+    if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
+    const xkey = c.req.header('x-api-key');
+    if (xkey) return xkey.trim();
+    const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+    const v = b.writeKey ?? b.write_key ?? b.api_key;
+    return typeof v === 'string' ? v.trim() : '';
+  };
+  app.post('/v1/track', async (c) => {
+    const body = await safeJson(c);
+    const r = await ingestTrack(opts.pool, ingestKeyFrom(c, body), body);
+    return c.json(r.body as object, r.status as 200 | 202 | 400 | 401);
+  });
+  app.post('/v1/identify', async (c) => {
+    const body = await safeJson(c);
+    const r = await ingestIdentify(opts.pool, ingestKeyFrom(c, body), body);
+    return c.json(r.body as object, r.status as 200 | 202 | 400 | 401);
   });
 
   // Unsubscribe (§10): public, no auth — the link lands here from a delivered
