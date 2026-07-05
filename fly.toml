@@ -1,0 +1,52 @@
+# Fly.io deployment for the CDP app (same Docker image as App Runner).
+# Two process groups from ONE image: `web` (HTTP + SPA, kept warm) and `worker`
+# (background sweeps, single always-on machine). Frankfurt (fra) to sit next to
+# the Supabase DB. Secrets (DATABASE_URL + the 3 app secrets) are set via
+# `fly secrets set` (encrypted), NOT stored here.
+app = "cdp-journeys"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Non-secret runtime config shared by both processes. APP_MODE is set per process
+# in the command below (web vs worker).
+[env]
+  APP_BASE_URL = "https://journeys.on-grow.com"
+  LOCAL_APP_BASE_URL = "https://journeys.on-grow.com"
+  UNSUBSCRIBE_BASE_URL = "https://journeys.on-grow.com/unsubscribe"
+  LINK_TRACKING_BASE_URL = "https://journeys.on-grow.com"
+  PORT = "8080"
+
+# One image, two roles. The image WORKDIR is /app/services/local-api.
+[processes]
+  web = "sh -c 'APP_MODE=web node --import tsx/esm src/server.ts'"
+  worker = "sh -c 'APP_MODE=worker node --import tsx/esm src/server.ts'"
+
+# Public HTTPS service — ONLY the web process. Kept warm (min 1, no auto-stop) so
+# there are no cold starts, matching App Runner.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["web"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+# Machine sizes (I/O-bound Node work → shared CPU is plenty; bump later if needed).
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"
+  processes = ["web"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"
+  processes = ["worker"]
