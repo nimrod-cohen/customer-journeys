@@ -39,7 +39,8 @@ import {
   buildTrackedOpenInsert,
   type DispatchContext,
   type DispatchDecision,
-  type QuietHoursConfig,
+  type QuietSchedule,
+  type FrequencyCap,
   type SqlStatement,
   type TrackedLink,
 } from './core.js';
@@ -129,13 +130,38 @@ interface OutboxRow {
   readonly payload: Record<string, unknown> | null;
 }
 
-function parseQuietHours(raw: unknown): QuietHoursConfig | null {
+/**
+ * Parse the per-weekday quiet schedule from settings: { "0": {startHour,endHour},
+ * … "6": … } (0=Sun..6=Sat). A day absent / malformed = not quiet that day. Null
+ * when nothing is configured.
+ */
+function parseQuietHours(raw: unknown): QuietSchedule | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
-  const startHour = r['startHour'] ?? r['start_hour'];
-  const endHour = r['endHour'] ?? r['end_hour'];
-  if (typeof startHour !== 'number' || typeof endHour !== 'number') return null;
-  return { startHour, endHour };
+  const schedule: Record<number, { startHour: number; endHour: number }> = {};
+  for (let day = 0; day <= 6; day++) {
+    const w = r[String(day)];
+    if (w && typeof w === 'object' && !Array.isArray(w)) {
+      const wo = w as Record<string, unknown>;
+      const startHour = wo['startHour'] ?? wo['start_hour'];
+      const endHour = wo['endHour'] ?? wo['end_hour'];
+      if (typeof startHour === 'number' && typeof endHour === 'number') {
+        schedule[day] = { startHour, endHour };
+      }
+    }
+  }
+  return Object.keys(schedule).length ? schedule : null;
+}
+
+/** Parse the frequency cap { max, days } from settings; null when off/invalid. */
+function parseFrequencyCap(raw: unknown): FrequencyCap | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const max = r['max'];
+  const days = r['days'];
+  return typeof max === 'number' && typeof days === 'number' && max > 0 && days > 0
+    ? { max, days }
+    : null;
 }
 
 function asStringRecord(raw: unknown): Record<string, string> {
@@ -365,16 +391,13 @@ export async function dispatchOutbox(
       merge.unsubscribe = `<a href="${unsubUrl}">Unsubscribe</a>`;
     }
     // Frequency cap + quiet hours: a per-send payload override wins, else the
-    // per-workspace default from `workspaces.settings` (like `link_tracking`).
-    // Without this fallback these two gating stages (CLAUDE.md invariant 7) never
-    // fire — no send path stamps the payload keys.
-    const frequencyCapPerDays =
-      typeof payload['frequency_cap_per_days'] === 'number'
-        ? (payload['frequency_cap_per_days'] as number)
-        : typeof ws.settings?.['frequency_cap_per_days'] === 'number'
-          ? (ws.settings['frequency_cap_per_days'] as number)
-          : null;
+    // per-workspace default from `workspaces.settings`. The frequency cap is
+    // { max, days }; quiet hours is a per-weekday schedule evaluated in the
+    // workspace timezone. Without these two gating stages fire never (inv.7).
+    const frequencyCap = parseFrequencyCap(payload['frequency_cap'] ?? ws.settings?.['frequency_cap']);
     const quietHours = parseQuietHours(payload['quiet_hours'] ?? ws.settings?.['quiet_hours']);
+    const timeZone =
+      typeof ws.settings?.['timezone'] === 'string' && ws.settings['timezone'] ? ws.settings['timezone'] : 'UTC';
 
     // Text channels send to the recipient PHONE. The To token defaults to
     // {{customer.phone}} (resolves to attributes.phone via the customer.* resolver),
@@ -451,10 +474,10 @@ export async function dispatchOutbox(
       topicUnsubscribed = tRows[0]?.unsubscribed === true;
     }
 
-    // recent-send count for the frequency cap window.
+    // recent-send count over the frequency cap's rolling `days` window.
     let recentSendCount = 0;
-    if (frequencyCapPerDays && frequencyCapPerDays > 0) {
-      const since = windowStart(now, frequencyCapPerDays);
+    if (frequencyCap) {
+      const since = windowStart(now, frequencyCap.days);
       const q = buildRecentSendCountQuery(workspaceId, profile.id, since);
       const { rows } = await deps.reader.query<{ n: number }>(q.text, q.values);
       recentSendCount = rows[0]?.n ?? 0;
@@ -470,8 +493,9 @@ export async function dispatchOutbox(
       whatsappTemplate,
       phone,
       merge,
-      frequencyCapPerDays,
+      frequencyCap,
       quietHours,
+      timeZone,
       recentSendCount,
       isSuppressed,
       optedOutOfMedium,

@@ -24,7 +24,9 @@ export {
   parseOutboxIdFromSqsRecord,
   type DispatchContext,
   type DispatchDecision,
-  type QuietHoursConfig,
+  type QuietSchedule,
+  type QuietWindow,
+  type FrequencyCap,
   type GuardStage,
   type SqlStatement,
 } from './core.js';

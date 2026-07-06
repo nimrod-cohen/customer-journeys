@@ -6,7 +6,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { useStore } from '../store/store.js';
 import { api, sessionStore } from '../store/session.js';
 import { navigate } from '../router.js';
-import { Button, Card, Field, Input, PageHeader, Select } from '../ui/kit.js';
+import { Button, Card, Field, Input, PageHeader, Select, Switch } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { timeZoneList } from '@cdp/shared';
 import { saveWorkspaceTimezone, saveWorkspaceLanguage, type FrontFacingLanguage } from './workspaceSettingsLogic.js';
@@ -36,11 +36,16 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   const [language, setLanguage] = useState<FrontFacingLanguage>('auto');
   // Lock the toggles while a settings PUT is in flight (no racing re-toggles).
   const [savingSettings, setSavingSettings] = useState(false);
-  // Sending guardrails (CLAUDE.md inv.7): frequency cap + quiet-hours window (UTC).
-  const [freqCap, setFreqCap] = useState(0);
+  // Sending guardrails (CLAUDE.md inv.7). Frequency cap: at most `freqMax` messages
+  // per `freqDays` days (a switch). Quiet hours: a per-weekday schedule (each day
+  // on/off + start/end), evaluated in the workspace timezone (a switch).
+  const [freqEnabled, setFreqEnabled] = useState(false);
+  const [freqMax, setFreqMax] = useState(3);
+  const [freqDays, setFreqDays] = useState(7);
   const [quietEnabled, setQuietEnabled] = useState(false);
-  const [quietStart, setQuietStart] = useState(22);
-  const [quietEnd, setQuietEnd] = useState(8);
+  const [quietDays, setQuietDays] = useState<Array<{ on: boolean; start: number; end: number }>>(() =>
+    Array.from({ length: 7 }, () => ({ on: false, start: 22, end: 8 })),
+  );
 
   const reload = async () => {
     const r = await api.get<{ members: Member[] }>('/workspace/members');
@@ -55,8 +60,8 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           link_tracking?: boolean;
           timezone?: string;
           front_facing_language?: FrontFacingLanguage;
-          frequency_cap_per_days?: number;
-          quiet_hours?: { startHour?: number; endHour?: number } | null;
+          frequency_cap?: { max?: number; days?: number } | null;
+          quiet_hours?: Record<string, { startHour?: number; endHour?: number }> | null;
         };
       }>('/workspace/settings')
       .then((r) => {
@@ -64,12 +69,27 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
         setLinkTracking(r.settings.link_tracking === true);
         setTimezone(r.settings.timezone || 'UTC');
         setLanguage(r.settings.front_facing_language ?? 'auto');
-        setFreqCap(typeof r.settings.frequency_cap_per_days === 'number' ? r.settings.frequency_cap_per_days : 0);
+        const fc = r.settings.frequency_cap;
+        if (fc && typeof fc === 'object') {
+          setFreqEnabled(true);
+          if (typeof fc.max === 'number') setFreqMax(fc.max);
+          if (typeof fc.days === 'number') setFreqDays(fc.days);
+        }
         const qh = r.settings.quiet_hours;
         if (qh && typeof qh === 'object') {
           setQuietEnabled(true);
-          if (typeof qh.startHour === 'number') setQuietStart(qh.startHour);
-          if (typeof qh.endHour === 'number') setQuietEnd(qh.endHour);
+          setQuietDays((prev) =>
+            prev.map((d, day) => {
+              const w = qh[String(day)];
+              return w && typeof w === 'object'
+                ? {
+                    on: true,
+                    start: typeof w.startHour === 'number' ? w.startHour : 22,
+                    end: typeof w.endHour === 'number' ? w.endHour : 8,
+                  }
+                : { ...d, on: false };
+            }),
+          );
         }
       });
   }, []);
@@ -127,9 +147,15 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   // Sending guardrails: persist the cap + quiet-hours window together. RETURN the
   // promise so the kit Save button auto-locks (standing button rule).
   const saveGuardrails = () => {
-    const quiet_hours = quietEnabled ? { startHour: quietStart, endHour: quietEnd } : null;
+    const frequency_cap = freqEnabled ? { max: freqMax, days: freqDays } : null;
+    const quiet_hours = quietEnabled
+      ? quietDays.reduce<Record<string, { startHour: number; endHour: number }>>((acc, d, day) => {
+          if (d.on) acc[String(day)] = { startHour: d.start, endHour: d.end };
+          return acc;
+        }, {})
+      : null;
     return api
-      .put('/workspace/settings', { body: { frequency_cap_per_days: freqCap, quiet_hours } })
+      .put('/workspace/settings', { body: { frequency_cap, quiet_hours } })
       .then(() => showToast('Sending guardrails saved.', { tone: 'success' }))
       .catch((e) => showToast((e as { error?: string })?.error ?? 'Could not save guardrails.', { tone: 'error' }));
   };
@@ -398,68 +424,109 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
       </Card>
 
       <Card class="mt-6 p-5" data-testid="settings-guardrails">
-        <div class="mb-3">
+        <div class="mb-4">
           <h2 class="text-base font-bold text-ink-900">Sending guardrails</h2>
           <p class="mt-1 text-sm text-stone-500">
-            Optional safety limits applied to every send (broadcasts and campaigns). A frequency cap holds a recipient
-            who has already received too many messages recently; a quiet-hours window (UTC) holds sends until the window
-            closes.
+            Optional safety limits on every send (broadcasts and campaigns). All hours are in your workspace timezone
+            (<span class="font-mono">{timezone}</span>).
           </p>
         </div>
-        <div class="flex flex-wrap items-end gap-4">
-          <Field label="Frequency cap (max sends / recipient)">
-            <Input
-              data-testid="settings-frequency-cap"
-              type="number"
-              min={0}
-              class="w-40"
-              value={String(freqCap)}
-              onInput={(e: Event) => setFreqCap(Math.max(0, Math.floor(Number((e.target as HTMLInputElement).value) || 0)))}
-            />
-          </Field>
-          <label class="flex items-center gap-2 pb-2 text-sm text-ink-800">
-            <input
-              data-testid="settings-quiet-enabled"
-              type="checkbox"
-              checked={quietEnabled}
-              onChange={(e: Event) => setQuietEnabled((e.target as HTMLInputElement).checked)}
-            />
-            Quiet hours
+
+        {/* Frequency cap */}
+        <div class="border-t border-stone-100 pt-4">
+          <label class="flex items-center gap-3">
+            <Switch data-testid="settings-frequency-enabled" checked={freqEnabled} onChange={setFreqEnabled} />
+            <span class="text-sm font-semibold text-ink-900">Frequency cap</span>
           </label>
-          <Field label="From (UTC)">
-            <Select
-              data-testid="settings-quiet-start"
-              class="w-24"
-              value={String(quietStart)}
-              disabled={!quietEnabled}
-              onChange={(e: Event) => setQuietStart(Number((e.target as HTMLSelectElement).value))}
-            >
-              {Array.from({ length: 24 }, (_, h) => (
-                <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>
+          {freqEnabled ? (
+            <div class="mt-2 flex flex-wrap items-center gap-2 pl-14 text-sm text-stone-700">
+              At most
+              <Input
+                data-testid="settings-frequency-max"
+                type="number"
+                min={1}
+                class="w-20"
+                value={String(freqMax)}
+                onInput={(e: Event) => setFreqMax(Math.max(1, Math.floor(Number((e.target as HTMLInputElement).value) || 1)))}
+              />
+              message(s) per
+              <Input
+                data-testid="settings-frequency-days"
+                type="number"
+                min={1}
+                class="w-20"
+                value={String(freqDays)}
+                onInput={(e: Event) => setFreqDays(Math.max(1, Math.floor(Number((e.target as HTMLInputElement).value) || 1)))}
+              />
+              day(s) per recipient.
+            </div>
+          ) : null}
+        </div>
+
+        {/* Quiet hours — per weekday */}
+        <div class="mt-5 border-t border-stone-100 pt-4">
+          <label class="flex flex-wrap items-center gap-3">
+            <Switch data-testid="settings-quiet-enabled" checked={quietEnabled} onChange={setQuietEnabled} />
+            <span class="text-sm font-semibold text-ink-900">Quiet hours</span>
+            <span class="text-xs text-stone-400">held sends resume when the window closes</span>
+          </label>
+          {quietEnabled ? (
+            <div class="mt-3 space-y-1.5 pl-14" data-testid="settings-quiet-days">
+              {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((name, day) => (
+                <div key={day} class="flex flex-wrap items-center gap-2 text-sm" data-testid={`quiet-day-${day}`}>
+                  <Switch
+                    size="sm"
+                    data-testid={`quiet-day-${day}-on`}
+                    checked={quietDays[day]!.on}
+                    onChange={(on) => setQuietDays((prev) => prev.map((d, i) => (i === day ? { ...d, on } : d)))}
+                  />
+                  <span class="w-24 text-stone-700">{name}</span>
+                  {quietDays[day]!.on ? (
+                    <>
+                      <Select
+                        class="w-24"
+                        data-testid={`quiet-day-${day}-start`}
+                        value={String(quietDays[day]!.start)}
+                        onChange={(e: Event) =>
+                          setQuietDays((prev) =>
+                            prev.map((d, i) => (i === day ? { ...d, start: Number((e.target as HTMLSelectElement).value) } : d)),
+                          )
+                        }
+                      >
+                        {Array.from({ length: 24 }, (_, h) => (
+                          <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>
+                        ))}
+                      </Select>
+                      <span class="text-stone-400">→</span>
+                      <Select
+                        class="w-24"
+                        data-testid={`quiet-day-${day}-end`}
+                        value={String(quietDays[day]!.end)}
+                        onChange={(e: Event) =>
+                          setQuietDays((prev) =>
+                            prev.map((d, i) => (i === day ? { ...d, end: Number((e.target as HTMLSelectElement).value) } : d)),
+                          )
+                        }
+                      >
+                        {Array.from({ length: 24 }, (_, h) => (
+                          <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>
+                        ))}
+                      </Select>
+                    </>
+                  ) : (
+                    <span class="text-stone-400">off</span>
+                  )}
+                </div>
               ))}
-            </Select>
-          </Field>
-          <Field label="Until (UTC)">
-            <Select
-              data-testid="settings-quiet-end"
-              class="w-24"
-              value={String(quietEnd)}
-              disabled={!quietEnabled}
-              onChange={(e: Event) => setQuietEnd(Number((e.target as HTMLSelectElement).value))}
-            >
-              {Array.from({ length: 24 }, (_, h) => (
-                <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>
-              ))}
-            </Select>
-          </Field>
+            </div>
+          ) : null}
+        </div>
+
+        <div class="mt-5 border-t border-stone-100 pt-4">
           <Button data-testid="settings-guardrails-save" onClick={saveGuardrails}>
-            Save
+            Save guardrails
           </Button>
         </div>
-        <p class="mt-2 text-xs text-stone-400">
-          Cap of <span class="font-mono">N</span> means at most <span class="font-mono">N</span> sends to a recipient in
-          the last <span class="font-mono">N</span> days; <span class="font-mono">0</span> disables it.
-        </p>
       </Card>
 
       </>

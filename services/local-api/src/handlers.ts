@@ -430,10 +430,12 @@ export const getWorkspaceSettings: Handler = async (ctx, pool) => {
         ? settings.front_facing_language
         : 'auto',
       // Sending guardrails (CLAUDE.md inv.7), read by the dispatcher.
-      // frequency_cap_per_days: max sends per recipient over that many days
-      // (0 = off). quiet_hours: {startHour,endHour} UTC window (null = never quiet).
-      frequency_cap_per_days:
-        typeof settings.frequency_cap_per_days === 'number' ? settings.frequency_cap_per_days : 0,
+      // frequency_cap: { max, days } | null (null = off) — at most `max` messages
+      // per recipient in a rolling `days`-day window. quiet_hours: a per-weekday
+      // schedule { "0": {startHour,endHour}, … "6": … } | null, evaluated in the
+      // workspace timezone; a message due in a day's window is deferred to its end.
+      frequency_cap:
+        settings.frequency_cap && typeof settings.frequency_cap === 'object' ? settings.frequency_cap : null,
       quiet_hours:
         settings.quiet_hours && typeof settings.quiet_hours === 'object' ? settings.quiet_hours : null,
     },
@@ -464,27 +466,42 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
     }
     patch.front_facing_language = b.front_facing_language;
   }
-  if (b.frequency_cap_per_days !== undefined) {
-    // Max sends per recipient over N days; 0 disables the cap. Bounded to a sane
-    // ceiling. workspace_id is from ctx only (inv.2).
-    const n = Number(b.frequency_cap_per_days);
-    if (!Number.isInteger(n) || n < 0 || n > 1000) {
-      return ok({ error: 'frequency_cap_per_days must be a non-negative integer (0 disables)' }, 400);
+  if (b.frequency_cap !== undefined) {
+    // { max, days } | null (null disables). Both positive integers, bounded.
+    // workspace_id is from ctx only (inv.2).
+    if (b.frequency_cap === null) {
+      patch.frequency_cap = null;
+    } else {
+      const fc = asObject(b.frequency_cap);
+      const max = Number(fc.max);
+      const days = Number(fc.days);
+      if (![max, days].every((n) => Number.isInteger(n) && n >= 1 && n <= 1000)) {
+        return ok({ error: 'frequency_cap must be { max, days } positive integers (or null)' }, 400);
+      }
+      patch.frequency_cap = { max, days };
     }
-    patch.frequency_cap_per_days = n;
   }
   if (b.quiet_hours !== undefined) {
-    // A UTC {startHour,endHour} window (both 0..23); null clears it (never quiet).
+    // A per-weekday schedule { "0": {startHour,endHour}, … "6": … } | null. Each
+    // present day is a window (both 0..23, evaluated in the workspace timezone);
+    // null (or an all-empty object) clears the schedule. A day may be absent.
     if (b.quiet_hours === null) {
       patch.quiet_hours = null;
     } else {
       const qh = asObject(b.quiet_hours);
-      const s = Number(qh.startHour);
-      const e = Number(qh.endHour);
-      if (![s, e].every((h) => Number.isInteger(h) && h >= 0 && h <= 23)) {
-        return ok({ error: 'quiet_hours must be {startHour,endHour} integers in 0..23' }, 400);
+      const schedule: Record<string, { startHour: number; endHour: number }> = {};
+      for (let day = 0; day <= 6; day++) {
+        const w = qh[String(day)];
+        if (w === undefined || w === null) continue;
+        const wo = asObject(w);
+        const s = Number(wo.startHour);
+        const e = Number(wo.endHour);
+        if (![s, e].every((h) => Number.isInteger(h) && h >= 0 && h <= 23)) {
+          return ok({ error: 'quiet_hours[day] must be {startHour,endHour} integers in 0..23' }, 400);
+        }
+        schedule[String(day)] = { startHour: s, endHour: e };
       }
-      patch.quiet_hours = { startHour: s, endHour: e };
+      patch.quiet_hours = Object.keys(schedule).length ? schedule : null;
     }
   }
   if (Object.keys(patch).length === 0) return ok({ error: 'no recognized settings' }, 400);

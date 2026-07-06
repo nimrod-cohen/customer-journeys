@@ -5,6 +5,10 @@ import { ProdSesEmailClient } from '@cdp/email';
 import { dispatchOutbox, type DispatchDeps, type Reader } from '../src/dispatch.js';
 import type { SqlStatement } from '../src/core.js';
 
+/** A quiet schedule with the SAME window every weekday (settings default TZ = UTC). */
+const allDays = (startHour: number, endHour: number): Record<string, { startHour: number; endHour: number }> =>
+  Object.fromEntries(Array.from({ length: 7 }, (_, d) => [String(d), { startHour, endHour }]));
+
 // §9 + CRITICAL invariants — the orchestrator runs the FIXED guard pipeline and
 // calls SES SendEmail ONLY on the all-pass path. We prove the SES call count
 // with aws-sdk-client-mock: 0 on refuse/suppress/cap/quiet, exactly 1 on send,
@@ -23,7 +27,7 @@ interface FakeState {
   wsStatus: string;
   verified: boolean;
   quietHours: unknown;
-  capPerDays: number | null;
+  freqCap: unknown;
   linkTracking?: boolean;
 }
 
@@ -46,7 +50,7 @@ function makeReader(state: FakeState): { reader: Reader; claimAttempts: number }
               payload: {
                 subject: 'Hi',
                 merge: { first_name: 'Ada' },
-                frequency_cap_per_days: state.capPerDays,
+                frequency_cap: state.freqCap,
                 quiet_hours: state.quietHours,
               },
             } as unknown as T,
@@ -146,7 +150,7 @@ function freshState(overrides: Partial<FakeState> = {}): FakeState {
     wsStatus: 'active',
     verified: true,
     quietHours: null,
-    capPerDays: 7,
+    freqCap: { max: 7, days: 7 },
     ...overrides,
   };
 }
@@ -201,14 +205,14 @@ describe('dispatchOutbox — SES call count proves guard order', () => {
   });
 
   it('over frequency cap → skip, SES NOT called', async () => {
-    const { deps } = makeDeps(freshState({ recentSends: 7, capPerDays: 7 }));
+    const { deps } = makeDeps(freshState({ recentSends: 7, freqCap: { max: 1, days: 7 } }));
     const out = await dispatchOutbox(deps, OUTBOX);
     expect(out.result).toBe('skip');
     expect(ses.commandCalls(SendEmailCommand)).toHaveLength(0);
   });
 
   it('within quiet hours → defer, SES NOT called', async () => {
-    const { deps } = makeDeps(freshState({ quietHours: { startHour: 9, endHour: 17 } }));
+    const { deps } = makeDeps(freshState({ quietHours: allDays(9, 17) }));
     const out = await dispatchOutbox(deps, OUTBOX);
     expect(out.result).toBe('defer');
     expect(ses.commandCalls(SendEmailCommand)).toHaveLength(0);

@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { canSend, buildListUnsubscribeHeaders, type SendingIdentity } from '@cdp/email';
 import type { SendEmailInput } from '@cdp/email';
-import { expandCustomerToken, type WorkspaceStatus } from '@cdp/shared';
+import { expandCustomerToken, zonedComponents, type WorkspaceStatus } from '@cdp/shared';
 import type { ChannelMessage, Medium, MediumGroup } from '@cdp/channels';
 
 /** A parameterized query ready for `pool.query(text, values)` (shared shape). */
@@ -20,12 +20,23 @@ export interface SqlStatement {
   readonly values: unknown[];
 }
 
-/** Quiet-hours window in UTC hours (this phase: UTC, no per-recipient tz). */
-export interface QuietHoursConfig {
-  /** Inclusive start hour [0..23] of the quiet window. */
+/** A quiet window for one weekday, on the WORKSPACE TIMEZONE's clock. */
+export interface QuietWindow {
+  /** Inclusive start hour [0..23]. */
   readonly startHour: number;
-  /** Exclusive end hour [0..23] when sending resumes. */
+  /** Exclusive end hour [0..23] when sending resumes (start>end wraps past midnight). */
   readonly endHour: number;
+}
+/**
+ * Per-weekday quiet schedule: 0=Sunday … 6=Saturday → that day's window. A day
+ * absent = never quiet that day. Evaluated in the workspace timezone.
+ */
+export type QuietSchedule = Readonly<Record<number, QuietWindow>>;
+
+/** Frequency cap: at most `max` messages per recipient in a rolling `days`-day window. */
+export interface FrequencyCap {
+  readonly max: number;
+  readonly days: number;
 }
 
 /** The minimal workspace shape the dispatcher inspects (§10). */
@@ -76,10 +87,12 @@ export interface DispatchContext {
   readonly phone?: string | null;
   /** Merge values substituted into the compiled HTML. */
   readonly merge: Readonly<Record<string, string>>;
-  /** Frequency cap (max sends per window); null/0 → no cap. */
-  readonly frequencyCapPerDays: number | null | undefined;
-  /** Quiet-hours window; null → never quiet. */
-  readonly quietHours: QuietHoursConfig | null;
+  /** Frequency cap (max messages per rolling `days` window); null → no cap. */
+  readonly frequencyCap: FrequencyCap | null;
+  /** Per-weekday quiet schedule; null → never quiet. Evaluated in `timeZone`. */
+  readonly quietHours: QuietSchedule | null;
+  /** Workspace IANA timezone (default 'UTC') — the clock for quiet hours. */
+  readonly timeZone: string;
   /** Count of sends in the rolling window (from messages_log). */
   readonly recentSendCount: number;
   /** Whether the recipient is suppressed (per-workspace OR global hard bounce). */
@@ -174,49 +187,50 @@ export function windowStart(now: Date, capPerDays: number): Date {
 }
 
 /**
- * True iff the recent send count has reached/exceeded the cap (so the NEXT send
- * is blocked). A null/undefined/zero cap means "no cap" → never over.
+ * True iff the recent send count (over the cap's `days` window) has reached the
+ * cap's `max` (so the NEXT send is blocked). A null cap / non-positive max|days
+ * means "no cap" → never over.
  */
-export function isOverCap(recentCount: number, cap: number | null | undefined): boolean {
-  if (!cap || cap <= 0) return false;
-  return recentCount >= cap;
+export function isOverCap(recentCount: number, cap: FrequencyCap | null | undefined): boolean {
+  if (!cap || cap.max <= 0 || cap.days <= 0) return false;
+  return recentCount >= cap.max;
 }
 
 // ── quiet-hours ──────────────────────────────────────────────────────────────
 
-/**
- * Whether `now` falls inside the quiet-hours window (UTC). Handles the
- * midnight-wrap case (start > end spans midnight, e.g. 22:00–06:00). A null
- * config means quiet hours are never in effect.
- */
-export function isInQuietHours(now: Date, config: QuietHoursConfig | null): boolean {
-  if (!config) return false;
-  const h = now.getUTCHours();
-  const { startHour, endHour } = config;
+/** Whether hour `h` is inside [startHour, endHour) — start>end wraps past midnight. */
+function hourInWindow(h: number, startHour: number, endHour: number): boolean {
   if (startHour === endHour) return false;
-  if (startHour < endHour) {
-    // Same-day window [start, end).
-    return h >= startHour && h < endHour;
-  }
-  // Midnight-wrap window: [start, 24) ∪ [0, end).
-  return h >= startHour || h < endHour;
+  if (startHour < endHour) return h >= startHour && h < endHour; // same-day
+  return h >= startHour || h < endHour; // [start,24) ∪ [0,end)
 }
 
 /**
- * The next instant the send is eligible. If not in quiet hours, returns `now`
- * unchanged. Otherwise returns the upcoming window-end (the `endHour` boundary),
- * rolling to the next day when the wrap window pushes the end past midnight.
+ * Whether `now` is in the quiet window for ITS weekday, evaluated in the workspace
+ * `timeZone`. Per-day schedule: each weekday (0=Sun…6=Sat) has its own window (or
+ * none). A null schedule means quiet hours are off.
  */
-export function nextSendableAt(now: Date, config: QuietHoursConfig | null): Date {
-  if (!config || !isInQuietHours(now, config)) return now;
-  const result = new Date(now.getTime());
-  result.setUTCHours(config.endHour, 0, 0, 0);
-  // If the computed end is at/before now, the window-end is on the next day
-  // (midnight-wrap, late-night case).
-  if (result.getTime() <= now.getTime()) {
-    result.setUTCDate(result.getUTCDate() + 1);
+export function isInQuietHours(now: Date, schedule: QuietSchedule | null, timeZone: string): boolean {
+  if (!schedule) return false;
+  const { weekday, hour } = zonedComponents(now, timeZone);
+  const win = schedule[weekday];
+  return win ? hourInWindow(hour, win.startHour, win.endHour) : false;
+}
+
+/**
+ * The next instant sending is allowed: `now` if not quiet, else the top of the
+ * next non-quiet hour. Steps hour-by-hour (bounded to 8 days), re-evaluating in
+ * `timeZone` each step, so it handles per-day windows, midnight wraps, and DST.
+ */
+export function nextSendableAt(now: Date, schedule: QuietSchedule | null, timeZone: string): Date {
+  if (!isInQuietHours(now, schedule, timeZone)) return now;
+  const HOUR = 3_600_000;
+  let t = new Date(Math.floor(now.getTime() / HOUR) * HOUR + HOUR); // top of the next hour
+  for (let i = 0; i < 8 * 24; i++) {
+    if (!isInQuietHours(t, schedule, timeZone)) return t;
+    t = new Date(t.getTime() + HOUR);
   }
-  return result;
+  return t; // fallback (quiet every hour — schedule misconfig)
 }
 
 // ── rendering + SES input ────────────────────────────────────────────────────
@@ -483,20 +497,20 @@ export function decideDispatch(ctx: DispatchContext): DispatchDecision {
     }
   }
   // 3. frequency cap
-  if (isOverCap(ctx.recentSendCount, ctx.frequencyCapPerDays)) {
+  if (isOverCap(ctx.recentSendCount, ctx.frequencyCap)) {
     return {
       action: 'skip',
       reason: 'frequency cap reached',
       stoppedAt: 'frequency-cap',
     };
   }
-  // 4. quiet hours
-  if (isInQuietHours(ctx.now, ctx.quietHours)) {
+  // 4. quiet hours (per weekday, in the workspace timezone)
+  if (isInQuietHours(ctx.now, ctx.quietHours, ctx.timeZone)) {
     return {
       action: 'defer',
       reason: 'within quiet hours',
       stoppedAt: 'quiet-hours',
-      deferUntil: nextSendableAt(ctx.now, ctx.quietHours),
+      deferUntil: nextSendableAt(ctx.now, ctx.quietHours, ctx.timeZone),
     };
   }
   // 5. send

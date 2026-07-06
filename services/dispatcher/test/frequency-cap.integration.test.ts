@@ -81,7 +81,7 @@ describe.skipIf(!RUN)('dispatcher frequency cap (real Postgres)', () => {
   it('isOverCap blocks once the windowed count reaches the cap', async () => {
     const since = windowStart(now, 7);
     const n = await recentCount(admin, wsA, profA, since); // 2
-    expect(isOverCap(n, 3)).toBe(false);
-    expect(isOverCap(n, 2)).toBe(true);
+    expect(isOverCap(n, { max: 3, days: 7 })).toBe(false);
+    expect(isOverCap(n, { max: 2, days: 7 })).toBe(true);
   });
 });

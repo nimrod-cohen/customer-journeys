@@ -14,8 +14,9 @@ const base = (over: Partial<DispatchContext> = {}): DispatchContext => ({
   template: { compiledHtml: '' },
   subject: '',
   merge: { 'customer.attributes.phone': '+15550001111', 'customer.attributes.first_name': 'Jo' },
-  frequencyCapPerDays: null,
+  frequencyCap: null,
   quietHours: null,
+  timeZone: 'UTC',
   recentSendCount: 0,
   isSuppressed: false,
   now: new Date('2026-06-22T12:00:00Z'),
@@ -50,7 +51,7 @@ describe('medium-aware gate', () => {
   });
 
   it('SMS: frequency cap still applies', () => {
-    const d = decideDispatch(base({ medium: 'sms', frequencyCapPerDays: 1, recentSendCount: 1 }));
+    const d = decideDispatch(base({ medium: 'sms', frequencyCap: { max: 1, days: 7 }, recentSendCount: 1 }));
     expect(d.action).toBe('skip');
     expect(d.stoppedAt).toBe('frequency-cap');
   });

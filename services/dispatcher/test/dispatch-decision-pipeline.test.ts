@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { decideDispatch, type DispatchContext } from '../src/core.js';
+import { decideDispatch, type DispatchContext, type QuietSchedule } from '../src/core.js';
+
+/** A quiet schedule with the SAME window every weekday (UTC in these tests). */
+const allDays = (startHour: number, endHour: number): QuietSchedule =>
+  Object.fromEntries(Array.from({ length: 7 }, (_, d) => [d, { startHour, endHour }]));
 
 // §9 / CLAUDE.md invariant 7 — the guard order is LOAD-BEARING:
 //   gate(canSend) → suppression → frequency-cap → quiet-hours → send
@@ -17,8 +21,9 @@ function base(overrides: Partial<DispatchContext> = {}): DispatchContext {
     template: { compiledHtml: '<html>{{x}}</html>' },
     subject: 'Hi',
     merge: { x: '1' },
-    frequencyCapPerDays: 7,
+    frequencyCap: { max: 7, days: 7 },
     quietHours: null,
+    timeZone: 'UTC',
     recentSendCount: 0,
     isSuppressed: false,
     now: new Date('2026-06-10T12:00:00.000Z'),
@@ -46,7 +51,7 @@ describe('decideDispatch — guard order + short-circuit', () => {
         // Even though suppressed AND over cap AND quiet, gate wins (order).
         isSuppressed: true,
         recentSendCount: 999,
-        quietHours: { startHour: 0, endHour: 23 },
+        quietHours: allDays(0, 23),
       }),
     );
     expect(d.action).toBe('refuse');
@@ -55,7 +60,7 @@ describe('decideDispatch — guard order + short-circuit', () => {
 
   it('suppression blocks before cap/quiet → skip, stoppedAt=suppression', () => {
     const d = decideDispatch(
-      base({ isSuppressed: true, recentSendCount: 999, quietHours: { startHour: 0, endHour: 23 } }),
+      base({ isSuppressed: true, recentSendCount: 999, quietHours: allDays(0, 23) }),
     );
     expect(d.action).toBe('skip');
     expect(d.stoppedAt).toBe('suppression');
@@ -85,7 +90,7 @@ describe('decideDispatch — guard order + short-circuit', () => {
 
   it('medium/topic opt-out beat the cap (order: opt-outs before cap/quiet)', () => {
     const d = decideDispatch(
-      base({ topicUnsubscribed: true, recentSendCount: 999, quietHours: { startHour: 0, endHour: 23 } }),
+      base({ topicUnsubscribed: true, recentSendCount: 999, quietHours: allDays(0, 23) }),
     );
     expect(d.action).toBe('skip');
     expect(d.stoppedAt).toBe('topic-optout');
@@ -93,14 +98,14 @@ describe('decideDispatch — guard order + short-circuit', () => {
 
   it('frequency cap blocks before quiet → skip, stoppedAt=frequency-cap', () => {
     const d = decideDispatch(
-      base({ recentSendCount: 7, quietHours: { startHour: 0, endHour: 23 } }),
+      base({ recentSendCount: 7, quietHours: allDays(0, 23) }),
     );
     expect(d.action).toBe('skip');
     expect(d.stoppedAt).toBe('frequency-cap');
   });
 
   it('quiet hours block last → defer, stoppedAt=quiet-hours', () => {
-    const d = decideDispatch(base({ quietHours: { startHour: 9, endHour: 17 } }));
+    const d = decideDispatch(base({ quietHours: allDays(9, 17) }));
     expect(d.action).toBe('defer');
     expect(d.stoppedAt).toBe('quiet-hours');
     expect(d.deferUntil?.toISOString()).toBe('2026-06-10T17:00:00.000Z');
@@ -135,7 +140,7 @@ describe('decideDispatch — guard order + short-circuit', () => {
         isSuppressed: true,
         // a cap of 0 means "no cap" — if cap were evaluated it would PASS, not
         // block; but suppression short-circuits before cap is even consulted.
-        frequencyCapPerDays: 0,
+        frequencyCap: null,
         recentSendCount: 0,
       }),
     );

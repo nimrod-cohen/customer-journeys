@@ -73,44 +73,55 @@ describeMaybe('workspace settings: lowercase_emails (real Postgres)', () => {
     expect(await storedEmail('p-off')).toBe('Mixed.Case@Acme.com');
   });
 
-  // Sending guardrails (CLAUDE.md inv.7): frequency cap + quiet-hours window that
-  // the dispatcher reads from workspaces.settings.
-  type Guard = { frequency_cap_per_days: number; quiet_hours: { startHour: number; endHour: number } | null };
+  // Sending guardrails (CLAUDE.md inv.7): frequency cap { max, days } + a per-weekday
+  // quiet-hours schedule, read by the dispatcher from workspaces.settings.
+  type Guard = {
+    frequency_cap: { max: number; days: number } | null;
+    quiet_hours: Record<string, { startHour: number; endHour: number }> | null;
+  };
 
-  it('defaults the guardrails to 0 cap / no quiet hours', async () => {
+  it('defaults the guardrails to no cap / no quiet hours', async () => {
     const r = await call(world.env, 'GET', '/workspace/settings', { token: tok() });
     const s = (r.body as { settings: Guard }).settings;
-    expect(s.frequency_cap_per_days).toBe(0);
+    expect(s.frequency_cap).toBeNull();
     expect(s.quiet_hours).toBeNull();
   });
 
-  it('persists a valid cap + quiet-hours window and round-trips it', async () => {
+  it('persists a valid cap + per-day quiet-hours schedule and round-trips it', async () => {
     const put = await call(world.env, 'PUT', '/workspace/settings', {
       token: tok(),
-      body: { frequency_cap_per_days: 3, quiet_hours: { startHour: 22, endHour: 8 } },
+      body: {
+        frequency_cap: { max: 2, days: 3 },
+        quiet_hours: { '1': { startHour: 22, endHour: 8 }, '6': { startHour: 20, endHour: 10 } },
+      },
     });
     expect(put.status).toBe(200);
     const get = await call(world.env, 'GET', '/workspace/settings', { token: tok() });
     const s = (get.body as { settings: Guard }).settings;
-    expect(s.frequency_cap_per_days).toBe(3);
-    expect(s.quiet_hours).toEqual({ startHour: 22, endHour: 8 });
+    expect(s.frequency_cap).toEqual({ max: 2, days: 3 });
+    expect(s.quiet_hours).toEqual({ '1': { startHour: 22, endHour: 8 }, '6': { startHour: 20, endHour: 10 } });
   });
 
-  it('clears quiet hours when passed null', async () => {
-    await call(world.env, 'PUT', '/workspace/settings', { token: tok(), body: { quiet_hours: null } });
+  it('clears the cap + quiet hours when passed null', async () => {
+    await call(world.env, 'PUT', '/workspace/settings', {
+      token: tok(),
+      body: { quiet_hours: null, frequency_cap: null },
+    });
     const get = await call(world.env, 'GET', '/workspace/settings', { token: tok() });
-    expect((get.body as { settings: Guard }).settings.quiet_hours).toBeNull();
+    const s = (get.body as { settings: Guard }).settings;
+    expect(s.quiet_hours).toBeNull();
+    expect(s.frequency_cap).toBeNull();
   });
 
-  it('rejects an invalid cap (negative) and an out-of-range quiet hour (400)', async () => {
+  it('rejects an invalid cap and an out-of-range quiet hour (400)', async () => {
     const badCap = await call(world.env, 'PUT', '/workspace/settings', {
       token: tok(),
-      body: { frequency_cap_per_days: -1 },
+      body: { frequency_cap: { max: 0, days: 3 } },
     });
     expect(badCap.status).toBe(400);
     const badHour = await call(world.env, 'PUT', '/workspace/settings', {
       token: tok(),
-      body: { quiet_hours: { startHour: 24, endHour: 8 } },
+      body: { quiet_hours: { '1': { startHour: 24, endHour: 8 } } },
     });
     expect(badHour.status).toBe(400);
   });

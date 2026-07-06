@@ -20,20 +20,22 @@ describe('frequency-cap core', () => {
   describe('isOverCap', () => {
     // The cap is a MAX number of sends allowed in the window. Once the recent
     // count reaches the cap, the next send is blocked (>=).
+    const cap = (max: number, days = 7) => ({ max, days });
     it('is false when recent count is below the cap', () => {
-      expect(isOverCap(0, 3)).toBe(false);
-      expect(isOverCap(2, 3)).toBe(false);
+      expect(isOverCap(0, cap(3))).toBe(false);
+      expect(isOverCap(2, cap(3))).toBe(false);
     });
 
-    it('is true when recent count equals or exceeds the cap', () => {
-      expect(isOverCap(3, 3)).toBe(true);
-      expect(isOverCap(5, 3)).toBe(true);
+    it('is true when recent count equals or exceeds the cap.max', () => {
+      expect(isOverCap(3, cap(3))).toBe(true);
+      expect(isOverCap(5, cap(3))).toBe(true);
     });
 
-    it('treats a null/undefined/zero cap as no cap (never over)', () => {
+    it('treats a null/undefined/non-positive cap as no cap (never over)', () => {
       expect(isOverCap(100, null)).toBe(false);
       expect(isOverCap(100, undefined)).toBe(false);
-      expect(isOverCap(100, 0)).toBe(false);
+      expect(isOverCap(100, cap(0))).toBe(false);
+      expect(isOverCap(100, cap(3, 0))).toBe(false);
     });
   });
 });
