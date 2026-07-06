@@ -354,8 +354,10 @@ function ImageEl({ element }: { element: LeafElement & { type: 'image' } }): JSX
       </div>
     );
   }
-  const img: Style = { maxWidth: '100%', display: 'inline-block' };
-  if (p.width) img.width = `${p.width}px`;
+  // WYSIWYG parity with MJML: a width-less image renders at the FULL column width
+  // (width:100%) in email, NOT its natural size — so show it that way here too, or
+  // the editor would understate a stretched image (the huge-image surprise).
+  const img: Style = { maxWidth: '100%', display: 'inline-block', width: p.width ? `${p.width}px` : '100%' };
   const r = radiusCss(p.radius);
   if (r) img.borderRadius = r;
   return (
