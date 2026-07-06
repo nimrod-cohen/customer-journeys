@@ -21,6 +21,7 @@ import {
 import { FONT_SIZE_EMS, type Align, type Border, type Radius, type Spacing } from './model.js';
 import { AssetPicker } from './AssetPicker.tsx';
 import { ImageEditor } from './ImageEditor.tsx';
+import { apiBaseUrl } from '../api/client.js';
 import { AlignLeft, AlignCenter, AlignRight } from './icons.tsx';
 import { Crop } from 'lucide-preact';
 
@@ -287,9 +288,27 @@ function ImagePanel({ id }: { id: string }): JSX.Element {
   const commit = (patch: Patch): void => mutate('Edit image', () => updateElementProps(id, patch));
   const [editing, setEditing] = useState(false);
 
+  // Pick an image: set the src immediately, and if it has no width yet, default the
+  // width to the image's NATURAL size (capped at the email body width). Without this
+  // a width-less image renders at the FULL column width in email (MJML default), so a
+  // small logo or a large photo both balloon to ~600px. Only auto-set when unset, so
+  // it never overrides a width the user chose.
+  const pickImage = (src: string): void => {
+    commit({ src });
+    if (src && !el.props.width && typeof Image !== 'undefined') {
+      const cap = settings.value.bodyWidth ?? 600;
+      const probe = new Image();
+      probe.onload = () => {
+        const w = Math.min(probe.naturalWidth || cap, cap);
+        if (w > 0) commit({ width: w });
+      };
+      probe.src = src.startsWith('/') ? `${apiBaseUrl()}${src}` : src;
+    }
+  };
+
   return (
     <>
-      <AssetPicker value={el.props.src} onCommit={(v) => commit({ src: v })} />
+      <AssetPicker value={el.props.src} onCommit={pickImage} />
       {el.props.src ? (
         <button type="button" data-testid="image-edit-open" class="nm-btn nm-am-open" onClick={() => setEditing(true)}>
           <Crop size={14} /> Crop / resize…
