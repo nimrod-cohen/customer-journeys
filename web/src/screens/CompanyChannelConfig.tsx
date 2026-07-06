@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { Button, Card, Field, Input, Select } from '../ui/kit.js';
+import { sourceWarning } from './channelConfigLogic.js';
 
 interface ChannelConfig {
   configured: boolean;
@@ -152,6 +153,15 @@ export function CompanyChannelConfig() {
             value={source}
             onInput={(e: Event) => setSource((e.target as HTMLInputElement).value)}
           />
+          {sourceWarning(source) ? (
+            <p data-testid="channel-019-source-warning" class="mt-1 text-xs text-amber-600">
+              ⚠ {sourceWarning(source)}
+            </p>
+          ) : (
+            <p class="mt-1 text-xs text-stone-400">
+              Up to 11 letters/digits for a name, or a phone number. Must be verified with 019 before use.
+            </p>
+          )}
         </Field>
         <Field label="Default country">
           <Select
