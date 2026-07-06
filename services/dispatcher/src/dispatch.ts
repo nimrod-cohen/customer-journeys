@@ -29,6 +29,8 @@ import {
   buildMessagesLogFailure,
   buildUsageCounterIncrement,
   buildOutboxMarkSent,
+  buildOutboxMarkFailed,
+  isPermanentSendError,
   buildSendEmailInput,
   buildChannelMessage,
   resolveTextRecipient,
@@ -118,6 +120,7 @@ export type DispatchOutcome =
   | { readonly result: 'refuse'; readonly reason: string }
   | { readonly result: 'defer'; readonly reason: string; readonly deferUntil: Date }
   | { readonly result: 'noop'; readonly reason: string }
+  | { readonly result: 'failure'; readonly reason: string }
   | { readonly result: 'retryable-failure'; readonly reason: string };
 
 interface OutboxRow {
@@ -569,25 +572,40 @@ export async function dispatchOutbox(
       return { result: 'skip', reason: 'recipient has no email address' };
     }
 
-    // EMAIL: build the SES input and SEND (the only SES call site).
-    const input: SendEmailInput = buildSendEmailInput(ctx);
-    const { sesMessageId } = await deps.ses.sendEmail(input);
+    // EMAIL: build the SES input and SEND (the only SES call site). A PERMANENT
+    // rejection (e.g. "Email address is not verified" in the sandbox, a rejected
+    // address) will NEVER succeed on retry — record a messages_log FAILURE with the
+    // reason (so it surfaces in the activity feed instead of a silent "0 sent") and
+    // mark the outbox row terminally failed. A TRANSIENT error re-throws to the
+    // outer catch → reset to pending → bounded retry.
+    try {
+      const input: SendEmailInput = buildSendEmailInput(ctx);
+      const { sesMessageId } = await deps.ses.sendEmail(input);
 
-    // 7. ONE tx: tracked links (idempotent) + messages_log + usage + mark sent.
-    await deps.runInWorkspaceTx(workspaceId, [
-      ...trackedLinks.map((l) => buildTrackedLinkInsert(workspaceId, l, broadcastId, ob.campaign_id ?? null)),
-      ...(openToken
-        ? [buildTrackedOpenInsert(workspaceId, openToken, broadcastId, ob.campaign_id ?? null, profile.id)]
-        : []),
-      buildMessagesLogInsert(workspaceId, profile.id, ob.campaign_id, sesMessageId, broadcastId, 'email'),
-      buildUsageCounterIncrement(workspaceId, now),
-      buildOutboxMarkSent(workspaceId, outboxId),
-    ]);
+      // 7. ONE tx: tracked links (idempotent) + messages_log + usage + mark sent.
+      await deps.runInWorkspaceTx(workspaceId, [
+        ...trackedLinks.map((l) => buildTrackedLinkInsert(workspaceId, l, broadcastId, ob.campaign_id ?? null)),
+        ...(openToken
+          ? [buildTrackedOpenInsert(workspaceId, openToken, broadcastId, ob.campaign_id ?? null, profile.id)]
+          : []),
+        buildMessagesLogInsert(workspaceId, profile.id, ob.campaign_id, sesMessageId, broadcastId, 'email'),
+        buildUsageCounterIncrement(workspaceId, now),
+        buildOutboxMarkSent(workspaceId, outboxId),
+      ]);
 
-    return { result: 'send', sesMessageId };
+      return { result: 'send', sesMessageId };
+    } catch (sendErr) {
+      if (!isPermanentSendError(sendErr)) throw sendErr; // transient → outer catch (retry)
+      const reason = sendErr instanceof Error ? sendErr.message : String(sendErr);
+      await deps.runInWorkspaceTx(workspaceId, [
+        buildMessagesLogFailure(workspaceId, profile.id, ob.campaign_id ?? null, broadcastId, 'email', 'failed', reason),
+        buildOutboxMarkFailed(workspaceId, outboxId),
+      ]);
+      return { result: 'failure', reason };
+    }
   } catch (err) {
-    // SES or DB failure after a successful claim → reset to pending so a retry
-    // can re-claim it (bounded by attempts in the handler → DLQ).
+    // Transient send failure (re-thrown above) OR any other error after the claim
+    // → reset to pending so a retry can re-claim it (bounded by attempts → DLQ).
     await resetClaim(deps, workspaceId, outboxId);
     const reason = err instanceof Error ? err.message : String(err);
     return { result: 'retryable-failure', reason };

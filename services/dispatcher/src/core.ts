@@ -559,6 +559,41 @@ export function buildOutboxMarkSent(workspaceId: string, outboxId: string): SqlS
 }
 
 /**
+ * Mark a claimed outbox row FAILED (terminal) — a PERMANENT provider rejection
+ * (e.g. recipient not verified, address rejected) that must NOT be retried. Unlike
+ * a transient failure (which resets to pending for a bounded retry), this stops the
+ * row for good; the reason is recorded on the paired messages_log row. wsid at $1.
+ */
+export function buildOutboxMarkFailed(workspaceId: string, outboxId: string): SqlStatement {
+  if (!workspaceId) throw new Error('buildOutboxMarkFailed: workspaceId is required');
+  return {
+    text: `UPDATE outbox
+           SET status = 'failed'
+           WHERE workspace_id = $1 AND id = $2`,
+    values: [workspaceId, outboxId],
+  };
+}
+
+/**
+ * Whether a provider send error is PERMANENT (a hard rejection that will never
+ * succeed on retry) vs TRANSIENT (throttling / network / 5xx — worth retrying).
+ * SES signals permanent rejections via the error `name` (MessageRejected,
+ * *NotVerified, AccountSendingPaused/Suspended, InvalidParameter…) or a non-
+ * throttling 4xx status. Permanent → record a failure + stop; transient → retry.
+ */
+export function isPermanentSendError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  const name = e.name ?? '';
+  if (/MessageRejected|NotVerified|SendingPaused|AccountSuspended|InvalidParameter|BadRequest|Forbidden/i.test(name)) {
+    return true;
+  }
+  const throttle = /Throttl|TooManyRequests|LimitExceeded/i.test(name);
+  const code = e.$metadata?.httpStatusCode;
+  return typeof code === 'number' && code >= 400 && code < 500 && !throttle;
+}
+
+/**
  * Count this recipient's sends in the rolling cap window from messages_log
  * (§9 step 3, per workspace). Bound by (workspace_id, profile_id, sent_at >=
  * windowStart). workspace_id bound at $1.
