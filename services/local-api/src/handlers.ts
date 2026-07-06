@@ -5388,15 +5388,17 @@ export async function ingestIdentify(pool: Pool, rawKey: string, body: unknown):
   }
 }
 
-/** POST /ingest-keys — mint a new write key (the raw value is returned ONCE). */
+/** POST /ingest-keys — mint a new write key. */
 export const createIngestKey: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const label = typeof b.label === 'string' ? b.label.trim() : '';
   const { raw, hash, prefix } = newIngestKey();
   const { rows } = await pool.query<{ id: string; created_at: string }>(
-    `INSERT INTO ingest_keys (workspace_id, key_hash, key_prefix, label)
-       VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
-    [ctx.workspaceId, hash, prefix, label || null],
+    // The key is public (write-only, embedded in front-end code), so we store the
+    // full value too — it can be copied again later from the UI.
+    `INSERT INTO ingest_keys (workspace_id, key_hash, key_prefix, key_full, label)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
+    [ctx.workspaceId, hash, prefix, raw, label || null],
   );
   return ok(
     { id: rows[0]!.id, key: raw, key_prefix: prefix, label: label || null, created_at: rows[0]!.created_at },
@@ -5404,10 +5406,11 @@ export const createIngestKey: Handler = async (ctx, pool, req) => {
   );
 };
 
-/** GET /ingest-keys — list keys (masked; the raw key is never returned again). */
+/** GET /ingest-keys — list keys. key_full is the copyable public value (null for
+ *  keys minted before it was stored — those show by prefix only). */
 export const listIngestKeys: Handler = async (ctx, pool) => {
   const { rows } = await pool.query(
-    `SELECT id, key_prefix, label, created_at, revoked_at, last_used_at
+    `SELECT id, key_prefix, key_full, label, created_at, revoked_at, last_used_at
        FROM ingest_keys WHERE workspace_id = $1 ORDER BY created_at DESC`,
     [ctx.workspaceId],
   );

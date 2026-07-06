@@ -10,6 +10,7 @@ import { showToast } from '../ui/toast.js';
 interface KeyRow {
   id: string;
   key_prefix: string;
+  key_full: string | null; // the copyable public value (null for pre-0050 keys)
   label: string | null;
   created_at: string;
   revoked_at: string | null;
@@ -68,7 +69,7 @@ export function IngestKeys() {
           class="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3"
         >
           <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">
-            Copy this key now — it won't be shown again
+            Your new write key — copy it below (also available in the list anytime)
           </p>
           <div class="mt-2 flex items-center gap-2">
             <code class="flex-1 overflow-x-auto rounded bg-white px-2 py-1.5 font-mono text-sm text-ink-900 ring-1 ring-amber-200">
@@ -128,7 +129,20 @@ export function IngestKeys() {
                 {keys.map((k) => (
                   <tr key={k.id} data-testid="key-row" class="border-t border-stone-100">
                     <td class="py-2 pr-4 font-mono text-xs text-ink-900">
-                      {k.key_prefix}…
+                      {k.key_full && !k.revoked_at ? (
+                        <button
+                          type="button"
+                          data-testid="copy-existing-key"
+                          onClick={() => copy(k.key_full as string)}
+                          title="Click to copy this key"
+                          class="inline-flex max-w-full items-center gap-1.5 truncate rounded bg-stone-100 px-2 py-1 text-ink-800 hover:bg-stone-200"
+                        >
+                          <span class="truncate">{k.key_full}</span>
+                          <span class="shrink-0 text-stone-400">⧉</span>
+                        </button>
+                      ) : (
+                        <>{k.key_prefix}…</>
+                      )}
                       {k.revoked_at ? (
                         <Badge tone="danger" class="ml-2">
                           revoked
