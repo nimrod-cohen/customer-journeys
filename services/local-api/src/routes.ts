@@ -82,11 +82,12 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'PUT /text-templates/:id': 'manage_content',
   'DELETE /text-templates/:id': 'manage_content',
 
-  // Ingest (tracking) write keys — session-authed management. The keys themselves
-  // drive the PUBLIC /v1/track + /v1/identify endpoints (no session, key-authed).
-  'GET /ingest-keys': 'manage_content',
-  'POST /ingest-keys': 'manage_content',
-  'DELETE /ingest-keys/:id': 'manage_content',
+  // Ingest (tracking) write keys — session-authed management, owner-gated (they
+  // live under Workspace settings → API keys). The keys themselves drive the
+  // PUBLIC /v1/track + /v1/identify endpoints (no session, key-authed).
+  'GET /ingest-keys': 'manage_workspace_users',
+  'POST /ingest-keys': 'manage_workspace_users',
+  'DELETE /ingest-keys/:id': 'manage_workspace_users',
 
   // --- segments + audiences (manage_content) ---
   'GET /segments': 'manage_content',

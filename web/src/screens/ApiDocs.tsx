@@ -60,8 +60,8 @@ export function ApiDocs() {
       <Card class="border-brand-200 bg-brand-50/40 p-6">
         <h3 class="font-bold text-ink-900">1. Tracking API (write key) — for websites &amp; apps</h3>
         <p class="mt-1 text-sm text-stone-600">
-          Create a <b>write key</b> in the app (<b>Help → Developer API → Your write keys</b>, or ask
-          your admin). It's like a Segment/Mixpanel write key: <b>public and write-only</b> — it can
+          Create a <b>write key</b> in the app (<b>Workspace settings → API keys</b>, or ask your
+          admin). It's like a Segment/Mixpanel write key: <b>public and write-only</b> — it can
           ONLY create/update profiles and record events for your workspace, never read or delete. So
           it's safe to embed in front-end code. Pass it as{' '}
           <Code>Authorization: Bearer &lt;key&gt;</Code> (or an <Code>X-API-Key</Code> header). No

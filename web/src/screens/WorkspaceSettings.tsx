@@ -12,8 +12,9 @@ import { timeZoneList } from '@cdp/shared';
 import { saveWorkspaceTimezone, saveWorkspaceLanguage, type FrontFacingLanguage } from './workspaceSettingsLogic.js';
 import { SendingDomainsPanel } from './SendingDomainsList.tsx';
 import { TopicsPanel } from './Topics.tsx';
+import { IngestKeys } from './IngestKeys.tsx';
 
-type SettingsTab = 'workspace' | 'domains' | 'topics';
+type SettingsTab = 'workspace' | 'domains' | 'topics' | 'api-keys';
 
 interface Member {
   user_id: string;
@@ -185,12 +186,24 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
         >
           Topics
         </button>
+        <button
+          type="button"
+          data-testid="settings-tab-api-keys"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'api-keys' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => navigate('/settings/api-keys')}
+        >
+          API keys
+        </button>
       </div>
 
       {tab === 'domains' ? (
         <SendingDomainsPanel />
       ) : tab === 'topics' ? (
         <TopicsPanel />
+      ) : tab === 'api-keys' ? (
+        <IngestKeys />
       ) : (
       <>
       <Card class="overflow-hidden">

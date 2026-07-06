@@ -70,6 +70,7 @@ function screenFor(path: string): JSX.Element {
   if (path === '/settings') return <WorkspaceSettings tab="workspace" />;
   if (path === '/settings/domains') return <WorkspaceSettings tab="domains" />;
   if (path === '/settings/topics') return <WorkspaceSettings tab="topics" />;
+  if (path === '/settings/api-keys') return <WorkspaceSettings tab="api-keys" />;
   if (path.startsWith('/settings/domains/')) {
     const rest = path.slice('/settings/domains/'.length);
     return rest === 'new' ? <SendingDomainDetail /> : <SendingDomainDetail id={rest} />;

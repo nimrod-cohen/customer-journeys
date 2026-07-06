@@ -4,7 +4,6 @@
 import type { ComponentChildren } from 'preact';
 import { Badge, Card, PageHeader } from '../ui/kit.js';
 import { ApiDocs } from './ApiDocs.js';
-import { IngestKeys } from './IngestKeys.js';
 
 function Code({ children }: { children: ComponentChildren }) {
   return <code class="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[0.85em] text-ink-900">{children}</code>;
@@ -363,11 +362,13 @@ export function Help() {
           >
             /docs
           </a>{' '}
-          — no login required, so you can share it with your developers.
+          — no login required, so you can share it with your developers. Create and
+          manage your <b>write keys</b> under{' '}
+          <a href="#/settings/api-keys" class="font-semibold text-brand-700 hover:underline">
+            Workspace settings → API keys
+          </a>
+          .
         </p>
-        <div class="mb-6">
-          <IngestKeys />
-        </div>
         <ApiDocs />
       </div>
     </section>
