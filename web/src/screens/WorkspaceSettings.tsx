@@ -16,6 +16,13 @@ import { IngestKeys } from './IngestKeys.tsx';
 
 type SettingsTab = 'workspace' | 'domains' | 'topics' | 'api-keys';
 
+/** A quiet-hours window (UI shape): from (startDay, startMin) to (endDay, endMin). */
+type QuietWin = { startDay: number; startMin: number; endDay: number; endMin: number };
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const HALF_HOURS = Array.from({ length: 48 }, (_, i) => i * 30); // 0, 30, … 1410 minutes
+const hhmm = (m: number): string => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
 interface Member {
   user_id: string;
   role: string;
@@ -43,9 +50,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   const [freqMax, setFreqMax] = useState(3);
   const [freqDays, setFreqDays] = useState(7);
   const [quietEnabled, setQuietEnabled] = useState(false);
-  const [quietDays, setQuietDays] = useState<Array<{ on: boolean; start: number; end: number }>>(() =>
-    Array.from({ length: 7 }, () => ({ on: false, start: 22, end: 8 })),
-  );
+  const [quietWindows, setQuietWindows] = useState<QuietWin[]>([]);
 
   const reload = async () => {
     const r = await api.get<{ members: Member[] }>('/workspace/members');
@@ -61,7 +66,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           timezone?: string;
           front_facing_language?: FrontFacingLanguage;
           frequency_cap?: { max?: number; days?: number } | null;
-          quiet_hours?: Record<string, { startHour?: number; endHour?: number }> | null;
+          quiet_hours?: Array<{ startDay?: number; startMinute?: number; endDay?: number; endMinute?: number }> | null;
         };
       }>('/workspace/settings')
       .then((r) => {
@@ -76,19 +81,15 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           if (typeof fc.days === 'number') setFreqDays(fc.days);
         }
         const qh = r.settings.quiet_hours;
-        if (qh && typeof qh === 'object') {
+        if (Array.isArray(qh) && qh.length) {
           setQuietEnabled(true);
-          setQuietDays((prev) =>
-            prev.map((d, day) => {
-              const w = qh[String(day)];
-              return w && typeof w === 'object'
-                ? {
-                    on: true,
-                    start: typeof w.startHour === 'number' ? w.startHour : 22,
-                    end: typeof w.endHour === 'number' ? w.endHour : 8,
-                  }
-                : { ...d, on: false };
-            }),
+          setQuietWindows(
+            qh.map((w) => ({
+              startDay: typeof w.startDay === 'number' ? w.startDay : 0,
+              startMin: typeof w.startMinute === 'number' ? w.startMinute : 0,
+              endDay: typeof w.endDay === 'number' ? w.endDay : 0,
+              endMin: typeof w.endMinute === 'number' ? w.endMinute : 0,
+            })),
           );
         }
       });
@@ -148,12 +149,15 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   // promise so the kit Save button auto-locks (standing button rule).
   const saveGuardrails = () => {
     const frequency_cap = freqEnabled ? { max: freqMax, days: freqDays } : null;
-    const quiet_hours = quietEnabled
-      ? quietDays.reduce<Record<string, { startHour: number; endHour: number }>>((acc, d, day) => {
-          if (d.on) acc[String(day)] = { startHour: d.start, endHour: d.end };
-          return acc;
-        }, {})
-      : null;
+    const quiet_hours =
+      quietEnabled && quietWindows.length
+        ? quietWindows.map((w) => ({
+            startDay: w.startDay,
+            startMinute: w.startMin,
+            endDay: w.endDay,
+            endMinute: w.endMin,
+          }))
+        : null;
     return api
       .put('/workspace/settings', { body: { frequency_cap, quiet_hours } })
       .then(() => showToast('Sending guardrails saved.', { tone: 'success' }))
@@ -463,7 +467,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           ) : null}
         </div>
 
-        {/* Quiet hours — per weekday */}
+        {/* Quiet hours — a list of windows (start day/time → end day/time) */}
         <div class="mt-5 border-t border-stone-100 pt-4">
           <label class="flex flex-wrap items-center gap-3">
             <Switch data-testid="settings-quiet-enabled" checked={quietEnabled} onChange={setQuietEnabled} />
@@ -471,53 +475,75 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
             <span class="text-xs text-stone-400">held sends resume when the window closes</span>
           </label>
           {quietEnabled ? (
-            <div class="mt-3 space-y-1.5 pl-14" data-testid="settings-quiet-days">
-              {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((name, day) => (
-                <div key={day} class="flex flex-wrap items-center gap-2 text-sm" data-testid={`quiet-day-${day}`}>
-                  <Switch
-                    size="sm"
-                    data-testid={`quiet-day-${day}-on`}
-                    checked={quietDays[day]!.on}
-                    onChange={(on) => setQuietDays((prev) => prev.map((d, i) => (i === day ? { ...d, on } : d)))}
-                  />
-                  <span class="w-24 text-stone-700">{name}</span>
-                  {quietDays[day]!.on ? (
-                    <>
-                      <Select
-                        class="w-24"
-                        data-testid={`quiet-day-${day}-start`}
-                        value={String(quietDays[day]!.start)}
-                        onChange={(e: Event) =>
-                          setQuietDays((prev) =>
-                            prev.map((d, i) => (i === day ? { ...d, start: Number((e.target as HTMLSelectElement).value) } : d)),
-                          )
-                        }
-                      >
-                        {Array.from({ length: 24 }, (_, h) => (
-                          <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>
+            <div class="mt-3 pl-14" data-testid="settings-quiet-windows">
+              <div class="space-y-2">
+                {quietWindows.map((w, i) => {
+                  const patch = (p: Partial<QuietWin>) =>
+                    setQuietWindows((prev) => prev.map((x, j) => (j === i ? { ...x, ...p } : x)));
+                  const num = (e: Event) => Number((e.target as HTMLSelectElement).value);
+                  return (
+                    <div key={i} class="flex flex-wrap items-center gap-2 text-sm" data-testid="quiet-window">
+                      <Select class="w-32" data-testid="quiet-start-day" value={String(w.startDay)} onChange={(e: Event) => patch({ startDay: num(e) })}>
+                        {DAY_NAMES.map((n, d) => (
+                          <option key={d} value={d}>{n}</option>
+                        ))}
+                      </Select>
+                      <Select class="w-24" data-testid="quiet-start-time" value={String(w.startMin)} onChange={(e: Event) => patch({ startMin: num(e) })}>
+                        {HALF_HOURS.map((m) => (
+                          <option key={m} value={m}>{hhmm(m)}</option>
                         ))}
                       </Select>
                       <span class="text-stone-400">→</span>
-                      <Select
-                        class="w-24"
-                        data-testid={`quiet-day-${day}-end`}
-                        value={String(quietDays[day]!.end)}
-                        onChange={(e: Event) =>
-                          setQuietDays((prev) =>
-                            prev.map((d, i) => (i === day ? { ...d, end: Number((e.target as HTMLSelectElement).value) } : d)),
-                          )
-                        }
-                      >
-                        {Array.from({ length: 24 }, (_, h) => (
-                          <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>
+                      <Select class="w-32" data-testid="quiet-end-day" value={String(w.endDay)} onChange={(e: Event) => patch({ endDay: num(e) })}>
+                        {DAY_NAMES.map((n, d) => (
+                          <option key={d} value={d}>{n}</option>
                         ))}
                       </Select>
-                    </>
-                  ) : (
-                    <span class="text-stone-400">off</span>
-                  )}
-                </div>
-              ))}
+                      <Select class="w-24" data-testid="quiet-end-time" value={String(w.endMin)} onChange={(e: Event) => patch({ endMin: num(e) })}>
+                        {HALF_HOURS.map((m) => (
+                          <option key={m} value={m}>{hhmm(m)}</option>
+                        ))}
+                      </Select>
+                      <button
+                        type="button"
+                        data-testid="quiet-window-remove"
+                        title="Remove window"
+                        class="ml-1 text-stone-400 hover:text-rose-600"
+                        onClick={() => setQuietWindows((prev) => prev.filter((_, j) => j !== i))}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                data-testid="quiet-add-window"
+                class="mt-2 text-sm font-semibold text-brand-700 hover:underline"
+                onClick={() => setQuietWindows((prev) => [...prev, { startDay: 0, startMin: 1320, endDay: 1, endMin: 360 }])}
+              >
+                + Add quiet hours window
+              </button>
+              <div
+                class="mt-3 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600 ring-1 ring-inset ring-stone-200"
+                data-testid="quiet-summary"
+              >
+                {quietWindows.length ? (
+                  <span>
+                    No emails will send during ({timezone}):{' '}
+                    {quietWindows.map((w, i) => (
+                      <span key={i} class="font-medium text-ink-800">
+                        {i > 0 ? '; ' : ''}
+                        {DAY_ABBR[w.startDay]} {hhmm(w.startMin)} → {DAY_ABBR[w.endDay]} {hhmm(w.endMin)}
+                      </span>
+                    ))}
+                    .
+                  </span>
+                ) : (
+                  'No windows yet — add one, or messages can send at any time.'
+                )}
+              </div>
             </div>
           ) : null}
         </div>

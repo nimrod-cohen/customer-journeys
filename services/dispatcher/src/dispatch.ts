@@ -40,6 +40,7 @@ import {
   type DispatchContext,
   type DispatchDecision,
   type QuietSchedule,
+  type QuietWindow,
   type FrequencyCap,
   type SqlStatement,
   type TrackedLink,
@@ -131,26 +132,33 @@ interface OutboxRow {
 }
 
 /**
- * Parse the per-weekday quiet schedule from settings: { "0": {startHour,endHour},
- * … "6": … } (0=Sun..6=Sat). A day absent / malformed = not quiet that day. Null
- * when nothing is configured.
+ * Parse the quiet-window list from settings: an array of
+ * { startDay, startMinute, endDay, endMinute } (days 0=Sun..6=Sat, minutes
+ * 0..1439). Malformed entries are dropped; null when nothing valid is configured.
  */
 function parseQuietHours(raw: unknown): QuietSchedule | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const r = raw as Record<string, unknown>;
-  const schedule: Record<number, { startHour: number; endHour: number }> = {};
-  for (let day = 0; day <= 6; day++) {
-    const w = r[String(day)];
-    if (w && typeof w === 'object' && !Array.isArray(w)) {
-      const wo = w as Record<string, unknown>;
-      const startHour = wo['startHour'] ?? wo['start_hour'];
-      const endHour = wo['endHour'] ?? wo['end_hour'];
-      if (typeof startHour === 'number' && typeof endHour === 'number') {
-        schedule[day] = { startHour, endHour };
-      }
+  if (!Array.isArray(raw)) return null;
+  const windows: QuietWindow[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const startDay = o['startDay'];
+    const startMinute = o['startMinute'];
+    const endDay = o['endDay'];
+    const endMinute = o['endMinute'];
+    if (
+      [startDay, endDay].every((d) => typeof d === 'number' && d >= 0 && d <= 6) &&
+      [startMinute, endMinute].every((m) => typeof m === 'number' && m >= 0 && m <= 1439)
+    ) {
+      windows.push({
+        startDay: startDay as number,
+        startMinute: startMinute as number,
+        endDay: endDay as number,
+        endMinute: endMinute as number,
+      });
     }
   }
-  return Object.keys(schedule).length ? schedule : null;
+  return windows.length ? windows : null;
 }
 
 /** Parse the frequency cap { max, days } from settings; null when off/invalid. */

@@ -5,9 +5,9 @@ import { ProdSesEmailClient } from '@cdp/email';
 import { dispatchOutbox, type DispatchDeps, type Reader } from '../src/dispatch.js';
 import type { SqlStatement } from '../src/core.js';
 
-/** A quiet schedule with the SAME window every weekday (settings default TZ = UTC). */
-const allDays = (startHour: number, endHour: number): Record<string, { startHour: number; endHour: number }> =>
-  Object.fromEntries(Array.from({ length: 7 }, (_, d) => [String(d), { startHour, endHour }]));
+/** A quiet schedule (settings shape: an array of windows) with the same window every day. */
+const allDays = (startHour: number, endHour: number): Array<{ startDay: number; startMinute: number; endDay: number; endMinute: number }> =>
+  Array.from({ length: 7 }, (_, d) => ({ startDay: d, startMinute: startHour * 60, endDay: d, endMinute: endHour * 60 }));
 
 // §9 + CRITICAL invariants — the orchestrator runs the FIXED guard pipeline and
 // calls SES SendEmail ONLY on the all-pass path. We prove the SES call count

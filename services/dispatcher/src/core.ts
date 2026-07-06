@@ -20,18 +20,21 @@ export interface SqlStatement {
   readonly values: unknown[];
 }
 
-/** A quiet window for one weekday, on the WORKSPACE TIMEZONE's clock. */
-export interface QuietWindow {
-  /** Inclusive start hour [0..23]. */
-  readonly startHour: number;
-  /** Exclusive end hour [0..23] when sending resumes (start>end wraps past midnight). */
-  readonly endHour: number;
-}
 /**
- * Per-weekday quiet schedule: 0=Sunday … 6=Saturday → that day's window. A day
- * absent = never quiet that day. Evaluated in the workspace timezone.
+ * A quiet window in the weekly cycle: from (startDay, startMinute) to (endDay,
+ * endMinute). Days are 0=Sunday … 6=Saturday; minutes are minutes-past-midnight
+ * (0..1439, 30-minute steps in the UI). A window may span days (Fri 16:00 → Sat
+ * 21:00) and may wrap the week (Sat 22:00 → Sun 06:00). Evaluated in the workspace
+ * timezone.
  */
-export type QuietSchedule = Readonly<Record<number, QuietWindow>>;
+export interface QuietWindow {
+  readonly startDay: number;
+  readonly startMinute: number;
+  readonly endDay: number;
+  readonly endMinute: number;
+}
+/** A set of quiet windows; a moment is quiet if it falls in ANY window (union). */
+export type QuietSchedule = readonly QuietWindow[];
 
 /** Frequency cap: at most `max` messages per recipient in a rolling `days`-day window. */
 export interface FrequencyCap {
@@ -198,39 +201,45 @@ export function isOverCap(recentCount: number, cap: FrequencyCap | null | undefi
 
 // ── quiet-hours ──────────────────────────────────────────────────────────────
 
-/** Whether hour `h` is inside [startHour, endHour) — start>end wraps past midnight. */
-function hourInWindow(h: number, startHour: number, endHour: number): boolean {
-  if (startHour === endHour) return false;
-  if (startHour < endHour) return h >= startHour && h < endHour; // same-day
-  return h >= startHour || h < endHour; // [start,24) ∪ [0,end)
+/** Absolute minute-of-week (0..10079) for a (day 0=Sun..6=Sat, minute-of-day). */
+function weekMinute(day: number, minuteOfDay: number): number {
+  return day * 1440 + minuteOfDay;
+}
+
+/** Whether week-minute `wm` falls inside window `w` (handles the week wrap). */
+function inQuietWindow(wm: number, w: QuietWindow): boolean {
+  const start = weekMinute(w.startDay, w.startMinute);
+  const end = weekMinute(w.endDay, w.endMinute);
+  if (start === end) return false; // empty window
+  return start < end ? wm >= start && wm < end : wm >= start || wm < end;
 }
 
 /**
- * Whether `now` is in the quiet window for ITS weekday, evaluated in the workspace
- * `timeZone`. Per-day schedule: each weekday (0=Sun…6=Sat) has its own window (or
- * none). A null schedule means quiet hours are off.
+ * Whether `now` falls in ANY quiet window, evaluated in the workspace `timeZone`.
+ * A null/empty schedule means quiet hours are off.
  */
 export function isInQuietHours(now: Date, schedule: QuietSchedule | null, timeZone: string): boolean {
-  if (!schedule) return false;
-  const { weekday, hour } = zonedComponents(now, timeZone);
-  const win = schedule[weekday];
-  return win ? hourInWindow(hour, win.startHour, win.endHour) : false;
+  if (!schedule || schedule.length === 0) return false;
+  const { weekday, hour, minute } = zonedComponents(now, timeZone);
+  const wm = weekMinute(weekday, hour * 60 + minute);
+  return schedule.some((w) => inQuietWindow(wm, w));
 }
 
 /**
- * The next instant sending is allowed: `now` if not quiet, else the top of the
- * next non-quiet hour. Steps hour-by-hour (bounded to 8 days), re-evaluating in
- * `timeZone` each step, so it handles per-day windows, midnight wraps, and DST.
+ * The next instant sending is allowed: `now` if not quiet, else the next 30-minute
+ * boundary (the picker granularity) that falls outside every window. Steps in
+ * 30-min increments (bounded to 8 days), re-evaluating in `timeZone` each step, so
+ * it handles multi-day windows, week-wraps, and DST.
  */
 export function nextSendableAt(now: Date, schedule: QuietSchedule | null, timeZone: string): Date {
   if (!isInQuietHours(now, schedule, timeZone)) return now;
-  const HOUR = 3_600_000;
-  let t = new Date(Math.floor(now.getTime() / HOUR) * HOUR + HOUR); // top of the next hour
-  for (let i = 0; i < 8 * 24; i++) {
+  const STEP = 30 * 60_000; // 30 minutes
+  let t = new Date(Math.ceil((now.getTime() + 1) / STEP) * STEP); // next 30-min boundary strictly after now
+  for (let i = 0; i < 8 * 48; i++) {
     if (!isInQuietHours(t, schedule, timeZone)) return t;
-    t = new Date(t.getTime() + HOUR);
+    t = new Date(t.getTime() + STEP);
   }
-  return t; // fallback (quiet every hour — schedule misconfig)
+  return t; // fallback (quiet all week — misconfig)
 }
 
 // ── rendering + SES input ────────────────────────────────────────────────────

@@ -77,7 +77,7 @@ describeMaybe('workspace settings: lowercase_emails (real Postgres)', () => {
   // quiet-hours schedule, read by the dispatcher from workspaces.settings.
   type Guard = {
     frequency_cap: { max: number; days: number } | null;
-    quiet_hours: Record<string, { startHour: number; endHour: number }> | null;
+    quiet_hours: Array<{ startDay: number; startMinute: number; endDay: number; endMinute: number }> | null;
   };
 
   it('defaults the guardrails to no cap / no quiet hours', async () => {
@@ -87,19 +87,20 @@ describeMaybe('workspace settings: lowercase_emails (real Postgres)', () => {
     expect(s.quiet_hours).toBeNull();
   });
 
-  it('persists a valid cap + per-day quiet-hours schedule and round-trips it', async () => {
+  it('persists a valid cap + quiet-window list and round-trips it', async () => {
+    const windows = [
+      { startDay: 5, startMinute: 960, endDay: 6, endMinute: 1260 }, // Fri 16:00 → Sat 21:00
+      { startDay: 0, startMinute: 1320, endDay: 1, endMinute: 0 }, // Sun 22:00 → Mon 00:00
+    ];
     const put = await call(world.env, 'PUT', '/workspace/settings', {
       token: tok(),
-      body: {
-        frequency_cap: { max: 2, days: 3 },
-        quiet_hours: { '1': { startHour: 22, endHour: 8 }, '6': { startHour: 20, endHour: 10 } },
-      },
+      body: { frequency_cap: { max: 2, days: 3 }, quiet_hours: windows },
     });
     expect(put.status).toBe(200);
     const get = await call(world.env, 'GET', '/workspace/settings', { token: tok() });
     const s = (get.body as { settings: Guard }).settings;
     expect(s.frequency_cap).toEqual({ max: 2, days: 3 });
-    expect(s.quiet_hours).toEqual({ '1': { startHour: 22, endHour: 8 }, '6': { startHour: 20, endHour: 10 } });
+    expect(s.quiet_hours).toEqual(windows);
   });
 
   it('clears the cap + quiet hours when passed null', async () => {
@@ -119,10 +120,10 @@ describeMaybe('workspace settings: lowercase_emails (real Postgres)', () => {
       body: { frequency_cap: { max: 0, days: 3 } },
     });
     expect(badCap.status).toBe(400);
-    const badHour = await call(world.env, 'PUT', '/workspace/settings', {
+    const badWindow = await call(world.env, 'PUT', '/workspace/settings', {
       token: tok(),
-      body: { quiet_hours: { '1': { startHour: 24, endHour: 8 } } },
+      body: { quiet_hours: [{ startDay: 1, startMinute: 1500, endDay: 1, endMinute: 480 }] }, // startMinute > 1439
     });
-    expect(badHour.status).toBe(400);
+    expect(badWindow.status).toBe(400);
   });
 });

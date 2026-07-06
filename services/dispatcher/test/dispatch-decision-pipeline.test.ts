@@ -3,7 +3,7 @@ import { decideDispatch, type DispatchContext, type QuietSchedule } from '../src
 
 /** A quiet schedule with the SAME window every weekday (UTC in these tests). */
 const allDays = (startHour: number, endHour: number): QuietSchedule =>
-  Object.fromEntries(Array.from({ length: 7 }, (_, d) => [d, { startHour, endHour }]));
+  Array.from({ length: 7 }, (_, d) => ({ startDay: d, startMinute: startHour * 60, endDay: d, endMinute: endHour * 60 }));
 
 // §9 / CLAUDE.md invariant 7 — the guard order is LOAD-BEARING:
 //   gate(canSend) → suppression → frequency-cap → quiet-hours → send

@@ -482,26 +482,33 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
     }
   }
   if (b.quiet_hours !== undefined) {
-    // A per-weekday schedule { "0": {startHour,endHour}, … "6": … } | null. Each
-    // present day is a window (both 0..23, evaluated in the workspace timezone);
-    // null (or an all-empty object) clears the schedule. A day may be absent.
+    // An ARRAY of quiet windows { startDay, startMinute, endDay, endMinute } (days
+    // 0=Sun..6=Sat; minutes 0..1439, 30-min steps in the UI). null / [] clears it.
+    // Evaluated in the workspace timezone; a window may span days or wrap the week.
     if (b.quiet_hours === null) {
       patch.quiet_hours = null;
-    } else {
-      const qh = asObject(b.quiet_hours);
-      const schedule: Record<string, { startHour: number; endHour: number }> = {};
-      for (let day = 0; day <= 6; day++) {
-        const w = qh[String(day)];
-        if (w === undefined || w === null) continue;
-        const wo = asObject(w);
-        const s = Number(wo.startHour);
-        const e = Number(wo.endHour);
-        if (![s, e].every((h) => Number.isInteger(h) && h >= 0 && h <= 23)) {
-          return ok({ error: 'quiet_hours[day] must be {startHour,endHour} integers in 0..23' }, 400);
+    } else if (Array.isArray(b.quiet_hours)) {
+      const windows: Array<{ startDay: number; startMinute: number; endDay: number; endMinute: number }> = [];
+      for (const raw of b.quiet_hours) {
+        const w = asObject(raw);
+        const startDay = Number(w.startDay);
+        const endDay = Number(w.endDay);
+        const startMinute = Number(w.startMinute);
+        const endMinute = Number(w.endMinute);
+        if (
+          ![startDay, endDay].every((d) => Number.isInteger(d) && d >= 0 && d <= 6) ||
+          ![startMinute, endMinute].every((m) => Number.isInteger(m) && m >= 0 && m <= 1439)
+        ) {
+          return ok(
+            { error: 'quiet_hours windows need integer startDay/endDay (0..6) and startMinute/endMinute (0..1439)' },
+            400,
+          );
         }
-        schedule[String(day)] = { startHour: s, endHour: e };
+        windows.push({ startDay, startMinute, endDay, endMinute });
       }
-      patch.quiet_hours = Object.keys(schedule).length ? schedule : null;
+      patch.quiet_hours = windows.length ? windows : null;
+    } else {
+      return ok({ error: 'quiet_hours must be an array of windows (or null)' }, 400);
     }
   }
   if (Object.keys(patch).length === 0) return ok({ error: 'no recognized settings' }, 400);
