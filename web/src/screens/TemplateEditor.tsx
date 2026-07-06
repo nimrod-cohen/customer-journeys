@@ -416,10 +416,16 @@ export function TemplateEditor({
 
       {loadedKey ? <EmailDesigner design={design} onChange={onDesignChange} documentKey={loadedKey} /> : null}
 
-      <div class="mt-5">
-        <span class="label">Emitted MJML</span>
-        <textarea data-testid="mjml-output" readOnly value={mjml} rows={6} class="textarea w-full font-mono text-xs" />
-      </div>
+      {/* The emitted MJML is an implementation detail — not shown to users. Kept in
+          the DOM (hidden) so the e2e suite can still assert the serializer output. */}
+      <textarea
+        data-testid="mjml-output"
+        readOnly
+        value={mjml}
+        class="hidden"
+        tabIndex={-1}
+        aria-hidden="true"
+      />
     </section>
   );
 }
