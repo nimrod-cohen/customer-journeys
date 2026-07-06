@@ -36,6 +36,8 @@ import {
   resolveTextRecipient,
   renderTemplateBody,
   rewriteTrackingLinks,
+  absolutizeUrls,
+  ensureUnsubscribeFooter,
   buildTrackedLinkInsert,
   injectOpenPixel,
   buildTrackedOpenInsert,
@@ -427,6 +429,15 @@ export async function dispatchOutbox(
     // funnel counts DISTINCT-profile opens. The row is pre-created at send (opens=0)
     // so an unopened send is still attributed; the /o/<token> endpoint bumps it.
     let openToken: string | null = null;
+    // EMAIL body fixups (before tracking/pixel + the per-recipient render):
+    //  (1) absolutize root-relative URLs (images `/assets/<id>`, links) against the
+    //      app origin — an email client has no page origin, so `/assets/…` would 404;
+    //  (2) guarantee an unsubscribe link — if the design has no {{unsubscribe}} token,
+    //      append a minimal compliant footer (every marketing email needs one).
+    if (compiledHtml) {
+      compiledHtml = absolutizeUrls(compiledHtml, deps.linkTrackingBaseUrl);
+      compiledHtml = ensureUnsubscribeFooter(compiledHtml);
+    }
     if (linkTrackingOn && compiledHtml) {
       const rw = rewriteTrackingLinks(compiledHtml, {
         baseUrl: deps.linkTrackingBaseUrl,

@@ -114,7 +114,10 @@ describe.skipIf(!RUN)('dispatcher dedupe / idempotency (real Postgres)', () => {
     expect(out.result).toBe('send');
     expect(ses.sends).toHaveLength(1);
     // The rendered body used the compiled template + merge value.
-    expect(ses.sends[0]!.html).toBe('<html>Hi Ada</html>');
+    expect(ses.sends[0]!.html).toContain('<html>Hi Ada</html>');
+    // A design with no {{unsubscribe}} token gets a compliant unsubscribe footer
+    // auto-appended (every marketing email needs one).
+    expect(ses.sends[0]!.html).toContain('/manage-subscription?t=');
     expect(ses.sends[0]!.configurationSetName).toBe('cs');
 
     const ml = await admin.query('SELECT count(*)::int n FROM messages_log WHERE workspace_id = $1', [ws]);
