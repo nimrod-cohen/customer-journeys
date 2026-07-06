@@ -1,6 +1,6 @@
 {
   "name": "customer-journeys",
-  "version": "0.99.25",
+  "version": "0.99.26",
   "private": true,
   "description": "Serverless multi-tenant marketing CDP (monorepo)",
   "packageManager": "pnpm@9.15.9",

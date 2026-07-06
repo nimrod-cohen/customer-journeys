@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { Button, Card, Field, Input, Select } from '../ui/kit.js';
-import { sourceWarning } from './channelConfigLogic.js';
+import { sourceWarning, SMS_019_ERRORS } from './channelConfigLogic.js';
 
 interface ChannelConfig {
   configured: boolean;
@@ -206,6 +206,44 @@ export function CompanyChannelConfig() {
             {error}
           </p>
         ) : null}
+
+        <details data-testid="channel-019-errors-help" class="mt-2 rounded-lg border border-stone-200 bg-stone-50/60">
+          <summary class="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-ink-800">
+            019 error codes — what they mean &amp; how to fix
+          </summary>
+          <div class="overflow-x-auto px-3 pb-3">
+            <table class="w-full text-left text-xs">
+              <thead class="text-stone-400">
+                <tr>
+                  <th class="py-1 pr-3 font-medium">Code</th>
+                  <th class="py-1 pr-3 font-medium">Meaning</th>
+                  <th class="py-1 font-medium">How to fix</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SMS_019_ERRORS.map((e) => (
+                  <tr key={e.code} class="border-t border-stone-200 align-top">
+                    <td class="whitespace-nowrap py-1.5 pr-3 font-mono font-semibold text-ink-900">{e.code}</td>
+                    <td class="py-1.5 pr-3 text-stone-700">{e.meaning}</td>
+                    <td class="py-1.5 text-stone-600">{e.fix}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p class="mt-2 text-xs text-stone-400">
+              Full status/error reference:{' '}
+              <a
+                href="https://docs.019sms.co.il/sms/errors-and-status.html"
+                target="_blank"
+                rel="noreferrer"
+                class="underline"
+              >
+                019 docs
+              </a>
+              .
+            </p>
+          </div>
+        </details>
       </div>
     </Card>
   );
