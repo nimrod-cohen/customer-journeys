@@ -51,6 +51,17 @@ export interface Membership {
 }
 
 /**
+ * A user's COMPANY membership under company-centric RBAC (a `company_users` row):
+ * their single company + company-level role. The role governs capabilities; the
+ * accessible workspaces are derived separately (owner→all, marketer→grants,
+ * accounting→none).
+ */
+export interface CompanyMembership {
+  readonly companyId: string;
+  readonly role: WorkspaceRole;
+}
+
+/**
  * The custom JWT claims the authorizer injects (§12). `workspace_id` is the
  * ACTIVE workspace; it is never read from a client body (§13).
  */

@@ -37,14 +37,17 @@ export class RouteForbiddenError extends Error {
  */
 export function contextFromAuthorizer(event: RequestLike): WorkspaceContext {
   const a = event.requestContext.authorizer;
-  if (!a || !a.sub || !a.workspace_id) {
+  // `sub` is required; `workspace_id` may be EMPTY for a company-level context
+  // (an accounting user has a company role + no active workspace).
+  if (!a || !a.sub) {
     throw new Error('missing authorizer context');
   }
   const isPlatformAdmin = a.is_platform_admin === 'true';
   const role = a.role;
   const base = {
-    workspaceId: a.workspace_id,
+    workspaceId: a.workspace_id ?? '',
     userId: a.sub,
+    ...(a.company_id ? { companyId: a.company_id } : {}),
     isPlatformAdmin,
   };
   return role === 'owner' || role === 'marketer' || role === 'accounting'

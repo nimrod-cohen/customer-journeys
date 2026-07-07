@@ -4,7 +4,7 @@
 // is_platform_admin), and delegates the decision to the pure authorize() core,
 // returning an API Gateway authorizer policy. All I/O (JWKS verification, DB
 // lookups) is INJECTED so the handler stays thin and fully unit-testable.
-import type { Membership } from '@cdp/shared';
+import type { CompanyMembership, Membership } from '@cdp/shared';
 import {
   authorize,
   buildAuthorizerPolicy,
@@ -23,7 +23,9 @@ export interface AuthorizerEvent {
 export interface AuthorizerDeps {
   /** Verify a Supabase JWT against JWKS; reject on bad signature/expiry. */
   verifyJwt(token: string): Promise<DecodedJwt>;
-  /** Load the user's workspace memberships from `workspace_users`. */
+  /** The user's COMPANY membership (company-centric RBAC). Optional for legacy tests. */
+  loadCompany?(userId: string): Promise<CompanyMembership | null>;
+  /** Load the workspaces the user may ACT in (owner→all, marketer→grants, accounting→none). */
   loadMemberships(userId: string): Promise<readonly Membership[]>;
   /** Whether the user is in `platform_admins`. */
   loadIsPlatformAdmin(userId: string): Promise<boolean>;
@@ -57,12 +59,13 @@ export function makeAuthorizerHandler(deps: AuthorizerDeps) {
       throw new Error(UNAUTHORIZED);
     }
 
-    const [memberships, isPlatformAdmin] = await Promise.all([
+    const [company, memberships, isPlatformAdmin] = await Promise.all([
+      deps.loadCompany ? deps.loadCompany(jwt.sub) : Promise.resolve(null),
       deps.loadMemberships(jwt.sub),
       deps.loadIsPlatformAdmin(jwt.sub),
     ]);
 
-    const result = authorize(jwt, memberships, isPlatformAdmin);
+    const result = authorize(jwt, memberships, isPlatformAdmin, company);
     return buildAuthorizerPolicy(result, event.methodArn);
   };
 }

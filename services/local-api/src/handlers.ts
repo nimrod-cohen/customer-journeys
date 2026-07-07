@@ -211,20 +211,44 @@ async function cloneEmailTemplate(
 
 /** GET /me — the resolved identity + the active workspace + capabilities the UI uses. */
 export const getMe: Handler = async (ctx, pool) => {
-  // Memberships carry the workspace NAME (joined) so the UI never shows a raw id.
-  const { rows } = await pool.query(
-    `SELECT wu.workspace_id, wu.role, w.name
-       FROM workspace_users wu
-       JOIN workspaces w ON w.id = wu.workspace_id
-      WHERE wu.user_id = $1
-      ORDER BY w.name`,
-    [ctx.userId ?? ''],
-  );
+  const role = ctx.role ?? null;
+  const companyIdClaim = ctx.companyId ?? null;
+  // Accessible workspaces (company-centric RBAC), each with its NAME so the UI
+  // never shows a raw id: owner → every workspace in the company, marketer → only
+  // granted, accounting → none. A platform admin (no company role) falls back to
+  // their workspace_users rows.
+  let memberships: Array<{ workspaceId: string; role: string; name: string }> = [];
+  if (role === 'owner' && companyIdClaim) {
+    const { rows } = await pool.query<{ id: string; name: string }>(
+      'SELECT id, name FROM workspaces WHERE company_id = $1 ORDER BY name',
+      [companyIdClaim],
+    );
+    memberships = rows.map((r) => ({ workspaceId: r.id, role: 'owner', name: r.name }));
+  } else if (role === 'accounting') {
+    memberships = [];
+  } else if (role === 'marketer') {
+    const { rows } = await pool.query<{ workspace_id: string; name: string }>(
+      `SELECT wu.workspace_id, w.name
+         FROM workspace_users wu JOIN workspaces w ON w.id = wu.workspace_id
+        WHERE wu.user_id = $1 ORDER BY w.name`,
+      [ctx.userId ?? ''],
+    );
+    memberships = rows.map((r) => ({ workspaceId: r.workspace_id, role: 'marketer', name: r.name }));
+  } else {
+    const { rows } = await pool.query<{ workspace_id: string; role: string; name: string }>(
+      `SELECT wu.workspace_id, wu.role, w.name
+         FROM workspace_users wu JOIN workspaces w ON w.id = wu.workspace_id
+        WHERE wu.user_id = $1 ORDER BY w.name`,
+      [ctx.userId ?? ''],
+    );
+    memberships = rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role, name: r.name }));
+  }
   // Resolve the ACTIVE workspace's name + its parent company (even when it isn't
-  // one of the user's memberships — a platform admin viewing into a company) so
-  // the UI can show friendly names, never raw ids.
+  // accessible — a platform admin viewing into a company). With NO active workspace
+  // (an accounting user), resolve the company from the claim so the UI still shows
+  // friendly names, never raw ids.
   let workspaceName: string | null = null;
-  let companyId: string | null = null;
+  let companyId: string | null = companyIdClaim;
   let companyName: string | null = null;
   let companyLogoUrl: string | null = null;
   if (ctx.workspaceId) {
@@ -240,12 +264,19 @@ export const getMe: Handler = async (ctx, pool) => {
       [ctx.workspaceId],
     );
     workspaceName = wn.rows[0]?.wname ?? null;
-    companyId = wn.rows[0]?.company_id ?? null;
+    companyId = wn.rows[0]?.company_id ?? companyIdClaim;
     companyName = wn.rows[0]?.cname ?? null;
     // The logo asset is served public-by-uuid at /assets/<id> (no auth), so the
     // header can render it for EVERY role without a capability-gated fetch.
     const logoId = wn.rows[0]?.logo_asset_id ?? null;
     companyLogoUrl = logoId ? `/assets/${logoId}` : null;
+  } else if (companyIdClaim) {
+    const cn = await pool.query<{ name: string | null; logo_asset_id: string | null }>(
+      'SELECT name, logo_asset_id FROM companies WHERE id = $1',
+      [companyIdClaim],
+    );
+    companyName = cn.rows[0]?.name ?? null;
+    companyLogoUrl = cn.rows[0]?.logo_asset_id ? `/assets/${cn.rows[0].logo_asset_id}` : null;
   }
   // App-owned profile (display name); identity/email live in the auth provider.
   const prof = await pool.query<{ name: string | null }>('SELECT name FROM users WHERE id = $1', [ctx.userId ?? '']);
@@ -258,9 +289,9 @@ export const getMe: Handler = async (ctx, pool) => {
     company_id: companyId,
     company_name: companyName,
     company_logo_url: companyLogoUrl,
-    role: ctx.role ?? null,
+    role,
     is_platform_admin: ctx.isPlatformAdmin,
-    memberships: rows.map((r) => ({ workspaceId: r.workspace_id, role: r.role, name: r.name })),
+    memberships,
   });
 };
 
@@ -4977,15 +5008,35 @@ export const listSuppressions: Handler = async (ctx, pool) => {
 const FIXED_COST_TOTAL = Number(process.env.METERING_FIXED_TOTAL ?? '40');
 
 export const billingUsage: Handler = async (ctx, pool) => {
-  // Raw counters (unchanged contract) for the current workspace.
+  // Billing is COMPANY-level. Report on the ACTIVE workspace (an owner/marketer
+  // viewing a workspace) OR, for a company-level context with no active workspace
+  // (an accounting user), every workspace in the company.
+  let reportIds: string[];
+  if (ctx.workspaceId) {
+    reportIds = [ctx.workspaceId];
+  } else if (ctx.companyId) {
+    const cw = await pool.query<{ id: string }>(
+      'SELECT id FROM workspaces WHERE company_id = $1',
+      [ctx.companyId],
+    );
+    reportIds = cw.rows.map((r) => r.id);
+  } else {
+    reportIds = [];
+  }
+
+  // Raw counters aggregated across the reported workspaces.
   const { rows } = await pool.query(
-    'SELECT period, metric, value FROM usage_counters WHERE workspace_id = $1 ORDER BY period DESC',
-    [ctx.workspaceId],
+    `SELECT period, metric, SUM(value)::bigint AS value
+       FROM usage_counters
+      WHERE workspace_id = ANY($1::uuid[])
+      GROUP BY period, metric
+      ORDER BY period DESC`,
+    [reportIds],
   );
 
   // Computed §20 cost view. The even-split denominator AND iterated rows are the
   // SAME active set (status='active'); per-workspace figures sum to the true
-  // total. This workspace's line is surfaced; the platform totals reconcile.
+  // total. The reported workspaces' lines are summed; the platform totals reconcile.
   const period = monthBucket(new Date());
   const active = await pool.query("SELECT id FROM workspaces WHERE status = 'active' ORDER BY id");
   const activeIds = active.rows.map((r) => r.id as string);
@@ -5003,15 +5054,31 @@ export const billingUsage: Handler = async (ctx, pool) => {
     FIXED_COST_TOTAL,
     DEFAULT_PRICES,
   );
-  const mine = view.workspaces.find((w) => w.workspaceId === ctx.workspaceId) ?? null;
+  // Sum the reported workspaces' cost lines (one line for an owner/marketer's
+  // active workspace; the whole company for an accounting user).
+  const mineLines = view.workspaces.filter((w) => reportIds.includes(w.workspaceId));
+  const mine = mineLines.length
+    ? mineLines.reduce(
+        (a, w) => ({
+          directCost: a.directCost + w.directCost,
+          fixedShare: a.fixedShare + w.fixedShare,
+          total: a.total + w.total,
+        }),
+        { directCost: 0, fixedShare: 0, total: 0 },
+      )
+    : null;
 
-  // ip_recommendation badge (read-only) from sending_identity.
-  const wsRow = await pool.query(
-    "SELECT sending_identity ->> 'ip_mode' AS ip_mode, sending_identity -> 'ip_recommendation' AS ip_recommendation FROM workspaces WHERE id = $1",
-    [ctx.workspaceId],
-  );
-  const ipMode = (wsRow.rows[0]?.ip_mode as string | null) ?? 'shared';
-  const ipRecommendation = wsRow.rows[0]?.ip_recommendation ?? null;
+  // ip_recommendation badge (read-only) — only meaningful for a single active workspace.
+  let ipMode = 'shared';
+  let ipRecommendation: unknown = null;
+  if (ctx.workspaceId) {
+    const wsRow = await pool.query(
+      "SELECT sending_identity ->> 'ip_mode' AS ip_mode, sending_identity -> 'ip_recommendation' AS ip_recommendation FROM workspaces WHERE id = $1",
+      [ctx.workspaceId],
+    );
+    ipMode = (wsRow.rows[0]?.ip_mode as string | null) ?? 'shared';
+    ipRecommendation = wsRow.rows[0]?.ip_recommendation ?? null;
+  }
 
   return ok({
     usage: rows,

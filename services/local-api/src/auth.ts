@@ -13,13 +13,14 @@
 // workspace_id ALWAYS comes from the token (the active-workspace claim), never
 // from a request body (CLAUDE.md inv.2).
 import { authorize, buildAuthorizerPolicy, type DecodedJwt } from '@cdp/service-authorizer';
-import type { Membership } from '@cdp/shared';
+import type { CompanyMembership, Membership } from '@cdp/shared';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /** The authorizer-injected request context (string values), as API GW produces. */
 export interface AuthorizerContext {
   readonly sub: string;
   readonly workspace_id: string;
+  readonly company_id?: string;
   readonly is_platform_admin: string; // 'true' | 'false'
   readonly role?: string;
   readonly effective_role?: string;
@@ -100,6 +101,9 @@ export function extractBearer(header: string | undefined | null): string | null 
 
 /** The DB lookups the local authorizer needs (injected for testability). */
 export interface AuthorizerLookups {
+  /** The user's COMPANY membership (company-centric RBAC), or null if none. */
+  loadCompany(userId: string): Promise<CompanyMembership | null>;
+  /** The workspaces the user may ACT in (owner→all, marketer→grants, accounting→none). */
   loadMemberships(userId: string): Promise<readonly Membership[]>;
   loadIsPlatformAdmin(userId: string): Promise<boolean>;
 }
@@ -123,12 +127,13 @@ export async function runLocalAuthorizer(
   const jwt = decodeDevToken(bearer);
   if (!jwt) return { ok: false, status: 401, reason: 'invalid token' };
 
-  const [memberships, isPlatformAdmin] = await Promise.all([
+  const [company, memberships, isPlatformAdmin] = await Promise.all([
+    lookups.loadCompany(jwt.sub),
     lookups.loadMemberships(jwt.sub),
     lookups.loadIsPlatformAdmin(jwt.sub),
   ]);
 
-  const result = authorize(jwt, memberships, isPlatformAdmin);
+  const result = authorize(jwt, memberships, isPlatformAdmin, company);
   if (!result.allowed) {
     return { ok: false, status: 403, reason: result.reason ?? 'forbidden' };
   }
@@ -141,6 +146,7 @@ export async function runLocalAuthorizer(
     sub: ctx.sub ?? '',
     workspace_id: ctx.workspace_id ?? '',
     is_platform_admin: ctx.is_platform_admin ?? 'false',
+    ...(ctx.company_id !== undefined ? { company_id: ctx.company_id } : {}),
     ...(ctx.role !== undefined ? { role: ctx.role } : {}),
     ...(ctx.effective_role !== undefined ? { effective_role: ctx.effective_role } : {}),
   };

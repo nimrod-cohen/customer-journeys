@@ -86,11 +86,16 @@ export async function dispatch(req: ApiRequest, env: DispatchEnv): Promise<Handl
     }
   }
 
-  // A workspace-less platform admin can use identity (/me) + cross-tenant
-  // (view_all_workspaces) routes, but a workspace-scoped data route would have
-  // nothing to scope to — return a clean 403 ("switch into a workspace first")
-  // rather than letting scopedQuery throw a 500.
-  if (ctx.workspaceId === '' && capability !== null && capability !== 'view_all_workspaces') {
+  // A workspace-less context (a platform admin before switching, OR an accounting
+  // user who is company-level by design) can use identity (/me), cross-tenant
+  // (view_all_workspaces), and COMPANY-LEVEL billing (view_billing) routes — but a
+  // workspace-scoped data route has nothing to scope to → a clean 403.
+  if (
+    ctx.workspaceId === '' &&
+    capability !== null &&
+    capability !== 'view_all_workspaces' &&
+    capability !== 'view_billing'
+  ) {
     return jsonError(403, 'no active workspace — switch into a workspace first');
   }
 

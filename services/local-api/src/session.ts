@@ -123,6 +123,29 @@ export async function devLogin(
         },
       };
     }
+    // A company user with a role but no active workspace — an ACCOUNTING user
+    // (company-level billing only) or a MARKETER not yet granted any workspace.
+    // Log them in workspace-less carrying their company role so the SPA can route
+    // them (accounting → Billing; marketer → "no workspaces assigned yet").
+    const company = await lookups.loadCompany(sub);
+    if (company) {
+      const co = await pool.query<{ name: string }>('SELECT name FROM companies WHERE id = $1', [
+        company.companyId,
+      ]);
+      const token = encodeDevToken({ sub, workspace_id: null });
+      return {
+        status: 200,
+        body: {
+          token,
+          sub,
+          workspace_id: null,
+          is_platform_admin: false,
+          memberships: [],
+          role: company.role,
+          company: { id: company.companyId, name: co.rows[0]?.name ?? '' },
+        },
+      };
+    }
     return {
       status: 403,
       body: { error: 'This account has no workspace access. Ask an owner to invite you, or register a new company.' },
@@ -137,6 +160,7 @@ export async function devLogin(
       sub,
       workspace_id: active,
       is_platform_admin: isPlatformAdmin,
+      role: memberships.find((m) => m.workspaceId === active)?.role ?? memberships[0]?.role ?? null,
       memberships,
     },
   };
@@ -185,6 +209,12 @@ export async function registerOwner(pool: Pool, body: unknown): Promise<SessionR
       [companyName, userId],
     );
     const companyId = company.rows[0]!.id;
+    // Company-centric RBAC: the registrant is the company OWNER from the start
+    // (so they resolve as `owner` even before creating a workspace).
+    await client.query(
+      "INSERT INTO company_users (company_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT (company_id, user_id) DO UPDATE SET role = 'owner'",
+      [companyId, userId],
+    );
     await client.query('COMMIT');
     const token = encodeDevToken({ sub: userId, workspace_id: null });
     return {
@@ -253,9 +283,11 @@ export async function createFirstWorkspace(
       [name, companyId],
     );
     const wsId = ws.rows[0]!.id;
+    // Company-centric RBAC: the creator is the company OWNER (owners access every
+    // workspace implicitly, so no workspace_users grant row is needed).
     await client.query(
-      "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT DO NOTHING",
-      [wsId, jwt.sub],
+      "INSERT INTO company_users (company_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT (company_id, user_id) DO UPDATE SET role = 'owner'",
+      [companyId, jwt.sub],
     );
     await client.query('COMMIT');
     const token = encodeDevToken({ sub: jwt.sub, workspace_id: wsId });

@@ -98,15 +98,14 @@
 # [~] Connect to the REAL WhatsApp official API — BLOCKED on a Meta WhatsApp Business account + credentials.
 #     Architecture + mock done; see .a5c/PROVIDERS-SETUP.md.
 * make the campaign editor grid use the full space, not wrapped in a bordered container
-* add credits checks and alerts
+* add credits checks and alerts - check SMS/WhatsApp/Email credits in each provider and make sure there's enough (let the user set a minimum threshold and send alert email when its lower)
+* finish WhatsApp integration.
+* retry queues in case of SES/SMS/WhatsApp/webhooks api failures - failure-retry planning for SMS/WhatsApp/Email/webhooks.
+* rate limits for SMS/WhatsApp/Email/webhooks based on provider capacities.
 
 # TBD - FUTURE , NOT TO BE DONE NOW
 * Streamed/bulk CSV import for very large files (current import parses client-side).
-  (Skipped on 2026-06-10 — needs a design decision: upload transport + async processing
-  + progress/status.
-* retry queues in case of SES/SMS/WhatsApp api failures
+  (Skipped on 2026-06-10 — needs a design decision: upload transport + async processing  + progress/status.
 * objects management with campaigns.
 * basic CRM features - add sales role? alternatively send events to the CRM.
 * integration with sales system? 
-* rate limits for SMS/WhatsApp/Email/webhooks
-* failure-retry planning for SMS/WhatsApp/Email/webhooks
