@@ -60,6 +60,49 @@ function horizontalKnees(d: string): number {
 }
 
 /**
+ * Assert EVERY direction change in path `d` is a NON-DEGENERATE rounded corner. Catches
+ * the two ways a corner renders SQUARE while still "looking" curved to a naive check:
+ *   (1) a bare axis flip (V immediately followed by H, or H by V, with no Q between);
+ *   (2) a Q whose control point equals its start pen OR its endpoint (a straight Bézier).
+ * The old `qCount ≥ N` check is blind to both. Pure string walk over the M/V/H/Q grammar.
+ */
+function assertAllCornersRounded(d: string, label: string): void {
+  const t = d.trim().split(/\s+/);
+  let i = 0;
+  let px = 0;
+  let py = 0;
+  let prev = '';
+  const n = (): number => Number(t[i++]);
+  while (i < t.length) {
+    const cmd = t[i++];
+    if (cmd === 'M') {
+      px = n();
+      py = n();
+    } else if (cmd === 'V') {
+      const ny = n();
+      expect(prev !== 'H', `${label}: SQUARE corner (bare H→V) at (${px},${py}) in ${d}`).toBe(true);
+      py = ny;
+    } else if (cmd === 'H') {
+      const nx = n();
+      expect(prev !== 'V', `${label}: SQUARE corner (bare V→H) at (${px},${py}) in ${d}`).toBe(true);
+      px = nx;
+    } else if (cmd === 'Q') {
+      const cx = n();
+      const cy = n();
+      const ex = n();
+      const ey = n();
+      const degenerate = (cx === px && cy === py) || (cx === ex && cy === ey);
+      expect(!degenerate, `${label}: DEGENERATE Q ctrl(${cx},${cy}) pen(${px},${py}) end(${ex},${ey}) in ${d}`).toBe(
+        true,
+      );
+      px = ex;
+      py = ey;
+    }
+    prev = cmd;
+  }
+}
+
+/**
  * RULE 1 oracle (tightened v0.42.2) — assert anchor `p` sits on ONE vertical run of `d`
  * that spans at least [p.y − PLUS_DIAMETER, p.y + PLUS_DIAMETER]: the USER RULE that the
  * minimum pad on EACH side of EVERY `+` is at least the height of the `+` CIRCLE. Since
@@ -476,16 +519,16 @@ describe('EMPTY If (both arms empty → straight to the merge) — v0.42.3', () 
     assertLineAboveAndBelow(d, { x: anchor.x, y: anchor.y }, 'emptyIf merge +');
   });
 
-  it('both shoulders are ROUNDED (Q corners) — no square L corner at the split or close', () => {
+  it('EVERY corner of an empty arm is ROUNDED — no square (bare axis flip / degenerate Q)', () => {
     const { arms } = emptyArmEdges();
     for (const e of arms) {
       const d = orthogonalPath(e.fromPoint, e.toPoint, e.laneX, undefined, e.kneeTop, e.closeKnee, e.crossY);
-      // No straight-diagonal segment anywhere.
-      expect(d).not.toMatch(/\bL\b/);
-      // The route has BOTH a top split AND a bottom close, each rounded with Q corners:
-      // expect at least 3 Q commands (1 at the split, 2 at the close).
+      expect(d).not.toMatch(/\bL\b/); // no straight-diagonal segment
+      // All FOUR outer corners (top-center, top-outer, bottom-outer, bottom-center) must be
+      // genuine quarter-circles — a degenerate Q or a bare V↔H flip is a square corner.
+      assertAllCornersRounded(d, `emptyIf arm ${e.slot}`);
       const qCount = d.trim().split(/\s+/).filter((t) => t === 'Q').length;
-      expect(qCount).toBeGreaterThanOrEqual(3);
+      expect(qCount).toBeGreaterThanOrEqual(4); // top-center + top-outer + bottom-outer + bottom-center
     }
   });
 

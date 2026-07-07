@@ -737,11 +737,13 @@ export const JOIN_EXTRA_DROP = 48;
  * longer arm's leaf → the shared closure knee, where that arm's append-+ sits via padHigh)
  * tall enough to realize a comfortable PLUS_TOP_GAP line above the +. That upper leg =
  * (rowHeight − cardHeight) + JOIN_MERGE_DROP − MERGE_LOWER_RUN − r. With the v0.42.2 drop
- * (128) and MERGE_LOWER_RUN (100), the upper leg = 128 + 92 − 100 − 14 = 106px ≥
+ * (128) and MERGE_LOWER_RUN (100), the upper leg = 128 + 112 − 100 − 14 = 126px ≥
  * 2·PLUS_TOP_GAP (88) AND ≥ MIN_SEGMENT (84) ⇒ the append-+ clears PLUS_TOP_GAP above AND
- * ≥ PLUS_PAD below. (Bumped 56 → 92; held at 92 in v0.42.2.)
+ * ≥ PLUS_PAD below. (Bumped 56 → 92 → 112.) v0.100.3 raised it to 112 so an EMPTY arm's
+ * lane run reaches MIN_SEGMENT + 2·CORNER_RADIUS (112) — enough to round BOTH the top-outer
+ * and bottom-outer shoulders AND keep a ≥ MIN_SEGMENT straight run for the arm's (+).
  */
-export const JOIN_MERGE_DROP = 92;
+export const JOIN_MERGE_DROP = 112;
 
 /**
  * NESTED_LEVEL_DROP — extra vertical px reserved PER EXTRA OWNER on a join shared by
