@@ -127,6 +127,7 @@ export function buildJwtClaims(ctx: WorkspaceContext): ClaimSet {
     sub: ctx.userId ?? '',
     workspace_id: ctx.workspaceId,
     is_platform_admin: ctx.isPlatformAdmin,
+    ...(ctx.companyId != null ? { company_id: ctx.companyId } : {}),
   };
   return ctx.role === undefined ? base : { ...base, role: ctx.role };
 }

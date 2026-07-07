@@ -57,21 +57,28 @@ export interface Membership {
 export interface ClaimSet {
   /** Supabase auth user id (the `sub` claim). */
   readonly sub: string;
-  /** The active workspace id (the workspace switcher's selection). */
+  /** The active workspace id (the workspace switcher's selection). May be null for an
+   *  accounting user (company-level billing only, no workspace). */
   readonly workspace_id: string | null;
+  /** The user's COMPANY id (company-centric RBAC). Null only for a workspace-less
+   *  platform admin or a not-yet-bootstrapped owner. */
+  readonly company_id?: string | null;
   /** True when the user is in `platform_admins` (the cross-tenant role). */
   readonly is_platform_admin: boolean;
-  /** The user's role in the active workspace (absent for platform-admin-only). */
+  /** The user's COMPANY role (owner|marketer|accounting), absent for platform-admin-only. */
   readonly role?: WorkspaceRole;
 }
 
 /**
  * Tenancy context resolved by the authorizer (admin API) or from the API key
- * (ingest). `workspace_id` is NEVER taken from a client payload (§7, §13).
+ * (ingest). `workspace_id` is NEVER taken from a client payload (§7, §13). Under
+ * company-centric RBAC, `role` is the user's COMPANY role and `companyId` scopes
+ * company-level actions (user management, sending config, billing).
  */
 export interface WorkspaceContext {
   readonly workspaceId: string;
   readonly userId?: string;
+  readonly companyId?: string | null;
   readonly role?: WorkspaceRole;
   readonly isPlatformAdmin: boolean;
 }
