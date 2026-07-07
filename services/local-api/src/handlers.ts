@@ -424,6 +424,191 @@ export const updateMember: Handler = async (ctx, pool, req) => {
 };
 
 // ---------------------------------------------------------------------------
+// company users + roles (company-centric RBAC, manage_workspace_users)
+//
+// A user belongs to ONE company with a company ROLE (owner|marketer|accounting).
+// Owners access every workspace; a MARKETER's access is the set of workspace_users
+// GRANTS; accounting has none. "Pass ownership" = promote another user to owner
+// (co-owners). A company must always keep ≥1 owner (last-owner guard).
+// ---------------------------------------------------------------------------
+
+const COMPANY_ROLES: ReadonlySet<string> = new Set(['owner', 'marketer', 'accounting']);
+
+/** Resolve the caller's company id (claim first, else the active workspace's company). */
+async function companyIdForCtx(
+  ctx: { readonly companyId?: string | null; readonly workspaceId: string },
+  pool: Pool,
+): Promise<string | null> {
+  if (ctx.companyId) return ctx.companyId;
+  if (ctx.workspaceId) {
+    const r = await pool.query<{ company_id: string }>(
+      'SELECT company_id FROM workspaces WHERE id = $1',
+      [ctx.workspaceId],
+    );
+    return r.rows[0]?.company_id ?? null;
+  }
+  return null;
+}
+
+/** Count owners remaining in a company (the last-owner guard denominator). */
+async function companyOwnerCount(pool: Pool, companyId: string): Promise<number> {
+  const r = await pool.query<{ n: number }>(
+    "SELECT count(*)::int AS n FROM company_users WHERE company_id = $1 AND role = 'owner'",
+    [companyId],
+  );
+  return Number(r.rows[0]?.n ?? 0);
+}
+
+/** Replace a user's marketer grants with `workspaceIds`, validated to the company (inv.2). */
+async function setMarketerGrants(
+  pool: Pool,
+  companyId: string,
+  userId: string,
+  workspaceIds: readonly string[],
+): Promise<void> {
+  // Only ids that actually belong to the company survive (never trust body ids).
+  const valid = await pool.query<{ id: string }>(
+    'SELECT id FROM workspaces WHERE company_id = $1 AND id = ANY($2::uuid[])',
+    [companyId, workspaceIds.length ? workspaceIds : ['00000000-0000-0000-0000-000000000000']],
+  );
+  const ids = valid.rows.map((r) => r.id);
+  // Clear this user's grants in the company, then insert the validated set.
+  await pool.query(
+    `DELETE FROM workspace_users wu USING workspaces w
+      WHERE wu.workspace_id = w.id AND w.company_id = $1 AND wu.user_id = $2`,
+    [companyId, userId],
+  );
+  for (const id of ids) {
+    await pool.query(
+      "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1, $2, 'marketer') ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'marketer'",
+      [id, userId],
+    );
+  }
+}
+
+/** GET /company/users — every user in the company, their role + (marketer) grants. */
+export const listCompanyUsers: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForCtx(ctx, pool);
+  if (!companyId) return ok({ error: 'no active company' }, 400);
+  const { rows } = await pool.query<{ user_id: string; role: string; email: string | null; name: string | null }>(
+    `SELECT cu.user_id, cu.role, u.email, u.name
+       FROM company_users cu LEFT JOIN users u ON u.id = cu.user_id
+      WHERE cu.company_id = $1
+      ORDER BY (cu.role = 'owner') DESC, u.email`,
+    [companyId],
+  );
+  const grants = await pool.query<{ user_id: string; workspace_id: string }>(
+    `SELECT wu.user_id, wu.workspace_id
+       FROM workspace_users wu JOIN workspaces w ON w.id = wu.workspace_id
+      WHERE w.company_id = $1`,
+    [companyId],
+  );
+  const grantsByUser = new Map<string, string[]>();
+  for (const g of grants.rows) {
+    const arr = grantsByUser.get(g.user_id) ?? [];
+    arr.push(g.workspace_id);
+    grantsByUser.set(g.user_id, arr);
+  }
+  const ws = await pool.query<{ id: string; name: string }>(
+    'SELECT id, name FROM workspaces WHERE company_id = $1 ORDER BY name',
+    [companyId],
+  );
+  return ok({
+    users: rows.map((r) => ({
+      user_id: r.user_id,
+      email: r.email ?? emailForUser(r.user_id),
+      name: r.name ?? null,
+      role: r.role,
+      workspace_ids: r.role === 'marketer' ? (grantsByUser.get(r.user_id) ?? []) : [],
+    })),
+    workspaces: ws.rows,
+  });
+};
+
+/** POST /company/users — add a user to the company BY EMAIL (they must have an account). */
+export const addCompanyUser: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForCtx(ctx, pool);
+  if (!companyId) return ok({ error: 'no active company' }, 400);
+  const b = asObject(req.body);
+  const role = String(b.role ?? 'marketer');
+  if (!COMPANY_ROLES.has(role)) return ok({ error: 'invalid role' }, 400);
+  const email = typeof b.email === 'string' ? b.email.trim() : '';
+  const userId = email ? await resolveUserIdByEmail(pool, email) : String(b.user_id ?? '');
+  if (!userId) return ok({ error: email ? `no user with email ${email}` : 'email required' }, 400);
+  // A user belongs to ONE company — reject if already in a different one.
+  const other = await pool.query(
+    'SELECT 1 FROM company_users WHERE user_id = $1 AND company_id <> $2 LIMIT 1',
+    [userId, companyId],
+  );
+  if ((other.rowCount ?? 0) > 0) return ok({ error: 'user already belongs to another company' }, 409);
+  await pool.query(
+    'INSERT INTO company_users (company_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (company_id, user_id) DO UPDATE SET role = EXCLUDED.role',
+    [companyId, userId, role],
+  );
+  const workspaceIds = Array.isArray(b.workspace_ids) ? b.workspace_ids.map((x) => String(x)) : [];
+  // Owners access all / accounting none → clear grants; marketer keeps the chosen set.
+  await setMarketerGrants(pool, companyId, userId, role === 'marketer' ? workspaceIds : []);
+  return ok({ user_id: userId, email: await resolveEmail(pool, userId), role, workspace_ids: role === 'marketer' ? workspaceIds : [] }, 201);
+};
+
+/** PATCH /company/users — change a user's role (incl. pass-ownership) and/or grants. */
+export const updateCompanyUser: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForCtx(ctx, pool);
+  if (!companyId) return ok({ error: 'no active company' }, 400);
+  const b = asObject(req.body);
+  const userId = String(b.user_id ?? '');
+  if (!userId) return ok({ error: 'user_id required' }, 400);
+  if (userId === ctx.userId) return ok({ error: 'you cannot change your own role — ask another owner' }, 403);
+  const cur = await pool.query<{ role: string }>(
+    'SELECT role FROM company_users WHERE company_id = $1 AND user_id = $2',
+    [companyId, userId],
+  );
+  if (!cur.rows[0]) return ok({ error: 'not a member of this company' }, 404);
+  const currentRole = cur.rows[0].role;
+  const newRole = b.role !== undefined ? String(b.role) : currentRole;
+  if (!COMPANY_ROLES.has(newRole)) return ok({ error: 'invalid role' }, 400);
+  // Last-owner guard: never demote the final owner.
+  if (currentRole === 'owner' && newRole !== 'owner' && (await companyOwnerCount(pool, companyId)) <= 1) {
+    return ok({ error: 'a company must always have at least one owner' }, 409);
+  }
+  if (newRole !== currentRole) {
+    await pool.query('UPDATE company_users SET role = $3 WHERE company_id = $1 AND user_id = $2', [
+      companyId,
+      userId,
+      newRole,
+    ]);
+  }
+  if (newRole === 'marketer') {
+    if (Array.isArray(b.workspace_ids)) {
+      await setMarketerGrants(pool, companyId, userId, b.workspace_ids.map((x) => String(x)));
+    }
+  } else {
+    await setMarketerGrants(pool, companyId, userId, []); // owner/accounting hold no grants
+  }
+  return ok({ user_id: userId, role: newRole });
+};
+
+/** DELETE /company/users/:userId — remove a user from the company (last-owner guard). */
+export const removeCompanyUser: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForCtx(ctx, pool);
+  if (!companyId) return ok({ error: 'no active company' }, 400);
+  const userId = String(req.params.userId ?? '');
+  if (!userId) return ok({ error: 'user_id required' }, 400);
+  if (userId === ctx.userId) return ok({ error: 'you cannot remove yourself' }, 403);
+  const cur = await pool.query<{ role: string }>(
+    'SELECT role FROM company_users WHERE company_id = $1 AND user_id = $2',
+    [companyId, userId],
+  );
+  if (!cur.rows[0]) return ok({ deleted: 0 });
+  if (cur.rows[0].role === 'owner' && (await companyOwnerCount(pool, companyId)) <= 1) {
+    return ok({ error: 'a company must always have at least one owner' }, 409);
+  }
+  await setMarketerGrants(pool, companyId, userId, []);
+  await pool.query('DELETE FROM company_users WHERE company_id = $1 AND user_id = $2', [companyId, userId]);
+  return ok({ deleted: 1 });
+};
+
+// ---------------------------------------------------------------------------
 // workspace settings (manage_workspace_users) — e.g. lowercase_emails
 // ---------------------------------------------------------------------------
 
@@ -5552,6 +5737,10 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'DELETE /workspaces/:id': deleteWorkspace,
   'POST /workspace/members': addMember,
   'PATCH /workspace/members': updateMember,
+  'GET /company/users': listCompanyUsers,
+  'POST /company/users': addCompanyUser,
+  'PATCH /company/users': updateCompanyUser,
+  'DELETE /company/users/:userId': removeCompanyUser,
   'GET /workspace/settings': getWorkspaceSettings,
   'PUT /workspace/settings': updateWorkspaceSettings,
   'GET /company/ses-config': getCompanySesConfig,

@@ -29,6 +29,11 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /workspace/members': 'manage_workspace_users',
   'POST /workspace/members': 'manage_workspace_users',
   'PATCH /workspace/members': 'manage_workspace_users',
+  // --- company users + roles (company-centric RBAC, manage_workspace_users) ---
+  'GET /company/users': 'manage_workspace_users',
+  'POST /company/users': 'manage_workspace_users',
+  'PATCH /company/users': 'manage_workspace_users',
+  'DELETE /company/users/:userId': 'manage_workspace_users',
   'GET /workspace/settings': 'manage_workspace_users',
   'PUT /workspace/settings': 'manage_workspace_users',
 
