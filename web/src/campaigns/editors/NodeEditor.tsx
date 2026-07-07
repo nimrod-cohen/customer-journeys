@@ -80,6 +80,8 @@ export interface NodeEditorProps {
   readonly segments: readonly SegmentLite[];
   /** The campaign-row trigger_segment_id (segment_entry trigger). */
   readonly triggerSegmentId: string | null;
+  /** The campaign-row trigger direction (segment_entry): 'enter' | 'exit'. */
+  readonly triggerOn: 'enter' | 'exit';
   /** The campaign's TRIGGER node (its startNode) — lets the IF editor offer a
    *  "Trigger event" condition (only when the trigger is an event) + its type. */
   readonly triggerNode?: { kind?: string; eventType?: string } | null | undefined;
@@ -87,8 +89,8 @@ export interface NodeEditorProps {
   readonly topics: readonly { id: string; name: string }[];
   /** Persist a node config patch into the model (applyNodeConfig + PUT). */
   readonly onSaveNode: (patch: DslNode) => Promise<void>;
-  /** Persist the trigger_segment_id into the DRAFT (PUT /campaigns/:id/draft). */
-  readonly onSaveTriggerSegment: (segmentId: string | null) => Promise<void>;
+  /** Persist the trigger segment + direction into the DRAFT (PUT /campaigns/:id/draft). */
+  readonly onSaveTriggerSegment: (segmentId: string | null, triggerOn: 'enter' | 'exit') => Promise<void>;
   /**
    * Re-fetch the campaign into the builder's model (GET /campaigns/:id). The SEND
    * editor calls this after a SERVER-SIDE mutation (attach-template repoints the
@@ -114,6 +116,7 @@ function TriggerEditor(props: NodeEditorProps) {
   // segment rule builder (which would re-ask "did event X" / profile fields).
   const [filterForm, setFilterForm] = useState<EventFilterForm>(() => readEventPayloadFilter(initial.filter ?? null));
   const [segmentId, setSegmentId] = useState<string>(props.triggerSegmentId ?? '');
+  const [triggerOn, setTriggerOn] = useState<'enter' | 'exit'>(props.triggerOn ?? 'enter');
   const [profileChange, setProfileChange] = useState<ProfileChange>(initial.profileChange ?? 'any');
 
   const save = async (): Promise<void> => {
@@ -131,8 +134,8 @@ function TriggerEditor(props: NodeEditorProps) {
         ...(kind === 'profile' ? { profileChange } : {}),
       }),
     );
-    // The segment_entry trigger's segment is a CAMPAIGN-ROW field — saved separately.
-    if (kind === 'segment_entry') await props.onSaveTriggerSegment(segmentId || null);
+    // The segment_entry trigger's segment + direction are CAMPAIGN-ROW fields — saved separately.
+    if (kind === 'segment_entry') await props.onSaveTriggerSegment(segmentId || null, triggerOn);
     props.onDone();
   };
 
@@ -148,7 +151,7 @@ function TriggerEditor(props: NodeEditorProps) {
       </Field>
       <Field label="Enrollment trigger" hint="How a profile enters this journey.">
         <Select data-testid="trigger-kind" value={kind} onChange={(e: Event) => setKind((e.target as HTMLSelectElement).value as TriggerKind)}>
-          <option value="segment_entry">When a profile enters a segment</option>
+          <option value="segment_entry">When a profile enters or leaves a segment</option>
           <option value="event">When a profile does an event</option>
           <option value="profile">When a profile is created or updated</option>
           <option value="manual">Manually enrolled</option>
@@ -156,16 +159,28 @@ function TriggerEditor(props: NodeEditorProps) {
       </Field>
 
       {kind === 'segment_entry' ? (
-        <Field label="Segment" hint="The audience whose entry enrolls a profile.">
-          <Select data-testid="trigger-segment" value={segmentId} onChange={(e: Event) => setSegmentId((e.target as HTMLSelectElement).value)}>
-            <option value="">Choose a segment…</option>
-            {props.segments.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
+        <>
+          <Field label="Segment" hint="The audience whose entry/exit enrolls a profile.">
+            <Select data-testid="trigger-segment" value={segmentId} onChange={(e: Event) => setSegmentId((e.target as HTMLSelectElement).value)}>
+              <option value="">Choose a segment…</option>
+              {props.segments.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Fire when the profile…" hint="Enroll on ENTERING the segment, or on LEAVING it.">
+            <Select
+              data-testid="trigger-direction"
+              value={triggerOn}
+              onChange={(e: Event) => setTriggerOn((e.target as HTMLSelectElement).value as 'enter' | 'exit')}
+            >
+              <option value="enter">Enters the segment</option>
+              <option value="exit">Leaves the segment</option>
+            </Select>
+          </Field>
+        </>
       ) : null}
 
       {kind === 'event' ? (

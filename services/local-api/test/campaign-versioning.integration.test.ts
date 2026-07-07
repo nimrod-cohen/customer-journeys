@@ -197,6 +197,37 @@ describeMaybe('campaign versioning + publish-scope (real Postgres)', () => {
     expect(c.hasDraft).toBe(false);
   });
 
+  it('trigger_on (enter|exit) is draft-aware: /draft stages it, GET returns it, publish promotes it', async () => {
+    const camp = await makeCampaign(WS, segmentEntryDef); // live trigger_on defaults to 'enter'
+    // Stage "fire on LEAVING the segment" into the draft.
+    const put = await call(world.env, 'PUT', `/campaigns/${camp}/draft`, {
+      token: tok(),
+      body: { definition: segmentEntryDef, trigger_on: 'exit' },
+    });
+    expect(put.status).toBe(200);
+    // GET reflects the DRAFT direction; the live row is still 'enter' until publish.
+    const got = await call(world.env, 'GET', `/campaigns/${camp}`, { token: tok() });
+    expect((got.body as { campaign: { trigger_on: string } }).campaign.trigger_on).toBe('exit');
+    const before = await world.pool.query<{ trigger_on: string; draft_trigger_on: string | null }>(
+      'SELECT trigger_on, draft_trigger_on FROM campaigns WHERE id = $1',
+      [camp],
+    );
+    expect(before.rows[0]!.trigger_on).toBe('enter');
+    expect(before.rows[0]!.draft_trigger_on).toBe('exit');
+    // Publish promotes exit → live and clears the draft override.
+    const pub = await call(world.env, 'POST', `/campaigns/${camp}/publish`, {
+      token: tok(),
+      body: { name: 'exit v1', scope: 'forward' },
+    });
+    expect(pub.status).toBe(200);
+    const after = await world.pool.query<{ trigger_on: string; draft_trigger_on: string | null }>(
+      'SELECT trigger_on, draft_trigger_on FROM campaigns WHERE id = $1',
+      [camp],
+    );
+    expect(after.rows[0]!.trigger_on).toBe('exit');
+    expect(after.rows[0]!.draft_trigger_on).toBeNull();
+  });
+
   it('POST /publish snapshots v1, promotes draft→live + active_version_id + status active, clears the draft', async () => {
     const camp = await makeCampaign(WS, linearDef('orig'));
     await call(world.env, 'PUT', `/campaigns/${camp}/draft`, { token: tok(), body: { definition: linearDef('v1') } });

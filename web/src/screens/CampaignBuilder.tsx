@@ -418,6 +418,7 @@ export function CampaignDetail({ id }: { id?: string }) {
   const [status, setStatus] = useState<string>('draft');
   const [timeZone, setTimeZone] = useState('UTC');
   const [triggerSegmentId, setTriggerSegmentId] = useState<string | null>(null);
+  const [triggerOn, setTriggerOn] = useState<'enter' | 'exit'>('enter');
   const [segments, setSegments] = useState<SegmentLite[]>([]);
   // Topics list — fed into the per-send-node Topic picker in the node editor.
   // The dispatcher gates each send on its own node's topic_id (no campaign-level
@@ -458,6 +459,7 @@ export function CampaignDetail({ id }: { id?: string }) {
   const [tab, setTab] = useState<'builder' | 'history' | 'journeys'>('builder');
   const [liveDefinition, setLiveDefinition] = useState<CampaignDefinition | null>(null);
   const [liveTriggerSegmentId, setLiveTriggerSegmentId] = useState<string | null>(null);
+  const [liveTriggerOn, setLiveTriggerOn] = useState<'enter' | 'exit'>('enter');
   const [versions, setVersions] = useState<CampaignVersion[] | null>(null);
   const [enrollments, setEnrollments] = useState<CampaignEnrollment[] | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -495,6 +497,7 @@ export function CampaignDetail({ id }: { id?: string }) {
         liveDefinition: CampaignDefinition;
         hasDraft: boolean;
         trigger_segment_id: string | null;
+        trigger_on: 'enter' | 'exit' | null;
       };
       timezone: string;
     }>(`/campaigns/${cid}`);
@@ -503,11 +506,14 @@ export function CampaignDetail({ id }: { id?: string }) {
     setStatus(res.campaign.status);
     setModel(parseDefinition(res.campaign.definition));
     setTriggerSegmentId(res.campaign.trigger_segment_id ?? null);
+    const to = res.campaign.trigger_on === 'exit' ? 'exit' : 'enter';
+    setTriggerOn(to);
     setLiveDefinition(res.campaign.liveDefinition);
     // The server resolves trigger_segment_id to the DRAFT trigger when a draft
     // exists; the LIVE trigger equals it only when there's no unsaved draft. We use
     // the live trigger as the diff baseline — when no draft, draft == live.
     setLiveTriggerSegmentId(res.campaign.hasDraft ? null : (res.campaign.trigger_segment_id ?? null));
+    setLiveTriggerOn(res.campaign.hasDraft ? 'enter' : to);
     setTimeZone(res.timezone || 'UTC');
     clearPublish();
     setError('');
@@ -657,12 +663,17 @@ export function CampaignDetail({ id }: { id?: string }) {
   // PUT /campaigns/:id/draft — including its draft trigger segment. The server
   // validates the graph; an invalid graph throws (the caller surfaces it). Returns
   // the campaign id.
-  const persist = async (overrideModel?: CanvasModel, overrideTriggerSeg?: string | null): Promise<string> => {
+  const persist = async (
+    overrideModel?: CanvasModel,
+    overrideTriggerSeg?: string | null,
+    overrideTriggerOn?: 'enter' | 'exit',
+  ): Promise<string> => {
     const definition = buildDefinition(overrideModel ?? model);
     const triggerSeg = overrideTriggerSeg !== undefined ? overrideTriggerSeg : triggerSegmentId;
+    const to = overrideTriggerOn !== undefined ? overrideTriggerOn : triggerOn;
     if (editingId) {
       await api.put(`/campaigns/${editingId}/draft`, {
-        body: { definition, ...(triggerSeg !== null ? { trigger_segment_id: triggerSeg } : {}) },
+        body: { definition, trigger_on: to, ...(triggerSeg !== null ? { trigger_segment_id: triggerSeg } : {}) },
       });
       return editingId;
     }
@@ -672,6 +683,7 @@ export function CampaignDetail({ id }: { id?: string }) {
       body: {
         name: name || 'Untitled campaign',
         definition,
+        trigger_on: to,
         ...(triggerSeg !== null ? { trigger_segment_id: triggerSeg } : {}),
       },
     });
@@ -734,11 +746,12 @@ export function CampaignDetail({ id }: { id?: string }) {
     setOpenNode(node);
   };
 
-  // The trigger segment is part of the DRAFT — persist it (with the current model)
-  // through the draft writer so live is untouched until publish.
-  const saveTriggerSegment = async (segmentId: string | null): Promise<void> => {
+  // The trigger segment + direction (enter|exit) are part of the DRAFT — persist them
+  // (with the current model) through the draft writer so live is untouched until publish.
+  const saveTriggerSegment = async (segmentId: string | null, on: 'enter' | 'exit'): Promise<void> => {
     setTriggerSegmentId(segmentId);
-    await persist(undefined, segmentId);
+    setTriggerOn(on);
+    await persist(undefined, segmentId, on);
   };
 
   // PUBLISH the draft as a new VERSION (Draft → Live). Persist the draft first so
@@ -850,7 +863,14 @@ export function CampaignDetail({ id }: { id?: string }) {
 
   // The unsaved-draft indicator: a fresh new campaign (no live baseline) reads dirty
   // once it has been created; otherwise compare the local model to the published one.
-  const isDirty = draftDiffersFrom(buildDefinition(model), liveDefinition, triggerSegmentId, liveTriggerSegmentId);
+  const isDirty = draftDiffersFrom(
+    buildDefinition(model),
+    liveDefinition,
+    triggerSegmentId,
+    liveTriggerSegmentId,
+    triggerOn,
+    liveTriggerOn,
+  );
   const canBackfill = backfillAllowed(buildDefinition(model), triggerSegmentId);
 
   return (
@@ -1036,6 +1056,7 @@ export function CampaignDetail({ id }: { id?: string }) {
             segments={segments}
             topics={topics}
             triggerSegmentId={triggerSegmentId}
+            triggerOn={triggerOn}
             triggerNode={model.nodes.find((n) => n.node.type === 'trigger')?.node as { kind?: string; eventType?: string } | undefined}
             onSaveNode={(patch) => saveNode(openNode.id, patch)}
             onSaveTriggerSegment={saveTriggerSegment}

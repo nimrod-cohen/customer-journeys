@@ -3262,13 +3262,15 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
     trigger_segment_id: string | null;
     draft_trigger_segment_id: string | null;
     trigger_on: string | null;
+    draft_trigger_on: string | null;
     keep_while_in_segment: string | null;
     active_version_id: string | null;
     active_version: number | null;
     active_version_name: string | null;
   }>(
     `SELECT c.id, c.name, c.status, c.definition, c.draft_definition, c.trigger_segment_id,
-            c.draft_trigger_segment_id, c.trigger_on, c.keep_while_in_segment, c.active_version_id,
+            c.draft_trigger_segment_id, c.trigger_on, c.draft_trigger_on, c.keep_while_in_segment,
+            c.active_version_id,
             av.version AS active_version, av.name AS active_version_name
      FROM campaigns c
      LEFT JOIN campaign_versions av ON av.id = c.active_version_id AND av.workspace_id = c.workspace_id
@@ -3295,6 +3297,9 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
     JSON.stringify(r.draft_definition) !== JSON.stringify(r.definition);
   const definition = r.draft_definition ?? r.definition;
   const triggerSegmentId = r.draft_definition !== null ? r.draft_trigger_segment_id : r.trigger_segment_id;
+  // The trigger DIRECTION (enter|exit) is draft-aware too — the draft override wins
+  // when a draft exists, else the live trigger_on.
+  const triggerOn = r.draft_definition !== null ? (r.draft_trigger_on ?? r.trigger_on) : r.trigger_on;
   const activeVersion =
     r.active_version_id !== null && r.active_version !== null
       ? { version: r.active_version, name: r.active_version_name }
@@ -3309,7 +3314,7 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
     hasDraft,
     activeVersion,
     trigger_segment_id: triggerSegmentId, // draft trigger ?? live trigger
-    trigger_on: r.trigger_on,
+    trigger_on: triggerOn, // draft direction ?? live direction
     keep_while_in_segment: r.keep_while_in_segment,
     // topic_id moved to per-send-node config — clients read it from
     // each `action.kind = 'send'` node's `topic_id`.
@@ -3600,10 +3605,14 @@ export const saveCampaignDraft: Handler = async (ctx, pool, req) => {
   const resolved = await resolveTriggerSegmentId(pool, ctx.workspaceId, b.trigger_segment_id);
   if (resolved === REJECT) return ok({ error: 'trigger_segment_id not found in this workspace' }, 400);
 
+  // The trigger DIRECTION (enter|exit) is part of the draft working copy — default
+  // 'enter' unless the builder explicitly stages 'exit' (fire on LEAVING the segment).
+  const draftTriggerOn = b.trigger_on === 'exit' ? 'exit' : 'enter';
+
   const q = scopedQuery(
     ctx.workspaceId,
-    `UPDATE campaigns SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2 WHERE id = $3`,
-    [JSON.stringify(b.definition), resolved, id],
+    `UPDATE campaigns SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2, draft_trigger_on = $3 WHERE id = $4`,
+    [JSON.stringify(b.definition), resolved, draftTriggerOn, id],
   );
   const { rowCount } = await pool.query(q.text, q.values);
   if (!rowCount) return ok({ error: 'not found' }, 404); // foreign / missing id (inv.2)
@@ -3634,7 +3643,8 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
   // Read the campaign + its draft (scoped → a foreign id 404s, inv.2).
   const sel = scopedQuery(
     ctx.workspaceId,
-    `SELECT definition, draft_definition, trigger_segment_id, draft_trigger_segment_id
+    `SELECT definition, draft_definition, trigger_segment_id, draft_trigger_segment_id,
+            trigger_on, draft_trigger_on
      FROM campaigns WHERE id = $1`,
     [id],
   );
@@ -3643,6 +3653,8 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
     draft_definition: CampaignDefinition | null;
     trigger_segment_id: string | null;
     draft_trigger_segment_id: string | null;
+    trigger_on: string | null;
+    draft_trigger_on: string | null;
   }>(sel.text, sel.values);
   if (!rows[0]) return ok({ error: 'not found' }, 404);
 
@@ -3651,6 +3663,11 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
   const hasDraft = rows[0].draft_definition !== null;
   const def = hasDraft ? (rows[0].draft_definition as CampaignDefinition) : rows[0].definition;
   const triggerSegmentId = hasDraft ? rows[0].draft_trigger_segment_id : rows[0].trigger_segment_id;
+  // The trigger DIRECTION promotes with the draft (enter|exit); default 'enter'.
+  const triggerOn =
+    (hasDraft ? (rows[0].draft_trigger_on ?? rows[0].trigger_on) : rows[0].trigger_on) === 'exit'
+      ? 'exit'
+      : 'enter';
 
   // Gate BEFORE mutating anything (a failed gate leaves the draft + status intact).
   const gate = await runCampaignPublishGate(ctx.workspaceId, pool, def);
@@ -3683,12 +3700,14 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
       `UPDATE campaigns SET
          definition = $1::jsonb,
          trigger_segment_id = $2,
-         active_version_id = $3,
+         trigger_on = $3,
+         active_version_id = $4,
          status = 'active',
          draft_definition = NULL,
-         draft_trigger_segment_id = NULL
-       WHERE workspace_id = $4 AND id = $5`,
-      [JSON.stringify(def), triggerSegmentId, versionId, ctx.workspaceId, id],
+         draft_trigger_segment_id = NULL,
+         draft_trigger_on = NULL
+       WHERE workspace_id = $5 AND id = $6`,
+      [JSON.stringify(def), triggerSegmentId, triggerOn, versionId, ctx.workspaceId, id],
     );
 
     // (e) backfill on the SAME client so the just-set status='active' is visible to

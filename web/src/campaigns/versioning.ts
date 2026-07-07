@@ -38,9 +38,13 @@ export function draftDiffersFrom(
   liveDefinition: CampaignDefinition | null | undefined,
   localTriggerSegmentId: string | null,
   liveTriggerSegmentId: string | null,
+  localTriggerOn?: 'enter' | 'exit',
+  liveTriggerOn?: 'enter' | 'exit',
 ): boolean {
   if (!liveDefinition) return true;
   if ((localTriggerSegmentId ?? null) !== (liveTriggerSegmentId ?? null)) return true;
+  // The trigger DIRECTION (enter|exit) is part of the draft — a change marks it dirty.
+  if (localTriggerOn !== undefined && (localTriggerOn ?? 'enter') !== (liveTriggerOn ?? 'enter')) return true;
   return stableStringify(localDefinition) !== stableStringify(liveDefinition);
 }
 
