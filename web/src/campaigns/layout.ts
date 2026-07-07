@@ -777,8 +777,12 @@ export const MERGE_LOWER_RUN = 100;
  * center column. We route each out to ±EMPTY_ARM_LANE so the two (+)s sit on
  * DISTINCT columns yet still converge on the central join. A POPULATED arm needs no
  * such lane — its child is already in its own ±BRANCH_HALF_GAP column.
+ *
+ * Set to BRANCH_HALF_GAP so an empty diamond is as WIDE as a real branch (that width
+ * is already reserved in the layout, so no overlap) — the wide arms also give the
+ * shoulders long straight runs so the rounded corners read cleanly, not cramped.
  */
-export const EMPTY_ARM_LANE = 28;
+export const EMPTY_ARM_LANE = BRANCH_HALF_GAP;
 
 /**
  * computeEdges(def, positions) — one LayoutEdge per next/onTrue/onFalse, with the
