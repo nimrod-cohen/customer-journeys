@@ -158,8 +158,12 @@ export function orthogonalPath(
   const yTop = rails.yTop;
   const yBot = crossY !== undefined ? Math.max(yTop + 1, Math.min(crossY, to.y - 1)) : rails.yBot;
   const seg1 = jogTo(from.x, from.y, lane, yTop, radius); // into the lane top (rounded)
-  const seg2 = `V ${num(yBot)}`; // DOWN the lane (the anchorable vertical run)
-  const seg3 = jogTail(lane, yBot, to.x, to.y, radius); // out of the lane into target (rounded)
+  // Stop the lane vertical SHORT by the bottom-shoulder radius so jogTail's entry corner
+  // is a real quarter-circle (a Q whose control == its start pen draws a SQUARE corner).
+  // rTail is capped by the run's slack above MIN_SEGMENT (see laneTailRadius).
+  const rTail = laneTailRadius(yTop, yBot, lane, to.x, to.y, radius);
+  const seg2 = `V ${num(yBot - rTail)}`; // DOWN the lane (the anchorable vertical run)
+  const seg3 = jogTail(lane, yBot, to.x, to.y, rTail); // out of the lane into target (rounded by rTail)
   return `M ${num(from.x)} ${num(from.y)} ${seg1} ${seg2} ${seg3}`.replace(/\s+/g, ' ').trim();
 }
 
@@ -278,6 +282,24 @@ function jogTo(x1: number, y1: number, x2: number, y2: number, radius: number): 
     `Q ${num(x1)} ${num(y2)} ${num(x1 + dir * r)} ${num(y2)} ` +
     `H ${num(x2)}`
   );
+}
+
+/**
+ * Radius for a lane route's BOTTOM shoulder (where the side lane knees back toward the
+ * center). Rounding pulls the lane's straight vertical up by this much, so it is capped
+ * by the run's SLACK above MIN_SEGMENT — 0 at the tight minimum (stays square, run keeps
+ * ≥ MIN_SEGMENT) and the full corner radius on a tall arm (rounded). Both `orthogonalPath`
+ * (the `seg2` shorten) and `verticalAnchor` (the (+) center) use it so they stay in sync.
+ */
+function laneTailRadius(
+  yTop: number,
+  yBot: number,
+  lane: number,
+  toX: number,
+  toY: number,
+  radius: number = CORNER_RADIUS,
+): number {
+  return Math.max(0, Math.min(radius, Math.abs(toY - yBot) / 2, Math.abs(toX - lane) / 2, yBot - yTop - MIN_SEGMENT));
 }
 
 /** An H-into-corner-then-V tail from the lane bottom (x1,y1) down to (x2,y2). */
@@ -404,7 +426,10 @@ export function verticalAnchor(
   const rails = laneRailYs(from.y, to.y);
   const yTop = rails.yTop;
   const yBot = crossY !== undefined ? Math.max(yTop + 1, Math.min(crossY, to.y - 1)) : rails.yBot;
-  return { x: lane, y: padCenter(yTop, yBot) };
+  // Center on the ACTUAL drawn run [yTop, yBot − rTail] (the bottom shoulder rounds off
+  // the last rTail), so the (+) stays centered with ≥ PLUS_PAD each side.
+  const rTail = laneTailRadius(yTop, yBot, lane, to.x, to.y);
+  return { x: lane, y: padCenter(yTop, yBot - rTail) };
 }
 
 /**

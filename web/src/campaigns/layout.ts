@@ -636,7 +636,15 @@ function recenterJoins(def: CampaignDefinition, col: Map<string, number>): void 
       owner !== undefined ? ((d) => ps.filter((p) => d.has(p)))(reachableFrom(def, owner)) : ps;
     const considered = closureParents.length > 0 ? closureParents : ps;
     const cols = considered.map((p) => col.get(p) ?? 0);
-    const target = (Math.min(...cols) + Math.max(...cols)) / 2;
+    // Center DIRECTLY under the owning If (its column is by construction the midpoint
+    // between the two arms). Using the parent-node midpoint biases an EMPTY arm toward
+    // the populated side — an empty arm's "parent" is the If itself (center col), not a
+    // symmetric ±HALF_GAP leaf, so the average drifts. Fall back to the parent midpoint
+    // when there's no owning If (a non-diamond convergence).
+    const target =
+      owner !== undefined && col.has(owner)
+        ? col.get(owner)!
+        : (Math.min(...cols) + Math.max(...cols)) / 2;
     const current = col.get(id) ?? 0;
     const delta = target - current;
     if (delta === 0) continue;

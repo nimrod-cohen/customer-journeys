@@ -376,17 +376,15 @@ describe('layoutDefinition', () => {
     expect([...positions.keys()].filter((k) => k === 'join').length).toBe(1);
   });
 
-  it('recenterJoins centers the join at the average of its two parents’ columns', () => {
+  it('recenterJoins centers the join DIRECTLY under the owning If (not biased by an empty arm)', () => {
     const { positions } = layoutDefinition(emptyArmDiamond);
-    // The join’s parents are `a` (populated arm) and `cond` (the empty onFalse arm
-    // points straight at the join).
-    const px = [positions.get('a')!.x, positions.get('cond')!.x];
-    const lo = Math.min(...px);
-    const hi = Math.max(...px);
+    // `cond` has one populated arm (`a`) and one EMPTY arm (points straight at the join).
+    // The join must sit directly below the If — NOT at the midpoint of (a, cond). An
+    // empty arm's "source" node is the If itself (center column), so the parent-midpoint
+    // would drift toward the populated side and the diamond would close off-center.
     const join = positions.get('join')!;
-    expect(join.x).toBeGreaterThanOrEqual(lo);
-    expect(join.x).toBeLessThanOrEqual(hi);
-    expect(join.x).toBeCloseTo((lo + hi) / 2, 5);
+    const cond = positions.get('cond')!;
+    expect(join.x).toBeCloseTo(cond.x, 5);
   });
 
   it('a NESTED If centers its join under ITS OWN arms, not pulled by an outer arm that shares the join', () => {
