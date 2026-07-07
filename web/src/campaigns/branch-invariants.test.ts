@@ -74,7 +74,7 @@ function assertAllCornersRounded(d: string, label: string): void {
   let prev = '';
   const n = (): number => Number(t[i++]);
   while (i < t.length) {
-    const cmd = t[i++];
+    const cmd = t[i++] ?? '';
     if (cmd === 'M') {
       px = n();
       py = n();

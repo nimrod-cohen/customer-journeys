@@ -32,6 +32,19 @@ function commit(path: string): void {
   routeStore.set(path);
 }
 
+/**
+ * Silently point the URL at `path` WITHOUT re-rendering — the routeStore is NOT updated,
+ * so the current screen stays MOUNTED (no remount, no lost in-flight edit / open drawer).
+ * Used when a screen creates a resource and learns its id (a new campaign at
+ * /campaigns/new → /campaigns/:id): a browser REFRESH then reloads the saved resource
+ * instead of a blank starter. `committed` is synced so later navigation stays consistent.
+ */
+export function replaceRoute(path: string): void {
+  committed = path;
+  const loc = globalThis.location;
+  if (loc) globalThis.history?.replaceState?.(null, '', `${loc.pathname}${loc.search}#${path}`);
+}
+
 /** Navigate to a path (updates the hash), unless a guard cancels it. */
 export function navigate(path: string): void {
   if (navGuard && path !== committed) {

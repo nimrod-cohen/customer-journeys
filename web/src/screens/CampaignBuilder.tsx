@@ -18,7 +18,7 @@
 // /campaigns/:id). Server-calling buttons RETURN the promise; no native dialogs.
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
-import { navigate } from '../router.js';
+import { navigate, replaceRoute } from '../router.js';
 import { Badge, Button, Card, Input, PageHeader, Pagination, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
 import { usePagedList } from '../ui/usePagedList.js';
 import { formatDateTime } from '../ui/datetime.js';
@@ -688,6 +688,10 @@ export function CampaignDetail({ id }: { id?: string }) {
       },
     });
     setEditingId(r.campaign.id);
+    // Point the URL at the new campaign so a REFRESH reloads it instead of a blank
+    // /campaigns/new (which orphaned the draft + minted a new "Untitled" each retry).
+    // Silent (no remount) so an in-flight edit / open node editor isn't disrupted.
+    replaceRoute(`/campaigns/${r.campaign.id}`);
     // A freshly-created campaign's live == its definition (no unsaved draft yet).
     setLiveDefinition(definition);
     setLiveTriggerSegmentId(triggerSeg ?? null);
