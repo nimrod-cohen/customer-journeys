@@ -88,6 +88,18 @@ export async function seed(): Promise<void> {
       "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'marketer')",
       [WS_A, USER_MKT],
     );
+    // Company-centric RBAC: derive company_users from the memberships above (the
+    // same fold as migration 0052 — highest role per company). workspace_users
+    // stays as the marketer→workspace grant list.
+    await pool.query(
+      `INSERT INTO company_users (company_id, user_id, role)
+       SELECT w.company_id, wu.user_id,
+              (ARRAY['owner','marketer','accounting'])[
+                MIN(CASE wu.role WHEN 'owner' THEN 1 WHEN 'marketer' THEN 2 ELSE 3 END)]
+         FROM workspace_users wu JOIN workspaces w ON w.id = wu.workspace_id
+        GROUP BY w.company_id, wu.user_id
+       ON CONFLICT (company_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
+    );
     await pool.query('INSERT INTO platform_admins (user_id) VALUES ($1)', [USER_ADMIN]);
 
     // A template + a saved segment + a couple of profiles in WS_A. The template
