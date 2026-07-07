@@ -13,9 +13,10 @@ import { CompanySesConfig } from './CompanySesConfig.tsx';
 import { CompanyChannelConfig } from './CompanyChannelConfig.tsx';
 import { CompanyWhatsAppConfig } from './CompanyWhatsAppConfig.tsx';
 import { CompanyLogo } from './CompanyLogo.tsx';
+import { CompanyUsersPanel } from './CompanyUsers.tsx';
 import { BillingUsagePanel } from './SimpleScreens.tsx';
 
-type CompanyTab = 'company' | 'workspaces' | 'sending' | 'billing';
+type CompanyTab = 'company' | 'users' | 'workspaces' | 'sending' | 'billing';
 
 export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
   const session = useStore(sessionStore);
@@ -114,6 +115,18 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
         {canCompany ? (
           <button
             type="button"
+            data-testid="company-tab-users"
+            class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+              activeTab === 'users' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+            }`}
+            onClick={() => navigate('/company/users')}
+          >
+            Users
+          </button>
+        ) : null}
+        {canCompany ? (
+          <button
+            type="button"
             data-testid="company-tab-workspaces"
             class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
               activeTab === 'workspaces' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
@@ -150,6 +163,8 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
       </div>
 
       {activeTab === 'billing' ? <BillingUsagePanel /> : null}
+
+      {activeTab === 'users' && canCompany ? <CompanyUsersPanel /> : null}
 
       {activeTab === 'company' && canCompany ? (
       <>

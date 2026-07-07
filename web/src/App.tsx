@@ -14,9 +14,12 @@ export function App() {
   // Checked before the auth gate; the server serves the SPA shell at that path.
   if (typeof window !== 'undefined' && window.location.pathname === '/docs') return <PublicDocs />;
   if (!session.token) return <Login />;
-  // A logged-in owner with no workspace (registered a company but hasn't created
-  // a workspace yet) must create one before the main shell. Platform admins
-  // legitimately have no active workspace and go straight to the shell.
-  if (!session.isPlatformAdmin && !session.workspaceId) return <CreateFirstWorkspace />;
+  // A logged-in OWNER who registered a company but hasn't created a workspace yet
+  // must create one first (needs_workspace). Other workspace-less users go straight
+  // to the shell: platform admins operate cross-tenant, and an ACCOUNTING user is
+  // company-level (billing only) with no workspace by design.
+  if (!session.isPlatformAdmin && !session.workspaceId && session.needsWorkspace) {
+    return <CreateFirstWorkspace />;
+  }
   return <AppShell />;
 }
