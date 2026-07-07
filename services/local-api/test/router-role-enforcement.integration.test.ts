@@ -64,8 +64,9 @@ describeMaybe('router role enforcement (real Postgres)', () => {
     expect(segs.status).toBe(200);
   });
 
-  it('accounting can view billing but cannot edit content', async () => {
-    const t = tokenFor(ACC, WS);
+  it('accounting is company-level: views billing with NO workspace, cannot edit content', async () => {
+    // Company-centric RBAC: an accounting user has no active workspace (billing only).
+    const t = tokenFor(ACC, null);
     const billing = await call(world.env, 'GET', '/billing/usage', { token: t });
     const createSeg = await call(world.env, 'POST', '/segments', {
       token: t,

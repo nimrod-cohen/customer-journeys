@@ -50,6 +50,10 @@ const describeMaybe = RUN ? describe : describe.skip;
 const NY = 'America/New_York';
 const WS = '0c0d0e99-0000-4000-8000-000000000a01';
 const WS_B = '0c0d0e99-0000-4000-8000-000000000a02';
+// Distinct COMPANIES so the WS owner doesn't (legitimately) see WS_B under
+// company-centric RBAC (an owner sees every workspace in THEIR company).
+const COA = '0c0d0e99-0000-4000-8000-0000000000f1';
+const COB = '0c0d0e99-0000-4000-8000-0000000000f2';
 const OWNER = '0c0d0e99-0000-4000-8000-0000000000b1';
 const DOMAIN = '0c0d0e99-0000-4000-8000-0000000000d1';
 const SENDER = '0c0d0e99-0000-4000-8000-0000000000f1';
@@ -145,12 +149,15 @@ describeMaybe('FULL campaign journey: live event enroll → advance → send →
     admin = world.pool;
     await cleanup();
     // WS_A uses the NY timezone (governs the wait + hour-window math, DST-correct).
-    await admin.query("INSERT INTO workspaces (id, name, status, settings) VALUES ($1,'W','active',$2::jsonb)", [
+    await admin.query("INSERT INTO companies (id, name) VALUES ($1,'CoA'),($2,'CoB')", [COA, COB]);
+    await admin.query("INSERT INTO workspaces (id, name, status, company_id, settings) VALUES ($1,'W','active',$2,$3::jsonb)", [
       WS,
+      COA,
       JSON.stringify({ timezone: NY, webhook_allowlist: [ALLOWED] }),
     ]);
-    await admin.query("INSERT INTO workspaces (id, name, status, settings) VALUES ($1,'W-B','active',$2::jsonb)", [
+    await admin.query("INSERT INTO workspaces (id, name, status, company_id, settings) VALUES ($1,'W-B','active',$2,$3::jsonb)", [
       WS_B,
+      COB,
       JSON.stringify({ timezone: NY, webhook_allowlist: [ALLOWED] }),
     ]);
     await admin.query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')", [WS, OWNER]);
@@ -200,6 +207,7 @@ describeMaybe('FULL campaign journey: live event enroll → advance → send →
       await admin.query('DELETE FROM workspace_users WHERE workspace_id = $1', [ws]);
       await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);
     }
+    await admin.query('DELETE FROM companies WHERE id = ANY($1)', [[COA, COB]]);
   }
 
   function runnerDeps(now: Date, sqs: CapturingSqs, webhook?: WebhookHttpClient): RunDeps {

@@ -141,11 +141,11 @@ describeMaybe('register + bootstrap + login (real Postgres)', () => {
     const login = await loginBody();
     const me = (await (await get('/me', login.token)).json()) as { email: string };
     expect(me.email).toBe(EMAIL);
-    const mem = (await (await get('/workspace/members', login.token)).json()) as {
-      members: { email: string; role: string }[];
+    const mem = (await (await get('/company/users', login.token)).json()) as {
+      users: { email: string; role: string }[];
     };
-    expect(mem.members.find((m) => m.role === 'owner')?.email).toBe(EMAIL);
-    expect(mem.members.some((m) => m.email.startsWith('user-'))).toBe(false);
+    expect(mem.users.find((m) => m.role === 'owner')?.email).toBe(EMAIL);
+    expect(mem.users.some((m) => m.email.startsWith('user-'))).toBe(false);
   });
 
   it('rejects a wrong password and a duplicate registration', async () => {

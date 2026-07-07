@@ -10,6 +10,10 @@ import { makeWorld, tokenFor, call, type TestWorld } from './seed.js';
 const WS = '0c0d0e13-0000-4000-8000-000000000a01';
 const OTHER = '0c0d0e13-0000-4000-8000-000000000a02';
 const USER = '0c0d0e13-0000-4000-8000-0000000000b1';
+// Distinct COMPANIES so USER (owner of WS's company) can't reach OTHER (a different
+// company) — company-centric RBAC: an owner sees every workspace in THEIR company.
+const COW = '0c0d0e13-0000-4000-8000-0000000000f1';
+const COO = '0c0d0e13-0000-4000-8000-0000000000f2';
 
 const MJML = '<mjml><mj-body><mj-section><mj-column><mj-text>hi</mj-text></mj-column></mj-section></mj-body></mjml>';
 const DESIGN = {
@@ -30,9 +34,9 @@ describeMaybe('template design + clone + assets (real Postgres)', () => {
   beforeAll(async () => {
     world = makeWorld();
     await cleanup();
-    for (const ws of [WS, OTHER]) {
-      await world.pool.query("INSERT INTO workspaces (id, name, status) VALUES ($1,'W','active')", [ws]);
-    }
+    await world.pool.query("INSERT INTO companies (id, name) VALUES ($1,'CoW'),($2,'CoO')", [COW, COO]);
+    await world.pool.query("INSERT INTO workspaces (id, name, status, company_id) VALUES ($1,'W','active',$2)", [WS, COW]);
+    await world.pool.query("INSERT INTO workspaces (id, name, status, company_id) VALUES ($1,'W','active',$2)", [OTHER, COO]);
     await world.pool.query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')", [WS, USER]);
   });
 
@@ -49,6 +53,7 @@ describeMaybe('template design + clone + assets (real Postgres)', () => {
     await world.pool.query('DELETE FROM email_templates WHERE workspace_id = ANY($1)', [[WS, OTHER]]);
     await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [WS]);
     for (const ws of [WS, OTHER]) await world.pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
+    await world.pool.query('DELETE FROM companies WHERE id = ANY($1)', [[COW, COO]]);
   }
 
   it('design round-trips: create with design → get → update design', async () => {
