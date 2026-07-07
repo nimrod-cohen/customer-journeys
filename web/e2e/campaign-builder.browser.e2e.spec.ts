@@ -280,6 +280,34 @@ test('assemble trigger→wait→send→exit via the (+) palette, then save', asy
   await expect(page.getByTestId('campaign-list')).toContainText('Assembled linear');
 });
 
+// Regression for the v0.100.4 data-loss bug: a NEW campaign was created server-side but
+// the URL stayed at /campaigns/new, so a refresh reloaded a blank starter and orphaned the
+// saved draft. Saving must switch the URL to /campaigns/:id, and a reload must keep the work.
+test('a new campaign updates the URL to /campaigns/:id and a reload keeps the draft', async ({ page }) => {
+  await openCampaigns(page);
+  await page.getByTestId('campaign-new').click();
+  expect(page.url()).toContain('/campaigns/new'); // a brand-new campaign starts here
+  await page.getByTestId('campaign-name').fill('URL persist regression');
+
+  // Build a node: the starter is trigger → exit; insert a wait on that edge.
+  await page.getByTestId('campaign-edge-insert').first().click();
+  await page.getByTestId('campaign-palette').waitFor();
+  await page.getByTestId('palette-wait').click();
+  await expect(page.getByTestId('node-wait')).toBeVisible();
+
+  // Save draft CREATES the campaign — the URL must switch OFF /campaigns/new to the new id.
+  await page.getByTestId('save-campaign').click();
+  await expect(page.getByTestId('toast')).toBeVisible();
+  const uuid = /\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+  await expect.poll(() => page.url()).toMatch(uuid);
+  expect(page.url()).not.toContain('/campaigns/new');
+
+  // RELOAD — the trigger + the added wait node must survive (not a blank starter).
+  await page.reload();
+  await expect(page.getByTestId('node-trigger')).toBeVisible();
+  await expect(page.getByTestId('node-wait')).toBeVisible();
+});
+
 test('a NESTED If lets you add a node AFTER the inner closure (before the outer closure)', async ({ page }) => {
   await openCampaigns(page);
   await page.getByTestId('campaign-new').click();
@@ -501,8 +529,10 @@ test('branch arm spacing is FIXED & depth-consistent: a ~40px gap between the tw
       .map((e) => (e as HTMLElement).getBoundingClientRect())
       .filter((r) => r.top > c.bottom)
       .map((r) => r.left + r.width / 2);
-    const left = below.filter((x) => x < c.cx).sort((a, b) => Math.abs(a - c.cx) - Math.abs(b - c.cx))[0];
-    const right = below.filter((x) => x >= c.cx).sort((a, b) => Math.abs(a - c.cx) - Math.abs(b - c.cx))[0];
+    // The arm lanes straddle the center at ±EMPTY_ARM_LANE (120); a merge/continuation +
+    // can sit AT the center — exclude anything within 40px of it so we pick the arm lanes.
+    const left = below.filter((x) => x < c.cx - 40).sort((a, b) => Math.abs(a - c.cx) - Math.abs(b - c.cx))[0];
+    const right = below.filter((x) => x > c.cx + 40).sort((a, b) => Math.abs(a - c.cx) - Math.abs(b - c.cx))[0];
     return { left, right };
   }, { cx: nested.cx, bottom: nested.bottom });
   expect(nestedArmLanes.left, 'nested left arm lane').toBeDefined();
@@ -525,10 +555,15 @@ test('branch arm spacing is FIXED & depth-consistent: a ~40px gap between the tw
       const cx = lowest.left + lowest.width / 2;
       const inserts = Array.from(document.querySelectorAll('[data-testid="campaign-edge-insert"]'))
         .map((e, i) => ({ i, r: e.getBoundingClientRect() }))
-        .filter((o) => o.r.top > lowest.bottom && o.r.top < lowest.bottom + 160) // the arm-insert row just below
+        // Below THIS If, and within its OWN arm columns (±EMPTY_ARM_LANE + tol). No vertical
+        // window cap: an empty arm's (+) sits a full row LOW, and the far top-level arm's (+)
+        // sits at ±2·BRANCH_HALF_GAP — restricting to ±160 excludes that sibling branch.
+        .filter((o) => o.r.top > lowest.bottom && Math.abs(o.r.left + o.r.width / 2 - cx) < 160)
         .map((o) => ({ i: o.i, cx: o.r.left + o.r.width / 2 }));
+      // Exclude a merge/continuation (+) sitting AT the center (within 40px) so the
+      // pick is the actual ARM lane (+) at ±EMPTY_ARM_LANE, not the center control.
       const pick = inserts
-        .filter((o) => (s === 'left' ? o.cx < cx : o.cx >= cx))
+        .filter((o) => (s === 'left' ? o.cx < cx - 40 : o.cx > cx + 40))
         .sort((a, b) => Math.abs(a.cx - cx) - Math.abs(b.cx - cx))[0];
       return pick ? pick.i : -1;
     }, side);
@@ -549,7 +584,9 @@ test('branch arm spacing is FIXED & depth-consistent: a ~40px gap between the tw
   const nestedCards = await page.evaluate((c) => {
     const waits = Array.from(document.querySelectorAll('[data-testid="node-wait"]'))
       .map((e) => ({ cx: e.getBoundingClientRect().left + e.getBoundingClientRect().width / 2, top: e.getBoundingClientRect().top }))
-      .filter((w) => w.top > c.bottom);
+      // Only cards straddling THIS If's column (±160) — a same-depth card on a SIBLING
+      // branch (the top-level right arm at ±2·BRANCH_HALF_GAP) must not be counted.
+      .filter((w) => w.top > c.bottom && Math.abs(w.cx - c.cx) <= 160);
     const rowTop = Math.min(...waits.map((w) => w.top));
     return waits.filter((w) => Math.abs(w.top - rowTop) < 8).map((w) => w.cx).sort((a, b) => a - b);
   }, nestedFinal);
