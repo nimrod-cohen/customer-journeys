@@ -119,6 +119,16 @@ export function CompanyUsersPanel() {
         <ul class="mt-4 divide-y divide-stone-100 overflow-hidden rounded-lg border border-stone-200">
           {users.map((u) => {
             const isSelf = u.user_id === session.sub;
+            // The LAST owner can't be demoted or removed — a company always keeps ≥1
+            // owner (a system-admin acts cross-tenant but is NOT a company owner, so it
+            // never counts here). The server enforces this too (defense in depth).
+            const isLastOwner = u.role === 'owner' && users.filter((x) => x.role === 'owner').length <= 1;
+            const locked = isSelf || isLastOwner;
+            const lockReason = isSelf
+              ? 'You can’t change your own role — ask another owner'
+              : isLastOwner
+                ? 'A company must keep at least one owner — add another owner first'
+                : undefined;
             return (
               <li data-testid="company-user-row" data-uid={u.user_id} key={u.user_id} class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 text-sm">
                 <div class="min-w-[12rem] flex-1">
@@ -132,8 +142,8 @@ export function CompanyUsersPanel() {
                 <Select
                   data-testid="company-user-role"
                   value={u.role}
-                  disabled={isSelf}
-                  title={isSelf ? 'You cannot change your own role — ask another owner' : undefined}
+                  disabled={locked}
+                  title={lockReason}
                   onChange={(e: Event) => changeRole(u, (e.target as HTMLSelectElement).value)}
                   class="w-36"
                 >
@@ -142,7 +152,13 @@ export function CompanyUsersPanel() {
                   <option value="accounting">Accounting</option>
                 </Select>
                 <div class="flex items-center gap-2">
-                  {!isSelf ? (
+                  {isSelf ? (
+                    <span class="text-xs text-stone-400">you</span>
+                  ) : isLastOwner ? (
+                    <span data-testid="company-user-lastowner" class="text-xs text-stone-400" title={lockReason}>
+                      Last owner
+                    </span>
+                  ) : (
                     <Button
                       data-testid="company-user-remove"
                       variant="ghost"
@@ -152,8 +168,6 @@ export function CompanyUsersPanel() {
                     >
                       Remove
                     </Button>
-                  ) : (
-                    <span class="text-xs text-stone-400">you</span>
                   )}
                 </div>
                 {/* Marketer workspace grants. */}
