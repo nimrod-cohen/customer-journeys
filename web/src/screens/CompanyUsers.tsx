@@ -154,16 +154,14 @@ export function CompanyUsersPanel() {
                 <div class="flex items-center gap-2">
                   {isSelf ? (
                     <span class="text-xs text-stone-400">you</span>
-                  ) : isLastOwner ? (
-                    <span data-testid="company-user-lastowner" class="text-xs text-stone-400" title={lockReason}>
-                      Last owner
-                    </span>
                   ) : (
                     <Button
                       data-testid="company-user-remove"
                       variant="ghost"
                       size="sm"
                       class="text-rose-600 hover:bg-rose-50"
+                      disabled={isLastOwner}
+                      title={lockReason}
                       onClick={() => removeUser(u)}
                     >
                       Remove
