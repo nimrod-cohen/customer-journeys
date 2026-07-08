@@ -3,7 +3,7 @@
 // workspace_id + role; the app re-renders into the AppShell.
 import { useState } from 'preact/hooks';
 import { DEV_USERS } from '@cdp/shared';
-import { login, register } from '../store/session.js';
+import { login, register, requestPasswordReset } from '../store/session.js';
 import { Button, Input } from '../ui/kit.js';
 
 // Vite injects import.meta.env; the web tsconfig doesn't include vite/client
@@ -19,7 +19,19 @@ export function Login() {
   const [companyName, setCompanyName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState('');
   const isRegister = mode === 'register';
+
+  const sendReset = async () => {
+    const em = email.trim();
+    if (!em) {
+      setError('Enter your email above, then tap “Forgot password”.');
+      return;
+    }
+    setError('');
+    await requestPasswordReset(em);
+    setForgotMsg('If that email has an account, a reset link is on its way. Check your inbox.');
+  };
 
   const onSubmit = async (e: Event) => {
     e.preventDefault();
@@ -150,10 +162,28 @@ export function Login() {
                 placeholder={isRegister ? 'at least 8 characters' : '••••••••'}
               />
             </div>
+            {!isRegister ? (
+              <div class="-mt-1 text-right">
+                <button
+                  type="button"
+                  data-testid="forgot-password"
+                  class="text-sm font-medium text-brand-700 hover:underline"
+                  onClick={sendReset}
+                >
+                  Forgot password?
+                </button>
+              </div>
+            ) : null}
             <Button data-testid="login-submit" type="submit" class="w-full" loading={busy} disabled={busy}>
               {isRegister ? 'Create account' : 'Sign in'}
             </Button>
           </form>
+
+          {forgotMsg ? (
+            <p data-testid="forgot-sent" class="mt-4 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800 ring-1 ring-inset ring-brand-200">
+              {forgotMsg}
+            </p>
+          ) : null}
 
           <p class="mt-4 text-sm text-stone-500">
             {isRegister ? (

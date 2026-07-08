@@ -203,6 +203,29 @@ export async function register(input: {
   await applyLogin(res);
 }
 
+/** Accept a company invite: set a password via a one-time token → logged straight in. */
+export async function acceptInvite(token: string, password: string): Promise<void> {
+  const res = await api.post<LoginResponse>('/auth/accept-invite', {
+    body: { token, password },
+    allowWorkspaceId: true,
+  });
+  await applyLogin(res);
+}
+
+/** Complete a password reset via a one-time token → logged straight in. */
+export async function resetPasswordWithToken(token: string, password: string): Promise<void> {
+  const res = await api.post<LoginResponse>('/auth/reset-password', {
+    body: { token, password },
+    allowWorkspaceId: true,
+  });
+  await applyLogin(res);
+}
+
+/** Request a password-reset email (always resolves — never reveals whether the email exists). */
+export async function requestPasswordReset(email: string): Promise<void> {
+  await api.post('/auth/forgot-password', { body: { email } });
+}
+
 /**
  * Create the owner's FIRST workspace (POST /workspace/bootstrap), then enter it.
  * Re-mints the token with the new active workspace and reloads /me so the full

@@ -10,7 +10,15 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, normalize, sep } from 'node:path';
 import type { Pool } from 'pg';
 import { dispatch, type ApiRequest, type DispatchEnv } from './dispatch.js';
-import { devLogin, registerOwner, switchWorkspace, createFirstWorkspace } from './session.js';
+import {
+  devLogin,
+  registerOwner,
+  switchWorkspace,
+  createFirstWorkspace,
+  acceptInvite,
+  forgotPassword,
+  resetPassword,
+} from './session.js';
 import { makePgLookups } from './lookups.js';
 import { makeLocalDeps, type LocalApiDeps } from './deps.js';
 import type { AuthorizerLookups } from './auth.js';
@@ -110,6 +118,24 @@ export function createApp(opts: CreateAppOptions): Hono {
     const body = await safeJson(c);
     const r = await createFirstWorkspace(env.pool, c.req.header('authorization') ?? null, body);
     return c.json(r.body as object, r.status as 201 | 400 | 401 | 403);
+  });
+
+  // System-auth flows (pre-auth): accept an invite (set password → logged in),
+  // request a password reset (always 200), and complete a reset (→ logged in).
+  app.post('/auth/accept-invite', async (c) => {
+    const body = await safeJson(c);
+    const r = await acceptInvite(lookups, env.pool, body);
+    return c.json(r.body as object, r.status as 200 | 400 | 401 | 403);
+  });
+  app.post('/auth/forgot-password', async (c) => {
+    const body = await safeJson(c);
+    const r = await forgotPassword({ mailer: deps.mailer, appBaseUrl: deps.appBaseUrl, pool: env.pool }, body);
+    return c.json(r.body as object, r.status as 200 | 400);
+  });
+  app.post('/auth/reset-password', async (c) => {
+    const body = await safeJson(c);
+    const r = await resetPassword(lookups, env.pool, body);
+    return c.json(r.body as object, r.status as 200 | 400 | 401 | 403);
   });
 
   // Serve an uploaded asset (email image) as BINARY — public-by-uuid, no auth:

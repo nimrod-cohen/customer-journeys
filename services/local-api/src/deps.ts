@@ -8,13 +8,14 @@
 // deterministic and never hit AWS.
 import type { Pool } from 'pg';
 import { getPool } from '@cdp/db';
-import { compileMjml } from '@cdp/email';
+import { compileMjml, resolveTransactionalMailer } from '@cdp/email';
 import type {
   SesEmailClient,
   CreateDomainIdentityResult,
   IdentityVerificationAttributes,
   SendEmailResult,
   SendEmailInput,
+  TransactionalMailer,
 } from '@cdp/email';
 import {
   configSetNameFor,
@@ -48,6 +49,14 @@ export interface LocalApiDeps {
    * real fetch-based client.
    */
   readonly graphHttp: GraphHttpClient;
+  /**
+   * Transactional (system) email — invites, password reset. Resend when
+   * RESEND_API_KEY is set, else a deterministic offline MOCK (dev/tests). Injected
+   * so integration tests inspect the exact email (and its token link).
+   */
+  readonly mailer: TransactionalMailer;
+  /** The public app base URL used to build invite / reset links (e.g. https://journeys.on-grow.com). */
+  readonly appBaseUrl: string;
 }
 
 /**
@@ -129,6 +138,10 @@ export function makeLocalDeps(
   pool: Pool = getPool(),
   channelHttp: ChannelHttpClient = fetchChannelHttpClient(),
   graphHttp: GraphHttpClient = fetchGraphHttpClient(),
+  mailer: TransactionalMailer = resolveTransactionalMailer({
+    apiKey: process.env.RESEND_API_KEY ?? null,
+    from: process.env.SYSTEM_EMAIL_FROM ?? null,
+  }),
 ): LocalApiDeps {
   const region = process.env.AWS_REGION ?? 'us-east-1';
   const ses = makeLocalSes();
@@ -154,5 +167,6 @@ export function makeLocalDeps(
     now: () => new Date(),
     dispatchQueueUrl: process.env.DISPATCH_QUEUE_URL ?? 'local://dispatch',
   };
-  return { pool, compileMjml, onboarding, broadcast, channelHttp, graphHttp };
+  const appBaseUrl = (process.env.APP_BASE_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
+  return { pool, compileMjml, onboarding, broadcast, channelHttp, graphHttp, mailer, appBaseUrl };
 }

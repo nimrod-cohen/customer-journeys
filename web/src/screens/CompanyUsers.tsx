@@ -53,14 +53,14 @@ export function CompanyUsersPanel() {
   const addUser = async () => {
     setErr('');
     try {
-      await api.post('/company/users', {
+      const r = await api.post<{ invited?: boolean }>('/company/users', {
         body: { email: email.trim(), role, workspace_ids: role === 'marketer' ? [...grants] : [] },
       });
       setEmail('');
       setRole('marketer');
       setGrants(new Set());
       await load();
-      showToast('User added', { tone: 'success' });
+      showToast(r.invited ? `Invite sent to ${email.trim()}` : 'User added', { tone: 'success' });
     } catch (e) {
       setErr((e as { error?: string })?.error ?? 'could not add user');
     }
@@ -187,7 +187,9 @@ export function CompanyUsersPanel() {
       {/* Add a user. */}
       <div class="mt-5 rounded-lg border border-stone-200 bg-stone-50/60 p-4">
         <h3 class="text-sm font-bold text-ink-900">Add a user</h3>
-        <p class="mt-0.5 text-xs text-stone-500">They must already have an account (their email).</p>
+        <p class="mt-0.5 text-xs text-stone-500">
+          They'll get an email invite to set a password and join (or are added instantly if they already have an account).
+        </p>
         <div class="mt-3 flex flex-wrap items-end gap-3">
           <Field label="Email" class="min-w-[14rem] flex-1">
             <Input

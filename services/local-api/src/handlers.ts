@@ -11,7 +11,8 @@
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import type { Pool, PoolClient } from 'pg';
 import { promises as dns } from 'node:dns';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { sendInvite } from './system-auth.js';
 import {
   createSesClient,
   buildUnsubscribeUrl,
@@ -525,16 +526,31 @@ export const listCompanyUsers: Handler = async (ctx, pool) => {
   });
 };
 
-/** POST /company/users — add a user to the company BY EMAIL (they must have an account). */
-export const addCompanyUser: Handler = async (ctx, pool, req) => {
+const COMPANY_USER_EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/**
+ * POST /company/users — add a user to the company BY EMAIL. If they already have an
+ * account, they're linked. If NOT, a PENDING account is created and they're INVITED
+ * by email (a one-time link to set a password). Either way they get the chosen role
+ * (+ marketer grants).
+ */
+export const addCompanyUser: Handler = async (ctx, pool, req, deps) => {
   const companyId = await companyIdForCtx(ctx, pool);
   if (!companyId) return ok({ error: 'no active company' }, 400);
   const b = asObject(req.body);
   const role = String(b.role ?? 'marketer');
   if (!COMPANY_ROLES.has(role)) return ok({ error: 'invalid role' }, 400);
   const email = typeof b.email === 'string' ? b.email.trim() : '';
-  const userId = email ? await resolveUserIdByEmail(pool, email) : String(b.user_id ?? '');
-  if (!userId) return ok({ error: email ? `no user with email ${email}` : 'email required' }, 400);
+  if (!email || !COMPANY_USER_EMAIL_RE.test(email)) return ok({ error: 'a valid email is required' }, 400);
+
+  // Link an existing account, or create a PENDING one (no password) to invite.
+  let userId = await resolveUserIdByEmail(pool, email);
+  let invited = false;
+  if (!userId) {
+    userId = randomUUID();
+    await pool.query('INSERT INTO users (id, email) VALUES ($1, $2)', [userId, email]);
+    invited = true;
+  }
   // A user belongs to ONE company — reject if already in a different one.
   const other = await pool.query(
     'SELECT 1 FROM company_users WHERE user_id = $1 AND company_id <> $2 LIMIT 1',
@@ -548,7 +564,24 @@ export const addCompanyUser: Handler = async (ctx, pool, req) => {
   const workspaceIds = Array.isArray(b.workspace_ids) ? b.workspace_ids.map((x) => String(x)) : [];
   // Owners access all / accounting none → clear grants; marketer keeps the chosen set.
   await setMarketerGrants(pool, companyId, userId, role === 'marketer' ? workspaceIds : []);
-  return ok({ user_id: userId, email: await resolveEmail(pool, userId), role, workspace_ids: role === 'marketer' ? workspaceIds : [] }, 201);
+
+  // Email the invite (best-effort — a mail failure must not undo the membership).
+  if (invited && deps?.mailer) {
+    try {
+      const co = await pool.query<{ name: string }>('SELECT name FROM companies WHERE id = $1', [companyId]);
+      const inviter = await pool.query<{ name: string | null }>('SELECT name FROM users WHERE id = $1', [ctx.userId ?? '']);
+      await sendInvite(
+        { mailer: deps.mailer, appBaseUrl: deps.appBaseUrl, pool },
+        { userId, email, companyName: co.rows[0]?.name ?? 'the company', inviterName: inviter.rows[0]?.name ?? null },
+      );
+    } catch {
+      /* invite email failed — the user is still added; they can be re-invited / reset */
+    }
+  }
+  return ok(
+    { user_id: userId, email, role, workspace_ids: role === 'marketer' ? workspaceIds : [], invited },
+    201,
+  );
 };
 
 /** PATCH /company/users — change a user's role (incl. pass-ownership) and/or grants. */

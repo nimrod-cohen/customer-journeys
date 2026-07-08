@@ -36,3 +36,25 @@ export {
   type SendEmailInput,
   type SendEmailResult,
 } from './ses-client.js';
+
+// Transactional (system) email — invites, password reset, verification. Separate
+// from the per-company marketing pipeline; Resend provider + deterministic mock.
+export {
+  ResendMailer,
+  MockTransactionalMailer,
+  resolveTransactionalMailer,
+  fetchTxHttpClient,
+  TxSendError,
+  DEFAULT_SYSTEM_FROM,
+  type TransactionalMailer,
+  type TxEmail,
+  type TxSendResult,
+  type TxHttpClient,
+  type ResendConfig,
+} from './transactional.js';
+
+export {
+  buildInviteEmail,
+  buildPasswordResetEmail,
+  type BuiltEmail,
+} from './system-emails.js';

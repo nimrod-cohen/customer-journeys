@@ -10,6 +10,10 @@ import { findDevUser, DEV_USERS, type Membership } from '@cdp/shared';
 import { encodeDevToken, decodeDevToken, extractBearer } from './auth.js';
 import type { AuthorizerLookups } from './auth.js';
 import { hashPassword, verifyPassword } from './creds.js';
+import { consumeAuthToken, sendPasswordReset } from './system-auth.js';
+import type { TransactionalMailer } from '@cdp/email';
+
+const PASSWORD_MIN = 8;
 
 /** Response for dev-login / switch — a bearer token + the resolved session. */
 export interface SessionResult {
@@ -349,4 +353,83 @@ export async function switchWorkspace(
   } catch {
     return { status: 403, body: { error: 'cannot switch to that workspace' } };
   }
+}
+
+/**
+ * POST /auth/accept-invite — an invited user sets their password via a one-time
+ * token, activating their account, then is logged straight in. Pre-auth.
+ */
+export async function acceptInvite(
+  lookups: AuthorizerLookups,
+  pool: Pool,
+  body: unknown,
+): Promise<SessionResult> {
+  const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const token = String(b.token ?? '');
+  const password = String(b.password ?? '');
+  if (password.length < PASSWORD_MIN) {
+    return { status: 400, body: { error: `password must be at least ${PASSWORD_MIN} characters` } };
+  }
+  const userId = await consumeAuthToken(pool, token, 'invite');
+  if (!userId) return { status: 400, body: { error: 'This invite link is invalid or has expired.' } };
+  await pool.query('UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1', [
+    userId,
+    hashPassword(password),
+  ]);
+  const em = await pool.query<{ email: string | null }>('SELECT email FROM users WHERE id = $1', [userId]);
+  const email = em.rows[0]?.email;
+  if (!email) return { status: 400, body: { error: 'invite user not found' } };
+  // Log them in with the freshly-set credential (reuses devLogin's full resolution).
+  return devLogin(lookups, pool, { email, password });
+}
+
+/**
+ * POST /auth/forgot-password — email a reset link if the address has an account.
+ * ALWAYS returns 200 (never leaks whether an email is registered). Pre-auth.
+ */
+export async function forgotPassword(
+  deps: { mailer: TransactionalMailer; appBaseUrl: string; pool: Pool },
+  body: unknown,
+): Promise<SessionResult> {
+  const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const email = String(b.email ?? '').trim();
+  if (email && EMAIL_RE.test(email)) {
+    const u = await deps.pool.query<{ id: string }>('SELECT id FROM users WHERE email = $1', [email]);
+    const userId = u.rows[0]?.id;
+    if (userId) {
+      try {
+        await sendPasswordReset(deps, { userId, email });
+      } catch {
+        /* swallow — don't reveal send state to the caller */
+      }
+    }
+  }
+  return { status: 200, body: { ok: true } };
+}
+
+/**
+ * POST /auth/reset-password — set a new password via a one-time reset token, then
+ * log the user in. Pre-auth.
+ */
+export async function resetPassword(
+  lookups: AuthorizerLookups,
+  pool: Pool,
+  body: unknown,
+): Promise<SessionResult> {
+  const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const token = String(b.token ?? '');
+  const password = String(b.password ?? '');
+  if (password.length < PASSWORD_MIN) {
+    return { status: 400, body: { error: `password must be at least ${PASSWORD_MIN} characters` } };
+  }
+  const userId = await consumeAuthToken(pool, token, 'reset');
+  if (!userId) return { status: 400, body: { error: 'This reset link is invalid or has expired.' } };
+  await pool.query('UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1', [
+    userId,
+    hashPassword(password),
+  ]);
+  const em = await pool.query<{ email: string | null }>('SELECT email FROM users WHERE id = $1', [userId]);
+  const email = em.rows[0]?.email;
+  if (!email) return { status: 400, body: { error: 'user not found' } };
+  return devLogin(lookups, pool, { email, password });
 }
