@@ -765,6 +765,12 @@ function SendEditor(props: NodeEditorProps) {
   const [waTplName, setWaTplName] = useState(() => initialWa?.name ?? '');
   const [waTplLang, setWaTplLang] = useState(() => initialWa?.language ?? 'en_US');
   const [waTplParams, setWaTplParams] = useState<string[]>(() => initialWa?.params ?? []);
+  // Approved WhatsApp templates from Meta → pick one and SEE its message body (with
+  // {{1}},{{2}}… placeholders) + auto-size the params (mirrors the broadcast composer).
+  const [waTemplates, setWaTemplates] = useState<
+    { name: string; language: string; status: string; body: string; variableCount: number }[]
+  >([]);
+  const [waTplBody, setWaTplBody] = useState('');
   // Reusable SMS templates. Picking one COPIES its body into the
   // body field (copy-on-select — the user can still edit). No live reference.
   const [textTemplates, setTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
@@ -778,6 +784,32 @@ function SendEditor(props: NodeEditorProps) {
       .then((r) => setTextTemplates(r.templates))
       .catch(() => undefined);
   }, []);
+
+  // Approved WhatsApp templates (from Meta) once WhatsApp is the medium.
+  useEffect(() => {
+    if (medium !== 'whatsapp') return;
+    void api
+      .get<{ templates: { name: string; language: string; status: string; body: string; variableCount: number }[] }>(
+        '/whatsapp/templates',
+      )
+      .then((r) => setWaTemplates((r.templates ?? []).filter((t) => t.status === 'APPROVED')))
+      .catch(() => setWaTemplates([]));
+  }, [medium]);
+
+  // The preview body follows the selected (name, language) once templates load.
+  useEffect(() => {
+    const t = waTemplates.find((x) => x.name === waTplName && x.language === waTplLang);
+    setWaTplBody(t?.body ?? '');
+  }, [waTemplates, waTplName, waTplLang]);
+
+  const pickWaTemplate = (val: string) => {
+    const [name, language] = val.split('::');
+    const t = waTemplates.find((x) => x.name === name && x.language === language);
+    if (!t) return;
+    setWaTplName(t.name);
+    setWaTplLang(t.language);
+    setWaTplParams((ps) => Array.from({ length: t.variableCount }, (_, i) => ps[i] ?? ''));
+  };
 
   // Library templates for the picker (only kind!='copy' ones are reusable designs).
   // Declared here — ABOVE the text-channel early return — so the hook order is
@@ -894,6 +926,31 @@ function SendEditor(props: NodeEditorProps) {
         ) : null}
         {waTemplateMode ? (
           <div data-testid="send-whatsapp-template" class="space-y-3 rounded-xl border border-stone-200 bg-stone-50/60 p-3">
+            {waTemplates.length > 0 ? (
+              <Field label="Choose an approved template">
+                <Select
+                  data-testid="send-wa-template-pick"
+                  value={`${waTplName}::${waTplLang}`}
+                  onChange={(e: Event) => pickWaTemplate((e.target as HTMLSelectElement).value)}
+                >
+                  <option value="::">— pick a template —</option>
+                  {waTemplates.map((t) => (
+                    <option key={`${t.name}::${t.language}`} value={`${t.name}::${t.language}`}>
+                      {t.name} · {t.language}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
+            {waTplBody ? (
+              <div data-testid="send-wa-template-preview" class="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Message preview</div>
+                <div class="whitespace-pre-wrap text-sm text-ink-800">{waTplBody}</div>
+                <p class="mt-2 text-[11px] text-stone-500">
+                  Fill each <code class="rounded bg-white px-1">{'{{n}}'}</code> below — its number matches the spot in the message above.
+                </p>
+              </div>
+            ) : null}
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Template name">
                 <Input
