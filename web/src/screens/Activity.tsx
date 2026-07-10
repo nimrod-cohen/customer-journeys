@@ -101,18 +101,69 @@ export function Activity() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.workspaceId]);
 
-  // Re-queue a failed send (returns the promise so the kit Button auto-locks).
-  const retry = (row: ActivityRow) => {
-    if (!row.ref_id) return Promise.resolve();
-    return api
-      .post<{ result?: string }>(`/messages/${row.ref_id}/retry`, {})
-      .then((r) => {
-        showToast(r.result === 'send' ? 'Re-sent ✓' : `Re-queued (${r.result ?? 'done'})`, {
-          tone: r.result === 'send' ? 'success' : 'info',
-        });
-        return load(filters);
-      })
-      .catch((e) => showToast((e as { error?: string })?.error ?? 'Could not retry', { tone: 'error' }));
+  // Selected rows (for bulk retry) + rows with a retry IN FLIGHT (locked).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [retrying, setRetrying] = useState<Set<string>>(new Set());
+  const toggleSelect = (refId: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(refId)) n.delete(refId);
+      else n.add(refId);
+      return n;
+    });
+  const retryableIds = (): string[] => (rows ?? []).filter((r) => r.retryable && r.ref_id).map((r) => r.ref_id!);
+  const allRetryableSelected = (() => {
+    const ids = retryableIds();
+    return ids.length > 0 && ids.every((id) => selected.has(id));
+  })();
+  const toggleSelectAll = () => {
+    const ids = retryableIds();
+    setSelected(allRetryableSelected ? new Set() : new Set(ids));
+  };
+
+  // Flip a retried row to SUCCESS in place (avoids a reload that would show both the
+  // original failed row AND a new sent row) and drop its Retry affordance.
+  const markSucceeded = (refId: string) =>
+    setRows((rs) => rs?.map((r) => (r.ref_id === refId ? { ...r, outcome: 'success', retryable: false } : r)) ?? rs);
+
+  // Retry ONE send. Locked while in flight (no double-clicks). Resolves to the result.
+  const retryOne = async (refId: string): Promise<'sent' | 'queued' | 'error'> => {
+    setRetrying((s) => new Set(s).add(refId));
+    try {
+      const r = await api.post<{ result?: string }>(`/messages/${refId}/retry`, {});
+      if (r.result === 'send') {
+        markSucceeded(refId);
+        return 'sent';
+      }
+      return 'queued';
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not retry', { tone: 'error' });
+      return 'error';
+    } finally {
+      setRetrying((s) => {
+        const n = new Set(s);
+        n.delete(refId);
+        return n;
+      });
+      setSelected((s) => {
+        const n = new Set(s);
+        n.delete(refId);
+        return n;
+      });
+    }
+  };
+
+  const retrySingle = async (refId: string) => {
+    const res = await retryOne(refId);
+    if (res === 'sent') showToast('Re-sent ✓', { tone: 'success' });
+    else if (res === 'queued') showToast('Re-queued', { tone: 'info' });
+  };
+
+  const retrySelected = async () => {
+    const ids = [...selected];
+    let sent = 0;
+    for (const id of ids) if ((await retryOne(id)) === 'sent') sent++;
+    showToast(`Retried ${ids.length} — ${sent} re-sent`, { tone: sent ? 'success' : 'info' });
   };
 
   const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }));
@@ -193,6 +244,23 @@ export function Activity() {
         </div>
       </Card>
 
+      {selected.size > 0 ? (
+        <div data-testid="activity-bulk-bar" class="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2 text-sm">
+          <span class="font-medium text-ink-800">{selected.size} selected</span>
+          <Button
+            data-testid="activity-retry-selected"
+            size="sm"
+            loading={[...selected].some((id) => retrying.has(id))}
+            onClick={retrySelected}
+          >
+            Retry selected
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      ) : null}
+
       {rows === null ? (
         <p class="text-sm text-stone-500">Loading…</p>
       ) : rows.length === 0 ? (
@@ -202,6 +270,15 @@ export function Activity() {
           <table class="w-full text-sm">
             <thead class="border-b border-stone-200 bg-stone-50 text-left text-xs uppercase tracking-wide text-stone-500">
               <tr>
+                <th class="w-8 px-4 py-2.5">
+                  <input
+                    type="checkbox"
+                    data-testid="activity-select-all"
+                    aria-label="Select all retryable"
+                    checked={allRetryableSelected}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
                 <th class="w-8 px-4 py-2.5" />
                 <th class="px-4 py-2.5 font-semibold">When</th>
                 <th class="px-4 py-2.5 font-semibold">Source</th>
@@ -221,6 +298,17 @@ export function Activity() {
                       class={`hover:bg-stone-50/70 ${expandable ? 'cursor-pointer' : ''} ${isOpen ? 'bg-stone-50/70' : ''}`}
                       onClick={expandable ? () => toggle(i) : undefined}
                     >
+                      <td class="px-4 py-2.5" onClick={(e: Event) => e.stopPropagation()}>
+                        {r.retryable && r.ref_id ? (
+                          <input
+                            type="checkbox"
+                            data-testid="activity-select"
+                            aria-label="Select for retry"
+                            checked={selected.has(r.ref_id)}
+                            onChange={() => toggleSelect(r.ref_id!)}
+                          />
+                        ) : null}
+                      </td>
                       <td class="px-4 py-2.5 text-stone-400">
                         {expandable ? (
                           <span data-testid="activity-expand" class={`inline-block transition-transform ${isOpen ? 'rotate-90' : ''}`}>▸</span>
@@ -232,16 +320,7 @@ export function Activity() {
                       </td>
                       <td class="px-4 py-2.5 font-medium text-ink-900">{r.type}</td>
                       <td class="px-4 py-2.5">
-                        <span class="inline-flex items-center gap-2">
-                          <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
-                          {r.retryable && r.ref_id ? (
-                            <span onClick={(e: Event) => e.stopPropagation()} class="inline-block">
-                              <Button data-testid="activity-retry" variant="secondary" size="sm" onClick={() => retry(r)}>
-                                Retry
-                              </Button>
-                            </span>
-                          ) : null}
-                        </span>
+                        <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
                       </td>
                       <td class="px-4 py-2.5 text-stone-600" onClick={(e: Event) => e.stopPropagation()}>
                         {r.profile_id ? (
@@ -260,9 +339,23 @@ export function Activity() {
                     </tr>
                     {expandable && isOpen ? (
                       <tr data-testid="activity-detail-row" class="bg-stone-50/40">
-                        <td />
+                        <td colSpan={2} />
                         <td colSpan={5} class="px-4 pb-4 pt-1">
                           <JsonView value={r.detail} bare />
+                          {r.retryable && r.ref_id ? (
+                            <div class="mt-3">
+                              <Button
+                                data-testid="activity-retry"
+                                variant="secondary"
+                                size="sm"
+                                loading={retrying.has(r.ref_id)}
+                                disabled={retrying.has(r.ref_id)}
+                                onClick={() => retrySingle(r.ref_id!)}
+                              >
+                                Retry this send
+                              </Button>
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                     ) : null}
