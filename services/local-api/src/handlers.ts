@@ -5076,7 +5076,18 @@ export const listActivity: Handler = async (ctx, pool, req) => {
          SELECT sent_at, 'send', medium,
                 CASE WHEN status = 'sent' THEN 'success' ELSE 'failure' END,
                 profile_id, coalesce(reason, status),
-                id, (status = 'failed')   -- a FAILED send can be retried (re-queued)
+                id,
+                -- Retryable only while it's a FAILED send the recipient has NOT since
+                -- received: once a retry lands a 'sent' row for the same broadcast/
+                -- campaign, this failed row stops offering a (no-op) re-send.
+                (status = 'failed' AND NOT EXISTS (
+                   SELECT 1 FROM messages_log s
+                    WHERE s.workspace_id = messages_log.workspace_id
+                      AND s.profile_id = messages_log.profile_id
+                      AND s.status = 'sent'
+                      AND ( (messages_log.campaign_id IS NOT NULL AND s.campaign_id = messages_log.campaign_id)
+                         OR (messages_log.broadcast_id IS NOT NULL AND s.broadcast_id = messages_log.broadcast_id) )
+                )) AS retryable
            FROM messages_log WHERE workspace_id = $1
          UNION ALL
          SELECT at, source, type, outcome, profile_id, detail, NULL::uuid, false

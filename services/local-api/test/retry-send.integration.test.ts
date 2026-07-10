@@ -98,6 +98,22 @@ describeMaybe('retry a failed send (real Postgres)', () => {
     expect(r.status).toBe(409); // already delivered to this recipient
   });
 
+  it('the activity feed stops offering retry once the recipient has received it', async () => {
+    // A 'sent' row exists for (PROF, BC) from the earlier retry. Seed a failed row too.
+    await pool.query(
+      `INSERT INTO messages_log (workspace_id, profile_id, broadcast_id, medium, status, reason)
+       VALUES ($1,$2,$3,'whatsapp','failed','stale')`,
+      [WS, PROF, BC],
+    );
+    const r = await call(env, 'GET', '/activity', { token: tokenFor(OWNER, WS), query: { source: 'send' } });
+    const sends = (r.body as { activity: { outcome: string; retryable: boolean }[] }).activity.filter(
+      (a) => a.outcome === 'failure',
+    );
+    expect(sends.length).toBeGreaterThan(0);
+    // Every failed send to this already-delivered recipient is NON-retryable.
+    expect(sends.every((a) => a.retryable === false)).toBe(true);
+  });
+
   it('a non-failed send id is 400; a foreign id is 404', async () => {
     const okSend = await pool.query<{ id: string }>(
       `INSERT INTO messages_log (workspace_id, profile_id, broadcast_id, medium, status)
