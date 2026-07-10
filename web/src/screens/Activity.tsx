@@ -153,10 +153,11 @@ export function Activity() {
     }
   };
 
-  const retrySingle = async (refId: string) => {
-    const res = await retryOne(refId);
-    if (res === 'sent') showToast('Re-sent ✓', { tone: 'success' });
-    else if (res === 'queued') showToast('Re-queued', { tone: 'info' });
+  const retrySingle = async (row: ActivityRow) => {
+    const res = await retryOne(row.ref_id!);
+    const who = row.email ?? 'the recipient';
+    if (res === 'sent') showToast(`Re-sent to ${who} ✓`, { tone: 'success', ttl: 5000 });
+    else if (res === 'queued') showToast(`Re-queued for ${who} — delivery pending`, { tone: 'info', ttl: 5000 });
   };
 
   const retrySelected = async () => {
@@ -350,7 +351,7 @@ export function Activity() {
                                 size="sm"
                                 loading={retrying.has(r.ref_id)}
                                 disabled={retrying.has(r.ref_id)}
-                                onClick={() => retrySingle(r.ref_id!)}
+                                onClick={() => retrySingle(r)}
                               >
                                 Retry this send
                               </Button>
