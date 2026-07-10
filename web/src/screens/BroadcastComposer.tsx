@@ -472,6 +472,13 @@ export function BroadcastWizard({ id }: { id?: string }) {
   const [waTplName, setWaTplName] = useState('');
   const [waTplLang, setWaTplLang] = useState('en_US');
   const [waTplParams, setWaTplParams] = useState<string[]>([]);
+  // The APPROVED WhatsApp templates from Meta (name/language/body/variableCount), so
+  // the user can PICK one and SEE its message (with {{1}},{{2}}… placeholders) — no
+  // guessing how many variables it has. Derived preview body of the selected one.
+  const [waTemplates, setWaTemplates] = useState<
+    { name: string; language: string; status: string; body: string; variableCount: number }[]
+  >([]);
+  const [waTplBody, setWaTplBody] = useState('');
   // Optional TOPIC tag (subscription gating): a recipient unsubscribed from this
   // topic is skipped at send. '' = no topic (sends to everyone not opted out).
   const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
@@ -519,6 +526,36 @@ export function BroadcastWizard({ id }: { id?: string }) {
       setTextTemplates(tt.templates);
     });
   }, []);
+
+  // Load the APPROVED WhatsApp templates (from Meta) once WhatsApp is the channel, so
+  // the user can pick one and see its message body. Empty when not configured/offline.
+  useEffect(() => {
+    if (medium !== 'whatsapp') return;
+    void api
+      .get<{ templates: { name: string; language: string; status: string; body: string; variableCount: number }[] }>(
+        '/whatsapp/templates',
+      )
+      .then((r) => setWaTemplates((r.templates ?? []).filter((t) => t.status === 'APPROVED')))
+      .catch(() => setWaTemplates([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [medium]);
+
+  // The preview body follows the selected (name, language) once the templates load.
+  useEffect(() => {
+    const t = waTemplates.find((x) => x.name === waTplName && x.language === waTplLang);
+    setWaTplBody(t?.body ?? '');
+  }, [waTemplates, waTplName, waTplLang]);
+
+  // Pick an approved template: fill its name + language and SIZE the parameter list to
+  // its {{n}} count (keeping any values already typed). The body preview then appears.
+  const pickWaTemplate = (val: string) => {
+    const [name, language] = val.split('::');
+    const t = waTemplates.find((x) => x.name === name && x.language === language);
+    if (!t) return;
+    setWaTplName(t.name);
+    setWaTplLang(t.language);
+    setWaTplParams((ps) => Array.from({ length: t.variableCount }, (_, i) => ps[i] ?? ''));
+  };
 
   // Edit mode: load the broadcast and prefill. A sent/sending broadcast is not
   // editable → bounce back to the list.
@@ -998,6 +1035,31 @@ export function BroadcastWizard({ id }: { id?: string }) {
 
             {medium === 'whatsapp' && waMode === 'template' ? (
               <div data-testid="whatsapp-template" class="space-y-3 rounded-xl border border-stone-200 bg-stone-50/60 p-3">
+                {waTemplates.length > 0 ? (
+                  <Field label="Choose an approved template">
+                    <Select
+                      data-testid="wa-template-pick"
+                      value={`${waTplName}::${waTplLang}`}
+                      onChange={(e: Event) => pickWaTemplate((e.target as HTMLSelectElement).value)}
+                    >
+                      <option value="::">— pick a template —</option>
+                      {waTemplates.map((t) => (
+                        <option key={`${t.name}::${t.language}`} value={`${t.name}::${t.language}`}>
+                          {t.name} · {t.language}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                ) : null}
+                {waTplBody ? (
+                  <div data-testid="wa-template-preview" class="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                    <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Message preview</div>
+                    <div class="whitespace-pre-wrap text-sm text-ink-800">{waTplBody}</div>
+                    <p class="mt-2 text-[11px] text-stone-500">
+                      Fill each <code class="rounded bg-white px-1">{'{{n}}'}</code> below — its number matches the spot in the message above.
+                    </p>
+                  </div>
+                ) : null}
                 <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field label="Template name">
                     <Input
