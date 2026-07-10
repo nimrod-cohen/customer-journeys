@@ -9,6 +9,7 @@ import { useStore } from '../store/store.js';
 import { navigate } from '../router.js';
 import { Badge, Button, Card, EmptyState, Field, Input, PageHeader, Select } from '../ui/kit.js';
 import { JsonView } from '../ui/JsonView.js';
+import { showToast } from '../ui/toast.js';
 import { formatDateTime } from '../ui/datetime.js';
 
 interface ActivityRow {
@@ -19,6 +20,10 @@ interface ActivityRow {
   profile_id: string | null;
   detail: string | null;
   email: string | null;
+  /** messages_log id — present on send rows; enables a manual retry. */
+  ref_id: string | null;
+  /** True for a FAILED send that can be re-queued. */
+  retryable: boolean;
 }
 
 interface Filters {
@@ -95,6 +100,20 @@ export function Activity() {
     void load(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.workspaceId]);
+
+  // Re-queue a failed send (returns the promise so the kit Button auto-locks).
+  const retry = (row: ActivityRow) => {
+    if (!row.ref_id) return Promise.resolve();
+    return api
+      .post<{ result?: string }>(`/messages/${row.ref_id}/retry`, {})
+      .then((r) => {
+        showToast(r.result === 'send' ? 'Re-sent ✓' : `Re-queued (${r.result ?? 'done'})`, {
+          tone: r.result === 'send' ? 'success' : 'info',
+        });
+        return load(filters);
+      })
+      .catch((e) => showToast((e as { error?: string })?.error ?? 'Could not retry', { tone: 'error' }));
+  };
 
   const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }));
   const apply = () => void load(filters);
@@ -213,7 +232,16 @@ export function Activity() {
                       </td>
                       <td class="px-4 py-2.5 font-medium text-ink-900">{r.type}</td>
                       <td class="px-4 py-2.5">
-                        <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
+                        <span class="inline-flex items-center gap-2">
+                          <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
+                          {r.retryable && r.ref_id ? (
+                            <span onClick={(e: Event) => e.stopPropagation()} class="inline-block">
+                              <Button data-testid="activity-retry" variant="secondary" size="sm" onClick={() => retry(r)}>
+                                Retry
+                              </Button>
+                            </span>
+                          ) : null}
+                        </span>
                       </td>
                       <td class="px-4 py-2.5 text-stone-600" onClick={(e: Event) => e.stopPropagation()}>
                         {r.profile_id ? (

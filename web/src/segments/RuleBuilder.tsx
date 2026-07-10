@@ -51,7 +51,10 @@ const fetchPayloadValues = (type: string, key: string): Fetcher =>
  *  `customer.tier` ≡ `attributes.tier`, `customer.email` ≡ `email`. The
  *  workspace's REAL custom attribute keys are merged in at runtime (below). */
 const FIELD_SUGGESTIONS = [
+  'email',
   'email_status',
+  'external_id',
+  'created_at',
   'total_events',
   'monetary_total',
   'last_event_at',

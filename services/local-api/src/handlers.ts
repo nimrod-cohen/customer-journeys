@@ -5059,25 +5059,27 @@ export const listActivity: Handler = async (ctx, pool, req) => {
   const outcome = q.outcome || null;
   const source = q.source || null;
   const { rows } = await pool.query(
-    `SELECT a.at, a.source, a.type, a.outcome, a.profile_id, a.detail, p.email
+    `SELECT a.at, a.source, a.type, a.outcome, a.profile_id, a.detail, a.ref_id, a.retryable, p.email
        FROM (
          SELECT occurred_at AS at, 'event'::text AS source, type,
-                'info'::text AS outcome, profile_id, payload::text AS detail
+                'info'::text AS outcome, profile_id, payload::text AS detail,
+                NULL::uuid AS ref_id, false AS retryable
            FROM events WHERE workspace_id = $1
          UNION ALL
          SELECT occurred_at, 'email', type,
                 CASE WHEN type IN ('delivery','open','click') THEN 'success'
                      WHEN type IN ('bounce','complaint') THEN 'failure'
                      ELSE 'info' END,
-                profile_id, coalesce(sub_type, '')
+                profile_id, coalesce(sub_type, ''), NULL::uuid, false
            FROM email_events WHERE workspace_id = $1
          UNION ALL
          SELECT sent_at, 'send', medium,
                 CASE WHEN status = 'sent' THEN 'success' ELSE 'failure' END,
-                profile_id, coalesce(reason, status)
+                profile_id, coalesce(reason, status),
+                id, (status = 'failed')   -- a FAILED send can be retried (re-queued)
            FROM messages_log WHERE workspace_id = $1
          UNION ALL
-         SELECT at, source, type, outcome, profile_id, detail
+         SELECT at, source, type, outcome, profile_id, detail, NULL::uuid, false
            FROM activity_log WHERE workspace_id = $1
        ) a
        LEFT JOIN profiles p ON p.id = a.profile_id AND p.workspace_id = $1
@@ -5091,6 +5093,99 @@ export const listActivity: Handler = async (ctx, pool, req) => {
     [ctx.workspaceId, from, to, type, outcome, source],
   );
   return ok({ activity: rows });
+};
+
+/** Re-dispatch ONE outbox row NOW (the manual retry path). Builds the same
+ *  DispatchDeps as dispatchBroadcastNow. Returns the dispatch outcome string. */
+async function dispatchOneOutboxNow(
+  workspaceId: string,
+  pool: Pool,
+  deps: LocalApiDeps,
+  outboxId: string,
+  medium: string,
+): Promise<string> {
+  const isText = medium === 'sms' || medium === 'whatsapp';
+  const { ses, mode } = await sesForWorkspace(pool, workspaceId, deps);
+  // Email only delivers with REAL SES creds; text always delivers (mock/019/Meta).
+  if (!isText && mode !== 'real') return 'not-delivered';
+  const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
+  const reader = {
+    query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+      const r = await pool.query(text, values ? [...values] : undefined);
+      return { rows: r.rows as T[] };
+    },
+  };
+  const dispatchDeps: DispatchDeps = {
+    reader,
+    ses,
+    resolveChannelConfig: (ws, m) => channelConfigForWorkspace(reader, ws, m),
+    channelHttp: deps.channelHttp,
+    runInWorkspaceTx: deps.broadcast.runInWorkspaceTx,
+    now: () => new Date(),
+    unsubscribeBaseUrl: `${base}/unsubscribe`,
+    linkTrackingBaseUrl: base,
+  };
+  const outcome = await dispatchOutbox(dispatchDeps, outboxId);
+  return outcome.result;
+}
+
+/**
+ * POST /messages/:id/retry — re-queue a FAILED send. A failed send left its outbox
+ * row terminal (email→'failed', text→'sent') with the ORIGINAL payload (template /
+ * medium / text / topic) intact, so we reset that dedupe row to 'pending' and
+ * re-dispatch — reusing the exact content and the CURRENT (now-fixed) credentials.
+ * Only a status='failed' messages_log entry is retryable (a skip is deliberate).
+ * Guarded against double-sending: refuses if this recipient already has a 'sent'
+ * row for the same broadcast/campaign. Scoped to the token's workspace.
+ */
+export const retryMessage: Handler = async (ctx, pool, req, deps) => {
+  const id = req.params.id!;
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'SELECT profile_id, broadcast_id, campaign_id, medium, status FROM messages_log WHERE id = $1',
+    [id],
+  );
+  const { rows } = await pool.query<{
+    profile_id: string;
+    broadcast_id: string | null;
+    campaign_id: string | null;
+    medium: string;
+    status: string;
+  }>(q.text, q.values);
+  const m = rows[0];
+  if (!m) return ok({ error: 'not found' }, 404);
+  if (m.status !== 'failed') return ok({ error: 'only a failed send can be retried' }, 400);
+  const bid = m.broadcast_id;
+  const cid = m.campaign_id;
+
+  // Double-send guard: don't re-send if this recipient already GOT it.
+  const already = await pool.query(
+    `SELECT 1 FROM messages_log
+      WHERE workspace_id = $1 AND profile_id = $2 AND status = 'sent'
+        AND ( ($3::uuid IS NOT NULL AND campaign_id = $3) OR ($4::uuid IS NOT NULL AND broadcast_id = $4) )
+      LIMIT 1`,
+    [ctx.workspaceId, m.profile_id, cid, bid],
+  );
+  if ((already.rowCount ?? 0) > 0) {
+    return ok({ error: 'this recipient already received this message' }, 409);
+  }
+
+  // The single outbox dedupe row for this recipient + broadcast/campaign.
+  const ob = await pool.query<{ id: string }>(
+    `SELECT id FROM outbox
+      WHERE workspace_id = $1 AND profile_id = $2
+        AND ( ($3::uuid IS NOT NULL AND campaign_id = $3)
+           OR ($4::uuid IS NOT NULL AND payload->>'broadcast_id' = $4::text) )
+      ORDER BY created_at DESC LIMIT 1`,
+    [ctx.workspaceId, m.profile_id, cid, bid],
+  );
+  const outboxId = ob.rows[0]?.id;
+  if (!outboxId) return ok({ error: 'the original send is no longer available to retry' }, 400);
+
+  // Re-queue (reset the terminal row to pending) + re-dispatch.
+  await pool.query("UPDATE outbox SET status = 'pending' WHERE workspace_id = $1 AND id = $2", [ctx.workspaceId, outboxId]);
+  const result = await dispatchOneOutboxNow(ctx.workspaceId, pool, deps, outboxId, m.medium);
+  return ok({ retried: true, result });
 };
 
 // ---------------------------------------------------------------------------
@@ -5878,6 +5973,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /profiles/:id/delivery': getProfileDelivery,
   'GET /profiles/:id/segments': listProfileSegments,
   'GET /activity': listActivity,
+  'POST /messages/:id/retry': retryMessage,
   'GET /dashboards/summary': dashboardSummary,
   'GET /dashboards/delivery-health': dashboardDeliveryHealth,
   'GET /suppressions': listSuppressions,

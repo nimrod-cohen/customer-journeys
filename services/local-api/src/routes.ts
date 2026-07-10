@@ -172,6 +172,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
 
   // --- activity log (manage_content) ---
   'GET /activity': 'manage_content',
+  'POST /messages/:id/retry': 'manage_content',
 
   // --- dashboards (manage_content — marketer+ view) ---
   'GET /dashboards/summary': 'manage_content',
