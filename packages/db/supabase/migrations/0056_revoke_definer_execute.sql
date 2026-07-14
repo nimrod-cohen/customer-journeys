@@ -1,0 +1,13 @@
+-- 0056_revoke_definer_execute.sql
+-- SECURITY HARDENING (Supabase advisor warnings: "Public Can Execute SECURITY
+-- DEFINER Function" + "Signed-In Users Can Execute SECURITY DEFINER Function", on
+-- ensure_workspace_company). A SECURITY DEFINER function that anon/authenticated
+-- can EXECUTE is an attack surface. This one is a TRIGGER function (auto-assigns
+-- the "Unassigned" company on a workspace insert with no company_id) — and firing
+-- a trigger does NOT check EXECUTE on the function, so revoking EXECUTE from
+-- PUBLIC keeps the trigger working while removing the direct-call surface. It
+-- stays SECURITY DEFINER (it inserts into companies on behalf of low-privilege
+-- workspace inserts). On Supabase also revoke from anon/authenticated explicitly
+-- (see the manual prod SQL); those roles don't exist on a plain Postgres, so this
+-- portable migration revokes from PUBLIC only (which already covers them).
+REVOKE EXECUTE ON FUNCTION public.ensure_workspace_company() FROM PUBLIC;
