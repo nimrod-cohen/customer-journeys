@@ -36,6 +36,7 @@ describeMaybe('ingest write keys + /v1 track/identify (real Postgres)', () => {
   });
   async function cleanup(): Promise<void> {
     for (const w of [WS, WS_B]) {
+      await pool.query('DELETE FROM activity_log WHERE workspace_id=$1', [w]);
       await pool.query('DELETE FROM events WHERE workspace_id=$1', [w]);
       await pool.query('DELETE FROM profile_features WHERE workspace_id=$1', [w]);
       await pool.query('DELETE FROM profiles WHERE workspace_id=$1', [w]);
@@ -86,6 +87,45 @@ describeMaybe('ingest write keys + /v1 track/identify (real Postgres)', () => {
     expect(del.status).toBe(200);
     const afterRevoke = await ingestTrack(pool, rawKey, { email: 'jane@example.com', event: 'x' });
     expect(afterRevoke.status).toBe(401);
+  });
+
+  it('logs profile_created in the Activity log on FIRST ingest (parity with the UI), exactly once', async () => {
+    const created = await call('POST', '/ingest-keys', { label: 'api' });
+    const rawKey = body(created).key as string;
+
+    // First identify for a NEW email → profile created → one activity_log row.
+    const idr = await ingestIdentify(pool, rawKey, { email: 'newby@example.com', traits: { tier: 'pro' } });
+    expect(idr.status).toBe(202);
+    const pid = body(idr).profile_id as string;
+    const act1 = await pool.query(
+      "SELECT source, type FROM activity_log WHERE workspace_id=$1 AND profile_id=$2 AND type='profile_created'",
+      [WS, pid],
+    );
+    expect(act1.rowCount).toBe(1);
+    expect(act1.rows[0].source).toBe('profile');
+
+    // Subsequent track/identify for the SAME email are UPDATES, not creates → no
+    // second profile_created row (activity isn't flooded per event).
+    await ingestTrack(pool, rawKey, { email: 'newby@example.com', event: 'purchase' });
+    await ingestIdentify(pool, rawKey, { email: 'newby@example.com', traits: { tier: 'vip' } });
+    const act2 = await pool.query(
+      "SELECT count(*)::int n FROM activity_log WHERE workspace_id=$1 AND profile_id=$2 AND type='profile_created'",
+      [WS, pid],
+    );
+    expect(act2.rows[0].n).toBe(1);
+  });
+
+  it('a track that CREATES a new profile also logs profile_created', async () => {
+    const created = await call('POST', '/ingest-keys', {});
+    const rawKey = body(created).key as string;
+    const tr = await ingestTrack(pool, rawKey, { email: 'tracker@example.com', event: 'signup' });
+    expect(tr.status).toBe(202);
+    const pid = body(tr).profile_id as string;
+    const act = await pool.query(
+      "SELECT count(*)::int n FROM activity_log WHERE workspace_id=$1 AND profile_id=$2 AND type='profile_created'",
+      [WS, pid],
+    );
+    expect(act.rows[0].n).toBe(1);
   });
 
   it('rejects an unknown or malformed key', async () => {

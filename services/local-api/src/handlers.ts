@@ -5785,6 +5785,21 @@ async function upsertProfileByEmail(
   return { id: row.id, created: row.created };
 }
 
+/**
+ * Record a `profile_created` row in the workspace Activity log — parity with the
+ * manual `createProfile` path so a profile created via the ingest API (/v1/track,
+ * /v1/identify) shows up in Activity exactly like a UI/CSV creation. Call on the
+ * SAME tx client ONLY when the upsert actually CREATED the profile (never on an
+ * update — activity must not be flooded per event).
+ */
+async function logProfileCreated(client: PoolClient, ws: string, profileId: string, detail: string): Promise<void> {
+  await client.query(
+    `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
+     VALUES ($1, $2, 'profile', 'profile_created', 'info', $3)`,
+    [ws, profileId, detail],
+  );
+}
+
 /** Validate + normalize an ingest email (per the workspace's lowercase policy). */
 async function ingestEmail(pool: Pool, ws: string, raw: unknown): Promise<string | null> {
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
@@ -5823,6 +5838,7 @@ export async function ingestTrack(pool: Pool, rawKey: string, body: unknown): Pr
     const eventId = ins.rows[0]!.event_id;
     await recomputeFeaturesAndSegments(client, ws, id);
     if (created) {
+      await logProfileCreated(client, ws, id, 'created via API (track)');
       await enrollFromProfileChange(enrollDepsOnClient(client), { workspace_id: ws, profile_id: id, change: 'created' });
     }
     await enrollFromEvent(enrollDepsOnClient(client), {
@@ -5858,6 +5874,7 @@ export async function ingestIdentify(pool: Pool, rawKey: string, body: unknown):
     await client.query('BEGIN');
     const { id, created } = await upsertProfileByEmail(client, ws, email, traits);
     await recomputeFeaturesAndSegments(client, ws, id);
+    if (created) await logProfileCreated(client, ws, id, 'created via API (identify)');
     await enrollFromProfileChange(enrollDepsOnClient(client), {
       workspace_id: ws,
       profile_id: id,
