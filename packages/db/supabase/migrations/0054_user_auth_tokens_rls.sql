@@ -1,0 +1,15 @@
+-- 0054_user_auth_tokens_rls.sql
+-- SECURITY FIX (Supabase Security Advisor: "RLS Disabled in Public" → error
+-- "Table publicly accessible"). Every table in the `public` schema WITHOUT RLS is
+-- auto-exposed through Supabase's PostgREST API to the anon key — so anyone with
+-- the project URL + public anon key could read/insert/delete rows. For
+-- `user_auth_tokens` (invite/password-reset token hashes) that is a real exposure.
+--
+-- 0053 deliberately left RLS off ("pre-auth infra"), but the correct way to say
+-- "no client access" under Supabase is: ENABLE RLS with NO policy. The backend
+-- reads/writes this table ONLY over its service-role/direct pg connection, which
+-- BYPASSES RLS (exactly as it does for every other RLS-enabled table here) — so
+-- the accept-invite / reset-password flows are unaffected — while PostgREST's
+-- anon/authenticated roles, having no policy, get zero access. No FORCE (matches
+-- `users`/`company_users`; the owner/bypass roles must retain access).
+ALTER TABLE user_auth_tokens ENABLE ROW LEVEL SECURITY;

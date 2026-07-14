@@ -4729,6 +4729,57 @@ export const mergeProfiles: Handler = async (ctx, pool, req) => {
   return ok({ profile: rows[0] });
 };
 
+// Every table that carries a profile_id FK (§6). All are ON DELETE NO ACTION, so
+// on a profile delete their rows MUST go first or Postgres blocks the delete.
+// Keep this list in sync when a new profile-referencing table is added.
+const PROFILE_CHILD_TABLES = [
+  'events',
+  'email_events',
+  'messages_log',
+  'outbox',
+  'segment_change_log',
+  'segment_memberships',
+  'campaign_enrollments',
+  'topic_subscriptions',
+  'channel_optouts',
+  'tracked_opens',
+  'activity_log',
+  'profile_features',
+] as const;
+
+/**
+ * DELETE /profiles/:id — HARD delete + FULL erasure (§6, GDPR right-to-be-forgotten).
+ * Removes the profile AND every row that references it, PLUS the workspace
+ * suppression keyed by its email (suppressions has no profile_id — it's
+ * (workspace_id, email)). Because every child FK is ON DELETE NO ACTION, the
+ * children are deleted first, all in ONE workspace-scoped transaction. Scoped to
+ * the token's workspace in code (workspace_id in EVERY WHERE, NEVER the body,
+ * inv.2); a cross-workspace / missing id matches nothing → 404.
+ */
+export const deleteProfile: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const ws = ctx.workspaceId;
+  // Confirm the profile is in THIS workspace and capture its email (for the
+  // suppression erasure) BEFORE deleting anything.
+  const found = await pool.query('SELECT email FROM profiles WHERE workspace_id = $1 AND id = $2', [ws, id]);
+  if (!found.rows[0]) return ok({ error: 'not found' }, 404);
+  const email = (found.rows[0] as { email: string | null }).email;
+
+  await withTx(pool, async (client) => {
+    for (const table of PROFILE_CHILD_TABLES) {
+      await client.query(`DELETE FROM ${table} WHERE workspace_id = $1 AND profile_id = $2`, [ws, id]);
+    }
+    // Full erasure: drop the suppression for this email so the person is entirely
+    // gone (their address isn't retained). Only when the profile had an email.
+    if (email) {
+      await client.query('DELETE FROM suppressions WHERE workspace_id = $1 AND email = $2', [ws, email]);
+    }
+    await client.query('DELETE FROM profiles WHERE workspace_id = $1 AND id = $2', [ws, id]);
+  });
+
+  return ok({ deleted: 1 });
+};
+
 /**
  * Recompute a profile's rolling features from its events (mirrors the processor's
  * aggregates, §6) and re-evaluate its dynamic_realtime segments — both on the
@@ -5977,6 +6028,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /events/payload-values': listEventPayloadValues,
   'GET /profiles/:id': getProfile,
   'PATCH /profiles/:id': updateProfile,
+  'DELETE /profiles/:id': deleteProfile,
   'POST /profiles/:id/merge': mergeProfiles,
   'GET /profiles/:id/events': listProfileEvents,
   'GET /profiles/:id/subscription-link': getSubscriptionLink,

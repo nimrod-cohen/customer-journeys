@@ -13,6 +13,7 @@ import { ActionMenu, type ActionMenuItem, Badge, Button, Card, EmptyState, Field
 import { JsonView } from '../ui/JsonView.js';
 import { formatDateTime } from '../ui/datetime.js';
 import { showToast } from '../ui/toast.tsx';
+import { askConfirm } from '../ui/dialog.tsx';
 import { MergeProfileDrawer } from './MergeProfileDrawer.js';
 import { SendEventDrawer } from './SendEventDrawer.js';
 
@@ -157,12 +158,35 @@ export function ProfileDetail({ id }: { id: string }) {
     }
   };
 
+  // HARD delete + FULL erasure — permanently removes the profile and everything
+  // that references it (server-side, workspace-scoped). Confirm with the styled
+  // dialog (never a native confirm), then return to the profiles list.
+  const deleteProfile = async (): Promise<void> => {
+    const confirmed = await askConfirm({
+      title: 'Delete this profile?',
+      message:
+        'This permanently erases the profile and ALL of its data — events, send history, campaign enrollments, segment memberships and subscription choices. This cannot be undone.',
+      confirmLabel: 'Delete profile',
+      danger: true,
+    });
+    if (!confirmed) return;
+    try {
+      await api.del(`/profiles/${id}`);
+    } catch {
+      showToast('Could not delete the profile.', { tone: 'error' });
+      return;
+    }
+    showToast('Profile deleted.', { tone: 'success' });
+    navigate('/profiles');
+  };
+
   const profileActions: ActionMenuItem[] = [
     { label: 'Send event', onSelect: () => setSendingEvent(true), 'data-testid': 'send-event-action' },
     ...(profile?.email && session.workspaceId
       ? [{ label: 'Copy subscription link', onSelect: copyPrefLink, 'data-testid': 'copy-subscription-link' } satisfies ActionMenuItem]
       : []),
     { label: 'Merge…', onSelect: () => setMerging(true), 'data-testid': 'merge-button' },
+    { label: 'Delete profile…', onSelect: deleteProfile, danger: true, 'data-testid': 'profile-delete' },
   ];
 
   return (

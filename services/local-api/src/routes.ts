@@ -163,6 +163,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /events/payload-values': 'manage_content',
   'GET /profiles/:id': 'manage_content',
   'PATCH /profiles/:id': 'manage_content',
+  'DELETE /profiles/:id': 'manage_content',
   'POST /profiles/:id/merge': 'manage_content',
   'GET /profiles/:id/events': 'manage_content',
   'GET /profiles/:id/subscription-link': 'manage_content',

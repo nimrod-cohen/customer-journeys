@@ -219,6 +219,36 @@ test('merge a secondary profile into the lead (survivor remains, secondary delet
   await expect(page.getByTestId('profile-row')).toHaveCount(0);
 });
 
+test('delete a profile — styled confirm, erases it, returns to the list', async ({ page }) => {
+  await loginAs(page, DEV_MKT);
+  await page.getByTestId('nav-profiles').click();
+  await page.getByTestId('profile-explorer').waitFor();
+
+  // Create a throwaway profile so the delete doesn't disturb the seeded fixtures.
+  await page.getByTestId('new-profile').click();
+  await page.getByTestId('new-profile-drawer').waitFor();
+  await page.getByTestId('new-profile-email').fill('deleteme@acme.com');
+  await page.getByTestId('create-profile').click();
+  await expect(page.getByTestId('new-profile-drawer')).toHaveCount(0);
+
+  // Open it and delete from the ⋮ actions menu.
+  await page.getByTestId('profile-search').fill('deleteme@acme.com');
+  await page.getByTestId('profile-row').first().click();
+  await page.getByTestId('profile-detail').waitFor();
+  await page.getByTestId('profile-actions').click();
+  await page.getByTestId('profile-delete').click();
+
+  // Styled confirm (never a native dialog) → confirm the destructive action.
+  await page.getByTestId('app-dialog').waitFor();
+  await page.getByTestId('dialog-confirm').click();
+
+  // Toast + we're back on the list; the profile is gone.
+  await expect(page.getByText('Profile deleted.')).toBeVisible();
+  await page.getByTestId('profile-explorer').waitFor();
+  await page.getByTestId('profile-search').fill('deleteme@acme.com');
+  await expect(page.getByTestId('profile-row')).toHaveCount(0);
+});
+
 test('send a manual event on a profile via the actions menu — it appears in the timeline', async ({ page }) => {
   await loginAs(page, DEV_MKT);
   await page.getByTestId('nav-profiles').click();
