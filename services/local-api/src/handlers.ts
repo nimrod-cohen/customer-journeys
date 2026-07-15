@@ -1125,10 +1125,18 @@ export const deleteCompanySesConfig: Handler = async (ctx, pool) => {
 // domain). No config → base64-in-Postgres fallback. Secret write-only + encrypted,
 // exactly like company_ses_config.
 
-/** GET /company/r2-config — endpoint + bucket + access key id + whether a secret is set (NEVER the secret). */
+/** GET /company/r2-config — endpoint + bucket + access key id + whether a secret is
+ *  set (NEVER the secret) + `pending_db_assets` = how many images in THIS workspace
+ *  are still in the database (what "Migrate existing images" would move; the UI
+ *  hides that button when it's 0). */
 export const getCompanyR2Config: Handler = async (ctx, pool) => {
   const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
-  if (!companyId) return ok({ configured: false });
+  const pending = await pool.query<{ n: number }>(
+    "SELECT count(*)::int AS n FROM assets WHERE workspace_id = $1 AND storage = 'db' AND data IS NOT NULL",
+    [ctx.workspaceId],
+  );
+  const pending_db_assets = pending.rows[0]?.n ?? 0;
+  if (!companyId) return ok({ configured: false, pending_db_assets });
   const { rows } = await pool.query<{ endpoint: string; bucket: string; access_key_id: string; region: string }>(
     'SELECT endpoint, bucket, access_key_id, region FROM company_r2_config WHERE company_id = $1',
     [companyId],
@@ -1136,8 +1144,8 @@ export const getCompanyR2Config: Handler = async (ctx, pool) => {
   const c = rows[0];
   return ok(
     c
-      ? { configured: true, endpoint: c.endpoint, bucket: c.bucket, access_key_id: c.access_key_id, region: c.region }
-      : { configured: false },
+      ? { configured: true, endpoint: c.endpoint, bucket: c.bucket, access_key_id: c.access_key_id, region: c.region, pending_db_assets }
+      : { configured: false, pending_db_assets },
   );
 };
 

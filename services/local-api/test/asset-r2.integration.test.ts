@@ -132,9 +132,17 @@ describeMaybe('per-company R2 image storage (real Postgres, fake bucket)', () =>
       [WS, PNG_B64],
     );
     const id = legacy.rows[0]!.id;
+    // The config endpoint reports the pending count that drives the UI button.
+    const before = await dispatch({ method: 'GET', path: '/company/r2-config', authorization: owner(), query: {}, body: {} }, env());
+    expect((before.body as { pending_db_assets: number }).pending_db_assets).toBeGreaterThanOrEqual(1);
+
     const r = await dispatch({ method: 'POST', path: '/assets/backfill-r2', authorization: owner(), query: {}, body: {} }, env());
     expect(r.status).toBe(200);
     expect((r.body as { migrated: number }).migrated).toBeGreaterThanOrEqual(1);
+
+    // After migrating, nothing is pending → the UI hides the button.
+    const after = await dispatch({ method: 'GET', path: '/company/r2-config', authorization: owner(), query: {}, body: {} }, env());
+    expect((after.body as { pending_db_assets: number }).pending_db_assets).toBe(0);
     // The legacy asset is now r2-backed (key in the bucket, no base64).
     const row = await pool.query<{ storage: string; r2_key: string; data: string | null }>('SELECT storage, r2_key, data FROM assets WHERE id = $1', [id]);
     expect(row.rows[0]!.storage).toBe('r2');

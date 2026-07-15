@@ -14,6 +14,7 @@ interface R2Config {
   bucket?: string;
   access_key_id?: string;
   region?: string;
+  pending_db_assets?: number;
 }
 
 export function CompanyR2Config() {
@@ -79,12 +80,14 @@ export function CompanyR2Config() {
         r.migrated > 0 ? `Migrated ${r.migrated} image${r.migrated === 1 ? '' : 's'} to R2.` : 'No images left in the database — all set.',
         { tone: 'success' },
       );
+      await load(); // refresh pending count → the button hides once nothing's left
     } catch (e) {
       showToast((e as { error?: string })?.error ?? 'Could not migrate images.', { tone: 'error' });
     }
   };
 
   const configured = cfg?.configured ?? false;
+  const pendingDbAssets = cfg?.pending_db_assets ?? 0;
   const canSave =
     endpoint.trim().length > 0 && bucket.trim().length > 0 && accessKey.trim().length > 0 && (configured || secret.length > 0);
 
@@ -151,9 +154,11 @@ export function CompanyR2Config() {
           </Button>
           {configured ? (
             <>
-              <Button data-testid="r2-backfill" variant="secondary" size="sm" onClick={() => backfill()}>
-                Migrate existing images
-              </Button>
+              {pendingDbAssets > 0 ? (
+                <Button data-testid="r2-backfill" variant="secondary" size="sm" onClick={() => backfill()}>
+                  Migrate {pendingDbAssets} existing image{pendingDbAssets === 1 ? '' : 's'}
+                </Button>
+              ) : null}
               <Button data-testid="r2-remove" variant="danger" size="sm" onClick={() => remove()}>
                 Remove
               </Button>
