@@ -9,5 +9,6 @@ export {
   adminPool,
   type SessionClaims,
 } from './testutil.js';
-export { applyMigrations, MIGRATIONS_DIR } from './migrate.js';
+export { applyMigrations, runPendingMigrations, MIGRATIONS_DIR } from './migrate.js';
+export type { RunMigrationsOptions } from './migrate.js';
 export { encryptSecret, decryptSecret, isEncryptedSecret } from './secret-crypto.js';

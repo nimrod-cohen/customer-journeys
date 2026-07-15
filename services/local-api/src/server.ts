@@ -3,7 +3,7 @@
 // if the DB is fresh so a cold `pnpm dev:api` works against a blank Postgres.
 // The Vite SPA points its apiClient at this origin (or proxies /api to it).
 import { serve } from '@hono/node-server';
-import { getPool, applyMigrations } from '@cdp/db';
+import { getPool, runPendingMigrations } from '@cdp/db';
 import { createApp } from './app.js';
 import { makeLocalDeps } from './deps.js';
 import { sweepDueScheduledBroadcasts, sweepDueCampaignEnrollments } from './handlers.js';
@@ -15,9 +15,10 @@ const PORT = Number(process.env.PORT ?? process.env.LOCAL_API_PORT ?? 8787);
 // while the web tier scales horizontally (the DB claims make it safe either way).
 const MODE = (process.env.APP_MODE ?? 'all') as 'web' | 'worker' | 'all';
 const RUN_SWEEPS = MODE === 'worker' || MODE === 'all';
-// Only the sweep-running role may auto-apply migrations to a fresh DB (avoids a
-// multi-web-instance migration race). In production migrations are applied
-// explicitly before deploy, so this is a no-op guard there.
+// Only the single-runner role applies migrations (the `worker` in prod; `all` in
+// dev), avoiding a multi-web-instance race — plus runPendingMigrations takes an
+// advisory lock. On every boot it applies any OUTSTANDING migrations to the DB
+// (tracked in schema_migrations), so a deploy carries its own schema changes.
 const MAY_MIGRATE = MODE === 'worker' || MODE === 'all';
 // Absolute path to the built SPA (web/dist). When set, this service also serves
 // the admin SPA (single-container production). Unset in dev (Vite serves it).
@@ -32,16 +33,22 @@ const CAMPAIGN_SWEEP_MS = Number(process.env.LOCAL_CAMPAIGN_SWEEP_MS ?? 30_000);
 
 async function main(): Promise<void> {
   const pool = getPool();
-  // Ensure schema exists (idempotent guard: only apply if `workspaces` is absent).
+  // Apply any OUTSTANDING migrations on boot (tracked in schema_migrations) — so a
+  // deploy carries its own DB changes and no migration is ever hand-run. A fresh DB
+  // gets everything; an existing untracked DB is baselined then caught up; an
+  // up-to-date DB is a no-op. Gated to the single migrator role + advisory-locked.
+  // A failing migration throws here → boot fails → the deploy's health check fails
+  // and Fly keeps the previous version (never a half-applied schema).
   if (MAY_MIGRATE) {
-    const { rows } = await pool.query(
-      "SELECT to_regclass('public.workspaces') IS NOT NULL AS exists",
+    const { applied, baselined } = await runPendingMigrations(pool);
+    // eslint-disable-next-line no-console
+    if (baselined.length) console.log(`[local-api] baselined ${baselined.length} pre-existing migration(s)`);
+    // eslint-disable-next-line no-console
+    console.log(
+      applied.length
+        ? `[local-api] applied ${applied.length} pending migration(s): ${applied.join(', ')}`
+        : '[local-api] database schema up to date',
     );
-    if (!rows[0]?.exists) {
-      await applyMigrations(pool);
-      // eslint-disable-next-line no-console
-      console.log('[local-api] applied migrations to fresh database');
-    }
   }
 
   const deps = makeLocalDeps(pool);
