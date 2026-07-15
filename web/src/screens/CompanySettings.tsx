@@ -11,6 +11,7 @@ import { Button, Card, Field, Input, PageHeader } from '../ui/kit.js';
 import { can } from '@cdp/tenancy';
 import { CompanySesConfig } from './CompanySesConfig.tsx';
 import { CompanyChannelConfig } from './CompanyChannelConfig.tsx';
+import { CompanyR2Config } from './CompanyR2Config.tsx';
 import { CompanyWhatsAppConfig } from './CompanyWhatsAppConfig.tsx';
 import { CompanyLogo } from './CompanyLogo.tsx';
 import { CompanyUsersPanel } from './CompanyUsers.tsx';
@@ -366,6 +367,7 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
         <>
           <CompanySesConfig />
           <CompanyChannelConfig />
+          <CompanyR2Config />
           <CompanyWhatsAppConfig />
         </>
       ) : null}

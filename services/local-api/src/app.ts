@@ -23,7 +23,7 @@ import { makePgLookups } from './lookups.js';
 import { makeLocalDeps, type LocalApiDeps } from './deps.js';
 import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
-import { ingestTrack, ingestIdentify } from './handlers.js';
+import { ingestTrack, ingestIdentify, r2StorageForWorkspace } from './handlers.js';
 import {
   makeUnsubscribeHandler,
   makePreferenceCenterHandler,
@@ -145,14 +145,22 @@ export function createApp(opts: CreateAppOptions): Hono {
   app.get('/assets/:id', async (c) => {
     const id = c.req.param('id');
     if (!/^[0-9a-f-]{36}$/i.test(id)) return c.notFound();
-    const { rows } = await opts.pool.query('SELECT mime, data, storage, r2_key FROM assets WHERE id = $1', [id]);
-    const row = rows[0] as { mime: string; data: string | null; storage: string; r2_key: string | null } | undefined;
+    const { rows } = await opts.pool.query('SELECT workspace_id, mime, data, storage, r2_key FROM assets WHERE id = $1', [id]);
+    const row = rows[0] as
+      | { workspace_id: string; mime: string; data: string | null; storage: string; r2_key: string | null }
+      | undefined;
     if (!row) return c.notFound();
-    // R2-backed: 302 to the public CDN URL — the image bytes NEVER touch this
-    // server (free egress). Keeps the /assets/:id URL working for links frozen
-    // into already-saved templates. Cheap redirect; email image proxies cache it.
-    if (row.storage === 'r2' && row.r2_key && deps.storage) {
-      return c.redirect(deps.storage.publicUrl(row.r2_key), 302);
+    // R2-backed: STREAM the bytes from the company's bucket back through this same
+    // domain (no separate assets.* domain). Keeps the /assets/:id URL working for
+    // links frozen into already-saved templates; email image proxies cache it.
+    if (row.storage === 'r2' && row.r2_key) {
+      const storage = await r2StorageForWorkspace(opts.pool, row.workspace_id, deps.makeR2Storage);
+      const obj = storage ? await storage.get(row.r2_key) : null;
+      if (!obj) return c.notFound();
+      return c.body(new Uint8Array(obj.body), 200, {
+        'content-type': obj.contentType ?? row.mime,
+        'cache-control': 'public, max-age=31536000, immutable',
+      });
     }
     if (row.data == null) return c.notFound();
     const bytes = Buffer.from(row.data, 'base64');

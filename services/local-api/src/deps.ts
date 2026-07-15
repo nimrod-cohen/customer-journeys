@@ -9,7 +9,7 @@
 import type { Pool } from 'pg';
 import { getPool } from '@cdp/db';
 import { compileMjml, resolveTransactionalMailer } from '@cdp/email';
-import { r2StorageFromEnv, type ObjectStorage } from './storage.js';
+import { makeR2Storage, type R2StorageFactory } from './storage.js';
 import type {
   SesEmailClient,
   CreateDomainIdentityResult,
@@ -59,11 +59,12 @@ export interface LocalApiDeps {
   /** The public app base URL used to build invite / reset links (e.g. https://journeys.on-grow.com). */
   readonly appBaseUrl: string;
   /**
-   * Object storage for uploaded images (Cloudflare R2, S3-compatible). null when
-   * unconfigured → the asset handlers fall back to base64-in-Postgres (dev/tests).
-   * Set the R2_* env to switch prod image storage to the bucket.
+   * Factory that builds an object-storage client (Cloudflare R2, S3-compatible)
+   * from a company's R2 config. Injected so tests substitute an in-memory fake.
+   * The asset handlers resolve the PER-COMPANY config and call this; a company
+   * with no config falls back to base64-in-Postgres.
    */
-  readonly storage: ObjectStorage | null;
+  readonly makeR2Storage: R2StorageFactory;
 }
 
 /**
@@ -175,6 +176,5 @@ export function makeLocalDeps(
     dispatchQueueUrl: process.env.DISPATCH_QUEUE_URL ?? 'local://dispatch',
   };
   const appBaseUrl = (process.env.APP_BASE_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
-  const storage = r2StorageFromEnv();
-  return { pool, compileMjml, onboarding, broadcast, channelHttp, graphHttp, mailer, appBaseUrl, storage };
+  return { pool, compileMjml, onboarding, broadcast, channelHttp, graphHttp, mailer, appBaseUrl, makeR2Storage };
 }

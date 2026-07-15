@@ -104,7 +104,7 @@ import {
   type MeteringDeps,
 } from '@cdp/service-metering';
 import type { LocalApiDeps } from './deps.js';
-import { assetObjectKey } from './storage.js';
+import { assetObjectKey, type ObjectStorage, type R2StorageFactory } from './storage.js';
 
 /** A handler's request shape (already parsed by the server). */
 export interface HandlerRequest {
@@ -786,6 +786,43 @@ async function companyIdForWorkspace(pool: Pool, workspaceId: string): Promise<s
 }
 
 /**
+ * Resolve the R2 object storage for a workspace's COMPANY (per-company buckets),
+ * or null when the company has no config → callers fall back to base64-in-Postgres.
+ * The secret is decrypted ONLY here (never on the wire / in the asset row).
+ * `makeStorage` is injected (deps.makeR2Storage) so tests use an in-memory fake.
+ */
+export async function r2StorageForWorkspace(
+  pool: Pool,
+  workspaceId: string,
+  makeStorage: R2StorageFactory,
+): Promise<ObjectStorage | null> {
+  const { rows } = await pool.query<{
+    endpoint: string;
+    bucket: string;
+    access_key_id: string;
+    secret_access_key: string;
+    region: string;
+  }>(
+    `SELECT r.endpoint, r.bucket, r.access_key_id, r.secret_access_key, r.region
+       FROM company_r2_config r JOIN workspaces w ON w.company_id = r.company_id
+      WHERE w.id = $1`,
+    [workspaceId],
+  );
+  const cfg = rows[0];
+  if (!cfg) return null;
+  const secretAccessKey = isEncryptedSecret(cfg.secret_access_key)
+    ? decryptSecret(cfg.secret_access_key)
+    : cfg.secret_access_key;
+  return makeStorage({
+    endpoint: cfg.endpoint,
+    bucket: cfg.bucket,
+    accessKeyId: cfg.access_key_id,
+    secretAccessKey,
+    region: cfg.region,
+  });
+}
+
+/**
  * Resolve how to talk to SES for a workspace:
  *   - 'real' — the company has Amazon SES credentials → a real SES client.
  *   - 'mock' — ONLY when LOCAL_SES_FORCE_MOCK is set (tests / offline dev): a
@@ -1079,6 +1116,65 @@ export const deleteCompanySesConfig: Handler = async (ctx, pool) => {
   const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
   if (!companyId) return ok({ deleted: 0 });
   const { rowCount } = await pool.query('DELETE FROM company_ses_config WHERE company_id = $1', [companyId]);
+  return ok({ deleted: rowCount });
+};
+
+// --- per-company IMAGE STORAGE (Cloudflare R2, S3-compatible) -------------------
+// Each company brings its own bucket + keys (they pay their own storage). Uploaded
+// images go to that bucket; GET /assets/:id streams them back through the app (same
+// domain). No config → base64-in-Postgres fallback. Secret write-only + encrypted,
+// exactly like company_ses_config.
+
+/** GET /company/r2-config — endpoint + bucket + access key id + whether a secret is set (NEVER the secret). */
+export const getCompanyR2Config: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ configured: false });
+  const { rows } = await pool.query<{ endpoint: string; bucket: string; access_key_id: string; region: string }>(
+    'SELECT endpoint, bucket, access_key_id, region FROM company_r2_config WHERE company_id = $1',
+    [companyId],
+  );
+  const c = rows[0];
+  return ok(
+    c
+      ? { configured: true, endpoint: c.endpoint, bucket: c.bucket, access_key_id: c.access_key_id, region: c.region }
+      : { configured: false },
+  );
+};
+
+/** PUT /company/r2-config — set the company's R2 credentials. A blank secret on
+ *  update keeps the stored one (so you can change endpoint/bucket/key alone). */
+export const putCompanyR2Config: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ error: 'no company for this workspace' }, 400);
+  const b = asObject(req.body);
+  const endpoint = String(b.endpoint ?? '').trim();
+  const bucket = String(b.bucket ?? '').trim();
+  const accessKeyId = String(b.access_key_id ?? '').trim();
+  const region = String(b.region ?? 'auto').trim() || 'auto';
+  const secret = typeof b.secret_access_key === 'string' ? b.secret_access_key.trim() : '';
+  if (!endpoint || !bucket || !accessKeyId) return ok({ error: 'endpoint, bucket and access key id are required' }, 400);
+  if (!/^https?:\/\//i.test(endpoint)) return ok({ error: 'endpoint must be an http(s) URL' }, 400);
+  const existing = await pool.query<{ secret_access_key: string }>(
+    'SELECT secret_access_key FROM company_r2_config WHERE company_id = $1',
+    [companyId],
+  );
+  const effectiveSecret = secret ? encryptSecret(secret) : existing.rows[0]?.secret_access_key;
+  if (!effectiveSecret) return ok({ error: 'secret access key is required' }, 400);
+  await pool.query(
+    `INSERT INTO company_r2_config (company_id, endpoint, bucket, access_key_id, secret_access_key, region, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
+     ON CONFLICT (company_id)
+     DO UPDATE SET endpoint = $2, bucket = $3, access_key_id = $4, secret_access_key = $5, region = $6, updated_at = now()`,
+    [companyId, endpoint, bucket, accessKeyId, effectiveSecret, region],
+  );
+  return ok({ configured: true, endpoint, bucket, access_key_id: accessKeyId, region });
+};
+
+/** DELETE /company/r2-config — clear the company's R2 credentials (new uploads fall back to DB). */
+export const deleteCompanyR2Config: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ deleted: 0 });
+  const { rowCount } = await pool.query('DELETE FROM company_r2_config WHERE company_id = $1', [companyId]);
   return ok({ deleted: rowCount });
 };
 
@@ -2582,16 +2678,17 @@ export const uploadAsset: Handler = async (ctx, pool, req, deps) => {
   if (!ALLOWED_ASSET_MIME.has(mime)) return ok({ error: `unsupported image type '${mime}'` }, 400);
   if (!data) return ok({ error: 'data_base64 required' }, 400);
   if (data.length > MAX_ASSET_BASE64) return ok({ error: 'image too large (max ~2MB)' }, 413);
-  // R2 (object storage) when configured: put the bytes in the bucket and store
-  // only the key — the row carries NO base64 (bytes serve from R2's CDN). The
-  // returned `path` stays `/assets/:id` (unchanged contract; GET /assets/:id
-  // 302-redirects r2 assets to the CDN), so the web + URLs frozen into saved
+  // Per-company R2 when the company has a config: put the bytes in THAT company's
+  // bucket and store only the key — the row carries NO base64 (bytes stream from
+  // the bucket via GET /assets/:id, same domain). The returned `path` stays
+  // `/assets/:id` (unchanged contract), so the web + URLs frozen into saved
   // templates are unaffected. Falls back to base64-in-Postgres when unconfigured.
-  if (deps.storage) {
+  const storage = await r2StorageForWorkspace(pool, ctx.workspaceId, deps.makeR2Storage);
+  if (storage) {
     const id = randomUUID();
     const key = assetObjectKey(ctx.workspaceId, id);
     const bytes = Buffer.from(data, 'base64');
-    await deps.storage.put(key, bytes, mime);
+    await storage.put(key, bytes, mime);
     await pool.query(
       `INSERT INTO assets (id, workspace_id, filename, mime, storage, r2_key, size_bytes, folder)
        VALUES ($1, $2, $3, $4, 'r2', $5, $6, $7)`,
@@ -2663,17 +2760,48 @@ export const deleteAsset: Handler = async (ctx, pool, req, deps) => {
     [req.params.id!, ctx.workspaceId],
   );
   if (!rowCount) return ok({ error: 'not found' }, 404);
-  // Best-effort remove the object from the bucket (the row is already gone; a
-  // leftover object is harmless — never fail the delete on a storage hiccup).
+  // Best-effort remove the object from the company's bucket (the row is already
+  // gone; a leftover object is harmless — never fail the delete on a storage hiccup).
   const row = rows[0];
-  if (row?.storage === 'r2' && row.r2_key && deps.storage) {
-    try {
-      await deps.storage.del(row.r2_key);
-    } catch {
-      /* ignore — object cleanup is best-effort */
+  if (row?.storage === 'r2' && row.r2_key) {
+    const storage = await r2StorageForWorkspace(pool, ctx.workspaceId, deps.makeR2Storage);
+    if (storage) {
+      try {
+        await storage.del(row.r2_key);
+      } catch {
+        /* ignore — object cleanup is best-effort */
+      }
     }
   }
   return ok({ deleted: rowCount });
+};
+
+/**
+ * POST /assets/backfill-r2 — move this workspace's remaining base64 (storage='db')
+ * images INTO the company's R2 bucket. One-time after configuring R2; idempotent
+ * (only touches 'db' rows). 400 when the company has no R2 config.
+ */
+export const backfillAssetsR2: Handler = async (ctx, pool, _req, deps) => {
+  const storage = await r2StorageForWorkspace(pool, ctx.workspaceId, deps.makeR2Storage);
+  if (!storage) return ok({ error: 'no R2 storage configured for this company' }, 400);
+  const { rows } = await pool.query<{ id: string; mime: string; data: string }>(
+    "SELECT id, mime, data FROM assets WHERE workspace_id = $1 AND storage = 'db' AND data IS NOT NULL",
+    [ctx.workspaceId],
+  );
+  let migrated = 0;
+  for (const a of rows) {
+    const key = assetObjectKey(ctx.workspaceId, a.id);
+    const bytes = Buffer.from(a.data, 'base64');
+    await storage.put(key, bytes, a.mime);
+    await pool.query("UPDATE assets SET storage = 'r2', r2_key = $2, size_bytes = $3, data = NULL WHERE id = $1 AND workspace_id = $4", [
+      a.id,
+      key,
+      bytes.length,
+      ctx.workspaceId,
+    ]);
+    migrated++;
+  }
+  return ok({ migrated });
 };
 
 /**
@@ -5986,6 +6114,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /company/ses-config': getCompanySesConfig,
   'PUT /company/ses-config': putCompanySesConfig,
   'DELETE /company/ses-config': deleteCompanySesConfig,
+  'GET /company/r2-config': getCompanyR2Config,
+  'PUT /company/r2-config': putCompanyR2Config,
+  'DELETE /company/r2-config': deleteCompanyR2Config,
   'GET /company/channel-config': getCompanyChannelConfig,
   'PUT /company/channel-config': putCompanyChannelConfig,
   'DELETE /company/channel-config': deleteCompanyChannelConfig,
@@ -6036,6 +6167,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'DELETE /templates/:id': deleteTemplate,
   'POST /templates/:id/clone': cloneTemplate,
   'POST /assets': uploadAsset,
+  'POST /assets/backfill-r2': backfillAssetsR2,
   'GET /assets': listAssets,
   'POST /asset-folders': createAssetFolder,
   'PATCH /assets/:id': updateAsset,

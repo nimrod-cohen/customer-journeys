@@ -41,6 +41,9 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /company/ses-config': 'manage_sending_domain',
   'PUT /company/ses-config': 'manage_sending_domain',
   'DELETE /company/ses-config': 'manage_sending_domain',
+  'GET /company/r2-config': 'manage_sending_domain',
+  'PUT /company/r2-config': 'manage_sending_domain',
+  'DELETE /company/r2-config': 'manage_sending_domain',
   'GET /company/channel-config': 'manage_sending_domain',
   'PUT /company/channel-config': 'manage_sending_domain',
   'DELETE /company/channel-config': 'manage_sending_domain',
@@ -115,6 +118,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
 
   // --- assets (uploaded email images; GET /assets/:id is public-by-uuid in app.ts) ---
   'POST /assets': 'manage_content',
+  'POST /assets/backfill-r2': 'manage_sending_domain',
   'GET /assets': 'manage_content',
   'POST /asset-folders': 'manage_content',
   'PATCH /assets/:id': 'manage_content',
