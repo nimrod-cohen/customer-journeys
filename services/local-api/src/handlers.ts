@@ -104,6 +104,7 @@ import {
   type MeteringDeps,
 } from '@cdp/service-metering';
 import type { LocalApiDeps } from './deps.js';
+import { assetObjectKey } from './storage.js';
 
 /** A handler's request shape (already parsed by the server). */
 export interface HandlerRequest {
@@ -2572,7 +2573,7 @@ function normalizeFolder(raw: unknown): string {
     .slice(0, 120);
 }
 
-export const uploadAsset: Handler = async (ctx, pool, req) => {
+export const uploadAsset: Handler = async (ctx, pool, req, deps) => {
   const b = asObject(req.body);
   const filename = String(b.filename ?? 'upload');
   const mime = String(b.mime ?? '');
@@ -2581,9 +2582,26 @@ export const uploadAsset: Handler = async (ctx, pool, req) => {
   if (!ALLOWED_ASSET_MIME.has(mime)) return ok({ error: `unsupported image type '${mime}'` }, 400);
   if (!data) return ok({ error: 'data_base64 required' }, 400);
   if (data.length > MAX_ASSET_BASE64) return ok({ error: 'image too large (max ~2MB)' }, 413);
+  // R2 (object storage) when configured: put the bytes in the bucket and store
+  // only the key — the row carries NO base64 (bytes serve from R2's CDN). The
+  // returned `path` stays `/assets/:id` (unchanged contract; GET /assets/:id
+  // 302-redirects r2 assets to the CDN), so the web + URLs frozen into saved
+  // templates are unaffected. Falls back to base64-in-Postgres when unconfigured.
+  if (deps.storage) {
+    const id = randomUUID();
+    const key = assetObjectKey(ctx.workspaceId, id);
+    const bytes = Buffer.from(data, 'base64');
+    await deps.storage.put(key, bytes, mime);
+    await pool.query(
+      `INSERT INTO assets (id, workspace_id, filename, mime, storage, r2_key, size_bytes, folder)
+       VALUES ($1, $2, $3, $4, 'r2', $5, $6, $7)`,
+      [id, ctx.workspaceId, filename, mime, key, bytes.length, folder],
+    );
+    return ok({ id, path: `/assets/${id}`, folder }, 201);
+  }
   const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO assets (workspace_id, filename, mime, data, folder) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [ctx.workspaceId, filename, mime, data, folder],
+    `INSERT INTO assets (workspace_id, filename, mime, data, size_bytes, folder) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [ctx.workspaceId, filename, mime, data, Math.floor((data.length * 3) / 4), folder],
   );
   return ok({ id: rows[0]!.id, path: `/assets/${rows[0]!.id}`, folder }, 201);
 };
@@ -2595,8 +2613,9 @@ export const uploadAsset: Handler = async (ctx, pool, req) => {
 export const listAssets: Handler = async (ctx, pool) => {
   const q = scopedQuery(
     ctx.workspaceId,
-    // size ≈ base64 length × 3/4 (the dev harness stores base64 in-row).
-    "SELECT id, filename, mime, folder, created_at, (octet_length(data) * 3 / 4)::int AS size_bytes FROM assets",
+    // Prefer the stored byte size (r2 assets); fall back to base64 length × 3/4
+    // for legacy db-stored rows that predate the size_bytes column.
+    "SELECT id, filename, mime, folder, created_at, COALESCE(size_bytes, (octet_length(data) * 3 / 4)::int) AS size_bytes FROM assets",
   );
   const { rows } = await pool.query(`${q.text} ORDER BY folder, created_at DESC`, q.values);
   // Folders = persisted rows (creatable while still empty) ∪ implicit (in use).
@@ -2636,10 +2655,24 @@ export const updateAsset: Handler = async (ctx, pool, req) => {
  * DELETE /assets/:id — remove an image from the gallery. DESTRUCTIVE: emails
  * already referencing its URL will lose the image (the UI warns before calling).
  */
-export const deleteAsset: Handler = async (ctx, pool, req) => {
-  const q = scopedQuery(ctx.workspaceId, 'DELETE FROM assets WHERE id = $1', [req.params.id!]);
-  const { rowCount } = await pool.query(q.text, q.values);
+export const deleteAsset: Handler = async (ctx, pool, req, deps) => {
+  // Explicit workspace_id in the WHERE (NOT scopedQuery — it appends the filter
+  // after RETURNING, which would be invalid SQL). inv.2: scoped in code.
+  const { rows, rowCount } = await pool.query<{ storage: string; r2_key: string | null }>(
+    'DELETE FROM assets WHERE id = $1 AND workspace_id = $2 RETURNING storage, r2_key',
+    [req.params.id!, ctx.workspaceId],
+  );
   if (!rowCount) return ok({ error: 'not found' }, 404);
+  // Best-effort remove the object from the bucket (the row is already gone; a
+  // leftover object is harmless — never fail the delete on a storage hiccup).
+  const row = rows[0];
+  if (row?.storage === 'r2' && row.r2_key && deps.storage) {
+    try {
+      await deps.storage.del(row.r2_key);
+    } catch {
+      /* ignore — object cleanup is best-effort */
+    }
+  }
   return ok({ deleted: rowCount });
 };
 

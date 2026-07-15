@@ -15,7 +15,10 @@ test('company logo: upload shows the image, then remove clears it', async ({ pag
   await page.getByTestId('nav-company').click();
   await page.getByTestId('company-settings').waitFor();
   // Logo lives on the Settings tab (the default /company tab) with the company name.
-  await page.getByTestId('company-logo').waitFor();
+  // Scope to the settings card: once a logo is set, the sidebar ALSO renders a
+  // `company-logo` element (tenant branding), so an unscoped locator is ambiguous.
+  const logoCard = page.getByTestId('company-settings').getByTestId('company-logo');
+  await logoCard.waitFor();
 
   // Starts with no logo.
   await expect(page.getByTestId('company-logo-img')).toHaveCount(0);
@@ -31,8 +34,8 @@ test('company logo: upload shows the image, then remove clears it', async ({ pag
 
   // Persists across a reload.
   await page.reload();
-  await page.getByTestId('company-logo').waitFor();
-  await expect(page.getByTestId('company-logo-img')).toBeVisible({ timeout: 15_000 });
+  await logoCard.waitFor();
+  await expect(logoCard.getByTestId('company-logo-img')).toBeVisible({ timeout: 15_000 });
 
   // Remove → the image is gone (resets state for other specs).
   await page.getByTestId('company-logo-remove').click();

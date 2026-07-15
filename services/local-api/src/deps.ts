@@ -9,6 +9,7 @@
 import type { Pool } from 'pg';
 import { getPool } from '@cdp/db';
 import { compileMjml, resolveTransactionalMailer } from '@cdp/email';
+import { r2StorageFromEnv, type ObjectStorage } from './storage.js';
 import type {
   SesEmailClient,
   CreateDomainIdentityResult,
@@ -57,6 +58,12 @@ export interface LocalApiDeps {
   readonly mailer: TransactionalMailer;
   /** The public app base URL used to build invite / reset links (e.g. https://journeys.on-grow.com). */
   readonly appBaseUrl: string;
+  /**
+   * Object storage for uploaded images (Cloudflare R2, S3-compatible). null when
+   * unconfigured → the asset handlers fall back to base64-in-Postgres (dev/tests).
+   * Set the R2_* env to switch prod image storage to the bucket.
+   */
+  readonly storage: ObjectStorage | null;
 }
 
 /**
@@ -168,5 +175,6 @@ export function makeLocalDeps(
     dispatchQueueUrl: process.env.DISPATCH_QUEUE_URL ?? 'local://dispatch',
   };
   const appBaseUrl = (process.env.APP_BASE_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
-  return { pool, compileMjml, onboarding, broadcast, channelHttp, graphHttp, mailer, appBaseUrl };
+  const storage = r2StorageFromEnv();
+  return { pool, compileMjml, onboarding, broadcast, channelHttp, graphHttp, mailer, appBaseUrl, storage };
 }

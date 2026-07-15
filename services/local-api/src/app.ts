@@ -145,9 +145,16 @@ export function createApp(opts: CreateAppOptions): Hono {
   app.get('/assets/:id', async (c) => {
     const id = c.req.param('id');
     if (!/^[0-9a-f-]{36}$/i.test(id)) return c.notFound();
-    const { rows } = await opts.pool.query('SELECT mime, data FROM assets WHERE id = $1', [id]);
-    const row = rows[0] as { mime: string; data: string } | undefined;
+    const { rows } = await opts.pool.query('SELECT mime, data, storage, r2_key FROM assets WHERE id = $1', [id]);
+    const row = rows[0] as { mime: string; data: string | null; storage: string; r2_key: string | null } | undefined;
     if (!row) return c.notFound();
+    // R2-backed: 302 to the public CDN URL — the image bytes NEVER touch this
+    // server (free egress). Keeps the /assets/:id URL working for links frozen
+    // into already-saved templates. Cheap redirect; email image proxies cache it.
+    if (row.storage === 'r2' && row.r2_key && deps.storage) {
+      return c.redirect(deps.storage.publicUrl(row.r2_key), 302);
+    }
+    if (row.data == null) return c.notFound();
     const bytes = Buffer.from(row.data, 'base64');
     return c.body(bytes, 200, {
       'content-type': row.mime,
