@@ -52,6 +52,11 @@ describeMaybe('runPendingMigrations (real Postgres)', () => {
     expect(await regclass(T2)).toBeTruthy();
     const tracked = await pool.query<{ version: string }>(`SELECT version FROM ${TRACK} ORDER BY version`);
     expect(tracked.rows.map((x) => x.version)).toEqual(['0001_a.sql', '0002_b.sql']);
+    // The tracking table must have RLS enabled (it lives in `public`; backend-only).
+    const rls = await pool.query<{ r: boolean }>(
+      `SELECT relrowsecurity r FROM pg_class WHERE relname = '${TRACK}'`,
+    );
+    expect(rls.rows[0]!.r).toBe(true);
   });
 
   it('idempotent: a second run applies nothing', async () => {

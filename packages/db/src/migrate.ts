@@ -90,6 +90,11 @@ export async function runPendingMigrations(
          applied_at timestamptz NOT NULL DEFAULT now()
        )`,
     );
+    // Backend-only bookkeeping table in the `public` schema → enable RLS (no policy)
+    // so it isn't exposed through Supabase's PostgREST anon API (Security Advisor:
+    // "RLS Disabled in Public"). The migrator role bypasses RLS, so this doesn't
+    // affect the runner's own reads/writes. Idempotent.
+    await client.query(`ALTER TABLE ${tracking} ENABLE ROW LEVEL SECURITY`);
     const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort((a, b) => a.localeCompare(b));
     const { rows } = await client.query<{ version: string }>(`SELECT version FROM ${tracking}`);
     const applied = new Set(rows.map((r) => r.version));
