@@ -168,14 +168,19 @@ export function PublicDocs() {
   return (
     <div class="min-h-dvh bg-stone-50 text-ink-900">
       <header class="border-b border-stone-200 bg-white">
-        <div class="mx-auto flex max-w-3xl items-center gap-2.5 px-6 py-4">
-          <span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-500 text-ink-950">
-            <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="2">
-              <path d="M3 12c4-7 14-7 18 0-4 7-14 7-18 0Z" stroke-linejoin="round" />
-              <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
-            </svg>
-          </span>
-          <div class="font-display text-[15px] font-bold text-ink-950">Customer Journeys — API</div>
+        <div class="mx-auto flex max-w-3xl items-center justify-between gap-2.5 px-6 py-4">
+          <div class="flex items-center gap-2.5">
+            <span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-500 text-ink-950">
+              <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="2">
+                <path d="M3 12c4-7 14-7 18 0-4 7-14 7-18 0Z" stroke-linejoin="round" />
+                <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
+              </svg>
+            </span>
+            <div class="font-display text-[15px] font-bold text-ink-950">Customer Journeys — API</div>
+          </div>
+          <a data-testid="docs-back-home" href="/" class="text-sm font-semibold text-brand-700 hover:underline">
+            ← Back to homepage
+          </a>
         </div>
       </header>
       <main class="mx-auto max-w-3xl px-6 py-8">

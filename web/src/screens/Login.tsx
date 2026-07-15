@@ -242,7 +242,13 @@ export function Login() {
           </div>
           ) : null}
 
-          <p class="mt-8 text-center text-[11px] text-stone-400" data-testid="app-version">
+          <p class="mt-8 text-center text-xs text-stone-500">
+            <a data-testid="docs-link" href="/docs" class="font-semibold text-brand-700 hover:underline">
+              API documentation →
+            </a>
+          </p>
+
+          <p class="mt-3 text-center text-[11px] text-stone-400" data-testid="app-version">
             v{__APP_VERSION__}
             {__APP_COMMIT__ ? ` · ${__APP_COMMIT__}` : ''}
           </p>
