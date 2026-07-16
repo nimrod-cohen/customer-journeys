@@ -379,6 +379,24 @@ export const addMember: Handler = async (ctx, pool, req) => {
 };
 
 /**
+/**
+ * GET /company/workspaces — every workspace owned by the ACTIVE company (derived
+ * from the active workspace, never the body — inv.2). Drives the Company settings
+ * → Workspaces list. Unlike the session's `memberships` (which is empty for a
+ * platform admin viewing a company cross-tenant), this always lists the company's
+ * workspaces, so a system-admin (or an owner) sees + manages them.
+ */
+export const getCompanyWorkspaces: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ workspaces: [] });
+  const { rows } = await pool.query<{ id: string; name: string }>(
+    'SELECT id, name FROM workspaces WHERE company_id = $1 ORDER BY name',
+    [companyId],
+  );
+  return ok({ workspaces: rows });
+};
+
+/**
  * POST /workspaces — an owner (manage_workspace_users) creates a new workspace IN
  * THEIR OWN company. The company is derived from the active workspace (never the
  * body — CLAUDE.md inv.2); the creator becomes an owner of the new workspace
@@ -6107,6 +6125,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'DELETE /ingest-keys/:id': revokeIngestKey,
   'PATCH /me': updateMe,
   'GET /workspace/members': listMembers,
+  'GET /company/workspaces': getCompanyWorkspaces,
   'POST /workspaces': createWorkspace,
   'PATCH /company': renameCompany,
   'PATCH /workspaces/:id': renameWorkspace,

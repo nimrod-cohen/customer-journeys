@@ -2,7 +2,7 @@
 // a company can own several. List them (with Open to switch), add a new one,
 // rename, or delete (type-the-name confirmation). All scoped server-side to the
 // caller's company; tenant isolation stays at the workspace level.
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { useStore } from '../store/store.js';
 import { api, sessionStore, refreshMe, switchWorkspace } from '../store/session.js';
@@ -27,6 +27,22 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
   const activeTab: CompanyTab = tab !== 'billing' && !canCompany ? 'billing' : tab;
   const [newWsName, setNewWsName] = useState('');
   const [wsError, setWsError] = useState('');
+  // The ACTIVE company's workspaces — the list to manage here. Fetched from the
+  // server (not session.memberships, which is empty for a platform admin viewing
+  // a company cross-tenant, so the main workspace wouldn't show).
+  const [workspaces, setWorkspaces] = useState<Array<{ id: string; name: string }>>([]);
+  const loadWorkspaces = async (): Promise<void> => {
+    try {
+      const r = await api.get<{ workspaces: Array<{ id: string; name: string }> }>('/company/workspaces');
+      setWorkspaces(r.workspaces);
+    } catch {
+      /* leave as-is on a transient error */
+    }
+  };
+  useEffect(() => {
+    void loadWorkspaces();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.workspaceId]);
   const [delTarget, setDelTarget] = useState<{ id: string; name: string } | null>(null);
   const [delConfirm, setDelConfirm] = useState('');
   const [delBusy, setDelBusy] = useState(false);
@@ -58,6 +74,7 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
       await api.post('/workspaces', { body: { name } });
       setNewWsName('');
       await refreshMe();
+      await loadWorkspaces();
     } catch (e) {
       setWsError((e as { error?: string })?.error ?? 'could not create workspace');
     }
@@ -71,6 +88,7 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
       await api.patch(`/workspaces/${id}`, { body: { name } });
       setRenameId(null);
       await refreshMe();
+      await loadWorkspaces();
     } catch (e) {
       setWsError((e as { error?: string })?.error ?? 'could not rename workspace');
     }
@@ -85,6 +103,7 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
       setDelTarget(null);
       setDelConfirm('');
       await refreshMe();
+      await loadWorkspaces();
     } catch (e) {
       setDelErr((e as { error?: string })?.error ?? 'could not delete workspace');
     } finally {
@@ -220,13 +239,13 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
           A company can own several workspaces. Add, rename, switch into, or delete them here.
         </p>
         <ul class="mt-3 divide-y divide-stone-100 overflow-hidden rounded-lg border border-stone-200">
-          {session.memberships.map((m) => (
+          {workspaces.map((m) => (
             <li
               data-testid="ws-row"
-              key={m.workspaceId}
+              key={m.id}
               class="flex items-center justify-between gap-2 px-3 py-2 text-sm"
             >
-              {renameId === m.workspaceId ? (
+              {renameId === m.id ? (
                 <span class="flex flex-1 items-center gap-2">
                   <Input
                     data-testid="rename-input"
@@ -234,7 +253,7 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
                     value={renameText}
                     onInput={(e: Event) => setRenameText((e.target as HTMLInputElement).value)}
                   />
-                  <Button data-testid="rename-save" size="sm" onClick={() => saveRename(m.workspaceId)}>
+                  <Button data-testid="rename-save" size="sm" onClick={() => saveRename(m.id)}>
                     Save
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setRenameId(null)}>
@@ -244,42 +263,42 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
               ) : (
                 <>
                   <span class="text-ink-900">
-                    {m.name ?? m.workspaceId}
-                    {m.workspaceId === session.workspaceId ? (
+                    {m.name ?? m.id}
+                    {m.id === session.workspaceId ? (
                       <span class="ml-2 text-[11px] uppercase tracking-wide text-brand-600">active</span>
                     ) : null}
                   </span>
                   <span class="flex items-center gap-1">
                     <Button
                       data-testid="rename-workspace"
-                      data-ws={m.workspaceId}
+                      data-ws={m.id}
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        setRenameId(m.workspaceId);
+                        setRenameId(m.id);
                         setRenameText(m.name ?? '');
                       }}
                     >
                       Rename
                     </Button>
-                    {m.workspaceId !== session.workspaceId ? (
+                    {m.id !== session.workspaceId ? (
                       <>
                         <Button
                           data-testid="ws-open"
                           variant="ghost"
                           size="sm"
-                          onClick={() => switchWorkspace(m.workspaceId)}
+                          onClick={() => switchWorkspace(m.id)}
                         >
                           Open
                         </Button>
                         <Button
                           data-testid="delete-workspace"
-                          data-ws={m.workspaceId}
+                          data-ws={m.id}
                           variant="ghost"
                           size="sm"
                           class="text-rose-600 hover:bg-rose-50"
                           onClick={() => {
-                            setDelTarget({ id: m.workspaceId, name: m.name ?? m.workspaceId });
+                            setDelTarget({ id: m.id, name: m.name ?? m.id });
                             setDelConfirm('');
                             setDelErr('');
                           }}
