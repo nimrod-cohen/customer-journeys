@@ -15,6 +15,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { sendInvite } from './system-auth.js';
 import {
   createSesClient,
+  createResendEmailClient,
   buildUnsubscribeUrl,
   unsubscribeLinkSecret,
   type SesEmailClient,
@@ -803,6 +804,36 @@ async function companyIdForWorkspace(pool: Pool, workspaceId: string): Promise<s
   return rows[0]?.company_id ?? null;
 }
 
+export interface ChannelAvailability {
+  email: boolean;
+  sms: boolean;
+  whatsapp: boolean;
+}
+
+/**
+ * Which messaging channels the workspace can actually SEND on, derived from the
+ * company's connectors — the single source of truth for broadcast/campaign gating
+ * and the Connectors UI. A channel is enabled when an enabled connector for it
+ * exists AND that provider can really send: EMAIL needs a `resend` connector
+ * (trusted From) OR a `ses` connector WITH a verified sending_domain in THIS
+ * workspace; SMS needs `019`; WhatsApp needs `meta_whatsapp`.
+ */
+export async function channelsForWorkspace(pool: Pool, workspaceId: string): Promise<ChannelAvailability> {
+  const companyId = await companyIdForWorkspace(pool, workspaceId);
+  if (!companyId) return { email: false, sms: false, whatsapp: false };
+  const { rows } = await pool.query<{ channel: string; provider: string }>(
+    'SELECT channel, provider FROM company_connectors WHERE company_id = $1 AND enabled',
+    [companyId],
+  );
+  const has = (ch: string, pr?: string): boolean => rows.some((r) => r.channel === ch && (!pr || r.provider === pr));
+  let email = has('email', 'resend');
+  if (!email && has('email', 'ses')) {
+    const vd = await pool.query('SELECT 1 FROM sending_domains WHERE workspace_id = $1 AND verified LIMIT 1', [workspaceId]);
+    email = (vd.rowCount ?? 0) > 0;
+  }
+  return { email, sms: has('sms', '019'), whatsapp: has('whatsapp', 'meta_whatsapp') };
+}
+
 /**
  * Resolve the R2 object storage for a workspace's COMPANY (per-company buckets),
  * or null when the company has no config → callers fall back to base64-in-Postgres.
@@ -854,13 +885,27 @@ async function sesForWorkspace(
   workspaceId: string,
   deps: LocalApiDeps,
 ): Promise<{ ses: SesEmailClient; mode: SesMode; region: string | null }> {
-  const { rows } = await pool.query<{ region: string; access_key_id: string; secret_access_key: string }>(
-    `SELECT s.region, s.access_key_id, s.secret_access_key
-       FROM company_ses_config s JOIN workspaces w ON w.company_id = s.company_id
-      WHERE w.id = $1`,
+  // Connectors first (email/ses); fall back to the legacy company_ses_config for
+  // rows not yet migrated (transitional — keeps old tests green).
+  let cfg: { region: string; access_key_id: string; secret_access_key: string } | undefined;
+  const conn = await pool.query<{ config: Record<string, unknown>; secret: string | null }>(
+    `SELECT c.config, c.secret FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
+      WHERE w.id = $1 AND c.channel = 'email' AND c.provider = 'ses' AND c.enabled
+      ORDER BY c.updated_at DESC LIMIT 1`,
     [workspaceId],
   );
-  const cfg = rows[0];
+  const cc = conn.rows[0];
+  if (cc && cc.secret) {
+    cfg = { region: String(cc.config.region ?? ''), access_key_id: String(cc.config.access_key_id ?? ''), secret_access_key: cc.secret };
+  } else {
+    const { rows } = await pool.query<{ region: string; access_key_id: string; secret_access_key: string }>(
+      `SELECT s.region, s.access_key_id, s.secret_access_key
+         FROM company_ses_config s JOIN workspaces w ON w.company_id = s.company_id
+        WHERE w.id = $1`,
+      [workspaceId],
+    );
+    cfg = rows[0];
+  }
   if (cfg) {
     // Stored secret is an encryption envelope (legacy plaintext tolerated).
     const secretAccessKey = isEncryptedSecret(cfg.secret_access_key)
@@ -878,6 +923,33 @@ async function sesForWorkspace(
     return { ses: deps.onboarding.ses, mode: 'mock', region: process.env.LOCAL_SES_REGION ?? 'il-central-1' };
   }
   return { ses: deps.onboarding.ses, mode: 'none', region: null };
+}
+
+/**
+ * Resolve the EMAIL transport for a workspace's company: a TRUSTED Resend client
+ * when a `resend` email connector is configured, else the SES client. `trusted`
+ * feeds the dispatcher's verified gate — Resend needs no in-app verified domain
+ * (the company verified it in Resend's dashboard); its From is the connector's.
+ */
+async function emailSenderForWorkspace(
+  pool: Pool,
+  workspaceId: string,
+  deps: LocalApiDeps,
+): Promise<{ ses: SesEmailClient; mode: SesMode; region: string | null; trusted: boolean }> {
+  const r = await pool.query<{ config: Record<string, unknown>; secret: string | null }>(
+    `SELECT c.config, c.secret FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
+      WHERE w.id = $1 AND c.channel = 'email' AND c.provider = 'resend' AND c.enabled
+      ORDER BY c.updated_at DESC LIMIT 1`,
+    [workspaceId],
+  );
+  const rc = r.rows[0];
+  if (rc && rc.secret) {
+    const apiKey = isEncryptedSecret(rc.secret) ? decryptSecret(rc.secret) : rc.secret;
+    const from = String(rc.config.from ?? '');
+    return { ses: createResendEmailClient({ apiKey, from }, deps.resendHttp), mode: 'real', region: null, trusted: true };
+  }
+  const s = await sesForWorkspace(pool, workspaceId, deps);
+  return { ...s, trusted: false };
 }
 
 const SES_NOT_CONFIGURED =
@@ -909,9 +981,10 @@ async function dispatchBroadcastNow(
   const medium = bcRow.rows[0]?.medium ?? 'email';
   const isText = medium === 'sms' || medium === 'whatsapp';
 
-  const { ses, mode } = await sesForWorkspace(pool, workspaceId, deps);
-  // For EMAIL: only real SES creds deliver. For TEXT: always deliver (mock channel),
-  // using whatever SES client (the dispatcher never calls SES for a text send).
+  const { ses, mode, trusted } = await emailSenderForWorkspace(pool, workspaceId, deps);
+  // For EMAIL: only a real transport (SES creds or a Resend connector) delivers. For
+  // TEXT: always deliver (mock channel), using whatever email client (the dispatcher
+  // never calls it for a text send).
   if (!isText && mode !== 'real') return;
   const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
   const reader = {
@@ -923,6 +996,7 @@ async function dispatchBroadcastNow(
   const dispatchDeps: DispatchDeps = {
     reader,
     ses,
+    emailTrusted: trusted,
     // Per-company text-channel config: a real '019' SMS gateway when the workspace's
     // company configured it (bearer decrypted at send time), else the deterministic
     // MOCK (so dev/e2e text sends work offline). The injected channelHttp lets tests
@@ -1002,7 +1076,7 @@ async function dispatchCampaignOutboxNow(pool: Pool, deps: LocalApiDeps): Promis
   for (const r of rows) {
     let entry = dispatchByWs.get(r.workspace_id);
     if (entry === undefined) {
-      const { ses, mode } = await sesForWorkspace(pool, r.workspace_id, deps);
+      const { ses, mode, trusted } = await emailSenderForWorkspace(pool, r.workspace_id, deps);
       const reader = {
         query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
           const res = await pool.query(text, values ? [...values] : undefined);
@@ -1014,6 +1088,7 @@ async function dispatchCampaignOutboxNow(pool: Pool, deps: LocalApiDeps): Promis
         deps: {
           reader,
           ses,
+          emailTrusted: trusted,
           // Per-company text-channel config (real '019' when configured, else MOCK).
           resolveChannelConfig: (ws, medium) => channelConfigForWorkspace(reader, ws, medium),
           channelHttp: deps.channelHttp,
@@ -1135,6 +1210,88 @@ export const deleteCompanySesConfig: Handler = async (ctx, pool) => {
   if (!companyId) return ok({ deleted: 0 });
   const { rowCount } = await pool.query('DELETE FROM company_ses_config WHERE company_id = $1', [companyId]);
   return ok({ deleted: rowCount });
+};
+
+// --- per-company CONNECTORS (unified provider registry) ------------------------
+// A connector powers a messaging channel (email/sms/whatsapp) via a provider. The
+// secret is write-only + encrypted. Channel availability (GET /company/channels)
+// gates broadcasts + campaigns. Config is validated per provider.
+
+/** Allowed (channel, provider) pairs + which config keys each carries (non-secret). */
+const CONNECTOR_SPECS: Record<string, { channel: string; configKeys: string[]; secretRequired: boolean }> = {
+  ses: { channel: 'email', configKeys: ['region', 'access_key_id'], secretRequired: true },
+  resend: { channel: 'email', configKeys: ['from'], secretRequired: true },
+  '019': { channel: 'sms', configKeys: ['api_url', 'username', 'source', 'default_country'], secretRequired: true },
+  meta_whatsapp: { channel: 'whatsapp', configKeys: ['phone_number_id', 'waba_id', 'api_version', 'default_country'], secretRequired: true },
+};
+
+/** GET /company/connectors — every connector for the active company (secrets NEVER returned). */
+export const listCompanyConnectors: Handler = async (ctx, pool) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ connectors: [] });
+  const { rows } = await pool.query<{ id: string; channel: string; provider: string; config: Record<string, unknown>; enabled: boolean; has_secret: boolean }>(
+    "SELECT id, channel, provider, config, enabled, (secret IS NOT NULL AND secret <> '') AS has_secret FROM company_connectors WHERE company_id = $1 ORDER BY channel, provider",
+    [companyId],
+  );
+  return ok({ connectors: rows });
+};
+
+/** PUT /company/connectors — upsert a connector by (channel, provider). Blank secret on
+ *  update keeps the stored one. Config is validated + narrowed to the provider's keys. */
+export const putCompanyConnector: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ error: 'no company for this workspace' }, 400);
+  const b = asObject(req.body);
+  const provider = String(b.provider ?? '').trim();
+  const spec = CONNECTOR_SPECS[provider];
+  if (!spec) return ok({ error: `unknown provider '${provider}'` }, 400);
+  const channel = spec.channel;
+  const inCfg = asObject(b.config);
+  const config: Record<string, unknown> = {};
+  for (const k of spec.configKeys) {
+    const v = inCfg[k];
+    if (v !== undefined && v !== null && String(v).trim() !== '') config[k] = String(v).trim();
+  }
+  // Minimal required-config check (secret handled below).
+  const requiredCfg: Record<string, string[]> = {
+    ses: ['region', 'access_key_id'],
+    resend: ['from'],
+    '019': ['api_url', 'username', 'source'],
+    meta_whatsapp: ['phone_number_id'],
+  };
+  for (const k of requiredCfg[provider] ?? []) {
+    if (!config[k]) return ok({ error: `${k} is required for ${provider}` }, 400);
+  }
+  const secret = typeof b.secret === 'string' ? b.secret.trim() : '';
+  const existing = await pool.query<{ secret: string | null }>(
+    'SELECT secret FROM company_connectors WHERE company_id = $1 AND channel = $2 AND provider = $3',
+    [companyId, channel, provider],
+  );
+  const effectiveSecret = secret ? encryptSecret(secret) : existing.rows[0]?.secret ?? null;
+  if (spec.secretRequired && !effectiveSecret) return ok({ error: 'a credential/secret is required' }, 400);
+  const enabled = b.enabled === undefined ? true : Boolean(b.enabled);
+  await pool.query(
+    `INSERT INTO company_connectors (company_id, channel, provider, config, secret, enabled, updated_at)
+     VALUES ($1,$2,$3,$4::jsonb,$5,$6, now())
+     ON CONFLICT (company_id, channel, provider)
+     DO UPDATE SET config = $4::jsonb, secret = $5, enabled = $6, updated_at = now()`,
+    [companyId, channel, provider, JSON.stringify(config), effectiveSecret, enabled],
+  );
+  return ok({ configured: true, channel, provider });
+};
+
+/** DELETE /company/connectors/:id — remove a connector (scoped to the company). */
+export const deleteCompanyConnector: Handler = async (ctx, pool, req) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ deleted: 0 });
+  const { rowCount } = await pool.query('DELETE FROM company_connectors WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ deleted: rowCount });
+};
+
+/** GET /company/channels — which messaging channels are enabled (gate for the SPA). */
+export const getCompanyChannels: Handler = async (ctx, pool) => {
+  return ok({ channels: await channelsForWorkspace(pool, ctx.workspaceId) });
 };
 
 // --- per-company IMAGE STORAGE (Cloudflare R2, S3-compatible) -------------------
@@ -3519,9 +3676,16 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
       return ok({ error: 'Add a message body before sending.' }, 409);
     }
   } else {
-    // EMAIL: From / To / Subject are ALL required, set on the email itself (the
-    // editor). The From must be a real named sender — there is no no-reply fallback.
-    if (!guardRows[0].sender_id) {
+    // EMAIL. The active provider decides the gate: RESEND provides the From
+    // (trusted, verified in Resend's dashboard) — so no sender_id + no verified
+    // sending-domain needed; SES requires a named sender + a verified domain.
+    const rc = await pool.query(
+      `SELECT 1 FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
+        WHERE w.id = $1 AND c.channel = 'email' AND c.provider = 'resend' AND c.enabled LIMIT 1`,
+      [ctx.workspaceId],
+    );
+    const isResend = (rc.rowCount ?? 0) > 0;
+    if (!isResend && !guardRows[0].sender_id) {
       return ok({ error: 'Choose who the email is from — open the email and pick a sender (add one under Sending domains).' }, 409);
     }
     if (!guardRows[0].to_address || !guardRows[0].to_address.trim()) {
@@ -3530,17 +3694,17 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
     if (!guardRows[0].subject || !guardRows[0].subject.trim()) {
       return ok({ error: 'Add a subject line to the email before sending.' }, 409);
     }
-    // Pre-send gate (§10/inv.7): refuse to send unless this workspace has a VERIFIED
-    // sending domain. (Sends ultimately go through the Dispatcher, but enforce here
-    // too so a broadcast is never queued/marked sent with no way to actually send.)
-    // (No LIMIT in the fragment — scopedQuery wraps everything after WHERE.)
-    const vq = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM sending_domains WHERE verified = true');
-    const verified = await pool.query(vq.text, vq.values);
-    if (!verified.rowCount) {
-      return ok(
-        { error: 'No verified sending domain. Verify one in Workspace settings → Sending domains before sending.' },
-        409,
-      );
+    if (!isResend) {
+      // SES pre-send gate (§10/inv.7): refuse unless this workspace has a VERIFIED
+      // sending domain. (No LIMIT — scopedQuery wraps everything after WHERE.)
+      const vq = scopedQuery(ctx.workspaceId, 'SELECT 1 FROM sending_domains WHERE verified = true');
+      const verified = await pool.query(vq.text, vq.values);
+      if (!verified.rowCount) {
+        return ok(
+          { error: 'No verified sending domain. Verify one in Workspace settings → Sending domains before sending.' },
+          409,
+        );
+      }
     }
   }
   const result = await runBroadcast(deps.broadcast, id);
@@ -6144,6 +6308,10 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /company/r2-config': getCompanyR2Config,
   'PUT /company/r2-config': putCompanyR2Config,
   'DELETE /company/r2-config': deleteCompanyR2Config,
+  'GET /company/connectors': listCompanyConnectors,
+  'PUT /company/connectors': putCompanyConnector,
+  'DELETE /company/connectors/:id': deleteCompanyConnector,
+  'GET /company/channels': getCompanyChannels,
   'GET /company/channel-config': getCompanyChannelConfig,
   'PUT /company/channel-config': putCompanyChannelConfig,
   'DELETE /company/channel-config': deleteCompanyChannelConfig,

@@ -424,6 +424,15 @@ export function CampaignDetail({ id }: { id?: string }) {
   // The dispatcher gates each send on its own node's topic_id (no campaign-level
   // topic anymore). "No topic" = null = never gated.
   const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
+  // Channel availability (from connectors): a SEND node whose channel has no
+  // connector renders inactive on the canvas (the runner skips it).
+  const [channels, setChannels] = useState<{ email: boolean; sms: boolean; whatsapp: boolean } | null>(null);
+  useEffect(() => {
+    void api
+      .get<{ channels: { email: boolean; sms: boolean; whatsapp: boolean } }>('/company/channels')
+      .then((r) => setChannels(r.channels))
+      .catch(() => {});
+  }, []);
   const [paletteEdge, setPaletteEdge] = useState<CanvasEdge | null>(null);
   // When set, the palette is opened to insert a step AFTER this condition's branch
   // (the merge (+)); the chosen type splices in BEFORE the continuation.
@@ -971,6 +980,7 @@ export function CampaignDetail({ id }: { id?: string }) {
             onCancelPlacement={cancelPlacement}
             selectedNodeId={selectedNodeId}
             centerTick={centerTick}
+            channels={channels}
           />
 
           <div class="mt-4 flex flex-wrap items-center gap-3">

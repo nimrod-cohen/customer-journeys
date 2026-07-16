@@ -28,7 +28,27 @@ export async function channelConfigForWorkspace(
   workspaceId: string,
   medium: 'sms' | 'whatsapp' = 'sms',
 ): Promise<ChannelProviderConfig> {
+  const dec = (s: string): string => (isEncryptedSecret(s) ? decryptSecret(s) : s);
   if (medium === 'whatsapp') {
+    // Connectors first (the unified registry); fall back to the legacy per-provider
+    // table for rows not yet migrated (transitional — keeps old tests green).
+    const conn = await reader.query<{ config: Record<string, unknown>; secret: string | null }>(
+      `SELECT c.config, c.secret FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
+        WHERE w.id = $1 AND c.channel = 'whatsapp' AND c.provider = 'meta_whatsapp' AND c.enabled
+        ORDER BY c.updated_at DESC LIMIT 1`,
+      [workspaceId],
+    );
+    const cc = conn.rows[0];
+    if (cc && cc.secret) {
+      const cfg = cc.config;
+      return {
+        kind: 'meta',
+        phoneNumberId: String(cfg.phone_number_id ?? ''),
+        accessToken: dec(cc.secret),
+        apiVersion: (cfg.api_version as string | null) ?? null,
+        defaultCountry: (cfg.default_country as string | null) ?? null,
+      };
+    }
     const { rows } = await reader.query<{
       phone_number_id: string;
       access_token: string;
@@ -42,16 +62,33 @@ export async function channelConfigForWorkspace(
     );
     const cfg = rows[0];
     if (cfg) {
-      const accessToken = isEncryptedSecret(cfg.access_token) ? decryptSecret(cfg.access_token) : cfg.access_token;
       return {
         kind: 'meta',
         phoneNumberId: cfg.phone_number_id,
-        accessToken,
+        accessToken: dec(cfg.access_token),
         apiVersion: cfg.api_version,
         defaultCountry: cfg.default_country ?? null,
       };
     }
     return DEFAULT_CHANNEL_CONFIG;
+  }
+  const conn = await reader.query<{ config: Record<string, unknown>; secret: string | null }>(
+    `SELECT c.config, c.secret FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
+      WHERE w.id = $1 AND c.channel = 'sms' AND c.provider = '019' AND c.enabled
+      ORDER BY c.updated_at DESC LIMIT 1`,
+    [workspaceId],
+  );
+  const cc = conn.rows[0];
+  if (cc && cc.secret) {
+    const cfg = cc.config;
+    return {
+      kind: '019',
+      apiUrl: String(cfg.api_url ?? ''),
+      username: String(cfg.username ?? ''),
+      source: String(cfg.source ?? ''),
+      bearer: dec(cc.secret),
+      defaultCountry: (cfg.default_country as string | null) ?? null,
+    };
   }
   const { rows } = await reader.query<{
     provider: string;
@@ -69,8 +106,7 @@ export async function channelConfigForWorkspace(
   const cfg = rows[0];
   const defaultCountry = cfg?.default_country ?? null;
   if (cfg && cfg.provider === '019') {
-    const bearer = isEncryptedSecret(cfg.secret) ? decryptSecret(cfg.secret) : cfg.secret;
-    return { kind: '019', apiUrl: cfg.api_url, username: cfg.username, source: cfg.source, bearer, defaultCountry };
+    return { kind: '019', apiUrl: cfg.api_url, username: cfg.username, source: cfg.source, bearer: dec(cfg.secret), defaultCountry };
   }
   return defaultCountry ? { kind: 'mock', defaultCountry } : DEFAULT_CHANNEL_CONFIG;
 }

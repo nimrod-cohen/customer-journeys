@@ -220,6 +220,31 @@ interface TickOutcome {
  * single-tx path (so reads see the locked row state), or on the reader in the
  * legacy CAS path.
  */
+/**
+ * Which messaging channels the workspace's company can SEND on, from its connectors
+ * (mirrors local-api's channelsForWorkspace): email needs a `resend` connector OR a
+ * `ses` connector WITH a verified sending_domain; sms needs `019`; whatsapp needs
+ * `meta_whatsapp`. A campaign send node for a DISABLED channel is skipped — no
+ * outbox row — while the enrollment still advances (the step is ignored).
+ */
+async function resolveChannels(read: Reader, workspaceId: string): Promise<{ email: boolean; sms: boolean; whatsapp: boolean }> {
+  const { rows } = await read.query<{ channel: string; provider: string }>(
+    'SELECT c.channel, c.provider FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id WHERE w.id = $1 AND c.enabled',
+    [workspaceId],
+  );
+  // A company that hasn't opted into connectors at all (legacy / dev / test using
+  // the mock providers) is NOT gated — never skip. Gating kicks in once ≥1
+  // connector exists (then a channel with no connector is disabled → skipped).
+  if (rows.length === 0) return { email: true, sms: true, whatsapp: true };
+  const has = (ch: string, pr?: string): boolean => rows.some((r) => r.channel === ch && (!pr || r.provider === pr));
+  let email = has('email', 'resend');
+  if (!email && has('email', 'ses')) {
+    const vd = await read.query('SELECT 1 FROM sending_domains WHERE workspace_id = $1 AND verified LIMIT 1', [workspaceId]);
+    email = vd.rows.length > 0;
+  }
+  return { email, sms: has('sms', '019'), whatsapp: has('whatsapp', 'meta_whatsapp') };
+}
+
 async function chainTick(
   read: Reader,
   workspaceId: string,
@@ -252,6 +277,10 @@ async function chainTick(
   // in the SAME tick sees them (the SQL write only commits at tx end). Without this a
   // "set journey var → branch on it" in one tick would read the stale start-of-tick state.
   let tickJourney: Record<string, unknown> = { ...((row.state?.journey as Record<string, unknown>) ?? {}) };
+
+  // Channel availability (from the company's connectors) — a send node whose channel
+  // is DISABLED is skipped (ignored as if the step doesn't exist).
+  const channels = await resolveChannels(read, workspaceId);
 
   for (;;) {
     if (steps >= MAX_STEPS_PER_TICK) {
@@ -328,6 +357,10 @@ async function chainTick(
     // Collect side effects, stamping the authoritative node id onto sends/webhooks.
     for (const eff of result.sideEffects) {
       if (eff.kind === 'send') {
+        // Skip the send when its channel has no connector — the enrollment still
+        // advances below, so the node is ignored as if it doesn't exist.
+        const ch = eff.medium === 'sms' ? 'sms' : eff.medium === 'whatsapp' ? 'whatsapp' : 'email';
+        if (!channels[ch]) continue;
         sends.push({ ...eff, nodeId: currentNodeId });
         // A TEXT send (sms/whatsapp) carries its medium + plain body in the OUTBOX
         // PAYLOAD so the Dispatcher (which has no broadcast row for a campaign send)

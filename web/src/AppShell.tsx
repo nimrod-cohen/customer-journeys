@@ -82,7 +82,9 @@ function screenFor(path: string): JSX.Element {
   if (path === '/company') return <CompanySettings tab="company" />;
   if (path === '/company/users') return <CompanySettings tab="users" />;
   if (path === '/company/workspaces') return <CompanySettings tab="workspaces" />;
-  if (path === '/company/sending') return <CompanySettings tab="sending" />;
+  if (path === '/company/connectors') return <CompanySettings tab="connectors" />;
+  if (path === '/company/storage') return <CompanySettings tab="storage" />;
+  if (path === '/company/sending') return <CompanySettings tab="connectors" />; // legacy alias
   if (path === '/company/billing') return <CompanySettings tab="billing" />;
   if (path === '/account') return <AccountSettings />;
   switch (path) {

@@ -76,8 +76,15 @@ export interface Reader {
 export interface DispatchDeps {
   /** Service-role reader (bypasses RLS → in-code scoping is the guard). */
   readonly reader: Reader;
-  /** The injectable SES client (mocked in tests; never sends real mail). */
+  /** The injectable email client (SES or Resend; mocked in tests; never sends real mail). */
   readonly ses: SesEmailClient;
+  /**
+   * True when the resolved email provider is TRUSTED for its From without an
+   * in-app verified sending domain (i.e. Resend — the company verified its domain
+   * in Resend's dashboard). Lets the email `canSend` gate pass without a verified
+   * `sending_domains` row. SES leaves this false (still needs a verified domain).
+   */
+  readonly emailTrusted?: boolean;
   /**
    * The injectable text-channel provider resolver (sms/whatsapp). Defaults to
    * `@cdp/channels` `resolveChannelProvider` (the deterministic MOCK this phase —
@@ -256,7 +263,9 @@ export async function dispatchOutbox(
     );
     const fromDomain = verifiedDomains[0]?.domain ?? legacyIdentity.from_domain;
     const sendingIdentity = {
-      verified: verifiedDomains.length > 0 || legacyIdentity.verified === true,
+      // Resend (emailTrusted) is verified in Resend's own dashboard → it satisfies
+      // the gate without an in-app verified sending_domain.
+      verified: verifiedDomains.length > 0 || legacyIdentity.verified === true || deps.emailTrusted === true,
       ...(fromDomain ? { from_domain: fromDomain } : {}),
       ...(legacyIdentity.config_set ? { config_set: legacyIdentity.config_set } : {}),
     };

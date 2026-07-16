@@ -70,6 +70,7 @@ export function CampaignCanvas({
   onCancelPlacement,
   selectedNodeId,
   centerTick,
+  channels,
 }: {
   model: CanvasModel;
   onInsert: (edge: CanvasEdge) => void;
@@ -95,6 +96,9 @@ export function CampaignCanvas({
   selectedNodeId?: string | null;
   /** Bump to RE-CENTER the selected node (e.g. on mount / after the drawer closes). */
   centerTick?: number;
+  /** Which messaging channels have a connector. A SEND node whose channel is
+   *  disabled renders INACTIVE (greyed + a badge) — the runner skips it. */
+  channels?: { email: boolean; sms: boolean; whatsapp: boolean } | null;
 }): JSX.Element {
   const layout = layoutDefinition(buildDefinition(model));
 
@@ -490,6 +494,10 @@ export function CampaignCanvas({
           const isTrigger = cn.node.type === 'trigger';
           const isExit = cn.node.type === 'exit';
           const publishErr = publishErrors?.[cn.id];
+          // A SEND node whose channel has no connector is INACTIVE — the runner
+          // skips it (ignored as if it doesn't exist). Show it greyed + a badge.
+          const sendMedium = ((cn.node as { medium?: string }).medium ?? 'email') as 'email' | 'sms' | 'whatsapp';
+          const inactiveSend = dt === 'send' && channels != null && channels[sendMedium] === false;
           // Raise the card whose menu is open ABOVE sibling cards so its dropdown
           // (which can extend down past the card) paints over — and stays clickable
           // over — the next card, instead of being intercepted by it.
@@ -501,14 +509,17 @@ export function CampaignCanvas({
               data-testid={`node-${dt}`}
               data-node-id={cn.id}
               data-selected={isSelected ? 'true' : undefined}
-              class={`absolute rounded-xl border bg-white shadow-card ring-1 ring-inset ${
+              data-inactive={inactiveSend ? 'true' : undefined}
+              class={`group absolute rounded-xl border shadow-card ${
                 raised || isSelected ? 'z-20' : 'z-10'
-              } ${
+              } ${inactiveSend ? 'bg-stone-100/70' : 'bg-white'} ${
                 isSelected
-                  ? 'ring-2 ring-brand-500 border-brand-400'
+                  ? 'ring-2 ring-inset ring-brand-500 border-brand-400'
                   : publishErr
-                    ? 'ring-rose-300'
-                    : 'ring-stone-200'
+                    ? 'ring-1 ring-inset ring-rose-300 border-stone-200'
+                    : inactiveSend
+                      ? 'border-dashed border-stone-300'
+                      : 'ring-1 ring-inset ring-stone-200 border-stone-200'
               }`}
               style={{
                 left: `${pos.x - LAYOUT.cardWidth / 2}px`,
@@ -516,7 +527,38 @@ export function CampaignCanvas({
                 width: `${LAYOUT.cardWidth}px`,
               }}
             >
-              <div class="flex items-start justify-between gap-2 p-3">
+              {inactiveSend ? (
+                <>
+                  <span
+                    data-testid="node-inactive"
+                    class="absolute -right-2 -top-2 z-30 grid h-5 w-5 place-items-center rounded-full bg-amber-400 text-white shadow ring-2 ring-white"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" class="h-3 w-3" aria-hidden="true">
+                      <path d="M14.615 1.595a.75.75 0 0 1 .359.852L12.982 9.75h7.268a.75.75 0 0 1 .548 1.262l-10.5 11.25a.75.75 0 0 1-1.272-.71l1.992-7.302H3.75a.75.75 0 0 1-.548-1.262l10.5-11.25a.75.75 0 0 1 .913-.143Z" />
+                    </svg>
+                  </span>
+                  {/* Designed hover balloon (not the native title tooltip). */}
+                  <div
+                    data-testid="node-inactive-tip"
+                    class="pointer-events-none absolute -top-2.5 left-1/2 z-40 hidden w-60 -translate-x-1/2 -translate-y-full group-hover:block"
+                  >
+                    <div class="relative rounded-lg bg-ink-900 px-3 py-2 text-[11px] leading-snug text-white shadow-xl ring-1 ring-black/5">
+                      <span class="inline-flex items-center gap-1 font-semibold text-amber-300">
+                        <svg viewBox="0 0 24 24" fill="currentColor" class="h-3 w-3" aria-hidden="true">
+                          <path d="M14.615 1.595a.75.75 0 0 1 .359.852L12.982 9.75h7.268a.75.75 0 0 1 .548 1.262l-10.5 11.25a.75.75 0 0 1-1.272-.71l1.992-7.302H3.75a.75.75 0 0 1-.548-1.262l10.5-11.25a.75.75 0 0 1 .913-.143Z" />
+                        </svg>
+                        Inactive step
+                      </span>
+                      <p class="mt-0.5 text-stone-300">
+                        No {sendMedium === 'email' ? 'email' : sendMedium === 'sms' ? 'SMS' : 'WhatsApp'} connector is
+                        connected, so this step is skipped. Connect one in Company&nbsp;settings&nbsp;→&nbsp;Connectors.
+                      </p>
+                      <span class="absolute left-1/2 top-full h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] bg-ink-900" />
+                    </div>
+                  </div>
+                </>
+              ) : null}
+              <div class={`flex items-start justify-between gap-2 p-3 ${inactiveSend ? 'opacity-55' : ''}`}>
                 <button
                   type="button"
                   // Exit has no config; every other node opens its editor on click.
@@ -527,12 +569,14 @@ export function CampaignCanvas({
                 >
                   <span
                     class={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${
-                      NODE_STYLE[dt] ?? NODE_STYLE.exit
+                      inactiveSend ? 'bg-stone-100 text-stone-500 ring-stone-200' : NODE_STYLE[dt] ?? NODE_STYLE.exit
                     }`}
                   >
                     {TYPE_LABEL[dt] ?? dt}
                   </span>
-                  <p class="mt-1.5 truncate text-sm font-medium text-ink-900">{nodeSummary(cn)}</p>
+                  <p class={`mt-1.5 truncate text-sm font-medium ${inactiveSend ? 'text-stone-400' : 'text-ink-900'}`}>
+                    {nodeSummary(cn)}
+                  </p>
                 </button>
                 {isTrigger ? null : (
                   <ActionMenu

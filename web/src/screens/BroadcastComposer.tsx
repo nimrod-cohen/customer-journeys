@@ -483,6 +483,15 @@ export function BroadcastWizard({ id }: { id?: string }) {
   // topic is skipped at send. '' = no topic (sends to everyone not opted out).
   const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
   const [topicId, setTopicId] = useState('');
+  // Which channels the company can actually send on (from its connectors). A medium
+  // with no connector is disabled in the picker — you can't build/send it.
+  const [channels, setChannels] = useState<Record<Medium, boolean>>({ email: true, sms: true, whatsapp: true });
+  useEffect(() => {
+    void api
+      .get<{ channels: Record<Medium, boolean> }>('/company/channels')
+      .then((r) => setChannels(r.channels))
+      .catch(() => {});
+  }, []);
   // Reusable SMS templates. Picking one COPIES its body into the
   // text-body field below (copy-on-select — the user can still edit). No live ref.
   const [textTemplates, setTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
@@ -949,11 +958,19 @@ export function BroadcastWizard({ id }: { id?: string }) {
                 value={medium}
                 onChange={(e: Event) => setMedium((e.target as HTMLSelectElement).value as Medium)}
               >
-                <option value="email">Email</option>
-                <option value="sms">SMS</option>
-                <option value="whatsapp">WhatsApp</option>
+                {(['email', 'sms', 'whatsapp'] as Medium[]).map((m) => (
+                  <option key={m} value={m} disabled={!channels[m]}>
+                    {MEDIUM_LABEL[m]}
+                    {channels[m] ? '' : ' — no connector'}
+                  </option>
+                ))}
               </Select>
-              {medium !== 'email' ? (
+              {!channels[medium] ? (
+                <p data-testid="broadcast-medium-disabled" class="mt-1 text-xs text-amber-600">
+                  {MEDIUM_LABEL[medium]} has no connector. Connect a provider in Company settings → Connectors to send
+                  over {MEDIUM_LABEL[medium]}.
+                </p>
+              ) : medium !== 'email' ? (
                 <p class="mt-1 text-xs text-stone-500">
                   {MEDIUM_LABEL[medium]} messages send to each recipient's phone ({'{{customer.phone}}'}). Recipients
                   without a phone are skipped.

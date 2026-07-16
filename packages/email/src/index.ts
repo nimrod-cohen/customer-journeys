@@ -58,3 +58,13 @@ export {
   buildPasswordResetEmail,
   type BuiltEmail,
 } from './system-emails.js';
+
+// Resend as an alternate per-company EMAIL transport (drop-in for the dispatcher's
+// sendEmail). Chosen via a connector; From is the connector's trusted value.
+export {
+  createResendEmailClient,
+  fetchResendHttpClient,
+  type ResendEmailConfig,
+  type ResendHttpClient,
+  type ResendHttpResponse,
+} from './resend-client.js';

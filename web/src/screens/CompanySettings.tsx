@@ -9,15 +9,13 @@ import { api, sessionStore, refreshMe, switchWorkspace } from '../store/session.
 import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader } from '../ui/kit.js';
 import { can } from '@cdp/tenancy';
-import { CompanySesConfig } from './CompanySesConfig.tsx';
-import { CompanyChannelConfig } from './CompanyChannelConfig.tsx';
 import { CompanyR2Config } from './CompanyR2Config.tsx';
-import { CompanyWhatsAppConfig } from './CompanyWhatsAppConfig.tsx';
+import { ConnectorsPanel } from './Connectors.tsx';
 import { CompanyLogo } from './CompanyLogo.tsx';
 import { CompanyUsersPanel } from './CompanyUsers.tsx';
 import { BillingUsagePanel } from './SimpleScreens.tsx';
 
-type CompanyTab = 'company' | 'users' | 'workspaces' | 'sending' | 'billing';
+type CompanyTab = 'company' | 'users' | 'workspaces' | 'connectors' | 'storage' | 'billing';
 
 export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
   const session = useStore(sessionStore);
@@ -115,7 +113,7 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
     <section data-testid="company-settings">
       <PageHeader
         title={session.companyName ? `${session.companyName} — company settings` : 'Company settings'}
-        subtitle="Workspaces, sending (SES / SMS), and billing & usage."
+        subtitle="Workspaces, connectors (email / SMS / WhatsApp), storage, and billing & usage."
       />
 
       {/* Tabs (only those the role can see) */}
@@ -159,13 +157,25 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
         {canCompany ? (
           <button
             type="button"
-            data-testid="company-tab-sending"
+            data-testid="company-tab-connectors"
             class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
-              activeTab === 'sending' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+              activeTab === 'connectors' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
             }`}
-            onClick={() => navigate('/company/sending')}
+            onClick={() => navigate('/company/connectors')}
           >
-            Sending
+            Connectors
+          </button>
+        ) : null}
+        {canCompany ? (
+          <button
+            type="button"
+            data-testid="company-tab-storage"
+            class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+              activeTab === 'storage' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+            }`}
+            onClick={() => navigate('/company/storage')}
+          >
+            Storage
           </button>
         ) : null}
         {canBilling ? (
@@ -382,14 +392,9 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
       </>
       ) : null}
 
-      {activeTab === 'sending' && canCompany ? (
-        <>
-          <CompanySesConfig />
-          <CompanyChannelConfig />
-          <CompanyR2Config />
-          <CompanyWhatsAppConfig />
-        </>
-      ) : null}
+      {activeTab === 'connectors' && canCompany ? <ConnectorsPanel /> : null}
+
+      {activeTab === 'storage' && canCompany ? <CompanyR2Config /> : null}
     </section>
   );
 }

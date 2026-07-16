@@ -8,7 +8,7 @@
 // deterministic and never hit AWS.
 import type { Pool } from 'pg';
 import { getPool } from '@cdp/db';
-import { compileMjml, resolveTransactionalMailer } from '@cdp/email';
+import { compileMjml, resolveTransactionalMailer, fetchResendHttpClient } from '@cdp/email';
 import { makeR2Storage, type R2StorageFactory } from './storage.js';
 import type {
   SesEmailClient,
@@ -17,6 +17,7 @@ import type {
   SendEmailResult,
   SendEmailInput,
   TransactionalMailer,
+  ResendHttpClient,
 } from '@cdp/email';
 import {
   configSetNameFor,
@@ -65,6 +66,11 @@ export interface LocalApiDeps {
    * with no config falls back to base64-in-Postgres.
    */
   readonly makeR2Storage: R2StorageFactory;
+  /**
+   * HTTP client the Resend email transport POSTs through. Injected so integration
+   * tests assert the exact Resend request WITHOUT the network; defaults to fetch.
+   */
+  readonly resendHttp: ResendHttpClient;
 }
 
 /**
@@ -176,5 +182,5 @@ export function makeLocalDeps(
     dispatchQueueUrl: process.env.DISPATCH_QUEUE_URL ?? 'local://dispatch',
   };
   const appBaseUrl = (process.env.APP_BASE_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
-  return { pool, compileMjml, onboarding, broadcast, channelHttp, graphHttp, mailer, appBaseUrl, makeR2Storage };
+  return { pool, compileMjml, onboarding, broadcast, channelHttp, graphHttp, mailer, appBaseUrl, makeR2Storage, resendHttp: fetchResendHttpClient() };
 }
