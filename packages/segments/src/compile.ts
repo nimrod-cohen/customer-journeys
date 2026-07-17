@@ -79,7 +79,7 @@ export interface SegmentNode {
 }
 
 /**
- * A CONSTANT leaf — `TRUE`/`FALSE`. The campaign runner pre-evaluates a leaf it
+ * A CONSTANT leaf — `TRUE`/`FALSE`. The automation runner pre-evaluates a leaf it
  * CANNOT express in SQL (a trigger-event condition) in-memory and folds the
  * boolean result into the AST as a ConstNode before compiling.
  */
@@ -88,9 +88,9 @@ export interface ConstNode {
 }
 
 /**
- * A TRIGGER-EVENT leaf (CAMPAIGN IF only): match the ENROLLING event's payload.
- * It is NOT SQL-compilable (the trigger event lives on `campaign_enrollments.state`,
- * not a table the segment SQL touches) — the campaign runner evaluates `filter`
+ * A TRIGGER-EVENT leaf (AUTOMATION IF only): match the ENROLLING event's payload.
+ * It is NOT SQL-compilable (the trigger event lives on `automation_enrollments.state`,
+ * not a table the segment SQL touches) — the automation runner evaluates `filter`
  * in-memory against the persisted trigger event and REWRITES this node to a
  * ConstNode BEFORE compiling. `filter` is a `payload.*` AstNode (the same closed
  * grammar as the event TRIGGER's payload filter); omitted = matches whenever a
@@ -102,10 +102,10 @@ export interface TriggerEventNode {
 }
 
 /**
- * A JOURNEY-attribute leaf (CAMPAIGN IF only): match a per-enrollment journey
- * VARIABLE (set by an Update-journey node, stored on `campaign_enrollments.state.journey`).
+ * A JOURNEY-attribute leaf (AUTOMATION IF only): match a per-enrollment journey
+ * VARIABLE (set by an Update-journey node, stored on `automation_enrollments.state.journey`).
  * Like a trigger-event leaf it is NOT SQL-compilable (journey vars live on the
- * enrollment row, not a table the segment SQL touches) — the campaign runner
+ * enrollment row, not a table the segment SQL touches) — the automation runner
  * evaluates it in-memory against `state.journey` and REWRITES this node to a
  * ConstNode BEFORE compiling. `journeyKey` is the variable key (deep-dot supported,
  * e.g. `cohort` or `meta.tier`). Reaching the SQL compiler with one is a bug.
@@ -117,8 +117,8 @@ export interface JourneyNode {
 }
 
 /** A rule-AST node — a boolean group, a leaf condition, an event predicate, a
- *  segment-membership leaf, a constant, a (campaign-only) trigger-event leaf, or a
- *  (campaign-only) journey-attribute leaf. */
+ *  segment-membership leaf, a constant, a (automation-only) trigger-event leaf, or a
+ *  (automation-only) journey-attribute leaf. */
 export type AstNode =
   | GroupNode
   | ConditionNode
@@ -322,7 +322,7 @@ function isTriggerEvent(node: AstNode): node is TriggerEventNode {
   return (node as TriggerEventNode).triggerEvent === true;
 }
 
-/** A journey-attribute leaf (campaign IF, evaluated in-memory + rewritten before SQL). */
+/** A journey-attribute leaf (automation IF, evaluated in-memory + rewritten before SQL). */
 export function isJourney(node: AstNode): node is JourneyNode {
   return typeof (node as JourneyNode).journeyKey === 'string';
 }

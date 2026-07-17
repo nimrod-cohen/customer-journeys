@@ -23,14 +23,14 @@
         "converged": true,
         "phase": {
           "criteria": [
-            "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+            "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, automations, cost attribution).",
             "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
             "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
           ],
           "frontend": false,
           "id": "phase14-hardening",
           "scope": [
-            "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.",
+            "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + automation + cost criteria) runnable as one gate — the pass/fail merge gate.",
             "CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).",
             "A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).",
             "An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception)."
@@ -70,14 +70,14 @@
     "converged": true,
     "phase": {
       "criteria": [
-        "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+        "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, automations, cost attribution).",
         "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
         "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
       ],
       "frontend": false,
       "id": "phase14-hardening",
       "scope": [
-        "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.",
+        "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + automation + cost criteria) runnable as one gate — the pass/fail merge gate.",
         "CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).",
         "A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).",
         "An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception)."

@@ -39,7 +39,7 @@
       },
       {
         "criterion": "No scope creep",
-        "evidence": "no broadcast/campaign/image/metering/frontend imports.",
+        "evidence": "no broadcast/automation/image/metering/frontend imports.",
         "verified": true
       }
     ],
@@ -90,7 +90,7 @@
       },
       {
         "criterion": "No scope creep",
-        "evidence": "no broadcast/campaign/image/metering/frontend imports.",
+        "evidence": "no broadcast/automation/image/metering/frontend imports.",
         "verified": true
       }
     ],

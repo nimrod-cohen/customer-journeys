@@ -24,12 +24,12 @@ export async function pickAudienceSegment(page: Page): Promise<void> {
 }
 
 /**
- * Publish the campaign currently open in the builder via the Save-version modal
- * (the campaign builder now edits a DRAFT and publishes append-only VERSIONS).
+ * Publish the automation currently open in the builder via the Save-version modal
+ * (the automation builder now edits a DRAFT and publishes append-only VERSIONS).
  * Opens the modal, names the version, and confirms a FORWARD publish (the default).
  * Caller asserts the resulting status.
  */
-export async function publishCampaign(page: Page, versionName = 'v1'): Promise<void> {
+export async function publishAutomation(page: Page, versionName = 'v1'): Promise<void> {
   await page.getByTestId('publish-version').click();
   await page.getByTestId('publish-modal').waitFor();
   await page.getByTestId('version-name').fill(versionName);

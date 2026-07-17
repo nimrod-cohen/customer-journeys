@@ -7,13 +7,13 @@
   "result": {
     "commitHash": "97bfda151d4cbaaa69dd7f0f2bbb024eba91902f",
     "committed": true,
-    "message": "feat(phase10): campaign workflow engine (durable per-profile state machine)"
+    "message": "feat(phase10): automation workflow engine (durable per-profile state machine)"
   },
   "startedAt": "2026-06-07T07:36:15.268Z",
   "finishedAt": "2026-06-07T07:36:15.268Z",
   "value": {
     "commitHash": "97bfda151d4cbaaa69dd7f0f2bbb024eba91902f",
     "committed": true,
-    "message": "feat(phase10): campaign workflow engine (durable per-profile state machine)"
+    "message": "feat(phase10): automation workflow engine (durable per-profile state machine)"
   }
 }

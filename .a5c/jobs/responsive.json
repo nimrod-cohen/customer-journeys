@@ -3,7 +3,7 @@
     "web/src/AppShell.tsx",
     "web/src/ui/kit.tsx",
     "web/src/screens/BroadcastComposer.tsx",
-    "web/src/screens/CampaignBuilder.tsx",
+    "web/src/screens/AutomationBuilder.tsx",
     "package.json",
     "CLAUDE.md"
   ],

@@ -1,7 +1,7 @@
 // The Workspace settings timezone picker is a kit Select fed by timeZoneList()
 // (full IANA list, §9B clock), initialized from GET /workspace/settings and saved
 // via PUT with optimistic rollback. This project has no DOM-rendering test harness
-// (web unit tests are pure-logic, like campaign-builder.test.ts), so we test the
+// (web unit tests are pure-logic, like automation-builder.test.ts), so we test the
 // picker's PURE pieces: the option list + the optimistic save handler (mocked api),
 // which is exactly the load-bearing behavior (no real network).
 import { describe, it, expect, vi } from 'vitest';

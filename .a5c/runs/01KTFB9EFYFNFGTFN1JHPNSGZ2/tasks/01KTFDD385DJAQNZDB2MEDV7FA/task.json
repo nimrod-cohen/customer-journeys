@@ -104,7 +104,7 @@
           "Idempotency: outbox.dedupe_key prevents double-sends; feedback handlers are idempotent on the SES message id / event.",
           "Logic in pure injected functions; Lambda handlers stay thin and are unit-tested via the pure function. Reuse the Phase 2-5 harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text, values} shape.",
           "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id is a GLOBAL PK). No cross-file races.",
-          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), campaigns (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), automations (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
         ],
         "phase": {
           "criteria": [
@@ -287,7 +287,7 @@
         "Verify EACH acceptance criterion is actually covered by a passing, non-vacuous test: [\"The Dispatcher refuses to send for a workspace whose status != active/verified.\",\"A recipient on the workspace suppression list (or in global_hard_bounces) is skipped; suppression is checked before sending.\",\"Per-workspace frequency cap holds (a recipient over the cap within the window is not sent again); quiet-hours defer/re-queue rather than send.\",\"A successful send is recorded once in messages_log (+ usage_counters emails_sent); the dedupe_key prevents double-sends on retry; SES is called with the workspace Configuration Set only after suppression/cap/quiet-hours pass.\"].",
         "Highest-priority checks: (a) tenant isolation + suppression is per-(workspace_id,email) and never cross-workspace; (b) the verification/active gate genuinely blocks sends; (c) SES/SNS/DNS are MOCKED (no real mail/calls) yet asserted (e.g. SES SendEmail called with the right Configuration Set only AFTER suppression/cap/quiet-hours); (d) idempotency (re-delivered feedback / outbox retry does not double-write).",
         "If any integration test mocks Postgres, that is a FAIL (must use real local Postgres per §16A).",
-        "Scope check: flag any feature beyond the cited sections (broadcasts/campaigns/image/frontend/metering).",
+        "Scope check: flag any feature beyond the cited sections (broadcasts/automations/image/frontend/metering).",
         "Score 0-100. Set testsPass and criteriaAllMet honestly. Give concrete prioritized recommendations."
       ],
       "outputFormat": "JSON: { score: number, testsPass: boolean, criteriaAllMet: boolean, criteriaCoverage: [{criterion, met, evidence}], isolationOk: boolean, mocksOk: boolean, scopeCreep: string[], recommendations: string[], criticalIssues: string[] }",

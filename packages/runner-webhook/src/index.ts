@@ -1,4 +1,4 @@
-// @cdp/runner-webhook — the campaign webhook action's safety + execution core
+// @cdp/runner-webhook — the automation webhook action's safety + execution core
 // (§9B). Pure + injected: an SSRF/allowlist guard, a merge-rendering executor over
 // an injected HTTP client, and a production fetch-based client behind the same
 // interface. No DB/AWS — the runner wires this post-commit (mirrors enqueueSends).

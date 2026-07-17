@@ -1,7 +1,7 @@
 // Delete a profile (§6/§12) — HARD delete + FULL erasure. REAL Postgres. Proves:
 // DELETE /profiles/:id removes the profile AND every row that references it
 // (events, messages_log, activity_log, segment_memberships, segment_change_log,
-// campaign_enrollments, topic_subscriptions, channel_optouts, tracked_opens,
+// automation_enrollments, topic_subscriptions, channel_optouts, tracked_opens,
 // profile_features) PLUS the suppressions row keyed by its email — all
 // workspace-scoped. A cross-workspace / missing id → 404 and touches nothing.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -44,7 +44,7 @@ describeMaybe('delete profile — hard delete + full erasure (real Postgres)', (
     // Parents needed by the child rows.
     await world.pool.query("INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,'Seg','manual')", [SEG, WS]);
     await world.pool.query(
-      `INSERT INTO campaigns (id, workspace_id, name, definition, status)
+      `INSERT INTO automations (id, workspace_id, name, definition, status)
        VALUES ($1,$2,'Camp','{"startNode":"t","nodes":{}}'::jsonb,'active')`,
       [CAMP, WS],
     );
@@ -79,7 +79,7 @@ describeMaybe('delete profile — hard delete + full erasure (real Postgres)', (
         [ws, EMAIL],
       );
     }
-    // WS-only children that need the WS parents (segment/campaign/topic).
+    // WS-only children that need the WS parents (segment/automation/topic).
     await world.pool.query(
       "INSERT INTO segment_memberships (segment_id, profile_id, workspace_id, source) VALUES ($1,$2,$3,'manual')",
       [SEG, PROF, WS],
@@ -89,7 +89,7 @@ describeMaybe('delete profile — hard delete + full erasure (real Postgres)', (
       [WS, SEG, PROF],
     );
     await world.pool.query(
-      "INSERT INTO campaign_enrollments (workspace_id, campaign_id, profile_id, current_node, status) VALUES ($1,$2,$3,'t','active')",
+      "INSERT INTO automation_enrollments (workspace_id, automation_id, profile_id, current_node, status) VALUES ($1,$2,$3,'t','active')",
       [WS, CAMP, PROF],
     );
     await world.pool.query(
@@ -111,8 +111,8 @@ describeMaybe('delete profile — hard delete + full erasure (real Postgres)', (
       await world.pool.query('DELETE FROM channel_optouts WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM tracked_opens WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM topics WHERE workspace_id = $1', [ws]);
-      await world.pool.query('DELETE FROM campaign_enrollments WHERE workspace_id = $1', [ws]);
-      await world.pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);
+      await world.pool.query('DELETE FROM automation_enrollments WHERE workspace_id = $1', [ws]);
+      await world.pool.query('DELETE FROM automations WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM segment_change_log WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM segment_memberships WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM segments WHERE workspace_id = $1', [ws]);
@@ -154,7 +154,7 @@ describeMaybe('delete profile — hard delete + full erasure (real Postgres)', (
       'tracked_opens',
       'segment_memberships',
       'segment_change_log',
-      'campaign_enrollments',
+      'automation_enrollments',
       'topic_subscriptions',
     ]) {
       const { rowCount } = await world.pool.query(`SELECT 1 FROM ${table} WHERE profile_id = $1`, [PROF]);

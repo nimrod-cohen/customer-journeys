@@ -3,7 +3,7 @@
   "recordedAt": "2026-06-19T16:18:07.491Z",
   "data": {
     "effectId": "01KVGASRZH63N77ACDV18C3P8K",
-    "invocationKey": "cdp/campaign-builder:S000016:commit-phase",
+    "invocationKey": "cdp/automation-builder:S000016:commit-phase",
     "invocationHash": "4e8b59ab9247bffa6e3f493dd1fad9be79a8c2a391a383f164e7e1b8d1f34b23",
     "stepId": "S000016",
     "taskId": "commit-phase",

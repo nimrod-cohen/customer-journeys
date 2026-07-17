@@ -30,7 +30,7 @@ export interface ExpressionValueSpec {
 
 /**
  * A SANDBOXED JS value spec — a snippet of JavaScript evaluated NODE-SIDE ONLY
- * (services/campaign-runner/src/js-value.ts, via node:vm in an empty context with
+ * (services/automation-runner/src/js-value.ts, via node:vm in an empty context with
  * NO host globals). `code` may contain {{customer.*}}/{{event.*}} placeholders that
  * are interpolated as SAFE QUOTED literals BEFORE evaluation; `customer`/`event`
  * objects are also in scope inside the sandbox.
@@ -122,7 +122,7 @@ export function resolveValueSpec(spec: unknown, ctx: ValueResolveContext): unkno
     return spec.value;
   }
   // A spec object that is neither literal nor expression is not a valid value; the
-  // validator (validateCampaignDefinition) rejects it before persistence. Defensive
+  // validator (validateAutomationDefinition) rejects it before persistence. Defensive
   // here: treat an unknown spec object as null rather than throw at runner time.
   if (isSpecObject(spec)) return null;
   // Legacy bare scalar — the original static value shape — is an implicit literal.

@@ -179,10 +179,10 @@ export function simpleUnsubscribeStatements(
   workspaceId: string,
   email: string,
   broadcastId: string | null,
-  campaignId: string | null,
+  automationId: string | null,
   source: string | null = 'one-click',
 ): SqlStatement[] {
-  const attribution = buildUnsubscribeEvent(workspaceId, email, broadcastId, campaignId);
+  const attribution = buildUnsubscribeEvent(workspaceId, email, broadcastId, automationId);
   return [
     buildUnsubscribeSuppression(workspaceId, email, source),
     buildUnsubscribedAttribute(workspaceId, email),
@@ -273,10 +273,10 @@ export function makeUnsubscribeHandler(deps: UnsubscribeDeps) {
       //   1. the suppression (authoritative SEND gate, §10),
       //   2. the profile `unsubscribed = true` attribute (so it's segmentable).
       //   3. an email_events 'unsubscribe' row attributed to the source
-      //      broadcast/campaign (when the link carried one) — feeds the funnel.
+      //      broadcast/automation (when the link carried one) — feeds the funnel.
       await deps.runInWorkspaceTx(
         parsed.workspaceId,
-        simpleUnsubscribeStatements(parsed.workspaceId, parsed.email, parsed.broadcastId, parsed.campaignId),
+        simpleUnsubscribeStatements(parsed.workspaceId, parsed.email, parsed.broadcastId, parsed.automationId),
       );
       return { statusCode: 200, headers: HTML_HEADERS, body: donePage(parsed.email, logoHtml, lang) };
     } catch {

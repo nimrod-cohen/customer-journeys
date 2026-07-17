@@ -127,7 +127,7 @@ export function mediumLabel(m: Medium): string {
 /**
  * A WhatsApp APPROVED TEMPLATE message (§10). Meta forbids free-form outbound
  * WhatsApp to anyone who hasn't messaged the business in the last 24h, so a
- * business-INITIATED send (broadcast/campaign) MUST reference a pre-approved
+ * business-INITIATED send (broadcast/automation) MUST reference a pre-approved
  * template by `name` + `language` and supply its body variable values (already
  * merge-rendered). Free-form `ChannelMessage.body` is only valid inside the 24h
  * customer-service window (and for the mock).
@@ -151,7 +151,7 @@ export interface ChannelMessage {
   readonly from?: string;
   /**
    * WhatsApp only: send an approved TEMPLATE instead of free-form text. Required
-   * for business-initiated WhatsApp (a broadcast/campaign to a cold contact); the
+   * for business-initiated WhatsApp (a broadcast/automation to a cold contact); the
    * real Meta adapter sends a `type:'template'` payload. Absent → free-form text.
    */
   readonly template?: WhatsAppTemplate;

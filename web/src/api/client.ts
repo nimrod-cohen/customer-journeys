@@ -24,7 +24,7 @@ export interface ApiError {
   readonly error: string;
   /**
    * Any EXTRA fields the server put on the error body (beyond `error`) are carried
-   * through verbatim — e.g. the campaign publish gate's `{ node, missing }`, which
+   * through verbatim — e.g. the automation publish gate's `{ node, missing }`, which
    * the builder reads to render the reason against the offending node card. Without
    * this the client used to drop them and only surface a generic `error` string.
    */

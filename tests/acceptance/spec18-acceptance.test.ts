@@ -10,7 +10,7 @@
 //   unsubscribe (parse + suppression write)
 //   onboarding (startDomain/activate — SES+DNS mocked)
 //   broadcast (runBroadcast — resolve audience → outbox → dispatch, dedupe)
-//   campaign-runner (enrollFromSegmentChange/runEnrollment — advance, idempotent)
+//   automation-runner (enrollFromSegmentChange/runEnrollment — advance, idempotent)
 //   metering (computeAllWorkspaceCosts — cost attribution to the cent)
 //   service-api (contextFromAuthorizer/enforceRoute/handleAdminAccess) + tenancy
 //   RLS backstop (TEST_APP_ROLE / setSessionClaims) for the user-context path
@@ -68,12 +68,12 @@ import {
 import {
   enrollFromSegmentChange,
   runEnrollment,
-  runStatementsInWorkspaceTx as campaignTx,
+  runStatementsInWorkspaceTx as automationTx,
   type EnrollDeps,
   type RunDeps,
   type SegmentChangeLogRow,
-  type CampaignDefinition,
-} from '@cdp/service-campaign-runner';
+  type AutomationDefinition,
+} from '@cdp/service-automation-runner';
 import {
   computeAllWorkspaceCosts,
   DEFAULT_PRICES,
@@ -116,7 +116,7 @@ const ALL_WS = [WS_A, WS_B, WS_ONB, WS_GATE, WS_REP];
 const KEY_A = 'acc18-key-A';
 const KEY_B = 'acc18-key-B';
 const SEG_FEW = 'acc18000-0000-4000-8000-0000000000a1'; // "<3 events" realtime segment (WS_A)
-const SEG_CAMP = 'acc18000-0000-4000-8000-0000000000a2'; // campaign trigger segment (WS_A)
+const SEG_CAMP = 'acc18000-0000-4000-8000-0000000000a2'; // automation trigger segment (WS_A)
 const CAMP = 'acc18000-0000-4000-8000-0000000000c1';
 const TPL_A = 'acc18000-0000-4000-8000-0000000000e1';
 const ADMIN_USER = 'acc18000-0000-4000-8000-0000000000f1';
@@ -136,7 +136,7 @@ const evId = () => `acc18000-0000-4000-8000-${String(++evSeq).padStart(12, '0')}
 let sesSeq = 0;
 const nextSesId = () => `acc18-ses-${String(++sesSeq).padStart(6, '0')}`;
 
-const CAMP_DEF: CampaignDefinition = {
+const CAMP_DEF: AutomationDefinition = {
   startNode: 'trig',
   nodes: {
     trig: { type: 'trigger', kind: 'segment_entry', next: 'wait1' },
@@ -232,14 +232,14 @@ function feedbackDeps(pool: Pool): FeedbackDeps {
 function enrollDeps(pool: Pool): EnrollDeps {
   return {
     reader: { query: (t, v) => pool.query(t, v as unknown[]) as never },
-    runInWorkspaceTx: (w, s) => campaignTx(pool, w, s),
+    runInWorkspaceTx: (w, s) => automationTx(pool, w, s),
   };
 }
 function runDeps(pool: Pool, now: Date, sqs: CapturingSqs): RunDeps {
   return {
     reader: { query: (t, v) => pool.query(t, v as unknown[]) as never },
     sqs: sqs as never,
-    runInWorkspaceTx: (w, s) => campaignTx(pool, w, s),
+    runInWorkspaceTx: (w, s) => automationTx(pool, w, s),
     now: () => now,
     dispatchQueueUrl: 'https://sqs/dispatch',
   };
@@ -254,7 +254,7 @@ function evaluateDeps(pool: Pool): EvaluateDeps {
   return {
     reader: { query: (text, values) => pool.query(text, values as unknown[]) as never },
     runInWorkspaceTx: (w, s) =>
-      campaignTx(pool, w, s) as unknown as Promise<void>, // reuse the real workspace-scoped tx runner
+      automationTx(pool, w, s) as unknown as Promise<void>, // reuse the real workspace-scoped tx runner
   };
 }
 function broadcastDeps(pool: Pool, sqs: CapturingSqs, now: Date): BroadcastDeps {
@@ -335,9 +335,9 @@ async function cleanup(pool: Pool): Promise<void> {
     'segment_memberships',
     'messages_log',
     'usage_counters',
-    'outbox', // FK → campaigns; delete before campaigns
-    'campaign_enrollments',
-    'campaigns',
+    'outbox', // FK → automations; delete before automations
+    'automation_enrollments',
+    'automations',
     'broadcasts',
     'email_events',
     'suppressions',
@@ -390,14 +390,14 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
        VALUES ($1,$2,'few-events',$3::jsonb,'dynamic_realtime','active')`,
       [SEG_FEW, WS_A, JSON.stringify({ op: 'and', conditions: [{ field: 'total_events', operator: '<', value: 3 }] })],
     );
-    // Campaign trigger segment + an active campaign in WS_A.
+    // Automation trigger segment + an active automation in WS_A.
     // Draft status → the realtime evaluator skips it (it only selects active
     // realtime segments), so its null definition cannot match-all and churn
-    // memberships. The campaign still references it as its trigger segment.
+    // memberships. The automation still references it as its trigger segment.
     await pool.query("INSERT INTO segments (id, workspace_id, name, kind, status) VALUES ($1,$2,'camp-seg','dynamic_realtime','draft')", [SEG_CAMP, WS_A]);
     await pool.query("INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html) VALUES ($1,$2,'t','<m/>','<html>Hi {{first_name}}</html>')", [TPL_A, WS_A]);
     await pool.query(
-      "INSERT INTO campaigns (id, workspace_id, name, definition, trigger_segment_id, status) VALUES ($1,$2,'C',$3::jsonb,$4,'active')",
+      "INSERT INTO automations (id, workspace_id, name, definition, trigger_segment_id, status) VALUES ($1,$2,'C',$3::jsonb,$4,'active')",
       [CAMP, WS_A, JSON.stringify(CAMP_DEF), SEG_CAMP],
     );
   });
@@ -666,7 +666,7 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
     expect(ob2.rows[0].n).toBe(1);
   });
 
-  it('§18 Campaigns advance (idempotent runner): enroll→wait→branch→action(send)→exit through the real dispatcher', async () => {
+  it('§18 Automations advance (idempotent runner): enroll→wait→branch→action(send)→exit through the real dispatcher', async () => {
     const cpid = (await pool.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'camp-1','journey@acc18.example') RETURNING id", [WS_A])).rows[0].id;
     await pool.query("INSERT INTO profile_features (profile_id, workspace_id, counters) VALUES ($1,$2,$3::jsonb)", [cpid, WS_A, JSON.stringify({ purchase: 2 })]);
 
@@ -674,12 +674,12 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
     const enrolled = await enrollFromSegmentChange(enrollDeps(pool), change);
     expect(enrolled.enrolled).toBe(1);
     // A second identical enrollment is idempotent ('once' policy) — the structural
-    // ON CONFLICT (campaign_id, profile_id) DO NOTHING means at most ONE row.
+    // ON CONFLICT (automation_id, profile_id) DO NOTHING means at most ONE row.
     await enrollFromSegmentChange(enrollDeps(pool), change);
-    const rowCount = await pool.query('SELECT count(*)::int n FROM campaign_enrollments WHERE workspace_id=$1 AND campaign_id=$2 AND profile_id=$3', [WS_A, CAMP, cpid]);
+    const rowCount = await pool.query('SELECT count(*)::int n FROM automation_enrollments WHERE workspace_id=$1 AND automation_id=$2 AND profile_id=$3', [WS_A, CAMP, cpid]);
     expect(rowCount.rows[0].n).toBe(1);
 
-    const enr = await pool.query('SELECT id FROM campaign_enrollments WHERE workspace_id=$1 AND campaign_id=$2 AND profile_id=$3', [WS_A, CAMP, cpid]);
+    const enr = await pool.query('SELECT id FROM automation_enrollments WHERE workspace_id=$1 AND automation_id=$2 AND profile_id=$3', [WS_A, CAMP, cpid]);
     const enrollmentId = enr.rows[0].id;
 
     const t0 = new Date('2026-06-07T12:00:00Z');
@@ -702,7 +702,7 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
     const r3 = await runEnrollment(runDeps(pool, t2, sqs3), enrollmentId);
     expect(r3.result).toBe('skipped');
     expect(sqs3.bodies).toHaveLength(0);
-    const ml = await pool.query('SELECT count(*)::int n FROM messages_log WHERE workspace_id=$1 AND campaign_id=$2', [WS_A, CAMP]);
+    const ml = await pool.query('SELECT count(*)::int n FROM messages_log WHERE workspace_id=$1 AND automation_id=$2', [WS_A, CAMP]);
     expect(ml.rows[0].n).toBe(1);
   });
 
@@ -869,14 +869,22 @@ describeMaybe('§18 acceptance gate — composing the real cores', () => {
       WS_A, pid, nextSesId(), new Date(capNow.getTime() - 3_600_000).toISOString(),
     ]);
     const sesCap = new CountingSes();
-    const obCap = await enqueueOutbox(pool, WS_A, pid, TPL_A, 'comp-cap', { frequency_cap_per_days: 1 });
+    const obCap = await enqueueOutbox(pool, WS_A, pid, TPL_A, 'comp-cap', { frequency_cap: { max: 1, days: 1 } });
     const rCap = await dispatchOutbox(dispatchDeps(pool, sesCap, capNow), obCap);
     expect(rCap.result).toBe('skip');
     expect(sesCap.sends).toHaveLength(0);
 
-    // (2) QUIET HOURS: within a 22:00–06:00 UTC window the send is deferred (SES not called).
+    // (2) QUIET HOURS: within a nightly 22:00–06:00 (workspace-tz, default UTC) window
+    // the send is deferred (SES not called). Windows are the per-weekday shape the
+    // dispatcher + settings API use: each day 22:00 → next day 06:00.
+    const nightlyQuietHours = Array.from({ length: 7 }, (_, d) => ({
+      startDay: d,
+      startMinute: 22 * 60,
+      endDay: (d + 1) % 7,
+      endMinute: 6 * 60,
+    }));
     const sesQuiet = new CountingSes();
-    const obQuiet = await enqueueOutbox(pool, WS_A, pid, TPL_A, 'comp-quiet', { quiet_hours: { startHour: 22, endHour: 6 } });
+    const obQuiet = await enqueueOutbox(pool, WS_A, pid, TPL_A, 'comp-quiet', { quiet_hours: nightlyQuietHours });
     const rQuiet = await dispatchOutbox(dispatchDeps(pool, sesQuiet, new Date('2026-06-11T23:30:00Z')), obQuiet);
     expect(rQuiet.result).toBe('defer');
     expect(sesQuiet.sends).toHaveLength(0);

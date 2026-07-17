@@ -36,8 +36,8 @@ export interface UnsubscribeLinkParams {
   readonly token?: string;
   /** Optional source broadcast — attributes the unsubscribe to the send (funnel). */
   readonly broadcastId?: string | null;
-  /** Optional source campaign — attributes the unsubscribe to the send (funnel). */
-  readonly campaignId?: string | null;
+  /** Optional source automation — attributes the unsubscribe to the send (funnel). */
+  readonly automationId?: string | null;
 }
 
 /** The header name/value pairs to attach to an outgoing message. */
@@ -80,11 +80,11 @@ export function buildUnsubscribeUrl(params: UnsubscribeLinkParams): string {
     url.searchParams.set('email', params.email);
     if (params.token) url.searchParams.set('token', params.token);
   }
-  // Optional per-send attribution: which broadcast/campaign drove this opt-out.
+  // Optional per-send attribution: which broadcast/automation drove this opt-out.
   // Carried as SEPARATE short params (`b`/`c`, not in the token) so the
   // unsubscribe POST can record it (funnel metric).
   if (params.broadcastId) url.searchParams.set('b', params.broadcastId);
-  if (params.campaignId) url.searchParams.set('c', params.campaignId);
+  if (params.automationId) url.searchParams.set('c', params.automationId);
   return url.toString();
 }
 

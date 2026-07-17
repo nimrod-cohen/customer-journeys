@@ -67,7 +67,7 @@ export function TemplateEditor({
   const [design, setDesign] = useState<EmailDesign | null>(null);
   const [loadedKey, setLoadedKey] = useState(id ? '' : 'new'); // designer mounts when set
   const [legacy, setLegacy] = useState(false); // stored template has no design (old editor)
-  const [kind, setKind] = useState(''); // 'library' | 'copy' — a copy is a broadcast/campaign's own email instance
+  const [kind, setKind] = useState(''); // 'library' | 'copy' — a copy is a broadcast/automation's own email instance
   const [status, setStatus] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState('');
   // Envelope (From / To / Subject) — lives on this email instance, autosaved.
@@ -222,15 +222,15 @@ export function TemplateEditor({
 
   const returnTarget = peekEditorReturn()?.returnPath ?? '';
   const returnPending = returnTarget !== '';
-  // "Instance" = a broadcast/campaign's own copy of an email (reached via the
+  // "Instance" = a broadcast/automation's own copy of an email (reached via the
   // "Design email" flow, or a row whose kind is 'copy'). It is NOT a library
   // template — it reads as an email with an envelope. In EMBEDDED mode the
   // designer is always opened for an instance (a copy).
   const instance = embedded || returnPending || kind === 'copy';
   const backLabel = embedded
     ? 'Save & close'
-    : returnTarget.startsWith('/campaigns')
-      ? 'Back to campaign'
+    : returnTarget.startsWith('/automations')
+      ? 'Back to automation'
       : returnTarget.startsWith('/broadcasts')
         ? 'Back to broadcast'
         : instance
@@ -241,7 +241,7 @@ export function TemplateEditor({
    *  debounce window isn't persisted yet — so flush any pending change first
    *  (staying put if that save fails), then return: in EMBEDDED mode fire
    *  onClose(savedId) (the drawer closes, the opener wires the copy back); in
-   *  ROUTE mode navigate back to the originating broadcast/campaign or library. */
+   *  ROUTE mode navigate back to the originating broadcast/automation or library. */
   const goBack = async (): Promise<void> => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (dirtyRef.current || savingRef.current || queuedRef.current) {
@@ -341,7 +341,7 @@ export function TemplateEditor({
         />
       )}
 
-      {/* From / To / Subject belong to an actual EMAIL — a broadcast/campaign's own
+      {/* From / To / Subject belong to an actual EMAIL — a broadcast/automation's own
           copy. A library template is just a reusable DESIGN, so it has no envelope;
           the envelope is filled in on the copy made when it's attached to a send.
           Gated on `loadedKey` so the inputs only appear AFTER the template's values

@@ -1,29 +1,29 @@
 {
   "filesModified": [
-    "services/campaign-runner/src/dsl.ts",
-    "services/campaign-runner/src/core.ts",
-    "services/campaign-runner/src/enroll.ts",
-    "services/campaign-runner/src/index.ts",
+    "services/automation-runner/src/dsl.ts",
+    "services/automation-runner/src/core.ts",
+    "services/automation-runner/src/enroll.ts",
+    "services/automation-runner/src/index.ts",
     "services/local-api/src/handlers.ts",
-    "web/src/campaigns/node-config.ts",
-    "web/src/campaigns/mutate.ts",
-    "web/src/campaigns/editors/NodeEditor.tsx",
-    "web/src/campaigns/node-config.test.ts",
-    "web/src/campaigns/mutate.test.ts",
-    "web/e2e/campaign-node-editors.browser.e2e.spec.ts",
+    "web/src/automations/node-config.ts",
+    "web/src/automations/mutate.ts",
+    "web/src/automations/editors/NodeEditor.tsx",
+    "web/src/automations/node-config.test.ts",
+    "web/src/automations/mutate.test.ts",
+    "web/e2e/automation-node-editors.browser.e2e.spec.ts",
     "package.json",
     "CLAUDE.md"
   ],
   "filesCreated": [
-    "services/campaign-runner/test/profile-trigger-validation.test.ts",
-    "services/campaign-runner/test/parse-profile-trigger.test.ts",
-    "services/campaign-runner/test/enroll-from-profile-change.integration.test.ts",
+    "services/automation-runner/test/profile-trigger-validation.test.ts",
+    "services/automation-runner/test/parse-profile-trigger.test.ts",
+    "services/automation-runner/test/enroll-from-profile-change.integration.test.ts",
     "services/local-api/test/profile-trigger-enroll.integration.test.ts"
   ],
   "testsPass": true,
-  "testSummary": "campaign-runner 39 files/224 tests PASS (incl. profile-trigger-validation 6, parse-profile-trigger 4, enroll-from-profile-change.integration 7); local-api 51 files/235 tests PASS (incl. profile-trigger-enroll.integration 5); web 244 PASS/4 skipped (node-config 23, mutate 36).",
-  "e2eSummary": "SOLO Playwright (cdp_e2e, one at a time, ports freed before each): new profile-trigger test PASS; campaign suite 64/64 PASS (campaign-node-editors incl. profile-trigger #4); profile suite 7/7 PASS.",
+  "testSummary": "automation-runner 39 files/224 tests PASS (incl. profile-trigger-validation 6, parse-profile-trigger 4, enroll-from-profile-change.integration 7); local-api 51 files/235 tests PASS (incl. profile-trigger-enroll.integration 5); web 244 PASS/4 skipped (node-config 23, mutate 36).",
+  "e2eSummary": "SOLO Playwright (cdp_e2e, one at a time, ports freed before each): new profile-trigger test PASS; automation suite 64/64 PASS (automation-node-editors incl. profile-trigger #4); profile suite 7/7 PASS.",
   "typecheckOk": true,
   "lintOk": true,
-  "notes": "Trigger modeled as kind 'profile' + profileChange created|updated|any (default any). enrollFromProfileChange fires at createProfile(created), updateProfile/PATCH(updated), importProfilesCsv(created per created row). Lint: only the 7 pre-existing react-hooks 'rule not found' errors, none new. No migration (config in definition jsonb). campaign-runner package rebuilt (dist) so local-api picks up the new export."
+  "notes": "Trigger modeled as kind 'profile' + profileChange created|updated|any (default any). enrollFromProfileChange fires at createProfile(created), updateProfile/PATCH(updated), importProfilesCsv(created per created row). Lint: only the 7 pre-existing react-hooks 'rule not found' errors, none new. No migration (config in definition jsonb). automation-runner package rebuilt (dist) so local-api picks up the new export."
 }

@@ -189,7 +189,7 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
     expect(ev.rows[0]!.broadcast_id).toBe(BCAST);
   });
 
-  it('a POST with NO broadcast/campaign records NO email_events attribution row', async () => {
+  it('a POST with NO broadcast/automation records NO email_events attribution row', async () => {
     const before = await admin.query("SELECT count(*)::int AS n FROM email_events WHERE workspace_id = $1 AND type='unsubscribe'", [wsB]);
     await admin.query("INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,'p-noattr','noattr@ub-scope.example','{}'::jsonb)", [wsB]);
     const res = await handler({

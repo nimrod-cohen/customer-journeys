@@ -36,14 +36,14 @@ function makeReader(state: FakeState): { reader: Reader; claimAttempts: number }
   const reader: Reader = {
     async query<T>(text: string, values: readonly unknown[] = []): Promise<{ rows: T[] }> {
       const t = text.replace(/\s+/g, ' ').trim();
-      if (t.startsWith('SELECT id, workspace_id, profile_id, campaign_id')) {
+      if (t.startsWith('SELECT id, workspace_id, profile_id, automation_id')) {
         return {
           rows: [
             {
               id: OUTBOX,
               workspace_id: WS,
               profile_id: PROFILE,
-              campaign_id: null,
+              automation_id: null,
               template_id: 'tpl-1',
               dedupe_key: 'dk-1',
               attempts: 0,

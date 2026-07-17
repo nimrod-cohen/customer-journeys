@@ -1,5 +1,5 @@
 {
   "committed": true,
   "commitHash": "d749c783aea5b32715da67d62c040b97b042c177",
-  "message": "feat(campaigns): phase 1 — workspace timezone setting + DSL hour-window/webhook nodes + cycle/orphan validation"
+  "message": "feat(automations): phase 1 — workspace timezone setting + DSL hour-window/webhook nodes + cycle/orphan validation"
 }

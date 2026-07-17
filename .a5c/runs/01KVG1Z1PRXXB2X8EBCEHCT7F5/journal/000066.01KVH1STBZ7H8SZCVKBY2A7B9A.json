@@ -3,7 +3,7 @@
   "recordedAt": "2026-06-19T23:00:06.143Z",
   "data": {
     "effectId": "01KVH1STBD8QFJKMXR6J6GGMT8",
-    "invocationKey": "cdp/campaign-builder:S000033:integration",
+    "invocationKey": "cdp/automation-builder:S000033:integration",
     "invocationHash": "d8d1304ec94e8c3ca5c68447d4b161916e7fc334b868458a7feac6d20a2119c0",
     "stepId": "S000033",
     "taskId": "integration",

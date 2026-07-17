@@ -1,30 +1,30 @@
 {
   "filesCreated": [],
   "filesModified": [
-    "web/src/campaigns/mutate.ts",
-    "web/src/campaigns/mutate.test.ts",
-    "web/src/campaigns/CampaignCanvas.tsx",
-    "web/src/screens/CampaignBuilder.tsx",
+    "web/src/automations/mutate.ts",
+    "web/src/automations/mutate.test.ts",
+    "web/src/automations/AutomationCanvas.tsx",
+    "web/src/screens/AutomationBuilder.tsx",
     "web/src/ui/kit.tsx",
-    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "web/e2e/automation-builder.browser.e2e.spec.ts",
     "package.json",
     "CLAUDE.md"
   ],
   "versionBump": "0.39.0",
   "testsPass": true,
   "testSummary": "web vitest: 151 passed | 4 skipped (155). mutate.test.ts: 30 passed incl. moveSubtree (single diamond-arm, diamond sub-branch, move-into-own-subtree throws, move-trigger throws, no-op, orphan rejected by server validator), duplicateSubtree (single + branch with remapped internal edges + intact original, duplicate-trigger throws), subtreeNodeIds, hasCycle parity.",
-  "e2eSummary": "campaign-builder: 14 passed (incl. MOVE relocate+persist, placement cancel via banner + Escape, DUPLICATE adds second card original intact; pre-existing delete-condition fixed by ActionMenu z-index layering fix). Regression SOLO runs all green: campaign-node-editors 10 passed, campaign-publish-gate 2 passed, broadcast-and-campaign 12 passed. Each run pkill'd playwright/chrome + freed :8788/:5174 first; never two at once.",
+  "e2eSummary": "automation-builder: 14 passed (incl. MOVE relocate+persist, placement cancel via banner + Escape, DUPLICATE adds second card original intact; pre-existing delete-condition fixed by ActionMenu z-index layering fix). Regression SOLO runs all green: automation-node-editors 10 passed, automation-publish-gate 2 passed, broadcast-and-automation 12 passed. Each run pkill'd playwright/chrome + freed :8788/:5174 first; never two at once.",
   "typecheckOk": true,
   "lintOk": true,
   "commandsRun": [
-    "pnpm --filter @cdp/web exec vitest run src/campaigns/mutate.test.ts",
+    "pnpm --filter @cdp/web exec vitest run src/automations/mutate.test.ts",
     "pnpm --filter @cdp/web exec vitest run",
     "pnpm typecheck",
     "pnpm lint",
-    "pnpm exec playwright test campaign-builder",
-    "pnpm exec playwright test campaign-node-editors",
-    "pnpm exec playwright test campaign-publish-gate",
-    "pnpm exec playwright test broadcast-and-campaign"
+    "pnpm exec playwright test automation-builder",
+    "pnpm exec playwright test automation-node-editors",
+    "pnpm exec playwright test automation-publish-gate",
+    "pnpm exec playwright test broadcast-and-automation"
   ],
-  "notes": "TEST-FIRST. Pure graph ops added to mutate.ts: exclusiveSubtree (S = fromR \\ reachableWithoutR, +continuation C = single boundary target, throws on 2+), moveSubtree, duplicateSubtree, subtreeNodeIds, hasCycle, assertWellFormed (hasReachableExit + no-dangling + no-cycle; no runner import). UI: placement mode in CampaignCanvas+CampaignBuilder (banner, placement-target +s, hide-invalid-for-move, Escape capture-phase cancel, toast). Discovered+fixed a latent sibling-card layering bug exposed by the now-taller 4-item ActionMenu: kit ActionMenu gained onOpenChange; the open card is raised to z-20. Lint: only the 7 KNOWN pre-existing react-hooks rule-not-found errors remain (EmailDesigner/Activity/ProfileDetail/SegmentBuilder/SimpleScreens) — none in touched files; no new errors. NO migration. NOT pushed."
+  "notes": "TEST-FIRST. Pure graph ops added to mutate.ts: exclusiveSubtree (S = fromR \\ reachableWithoutR, +continuation C = single boundary target, throws on 2+), moveSubtree, duplicateSubtree, subtreeNodeIds, hasCycle, assertWellFormed (hasReachableExit + no-dangling + no-cycle; no runner import). UI: placement mode in AutomationCanvas+AutomationBuilder (banner, placement-target +s, hide-invalid-for-move, Escape capture-phase cancel, toast). Discovered+fixed a latent sibling-card layering bug exposed by the now-taller 4-item ActionMenu: kit ActionMenu gained onOpenChange; the open card is raised to z-20. Lint: only the 7 KNOWN pre-existing react-hooks rule-not-found errors remain (EmailDesigner/Activity/ProfileDetail/SegmentBuilder/SimpleScreens) — none in touched files; no new errors. NO migration. NOT pushed."
 }

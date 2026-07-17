@@ -8,7 +8,17 @@ export const routeStore: Store<string> = createStore<string>(currentPath());
 function currentPath(): string {
   const h = globalThis.location?.hash ?? '';
   const p = h.startsWith('#') ? h.slice(1) : h;
-  return p || '/';
+  return normalizeLegacyPath(p || '/');
+}
+
+// The "Campaigns" feature was renamed to "Automations" (v0.110.0). Old bookmarks /
+// links to #/campaigns[/…] still resolve — rewrite the leading path segment so the
+// SPA routes them to the new #/automations[/…] equivalent.
+function normalizeLegacyPath(path: string): string {
+  if (path === '/campaigns' || path.startsWith('/campaigns/') || path.startsWith('/campaigns?')) {
+    return '/automations' + path.slice('/campaigns'.length);
+  }
+  return path;
 }
 
 // An optional navigation guard. A screen with unsaved changes (e.g. the segment
@@ -35,8 +45,8 @@ function commit(path: string): void {
 /**
  * Silently point the URL at `path` WITHOUT re-rendering — the routeStore is NOT updated,
  * so the current screen stays MOUNTED (no remount, no lost in-flight edit / open drawer).
- * Used when a screen creates a resource and learns its id (a new campaign at
- * /campaigns/new → /campaigns/:id): a browser REFRESH then reloads the saved resource
+ * Used when a screen creates a resource and learns its id (a new automation at
+ * /automations/new → /automations/:id): a browser REFRESH then reloads the saved resource
  * instead of a blank starter. `committed` is synced so later navigation stays consistent.
  */
 export function replaceRoute(path: string): void {

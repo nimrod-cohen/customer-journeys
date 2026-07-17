@@ -39,7 +39,7 @@
       },
       {
         "criterion": "No scope creep",
-        "evidence": "only legitimate email attribute; no broadcast/campaign/dispatch/metering.",
+        "evidence": "only legitimate email attribute; no broadcast/automation/dispatch/metering.",
         "verified": true
       },
       {
@@ -95,7 +95,7 @@
       },
       {
         "criterion": "No scope creep",
-        "evidence": "only legitimate email attribute; no broadcast/campaign/dispatch/metering.",
+        "evidence": "only legitimate email attribute; no broadcast/automation/dispatch/metering.",
         "verified": true
       },
       {

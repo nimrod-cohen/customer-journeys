@@ -1,1 +1,1 @@
-{ "committed": true, "commitHash": "97bfda151d4cbaaa69dd7f0f2bbb024eba91902f", "message": "feat(phase10): campaign workflow engine (durable per-profile state machine)" }
+{ "committed": true, "commitHash": "97bfda151d4cbaaa69dd7f0f2bbb024eba91902f", "message": "feat(phase10): automation workflow engine (durable per-profile state machine)" }

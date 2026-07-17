@@ -24,16 +24,16 @@
         "phase": {
           "criteria": [
             "Workspace timezone is persisted + read back via the settings API (workspace-scoped, owner-gated like other settings); an invalid IANA zone is rejected.",
-            "validateCampaignDefinition accepts a well-formed graph using the new hour_of_day_window + webhook nodes, and REJECTS: a missing/invalid window range, a webhook missing url/method, a cycle/back-edge, an orphan node, more than one trigger, an unreachable exit. All covered by passing unit tests.",
-            "The DSL types are exported + documented; no runner/execution change yet (that is phase 2). Typecheck + lint clean; no regression in existing campaign-runner unit tests."
+            "validateAutomationDefinition accepts a well-formed graph using the new hour_of_day_window + webhook nodes, and REJECTS: a missing/invalid window range, a webhook missing url/method, a cycle/back-edge, an orphan node, more than one trigger, an unreachable exit. All covered by passing unit tests.",
+            "The DSL types are exported + documented; no runner/execution change yet (that is phase 2). Typecheck + lint clean; no regression in existing automation-runner unit tests."
           ],
           "frontend": false,
           "id": "phase1-model-tz",
-          "refs": "§9B + CLAUDE.md (campaigns DSL, workspace settings, broadcast scheduler tz math)",
+          "refs": "§9B + CLAUDE.md (automations DSL, workspace settings, broadcast scheduler tz math)",
           "scope": [
-            "Add a WORKSPACE TIMEZONE setting: persist on workspaces.settings.timezone (or a column) with a sane default (UTC); read/write via the existing workspace settings API (PUT /workspace/settings) + a small picker in WorkspaceSettings.tsx (full IANA list via Intl.supportedValuesOf, like the broadcast schedule tz). This is the clock for all campaign time math.",
-            "Extend the campaign DSL (services/campaign-runner/src/dsl.ts) with TWO new node kinds, PURE + structurally validated: (a) an hour_of_day_window node — config: allowed hour range (startHour..endHour, 0–23) + optional allowed days-of-week; advances when already inside the window, else parks until the next window opening (computed later in the runner). (b) a webhook ACTION kind on the action node — config: url, method, headers (incl. an optional secret-backed auth header), bodyTemplate (merge-aware), timeoutMs, maxRetries; next edge after the call.",
-            "Extend validateCampaignDefinition for the new nodes (required fields + edges) AND tighten it to the builder invariants: reject CYCLES (back-edges) and ORPHAN nodes (every node reachable from startNode), in addition to the existing one-trigger / reachable-exit checks. Keep it pure + exhaustively unit-tested."
+            "Add a WORKSPACE TIMEZONE setting: persist on workspaces.settings.timezone (or a column) with a sane default (UTC); read/write via the existing workspace settings API (PUT /workspace/settings) + a small picker in WorkspaceSettings.tsx (full IANA list via Intl.supportedValuesOf, like the broadcast schedule tz). This is the clock for all automation time math.",
+            "Extend the automation DSL (services/automation-runner/src/dsl.ts) with TWO new node kinds, PURE + structurally validated: (a) an hour_of_day_window node — config: allowed hour range (startHour..endHour, 0–23) + optional allowed days-of-week; advances when already inside the window, else parks until the next window opening (computed later in the runner). (b) a webhook ACTION kind on the action node — config: url, method, headers (incl. an optional secret-backed auth header), bodyTemplate (merge-aware), timeoutMs, maxRetries; next edge after the call.",
+            "Extend validateAutomationDefinition for the new nodes (required fields + edges) AND tighten it to the builder invariants: reject CYCLES (back-edges) and ORPHAN nodes (every node reachable from startNode), in addition to the existing one-trigger / reachable-exit checks. Keep it pure + exhaustively unit-tested."
           ],
           "title": "Workspace timezone + DSL extensions (hour-window, webhook)"
         },
@@ -63,23 +63,23 @@
   "schemaVersion": "2026.01.tasks-v1",
   "effectId": "01KVG37FHW7A1T563EGEK6V7G7",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000004:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000004:commit-phase",
   "stepId": "S000004",
   "inputs": {
     "converged": true,
     "phase": {
       "criteria": [
         "Workspace timezone is persisted + read back via the settings API (workspace-scoped, owner-gated like other settings); an invalid IANA zone is rejected.",
-        "validateCampaignDefinition accepts a well-formed graph using the new hour_of_day_window + webhook nodes, and REJECTS: a missing/invalid window range, a webhook missing url/method, a cycle/back-edge, an orphan node, more than one trigger, an unreachable exit. All covered by passing unit tests.",
-        "The DSL types are exported + documented; no runner/execution change yet (that is phase 2). Typecheck + lint clean; no regression in existing campaign-runner unit tests."
+        "validateAutomationDefinition accepts a well-formed graph using the new hour_of_day_window + webhook nodes, and REJECTS: a missing/invalid window range, a webhook missing url/method, a cycle/back-edge, an orphan node, more than one trigger, an unreachable exit. All covered by passing unit tests.",
+        "The DSL types are exported + documented; no runner/execution change yet (that is phase 2). Typecheck + lint clean; no regression in existing automation-runner unit tests."
       ],
       "frontend": false,
       "id": "phase1-model-tz",
-      "refs": "§9B + CLAUDE.md (campaigns DSL, workspace settings, broadcast scheduler tz math)",
+      "refs": "§9B + CLAUDE.md (automations DSL, workspace settings, broadcast scheduler tz math)",
       "scope": [
-        "Add a WORKSPACE TIMEZONE setting: persist on workspaces.settings.timezone (or a column) with a sane default (UTC); read/write via the existing workspace settings API (PUT /workspace/settings) + a small picker in WorkspaceSettings.tsx (full IANA list via Intl.supportedValuesOf, like the broadcast schedule tz). This is the clock for all campaign time math.",
-        "Extend the campaign DSL (services/campaign-runner/src/dsl.ts) with TWO new node kinds, PURE + structurally validated: (a) an hour_of_day_window node — config: allowed hour range (startHour..endHour, 0–23) + optional allowed days-of-week; advances when already inside the window, else parks until the next window opening (computed later in the runner). (b) a webhook ACTION kind on the action node — config: url, method, headers (incl. an optional secret-backed auth header), bodyTemplate (merge-aware), timeoutMs, maxRetries; next edge after the call.",
-        "Extend validateCampaignDefinition for the new nodes (required fields + edges) AND tighten it to the builder invariants: reject CYCLES (back-edges) and ORPHAN nodes (every node reachable from startNode), in addition to the existing one-trigger / reachable-exit checks. Keep it pure + exhaustively unit-tested."
+        "Add a WORKSPACE TIMEZONE setting: persist on workspaces.settings.timezone (or a column) with a sane default (UTC); read/write via the existing workspace settings API (PUT /workspace/settings) + a small picker in WorkspaceSettings.tsx (full IANA list via Intl.supportedValuesOf, like the broadcast schedule tz). This is the clock for all automation time math.",
+        "Extend the automation DSL (services/automation-runner/src/dsl.ts) with TWO new node kinds, PURE + structurally validated: (a) an hour_of_day_window node — config: allowed hour range (startHour..endHour, 0–23) + optional allowed days-of-week; advances when already inside the window, else parks until the next window opening (computed later in the runner). (b) a webhook ACTION kind on the action node — config: url, method, headers (incl. an optional secret-backed auth header), bodyTemplate (merge-aware), timeoutMs, maxRetries; next edge after the call.",
+        "Extend validateAutomationDefinition for the new nodes (required fields + edges) AND tighten it to the builder invariants: reject CYCLES (back-edges) and ORPHAN nodes (every node reachable from startNode), in addition to the existing one-trigger / reachable-exit checks. Keep it pure + exhaustively unit-tested."
       ],
       "title": "Workspace timezone + DSL extensions (hour-window, webhook)"
     },

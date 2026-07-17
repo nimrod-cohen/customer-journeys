@@ -12,7 +12,7 @@
     "taskDefRef": "tasks/01KTGFX9EXYNS6WA279RGW2GB0/task.json",
     "labels": [
       "quality-gate",
-      "phase10-campaigns",
+      "phase10-automations",
       "iteration-1"
     ]
   },

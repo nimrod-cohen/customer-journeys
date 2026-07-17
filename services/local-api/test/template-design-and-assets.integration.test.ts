@@ -1,6 +1,6 @@
 // Phase 2 of the email-designer port (§11): templates carry the designer's
 // editable `design` JSON alongside the derived MJML; library templates CLONE into
-// independently-mutable working copies (for broadcasts/campaigns); assets upload
+// independently-mutable working copies (for broadcasts/automations); assets upload
 // workspace-scoped and serve public-by-uuid as binary. REAL Postgres.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { hasDatabaseUrl } from '@cdp/db';

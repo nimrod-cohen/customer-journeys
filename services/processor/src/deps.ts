@@ -12,7 +12,7 @@ import {
   enrollFromEvent,
   enrollFromSegmentChange,
   type EnrollDeps,
-} from '@cdp/service-campaign-runner';
+} from '@cdp/service-automation-runner';
 import type { ProcessingPlan } from './core.js';
 import type { ProcessorDeps } from './handler.js';
 
@@ -95,12 +95,12 @@ async function runSegmentReevalInTx(
   };
   const evalRes = await evaluateRealtimeSegmentsForProfile(deps, reeval.workspaceId, profileId);
 
-  // Phase 3 (§9B) — campaign enrollment, fired on the SAME tx client (no nested
+  // Phase 3 (§9B) — automation enrollment, fired on the SAME tx client (no nested
   // BEGIN/COMMIT), workspace-scoped, idempotent (ON CONFLICT 'once'):
   //   1. SEGMENT-ENTRY: each entered/exited membership change drives
   //      enrollFromSegmentChange (the change_log rows were just written above).
   //   2. EVENT: the ingested event drives enrollFromEvent into active
-  //      event-trigger campaigns whose eventType (+ optional payload filter) matches.
+  //      event-trigger automations whose eventType (+ optional payload filter) matches.
   const enrollDeps: EnrollDeps = {
     reader: { query: (text, values) => client.query(text, values as unknown[]) as never },
     runInWorkspaceTx: async (_ws, statements) => {

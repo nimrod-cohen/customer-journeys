@@ -25,7 +25,7 @@
       }
     ],
     "criticalIssues": [
-      "PRE-EXISTING Phase-10 FLAKE: services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts fails ~80% standalone ('2 ticks completed instead of 1', claim race) though both cold full runs reported 36/36. Must root-cause: determine if this is a TEST-harness race or a REAL double-advance (which would break the §9B idempotency guarantee), then fix so it is deterministically green standalone AND in-suite."
+      "PRE-EXISTING Phase-10 FLAKE: services/automation-runner/test/idempotent-concurrent-sweep.integration.test.ts fails ~80% standalone ('2 ticks completed instead of 1', claim race) though both cold full runs reported 36/36. Must root-cause: determine if this is a TEST-harness race or a REAL double-advance (which would break the §9B idempotency guarantee), then fix so it is deterministically green standalone AND in-suite."
     ],
     "isolationOk": true,
     "recommendations": [
@@ -61,7 +61,7 @@
       }
     ],
     "criticalIssues": [
-      "PRE-EXISTING Phase-10 FLAKE: services/campaign-runner/test/idempotent-concurrent-sweep.integration.test.ts fails ~80% standalone ('2 ticks completed instead of 1', claim race) though both cold full runs reported 36/36. Must root-cause: determine if this is a TEST-harness race or a REAL double-advance (which would break the §9B idempotency guarantee), then fix so it is deterministically green standalone AND in-suite."
+      "PRE-EXISTING Phase-10 FLAKE: services/automation-runner/test/idempotent-concurrent-sweep.integration.test.ts fails ~80% standalone ('2 ticks completed instead of 1', claim race) though both cold full runs reported 36/36. Must root-cause: determine if this is a TEST-harness race or a REAL double-advance (which would break the §9B idempotency guarantee), then fix so it is deterministically green standalone AND in-suite."
     ],
     "isolationOk": true,
     "recommendations": [

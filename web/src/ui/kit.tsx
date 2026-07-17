@@ -312,7 +312,7 @@ export function PageHeader({
   actions?: ComponentChildren;
   /** Back link rendered on the right side of the title row, vertically centered. */
   back?: ComponentChildren;
-  /** Trims the header's bottom margin — for screens (e.g. campaign builder)
+  /** Trims the header's bottom margin — for screens (e.g. automation builder)
    *  where the content immediately below is tight and the default mb-6 wastes
    *  too much vertical space. */
   compact?: boolean;

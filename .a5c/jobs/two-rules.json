@@ -1,11 +1,11 @@
 {
   "status": "complete",
   "filesModified": [
-    "web/src/campaigns/orthogonal-path.ts",
-    "web/src/campaigns/layout.ts",
-    "web/src/campaigns/CampaignCanvas.tsx",
-    "web/src/campaigns/branch-invariants.test.ts (new)",
-    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "web/src/automations/orthogonal-path.ts",
+    "web/src/automations/layout.ts",
+    "web/src/automations/AutomationCanvas.tsx",
+    "web/src/automations/branch-invariants.test.ts (new)",
+    "web/e2e/automation-builder.browser.e2e.spec.ts",
     "package.json",
     "CLAUDE.md"
   ],
@@ -24,8 +24,8 @@
   },
   "rule1": "EVERY + has >= PLUS_PAD line above AND below. MIN_SEGMENT raised to 2*PLUS_PAD+PLUS_DIAMETER=68. verticalAnchor now anchors every + via padHigh (PLUS_PAD below run top, clamped <= run middle so >=PLUS_PAD also remains below; biases arm/edge + high under its source) or padCenter (run middle; merge + / straight V). The connector path draws the run, so the + sits mid-run with pad on both sides. Tested in branch-invariants.test.ts: assertLineAboveAndBelow oracle checks the anchor lies on a vertical run spanning >= [anchorY-PLUS_PAD, anchorY+PLUS_PAD] for EVERY edge-insert + merge-insert across 6 fixtures (linear, equalArms, yes1no3, no1yes3, nestedInArm, mergeThenTrunk). e2e probes SVG isPointInStroke at center +/- PAD for every + on the Yes=1/No=3 graph.",
   "rule2": "BOTH arms of an If are equal height and knee back at the SAME y, just below the LONGER arm's last node. LayoutEdge carries crossY = join.y - MERGE_LOWER_RUN(96), a SHARED closure y for all close-knee edges into that join (set in computeEdges). closeKneeCrossY/closeKneeLowerRun/verticalAnchor/orthogonalPath honor it; branchClosureY(edge) exposes the shared y. The shorter arm's column extends straight down a plain vertical to that y (one bottom knee, its append-+ right under its node per Rule 1). The merge + is CENTERED on the post-convergence run (mergeAnchor, line above+below). Because the join sits one full row below the longer arm's last node, crossY lands in the gap just below it -> both arms close at the SAME y. Tested in branch-invariants.test.ts: for yes1no3 + no1yes3, both closing-knee y EQUAL (branchClosureY), closure just after the longer arm's last-node card bottom, join below both, short-arm tail a single-knee plain vertical with one append-+. Verified geometry: join depth 5 = cond depth 1 + max arm len 4; both closures at y=920 (just below sendN bottom=848); short sendY (bottom 480) extends straight to 920. e2e asserts the two closing arm corner y are within 2px.",
-  "testsPass": "unit: 164/164 campaign tests pass (incl. 20 new branch-invariants + 55 existing layout/orthogonal-path unchanged). cold run confirmed.",
-  "e2eSummary": "ALL campaign e2e green, run SOLO one spec-group at a time (pkill playwright + free :8788/:5174 between). campaign-builder 21/21 (incl. new 'RULES 1+2 (Yes=1/No=3)'); pan-zoom+node-editors+no-overflow 15/15; list-detail+publish-gate 8/8; versioning+lifecycle+journey-smoke 5/5; broadcast-and-campaign 12/12. Existing geometry assertions (compact columns, straight trunk, line-above-merge, unequal-arm append-+) all still pass under the new rules.",
+  "testsPass": "unit: 164/164 automation tests pass (incl. 20 new branch-invariants + 55 existing layout/orthogonal-path unchanged). cold run confirmed.",
+  "e2eSummary": "ALL automation e2e green, run SOLO one spec-group at a time (pkill playwright + free :8788/:5174 between). automation-builder 21/21 (incl. new 'RULES 1+2 (Yes=1/No=3)'); pan-zoom+node-editors+no-overflow 15/15; list-detail+publish-gate 8/8; versioning+lifecycle+journey-smoke 5/5; broadcast-and-automation 12/12. Existing geometry assertions (compact columns, straight trunk, line-above-merge, unequal-arm append-+) all still pass under the new rules.",
   "typecheckOk": true,
   "lintOk": "no NEW errors; only the 7 known pre-existing react-hooks 'rule not found' errors (EmailDesigner/Activity/ProfileDetail/SegmentBuilder/SimpleScreens), none in modified files.",
   "notes": "Version bumped 0.41.9 -> 0.42.0 (MINOR). CLAUDE.md updated with both invariants. NOT committed/pushed (orchestrator commits). MERGE_PLUS_GAP retained as exported constant but deprecated (merge + now centered). branchClosureY + PLUS_PAD exported from layout.ts; crossY added to LayoutEdge; orthogonalPath/verticalAnchor/closeKneeLowerRun gained a crossY param (7th)."

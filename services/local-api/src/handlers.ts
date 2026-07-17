@@ -4,7 +4,7 @@
 //   - scopes EVERY DB op to ctx.workspaceId via scopedQuery (workspace_id from
 //     the token, NEVER the body — CLAUDE.md inv.2),
 //   - delegates to existing cores (segments compiler / manual members / onboarding
-//     / broadcast / campaign DSL) rather than re-implementing,
+//     / broadcast / automation DSL) rather than re-implementing,
 //   - audits system-admin cross-tenant reads via handleAdminAccess →
 //     writeAuditEntry.
 //
@@ -77,7 +77,7 @@ import {
   type AudienceSegmentDef,
 } from '@cdp/segments';
 import {
-  validateCampaignDefinition,
+  validateAutomationDefinition,
   enrollFromEvent,
   enrollFromProfileChange,
   enrollFromSegmentChange,
@@ -85,17 +85,17 @@ import {
   enrollSegmentSnapshot,
   collectSendNodeEnvelopeGaps,
   nextLifecycle,
-  campaignCountsShape,
+  automationCountsShape,
   runEnrollment,
   buildSweepQuery,
   withWorkspaceTx,
-  runStatementsInWorkspaceTx as campaignRunnerTx,
-  type CampaignLifecycleAction,
-  type CampaignCountRow,
+  runStatementsInWorkspaceTx as automationRunnerTx,
+  type AutomationLifecycleAction,
+  type AutomationCountRow,
   type EnrollDeps,
-  type CampaignDefinition,
+  type AutomationDefinition,
   type RunDeps,
-} from '@cdp/service-campaign-runner';
+} from '@cdp/service-automation-runner';
 import { fetchWebhookClient } from '@cdp/runner-webhook';
 import { runBroadcast, buildDueScheduledBroadcastsQuery } from '@cdp/service-broadcast';
 import {
@@ -167,7 +167,7 @@ async function withTx<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Pr
 async function ownsResource(
   pool: Pool,
   workspaceId: string,
-  table: 'segments' | 'broadcasts' | 'campaigns',
+  table: 'segments' | 'broadcasts' | 'automations',
   id: string,
 ): Promise<boolean> {
   const q = scopedQuery(workspaceId, `SELECT 1 FROM ${table} WHERE id = $1`, [id]);
@@ -188,7 +188,7 @@ async function topicBelongsToWorkspace(pool: Pool, workspaceId: string, topicId:
  * envelope (subject / sender_id / to_address / from_selected). The SELECT is
  * workspace-scoped, so a cross-workspace `sourceId` clones nothing → returns null.
  * The single home for the clone SQL used by cloneTemplate / duplicateBroadcast /
- * attachCampaignSendTemplate. Pass `nameOverride` to rename the copy (else the
+ * attachAutomationSendTemplate. Pass `nameOverride` to rename the copy (else the
  * original name is kept).
  */
 async function cloneEmailTemplate(
@@ -691,7 +691,7 @@ export const getWorkspaceSettings: Handler = async (ctx, pool) => {
       // Topic-based subscription management. Default ON; only explicit false
       // disables it (then the preference center shows the plain unsubscribe page).
       topics_enabled: settings.topics_enabled !== false,
-      // The workspace clock for all campaign time math (§9B). Default UTC.
+      // The workspace clock for all automation time math (§9B). Default UTC.
       timezone: typeof settings.timezone === 'string' && settings.timezone ? settings.timezone : 'UTC',
       // The PUBLIC unsubscribe/preference-center page language. Default 'auto'
       // (the recipient's browser language); 'en'/'he' force it (Hebrew is RTL).
@@ -720,7 +720,7 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
   if (b.topics_enabled !== undefined) patch.topics_enabled = Boolean(b.topics_enabled);
   if (b.timezone !== undefined) {
     // The workspace timezone (§9B clock). Validate against a real IANA zone before
-    // it ever drives campaign waits/windows. workspace_id is taken from ctx only —
+    // it ever drives automation waits/windows. workspace_id is taken from ctx only —
     // never from the body (inv.2).
     if (typeof b.timezone !== 'string' || !isValidTimeZone(b.timezone)) {
       return ok({ error: 'invalid timezone (must be a valid IANA zone)' }, 400);
@@ -812,7 +812,7 @@ export interface ChannelAvailability {
 
 /**
  * Which messaging channels the workspace can actually SEND on, derived from the
- * company's connectors — the single source of truth for broadcast/campaign gating
+ * company's connectors — the single source of truth for broadcast/automation gating
  * and the Connectors UI. A channel is enabled when an enabled connector for it
  * exists AND that provider can really send: EMAIL needs a `resend` connector
  * (trusted From) OR a `ses` connector WITH a verified sending_domain in THIS
@@ -1047,24 +1047,24 @@ export async function sweepDueScheduledBroadcasts(pool: Pool, deps: LocalApiDeps
 }
 
 /**
- * Dispatch every PENDING CAMPAIGN outbox row for REAL, right now — the campaign
- * twin of dispatchBroadcastNow. Campaign SEND nodes write outbox rows tagged with
- * `payload.campaign_id`; production drains them off SQS via the Dispatcher Lambda,
+ * Dispatch every PENDING AUTOMATION outbox row for REAL, right now — the automation
+ * twin of dispatchBroadcastNow. Automation SEND nodes write outbox rows tagged with
+ * `payload.automation_id`; production drains them off SQS via the Dispatcher Lambda,
  * but the dev server has no queue/loop, so we run the SAME dispatcher core
  * synchronously after a sweep tick. Grouped by workspace; only the workspaces
  * whose company has REAL SES credentials actually deliver (mock/none → no-op, the
- * long-standing local behaviour, so a set_attribute/exit-only campaign with NO
+ * long-standing local behaviour, so a set_attribute/exit-only automation with NO
  * outbox rows is simply a no-op). Failures are isolated and never thrown.
  */
-async function dispatchCampaignOutboxNow(pool: Pool, deps: LocalApiDeps): Promise<void> {
-  // Pending campaign outbox rows (a campaign send, not a broadcast), per workspace.
+async function dispatchAutomationOutboxNow(pool: Pool, deps: LocalApiDeps): Promise<void> {
+  // Pending automation outbox rows (a automation send, not a broadcast), per workspace.
   // The row's payload->>'medium' decides delivery: EMAIL needs REAL SES creds
   // (mock/none → no-op, the long-standing local behaviour); a TEXT send (sms/
   // whatsapp) ALWAYS delivers via the deterministic MOCK channel provider — no
   // credentials needed — exactly like a text broadcast.
   const { rows } = await pool.query<{ id: string; workspace_id: string; medium: string | null }>(
     `SELECT id, workspace_id, payload->>'medium' AS medium FROM outbox
-     WHERE status = 'pending' AND payload->>'campaign_id' IS NOT NULL
+     WHERE status = 'pending' AND payload->>'automation_id' IS NOT NULL
      ORDER BY workspace_id, created_at`,
   );
   if (rows.length === 0) return;
@@ -1107,14 +1107,14 @@ async function dispatchCampaignOutboxNow(pool: Pool, deps: LocalApiDeps): Promis
       // bad recipient can't abort the batch.
       await dispatchOutbox(entry.deps, r.id);
     } catch {
-      /* isolate: one failed campaign send must not abort the batch */
+      /* isolate: one failed automation send must not abort the batch */
     }
   }
 }
 
 /**
- * Advance every CAMPAIGN ENROLLMENT whose time has arrived — the LOCAL equivalent
- * of the production EventBridge campaign sweep (`@cdp/service-campaign-runner`
+ * Advance every AUTOMATION ENROLLMENT whose time has arrived — the LOCAL equivalent
+ * of the production EventBridge automation sweep (`@cdp/service-automation-runner`
  * scheduledSweepHandler → buildSweepQuery → runEnrollment), which the dev server
  * has no scheduler to run. Without this, enrollments are created (the trigger
  * fires) but NEVER advance, so update-profile/wait/send steps never run and
@@ -1124,7 +1124,7 @@ async function dispatchCampaignOutboxNow(pool: Pool, deps: LocalApiDeps): Promis
  * broadcasts) and run each due enrollment, isolating per-row failures. Returns
  * how many enrollments it ticked.
  */
-export async function sweepDueCampaignEnrollments(pool: Pool, deps: LocalApiDeps): Promise<number> {
+export async function sweepDueAutomationEnrollments(pool: Pool, deps: LocalApiDeps): Promise<number> {
   const runDeps: RunDeps = {
     reader: {
       query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
@@ -1134,9 +1134,9 @@ export async function sweepDueCampaignEnrollments(pool: Pool, deps: LocalApiDeps
     },
     // Local has no SQS — sends are dispatched synchronously below (like broadcasts).
     // A no-op sender keeps the runner happy (it enqueues the outbox id we then drain).
-    sqs: { async send() { return { MessageId: `local-campaign-${Date.now()}` }; } },
+    sqs: { async send() { return { MessageId: `local-automation-${Date.now()}` }; } },
     withTx: (fn) => withWorkspaceTx(pool, fn),
-    runInWorkspaceTx: (workspaceId, statements) => campaignRunnerTx(pool, workspaceId, statements),
+    runInWorkspaceTx: (workspaceId, statements) => automationRunnerTx(pool, workspaceId, statements),
     now: () => new Date(),
     dispatchQueueUrl: process.env.DISPATCH_QUEUE_URL ?? 'local://dispatch',
     webhookClient: fetchWebhookClient(),
@@ -1154,10 +1154,10 @@ export async function sweepDueCampaignEnrollments(pool: Pool, deps: LocalApiDeps
       /* isolate: one bad enrollment must not abort the sweep; next tick retries */
     }
   }
-  // Drain any campaign send outbox rows this tick produced (no-op without real SES,
-  // and for set_attribute/exit-only campaigns there are none — that's fine).
+  // Drain any automation send outbox rows this tick produced (no-op without real SES,
+  // and for set_attribute/exit-only automations there are none — that's fine).
   try {
-    await dispatchCampaignOutboxNow(pool, deps);
+    await dispatchAutomationOutboxNow(pool, deps);
   } catch {
     /* isolate: dispatch must not abort the sweep */
   }
@@ -1215,7 +1215,7 @@ export const deleteCompanySesConfig: Handler = async (ctx, pool) => {
 // --- per-company CONNECTORS (unified provider registry) ------------------------
 // A connector powers a messaging channel (email/sms/whatsapp) via a provider. The
 // secret is write-only + encrypted. Channel availability (GET /company/channels)
-// gates broadcasts + campaigns. Config is validated per provider.
+// gates broadcasts + automations. Config is validated per provider.
 
 /** Allowed (channel, provider) pairs + which config keys each carries (non-secret). */
 const CONNECTOR_SPECS: Record<string, { channel: string; configKeys: string[]; secretRequired: boolean }> = {
@@ -2317,7 +2317,7 @@ export const setProfileSubscriptions: Handler = async (ctx, pool, req) => {
       },
     );
   }
-  await campaignRunnerTx(pool, ctx.workspaceId, statements);
+  await automationRunnerTx(pool, ctx.workspaceId, statements);
   return ok({ unsubscribed });
 };
 
@@ -2384,7 +2384,7 @@ export const setProfileGlobalSubscription: Handler = async (ctx, pool, req) => {
       },
     );
   }
-  await campaignRunnerTx(pool, ctx.workspaceId, statements);
+  await automationRunnerTx(pool, ctx.workspaceId, statements);
   return ok({ unsubscribed: b.unsubscribed });
 };
 
@@ -2393,7 +2393,7 @@ export const deleteTopic: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   // Defensively null out any broadcast reference so the FK doesn't block (an
   // attached topic just becomes untopiced — sends to everyone not opted out).
-  // Campaigns no longer carry a top-level topic_id; per-send-node
+  // Automations no longer carry a top-level topic_id; per-send-node
   // topic_id references live inside `definition` jsonb and are caller-resolved.
   await pool.query('UPDATE broadcasts SET topic_id = NULL WHERE workspace_id = $1 AND topic_id = $2', [ctx.workspaceId, id]);
   const q = scopedQuery(ctx.workspaceId, 'DELETE FROM topics WHERE id = $1', [id]);
@@ -2406,7 +2406,7 @@ export const deleteTopic: Handler = async (ctx, pool, req) => {
 // text templates (a reusable plain-text SMS/WhatsApp body library) — workspace-
 // scoped CRUD (manage_content). A text template is medium-AGNOSTIC: the same body
 // works for SMS or WhatsApp. Picking one COPIES its body into a send's existing
-// text_body (broadcasts.text_body / a campaign send node) — copy-on-select, no
+// text_body (broadcasts.text_body / a automation send node) — copy-on-select, no
 // live reference. A cross-workspace id 404s (inv.1/2).
 // ---------------------------------------------------------------------------
 
@@ -2488,7 +2488,7 @@ export const deleteTextTemplate: Handler = async (ctx, pool, req) => {
 export const listSegments: Handler = async (ctx, pool, req) => {
   // Paging is OPT-IN (the Segments LIST screen passes ?limit&page&q). When `limit` is
   // absent the WHOLE list is returned — the segment dropdowns (broadcast audience,
-  // profile filter, campaign IF) depend on getting every segment. Search is server-side.
+  // profile filter, automation IF) depend on getting every segment. Search is server-side.
   const p = parsePageParams(req.query);
   const params: unknown[] = [ctx.workspaceId];
   let where = 'workspace_id = $1';
@@ -2541,7 +2541,7 @@ export const createSegment: Handler = async (ctx, pool, req) => {
   // Dynamic membership is NOT materialized on save (it doesn't scale and a
   // time-windowed rule drifts with the clock). Reads resolve the rule LIVE
   // (profile tab, members preview, broadcast at send time); the materialized cache
-  // for campaign enter/exit is maintained by the async sweep (later phase).
+  // for automation enter/exit is maintained by the async sweep (later phase).
   return ok({ segment: rows[0] }, 201);
 };
 
@@ -2681,7 +2681,7 @@ export const importCsvMembers: Handler = async (ctx, pool, req) => {
 
 /**
  * GET /templates — the LIBRARY templates only. kind='copy' rows (per-broadcast/
- * campaign clones) are working copies, not library entries — they never list.
+ * automation clones) are working copies, not library entries — they never list.
  */
 export const listTemplates: Handler = async (ctx, pool) => {
   const q = scopedQuery(
@@ -2700,7 +2700,7 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
   // designer's editable source (design JSON) is stored alongside the derived MJML.
   const compiled = deps.compileMjml(mjml);
   // kind: 'library' (default — shows in the Templates list) or 'copy' (a working
-  // copy created from a broadcast/campaign design flow; never listed).
+  // copy created from a broadcast/automation design flow; never listed).
   const kind = b.kind === 'copy' ? 'copy' : 'library';
   // Envelope (lives on the email instance): subject + optional named sender; the
   // To token defaults to {{customer.email}} when not supplied.
@@ -2785,7 +2785,7 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
 };
 
 /**
- * POST /templates/:id/clone — copy a template into a per-broadcast/campaign
+ * POST /templates/:id/clone — copy a template into a per-broadcast/automation
  * WORKING COPY (kind='copy', source_template_id = the original). The copy is
  * independently editable with the same designer; the library original stays
  * pristine. Returns the new copy's id. Scoped.
@@ -2799,9 +2799,9 @@ export const cloneTemplate: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * DELETE /templates/:id — delete a LIBRARY template. Per-broadcast/campaign
+ * DELETE /templates/:id — delete a LIBRARY template. Per-broadcast/automation
  * working copies (kind='copy') are NOT user-deletable here; they live and die
- * with their broadcast/campaign. First detach any copies that point home (so the
+ * with their broadcast/automation. First detach any copies that point home (so the
  * self-FK source_template_id doesn't block the delete); if some other row still
  * references it directly (FK), report it as in-use rather than 500. Scoped.
  */
@@ -3390,7 +3390,7 @@ async function liveAudienceAst(pool: Pool, workspaceId: string, audience: AstNod
 
 /**
  * Parse a WhatsApp template selection from a request body into the jsonb we store on
- * `broadcasts.whatsapp_template` (or a campaign send node). Shape:
+ * `broadcasts.whatsapp_template` (or a automation send node). Shape:
  *   { name, language, params: string[] }  (params = merge-tag expressions, in order).
  * Returns `{ value }` (the normalized object or null), or `{ error }` when a partial
  * template is given (a name without a language or vice versa).
@@ -3715,17 +3715,17 @@ export const sendBroadcast: Handler = async (ctx, pool, req, deps) => {
 };
 
 // ---------------------------------------------------------------------------
-// campaigns (manage_content)
+// automations (manage_content)
 // ---------------------------------------------------------------------------
 
-export const listCampaigns: Handler = async (ctx, pool, req) => {
+export const listAutomations: Handler = async (ctx, pool, req) => {
   // Opt-in numbered paging + server-side name search (the LIST screen passes ?limit&page&q).
   // `published` (active_version_id IS NOT NULL) lets the UI choose Delete (a never-published
-  // draft) vs Archive (a published campaign). `hasDraft` mirrors getCampaign (an unsaved
+  // draft) vs Archive (a published automation). `hasDraft` mirrors getAutomation (an unsaved
   // draft differing from live) and drives the "Publish…" affordance. Explicit workspace
   // scoping ($1) since the query carries ORDER BY/LIMIT/OFFSET.
   const p = parsePageParams(req.query);
-  // Archived campaigns drop from the default list (filtered SERVER-SIDE so paging totals
+  // Archived automations drop from the default list (filtered SERVER-SIDE so paging totals
   // are consistent — a page is never silently shrunk by a client-side archived filter).
   const params: unknown[] = [ctx.workspaceId];
   let where = "workspace_id = $1 AND status <> 'archived'";
@@ -3743,79 +3743,79 @@ export const listCampaigns: Handler = async (ctx, pool, req) => {
   }>(
     `SELECT id, name, status, (active_version_id IS NOT NULL) AS published,
             (draft_definition IS NOT NULL AND draft_definition::text IS DISTINCT FROM definition::text) AS "hasDraft"
-       FROM campaigns WHERE ${where} ORDER BY created_at DESC${pc.text}`,
+       FROM automations WHERE ${where} ORDER BY created_at DESC${pc.text}`,
     [...params, ...pc.values],
   );
   let total = rows.length;
   if (p.limit !== null) {
-    const c = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM campaigns WHERE ${where}`, params);
+    const c = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM automations WHERE ${where}`, params);
     total = c.rows[0]?.n ?? 0;
   }
-  // Per-campaign enrollment counts in ONE workspace-scoped round-trip: GROUP BY
-  // (campaign_id, status) over campaign_enrollments, then fold into {active,
+  // Per-automation enrollment counts in ONE workspace-scoped round-trip: GROUP BY
+  // (automation_id, status) over automation_enrollments, then fold into {active,
   // completed, exited, failed} (defaulting all-zero) via the pure shaper. Scoped
-  // to ctx.workspaceId so a campaign never sums another tenant's enrollments.
+  // to ctx.workspaceId so a automation never sums another tenant's enrollments.
   // GROUP BY is appended AFTER scopedQuery anchors the workspace_id WHERE at the
   // tail (a fragment with no WHERE of its own).
-  const cq = scopedQuery(ctx.workspaceId, 'SELECT campaign_id, status, count(*)::int AS n FROM campaign_enrollments');
-  const { rows: countRows } = await pool.query<CampaignCountRow>(
-    `${cq.text} GROUP BY campaign_id, status`,
+  const cq = scopedQuery(ctx.workspaceId, 'SELECT automation_id, status, count(*)::int AS n FROM automation_enrollments');
+  const { rows: countRows } = await pool.query<AutomationCountRow>(
+    `${cq.text} GROUP BY automation_id, status`,
     cq.values,
   );
-  const byCampaign = campaignCountsShape(countRows);
+  const byAutomation = automationCountsShape(countRows);
   const zero = { active: 0, completed: 0, exited: 0, failed: 0 };
-  const campaigns = rows.map((c) => ({ ...c, counts: byCampaign[c.id] ?? zero }));
-  return ok({ campaigns, ...pageMeta(p, total) });
+  const automations = rows.map((c) => ({ ...c, counts: byAutomation[c.id] ?? zero }));
+  return ok({ automations, ...pageMeta(p, total) });
 };
 
 /**
- * POST /campaigns/:id/{pause,resume,archive} — campaign LIFECYCLE transitions
- * (§9B phase 7). Each is workspace-scoped (the campaign must resolve INSIDE
+ * POST /automations/:id/{pause,resume,archive} — automation LIFECYCLE transitions
+ * (§9B phase 7). Each is workspace-scoped (the automation must resolve INSIDE
  * ctx.workspaceId — a foreign id 404s, inv.1/inv.2; workspace_id is NEVER taken
  * from the body) and capability-gated (manage_content, in routes.ts). The pure
  * `nextLifecycle` transition table decides: an illegal transition (e.g. resume a
- * non-paused campaign) is a typed 409; an idempotent no-op (pause a paused one)
- * is a 200. The runner reads campaigns.status inside its locked tick, so pausing
+ * non-paused automation) is a typed 409; an idempotent no-op (pause a paused one)
+ * is a 200. The runner reads automations.status inside its locked tick, so pausing
  * halts advancement without touching in-flight enrollment rows.
  */
-function makeLifecycleHandler(action: CampaignLifecycleAction): Handler {
+function makeLifecycleHandler(action: AutomationLifecycleAction): Handler {
   return async (ctx, pool, req) => {
     const id = req.params.id!;
-    const sel = scopedQuery(ctx.workspaceId, 'SELECT status FROM campaigns WHERE id = $1', [id]);
+    const sel = scopedQuery(ctx.workspaceId, 'SELECT status FROM automations WHERE id = $1', [id]);
     const { rows } = await pool.query<{ status: string }>(sel.text, sel.values);
     if (rows.length === 0) return ok({ error: 'not found' }, 404);
     const decision = nextLifecycle(rows[0]!.status, action);
     if (!decision.ok) return ok({ error: decision.reason }, 409);
     if (!decision.noop) {
-      const upd = scopedQuery(ctx.workspaceId, 'UPDATE campaigns SET status = $1 WHERE id = $2', [decision.next, id]);
+      const upd = scopedQuery(ctx.workspaceId, 'UPDATE automations SET status = $1 WHERE id = $2', [decision.next, id]);
       await pool.query(upd.text, upd.values);
     }
     return ok({ status: decision.next });
   };
 }
 
-export const pauseCampaign: Handler = makeLifecycleHandler('pause');
-export const resumeCampaign: Handler = makeLifecycleHandler('resume');
-export const archiveCampaign: Handler = makeLifecycleHandler('archive');
+export const pauseAutomation: Handler = makeLifecycleHandler('pause');
+export const resumeAutomation: Handler = makeLifecycleHandler('resume');
+export const archiveAutomation: Handler = makeLifecycleHandler('archive');
 
 /**
- * DELETE /campaigns/:id — HARD-delete a campaign that was NEVER PUBLISHED
- * (active_version_id IS NULL: it was only ever a draft). A campaign that HAS
+ * DELETE /automations/:id — HARD-delete a automation that was NEVER PUBLISHED
+ * (active_version_id IS NULL: it was only ever a draft). A automation that HAS
  * been published is history — it is never hard-deleted; archive it instead
- * (409). Workspace-scoped: the campaign must resolve INSIDE ctx.workspaceId (a
+ * (409). Workspace-scoped: the automation must resolve INSIDE ctx.workspaceId (a
  * foreign/missing id 404s, inv.1/inv.2 — workspace_id is NEVER taken from the
  * body) and capability-gated (manage_content, routes.ts).
  *
- * The delete runs in ONE workspace-scoped tx: drop any campaign_enrollments
- * (defensive — a never-published campaign has none, and the FK is NOT NULL with
- * no cascade) then the campaign row. campaign_versions ON DELETE CASCADE handles
+ * The delete runs in ONE workspace-scoped tx: drop any automation_enrollments
+ * (defensive — a never-published automation has none, and the FK is NOT NULL with
+ * no cascade) then the automation row. automation_versions ON DELETE CASCADE handles
  * any draft-saved snapshots (there shouldn't be any since it was never published).
  */
-export const deleteCampaign: Handler = async (ctx, pool, req) => {
+export const deleteAutomation: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const sel = scopedQuery(
     ctx.workspaceId,
-    'SELECT active_version_id FROM campaigns WHERE id = $1',
+    'SELECT active_version_id FROM automations WHERE id = $1',
     [id],
   );
   const row = (await pool.query(sel.text, sel.values)).rows[0] as
@@ -3823,14 +3823,14 @@ export const deleteCampaign: Handler = async (ctx, pool, req) => {
     | undefined;
   if (!row) return ok({ error: 'not found' }, 404);
   if (row.active_version_id !== null) {
-    return ok({ error: "A published campaign can't be deleted — archive it instead." }, 409);
+    return ok({ error: "A published automation can't be deleted — archive it instead." }, 409);
   }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const delEnroll = scopedQuery(ctx.workspaceId, 'DELETE FROM campaign_enrollments WHERE campaign_id = $1', [id]);
+    const delEnroll = scopedQuery(ctx.workspaceId, 'DELETE FROM automation_enrollments WHERE automation_id = $1', [id]);
     await client.query(delEnroll.text, delEnroll.values);
-    const delCamp = scopedQuery(ctx.workspaceId, 'DELETE FROM campaigns WHERE id = $1', [id]);
+    const delCamp = scopedQuery(ctx.workspaceId, 'DELETE FROM automations WHERE id = $1', [id]);
     await client.query(delCamp.text, delCamp.values);
     await client.query('COMMIT');
   } catch (e) {
@@ -3843,22 +3843,22 @@ export const deleteCampaign: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * GET /campaigns/:id — the full campaign + its definition for the builder to
+ * GET /automations/:id — the full automation + its definition for the builder to
  * reload/round-trip (§9B phase 5). Scoped to the TOKEN's workspace
- * (ctx.workspaceId, NEVER a body/query workspace_id — inv.1/inv.2): a campaign in
+ * (ctx.workspaceId, NEVER a body/query workspace_id — inv.1/inv.2): a automation in
  * another workspace 404s. The `definition` jsonb is returned verbatim so the
  * canvas reconstructs the same DSL graph it saved.
  */
-export const getCampaign: Handler = async (ctx, pool, req) => {
+export const getAutomation: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   // A JOIN makes `workspace_id` ambiguous for scopedQuery's injected predicate, so
-  // bind the workspace scope explicitly on the campaign (c.workspace_id at $1).
+  // bind the workspace scope explicitly on the automation (c.workspace_id at $1).
   const { rows } = await pool.query<{
     id: string;
     name: string;
     status: string;
-    definition: CampaignDefinition;
-    draft_definition: CampaignDefinition | null;
+    definition: AutomationDefinition;
+    draft_definition: AutomationDefinition | null;
     trigger_segment_id: string | null;
     draft_trigger_segment_id: string | null;
     trigger_on: string | null;
@@ -3872,12 +3872,12 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
             c.draft_trigger_segment_id, c.trigger_on, c.draft_trigger_on, c.keep_while_in_segment,
             c.active_version_id,
             av.version AS active_version, av.name AS active_version_name
-     FROM campaigns c
-     LEFT JOIN campaign_versions av ON av.id = c.active_version_id AND av.workspace_id = c.workspace_id
+     FROM automations c
+     LEFT JOIN automation_versions av ON av.id = c.active_version_id AND av.workspace_id = c.workspace_id
      WHERE c.workspace_id = $1 AND c.id = $2`,
     [ctx.workspaceId, id],
   );
-  if (rows.length === 0) return ok({ error: 'campaign not found' }, 404);
+  if (rows.length === 0) return ok({ error: 'automation not found' }, 404);
   // The workspace timezone (§9B clock) is needed by the wait-until / hour-window
   // editors, which run under manage_content (GET /workspace/settings is gated on
   // manage_workspace_users a marketer lacks) — surface it here, workspace-scoped.
@@ -3905,7 +3905,7 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
       ? { version: r.active_version, name: r.active_version_name }
       : null;
 
-  const campaign = {
+  const automation = {
     id: r.id,
     name: r.name,
     status: r.status,
@@ -3919,25 +3919,25 @@ export const getCampaign: Handler = async (ctx, pool, req) => {
     // topic_id moved to per-send-node config — clients read it from
     // each `action.kind = 'send'` node's `topic_id`.
   };
-  return ok({ campaign, timezone });
+  return ok({ automation, timezone });
 };
 
 /**
- * Map a validateCampaignDefinition throw to a TYPED 400 (the structural gate is
+ * Map a validateAutomationDefinition throw to a TYPED 400 (the structural gate is
  * USER input, not a server fault — a malformed graph must never be a 500). Returns
  * the 400 HandlerResponse on a validation error, or null when the definition is
  * structurally valid (the caller proceeds). §9B phase-6 follow-up.
  */
 function validateDefinitionOr400(definition: unknown): HandlerResponse | null {
   try {
-    validateCampaignDefinition(definition);
+    validateAutomationDefinition(definition);
     return null;
   } catch (e) {
-    return ok({ error: e instanceof Error ? e.message : 'invalid campaign definition' }, 400);
+    return ok({ error: e instanceof Error ? e.message : 'invalid automation definition' }, 400);
   }
 }
 
-export const createCampaign: Handler = async (ctx, pool, req) => {
+export const createAutomation: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const name = String(b.name ?? '');
   const definition = b.definition;
@@ -3952,7 +3952,7 @@ export const createCampaign: Handler = async (ctx, pool, req) => {
   // optional gate that exits the enrollment when the profile leaves that segment.
   const triggerOn = b.trigger_on === 'exit' ? 'exit' : 'enter';
   const { rows } = await pool.query(
-    `INSERT INTO campaigns (workspace_id, name, definition, trigger_segment_id, trigger_on, keep_while_in_segment)
+    `INSERT INTO automations (workspace_id, name, definition, trigger_segment_id, trigger_on, keep_while_in_segment)
      VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id, name, status, trigger_on, keep_while_in_segment`,
     [
       ctx.workspaceId,
@@ -3963,7 +3963,7 @@ export const createCampaign: Handler = async (ctx, pool, req) => {
       b.keep_while_in_segment ?? null,
     ],
   );
-  return ok({ campaign: rows[0] }, 201);
+  return ok({ automation: rows[0] }, 201);
 };
 
 /** Sentinel: a supplied trigger_segment_id did not resolve in the workspace. */
@@ -3987,14 +3987,14 @@ async function resolveTriggerSegmentId(
   return (rowCount ?? 0) > 0 ? raw : REJECT;
 }
 
-export const updateCampaign: Handler = async (ctx, pool, req) => {
+export const updateAutomation: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const id = req.params.id!;
   if (b.definition !== undefined) {
     const invalid = validateDefinitionOr400(b.definition); // typed 400, never a 500
     if (invalid) return invalid;
   }
-  // The segment_entry trigger's segment is a CAMPAIGN-ROW field. When the body
+  // The segment_entry trigger's segment is a AUTOMATION-ROW field. When the body
   // supplies trigger_segment_id it MUST resolve inside the token's workspace (inv.2)
   // — a foreign id is a 400, never silently stored. Absent → leave the column as-is.
   const setTriggerSegment = b.trigger_segment_id !== undefined;
@@ -4005,11 +4005,11 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
     triggerSegmentId = resolved;
   }
   // topic_id moved to per-send-node config. The PATCH no longer
-  // accepts or stores a campaign-level topic_id; each send node's `topic_id`
+  // accepts or stores a automation-level topic_id; each send node's `topic_id`
   // travels inside `definition` and is validated by the publish gate.
   const q = scopedQuery(
     ctx.workspaceId,
-    `UPDATE campaigns SET
+    `UPDATE automations SET
        name = COALESCE($1, name),
        definition = CASE WHEN $3::boolean THEN $2::jsonb ELSE definition END,
        status = COALESCE($4, status),
@@ -4035,32 +4035,32 @@ export const updateCampaign: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * POST /campaigns/:id/send-nodes/:nodeId/attach-template — attach an email to a
- * campaign SEND node by CLONING a library template into the node's own working copy
+ * POST /automations/:id/send-nodes/:nodeId/attach-template — attach an email to a
+ * automation SEND node by CLONING a library template into the node's own working copy
  * (kind='copy', source_template_id), exactly like the broadcast instance flow. The
  * clone copies the design + envelope columns (subject/sender_id/to_address/
  * from_selected) so a configured library template yields a sendable copy, and the
  * send node's `template_id` is repointed at the copy. Everything is scoped to the
- * TOKEN's workspace (ctx.workspaceId, NEVER the body — inv.2): the campaign, the
+ * TOKEN's workspace (ctx.workspaceId, NEVER the body — inv.2): the automation, the
  * node, and the SOURCE template must each resolve inside the workspace or it's a
  * 404 — a foreign template can never be cloned into this workspace.
  */
-export const attachCampaignSendTemplate: Handler = async (ctx, pool, req) => {
+export const attachAutomationSendTemplate: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const nodeId = req.params.nodeId!;
   const b = asObject(req.body);
   const templateId = typeof b.template_id === 'string' ? b.template_id.trim() : '';
   if (!templateId) return ok({ error: 'template_id required' }, 400);
 
-  // The campaign must belong to the token's workspace (else 404 — inv.2). Attach is
+  // The automation must belong to the token's workspace (else 404 — inv.2). Attach is
   // a DRAFT-TIME edit: it operates on the working-copy draft when one exists (the
   // builder persists a draft before opening a send node's editor), else on the live
-  // definition (backward-compatible for never-drafted campaigns). Writing the
+  // definition (backward-compatible for never-drafted automations). Writing the
   // repointed node back into the DRAFT keeps the attached template in the copy the
   // publish gate reads (draft ?? live) — a stale template-less draft used to shadow
   // a live-only write and silently drop the attachment.
-  const campRows = await pool.query<{ definition: CampaignDefinition; draft_definition: CampaignDefinition | null }>(
-    'SELECT definition, draft_definition FROM campaigns WHERE workspace_id = $1 AND id = $2',
+  const campRows = await pool.query<{ definition: AutomationDefinition; draft_definition: AutomationDefinition | null }>(
+    'SELECT definition, draft_definition FROM automations WHERE workspace_id = $1 AND id = $2',
     [ctx.workspaceId, id],
   );
   if (!campRows.rows[0]) return ok({ error: 'not found' }, 404);
@@ -4078,15 +4078,15 @@ export const attachCampaignSendTemplate: Handler = async (ctx, pool, req) => {
   const copyId = copy.id;
 
   // Repoint the send node's template_id at the copy and persist the definition.
-  const nextDef: CampaignDefinition = {
+  const nextDef: AutomationDefinition = {
     ...def,
     nodes: { ...def.nodes, [nodeId]: { ...def.nodes[nodeId], template_id: copyId } as never },
   };
   const uq = scopedQuery(
     ctx.workspaceId,
     onDraft
-      ? 'UPDATE campaigns SET draft_definition = $1::jsonb WHERE id = $2'
-      : 'UPDATE campaigns SET definition = $1::jsonb WHERE id = $2',
+      ? 'UPDATE automations SET draft_definition = $1::jsonb WHERE id = $2'
+      : 'UPDATE automations SET definition = $1::jsonb WHERE id = $2',
     [JSON.stringify(nextDef), id],
   );
   await pool.query(uq.text, uq.values);
@@ -4094,19 +4094,19 @@ export const attachCampaignSendTemplate: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * The shared PUBLISH GATE (§9B/§10) over a campaign DEFINITION: validate the graph
+ * The shared PUBLISH GATE (§9B/§10) over a automation DEFINITION: validate the graph
  * (typed 400), then mirror sendBroadcast's ORDERED per-send-node 409s (sender_id →
  * to_address → subject) naming the offending node, THEN the verified-domain gate.
- * A campaign with no send node is ungated. Returns a HandlerResponse to short-
+ * A automation with no send node is ungated. Returns a HandlerResponse to short-
  * circuit on the FIRST failure, or null when the definition is publishable.
  * Workspace-scoped: each referenced copy must resolve inside ctx.workspaceId
  * (a foreign copy never satisfies the gate — inv.2). Reused by BOTH activate and
  * publish so the two flows gate identically.
  */
-async function runCampaignPublishGate(
+async function runAutomationPublishGate(
   workspaceId: string,
   pool: Pool,
-  def: CampaignDefinition,
+  def: AutomationDefinition,
 ): Promise<HandlerResponse | null> {
   // The stored/draft definition must be structurally valid (and the trigger
   // complete — an event trigger missing eventType is rejected here) BEFORE the
@@ -4147,7 +4147,7 @@ async function runCampaignPublishGate(
   }
 
   // Verified-domain gate runs AFTER the per-node envelope checks (sendBroadcast
-  // parity). Only required when the campaign actually sends.
+  // parity). Only required when the automation actually sends.
   if (sendTemplateIds.length > 0) {
     const vq = scopedQuery(workspaceId, 'SELECT 1 FROM sending_domains WHERE verified = true');
     const verified = await pool.query(vq.text, vq.values);
@@ -4162,39 +4162,39 @@ async function runCampaignPublishGate(
 }
 
 /**
- * POST /campaigns/:id/activate — re-activate a campaign IN PLACE (status →
- * 'active') with the shared SEND-NODE gate (§9B/§10), gating the campaign's
- * current LIVE definition. Publishing (POST /campaigns/:id/publish) is the
- * draft→live flow; this remains a no-change re-activate (e.g. a paused campaign
+ * POST /automations/:id/activate — re-activate a automation IN PLACE (status →
+ * 'active') with the shared SEND-NODE gate (§9B/§10), gating the automation's
+ * current LIVE definition. Publishing (POST /automations/:id/publish) is the
+ * draft→live flow; this remains a no-change re-activate (e.g. a paused automation
  * whose live definition is already complete). Everything is scoped to the token's
- * workspace (the campaign + every referenced copy resolve inside ctx.workspaceId,
+ * workspace (the automation + every referenced copy resolve inside ctx.workspaceId,
  * NEVER the body — inv.2).
  */
-export const activateCampaign: Handler = async (ctx, pool, req) => {
+export const activateAutomation: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  const campRows = await pool.query<{ definition: CampaignDefinition }>(
-    'SELECT definition FROM campaigns WHERE workspace_id = $1 AND id = $2',
+  const campRows = await pool.query<{ definition: AutomationDefinition }>(
+    'SELECT definition FROM automations WHERE workspace_id = $1 AND id = $2',
     [ctx.workspaceId, id],
   );
   if (!campRows.rows[0]) return ok({ error: 'not found' }, 404);
 
-  const gate = await runCampaignPublishGate(ctx.workspaceId, pool, campRows.rows[0].definition);
+  const gate = await runAutomationPublishGate(ctx.workspaceId, pool, campRows.rows[0].definition);
   if (gate) return gate;
 
-  const uq = scopedQuery(ctx.workspaceId, "UPDATE campaigns SET status = 'active' WHERE id = $1", [id]);
+  const uq = scopedQuery(ctx.workspaceId, "UPDATE automations SET status = 'active' WHERE id = $1", [id]);
   const { rowCount } = await pool.query(uq.text, uq.values);
   return ok({ activated: rowCount ?? 0, status: 'active' });
 };
 
 /**
- * PUT /campaigns/:id/draft — the builder's AUTOSAVE target. Writes ONLY the
+ * PUT /automations/:id/draft — the builder's AUTOSAVE target. Writes ONLY the
  * working-copy draft (draft_definition + draft_trigger_segment_id); it NEVER
  * touches the live definition / trigger_segment_id / status the runner reads.
- * Validates the draft graph (typed 400, no write). Workspace-scoped (the campaign
+ * Validates the draft graph (typed 400, no write). Workspace-scoped (the automation
  * must resolve inside ctx.workspaceId — a foreign id 404s; trigger_segment_id, if
  * supplied, must resolve inside the workspace too — inv.2).
  */
-export const saveCampaignDraft: Handler = async (ctx, pool, req) => {
+export const saveAutomationDraft: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
   const invalid = validateDefinitionOr400(b.definition); // a malformed draft is a TYPED 400
@@ -4211,7 +4211,7 @@ export const saveCampaignDraft: Handler = async (ctx, pool, req) => {
 
   const q = scopedQuery(
     ctx.workspaceId,
-    `UPDATE campaigns SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2, draft_trigger_on = $3 WHERE id = $4`,
+    `UPDATE automations SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2, draft_trigger_on = $3 WHERE id = $4`,
     [JSON.stringify(b.definition), resolved, draftTriggerOn, id],
   );
   const { rowCount } = await pool.query(q.text, q.values);
@@ -4220,37 +4220,37 @@ export const saveCampaignDraft: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * POST /campaigns/:id/publish — promote the DRAFT to LIVE as an append-only
+ * POST /automations/:id/publish — promote the DRAFT to LIVE as an append-only
  * version snapshot (§9B builder). In ONE workspace-scoped tx: (a) take the draft
  * (draft_definition ?? definition) + draft trigger; (b) run the shared publish
  * gate on it (ordered per-node 409 / invalid-def 400); (c) compute the next
- * version number; INSERT a campaign_versions snapshot (created_by=ctx.userId);
- * (d) set campaigns.definition/trigger_segment_id = the published values,
+ * version number; INSERT a automation_versions snapshot (created_by=ctx.userId);
+ * (d) set automations.definition/trigger_segment_id = the published values,
  * active_version_id = the new version, status = 'active', and CLEAR the draft;
  * (e) if scope==='backfill' AND the published trigger is segment_entry with a
  * trigger_segment_id, enroll the CURRENT segment members (reuse
  * enrollSegmentSnapshot, ON CONFLICT 'once', workspace-scoped) on the SAME client
  * so the freshly-set status='active' is visible. Returns { version, name, enrolled }.
- * Workspace-scoped: the campaign must resolve inside ctx.workspaceId (inv.2).
+ * Workspace-scoped: the automation must resolve inside ctx.workspaceId (inv.2).
  */
-export const publishCampaign: Handler = async (ctx, pool, req) => {
+export const publishAutomation: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
   const name = typeof b.name === 'string' ? b.name.trim() : '';
   if (!name) return ok({ error: 'name required' }, 400);
   const scope = b.scope === 'backfill' ? 'backfill' : 'forward';
 
-  // Read the campaign + its draft (scoped → a foreign id 404s, inv.2).
+  // Read the automation + its draft (scoped → a foreign id 404s, inv.2).
   const sel = scopedQuery(
     ctx.workspaceId,
     `SELECT definition, draft_definition, trigger_segment_id, draft_trigger_segment_id,
             trigger_on, draft_trigger_on
-     FROM campaigns WHERE id = $1`,
+     FROM automations WHERE id = $1`,
     [id],
   );
   const { rows } = await pool.query<{
-    definition: CampaignDefinition;
-    draft_definition: CampaignDefinition | null;
+    definition: AutomationDefinition;
+    draft_definition: AutomationDefinition | null;
     trigger_segment_id: string | null;
     draft_trigger_segment_id: string | null;
     trigger_on: string | null;
@@ -4261,7 +4261,7 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
   // The DRAFT is the source of truth to publish (falls back to live when there is
   // no unsaved draft → an idempotent re-publish of the current live definition).
   const hasDraft = rows[0].draft_definition !== null;
-  const def = hasDraft ? (rows[0].draft_definition as CampaignDefinition) : rows[0].definition;
+  const def = hasDraft ? (rows[0].draft_definition as AutomationDefinition) : rows[0].definition;
   const triggerSegmentId = hasDraft ? rows[0].draft_trigger_segment_id : rows[0].trigger_segment_id;
   // The trigger DIRECTION promotes with the draft (enter|exit); default 'enter'.
   const triggerOn =
@@ -4270,7 +4270,7 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
       : 'enter';
 
   // Gate BEFORE mutating anything (a failed gate leaves the draft + status intact).
-  const gate = await runCampaignPublishGate(ctx.workspaceId, pool, def);
+  const gate = await runAutomationPublishGate(ctx.workspaceId, pool, def);
   if (gate) return gate;
 
   // Whether this publish backfills: scope=backfill AND a segment_entry trigger with
@@ -4282,14 +4282,14 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // (c) next version number for THIS campaign (workspace-scoped).
+    // (c) next version number for THIS automation (workspace-scoped).
     const verSel = await client.query<{ next: number }>(
-      'SELECT COALESCE(MAX(version), 0) + 1 AS next FROM campaign_versions WHERE workspace_id = $1 AND campaign_id = $2',
+      'SELECT COALESCE(MAX(version), 0) + 1 AS next FROM automation_versions WHERE workspace_id = $1 AND automation_id = $2',
       [ctx.workspaceId, id],
     );
     const version = verSel.rows[0]!.next;
     const ins = await client.query<{ id: string }>(
-      `INSERT INTO campaign_versions (workspace_id, campaign_id, version, name, definition, trigger_segment_id, created_by)
+      `INSERT INTO automation_versions (workspace_id, automation_id, version, name, definition, trigger_segment_id, created_by)
        VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING id`,
       [ctx.workspaceId, id, version, name, JSON.stringify(def), triggerSegmentId, ctx.userId ?? null],
     );
@@ -4297,7 +4297,7 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
 
     // (d) promote draft→live, point active_version_id, activate, CLEAR the draft.
     await client.query(
-      `UPDATE campaigns SET
+      `UPDATE automations SET
          definition = $1::jsonb,
          trigger_segment_id = $2,
          trigger_on = $3,
@@ -4316,7 +4316,7 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
     if (shouldBackfill) {
       const res = await enrollSegmentSnapshot(enrollDepsOnClient(client), {
         workspaceId: ctx.workspaceId,
-        campaignId: id,
+        automationId: id,
         segmentId: triggerSegmentId,
       });
       enrolled = res.enrolled;
@@ -4333,13 +4333,13 @@ export const publishCampaign: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * GET /campaigns/:id/versions — the campaign's append-only published-version
- * history, newest first, with is_active (== campaigns.active_version_id).
- * Workspace-scoped: a foreign campaign id 404s (inv.2).
+ * GET /automations/:id/versions — the automation's append-only published-version
+ * history, newest first, with is_active (== automations.active_version_id).
+ * Workspace-scoped: a foreign automation id 404s (inv.2).
  */
-export const listCampaignVersions: Handler = async (ctx, pool, req) => {
+export const listAutomationVersions: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  const cSel = scopedQuery(ctx.workspaceId, 'SELECT active_version_id FROM campaigns WHERE id = $1', [id]);
+  const cSel = scopedQuery(ctx.workspaceId, 'SELECT active_version_id FROM automations WHERE id = $1', [id]);
   const camp = await pool.query<{ active_version_id: string | null }>(cSel.text, cSel.values);
   if (!camp.rows[0]) return ok({ error: 'not found' }, 404);
   const activeId = camp.rows[0].active_version_id;
@@ -4349,7 +4349,7 @@ export const listCampaignVersions: Handler = async (ctx, pool, req) => {
   const q = scopedQuery(
     ctx.workspaceId,
     `SELECT id, version, name, created_at, created_by
-     FROM campaign_versions WHERE campaign_id = $1`,
+     FROM automation_versions WHERE automation_id = $1`,
     [id],
   );
   const { rows } = await pool.query<{ id: string; version: number; name: string; created_at: string; created_by: string | null }>(
@@ -4361,58 +4361,58 @@ export const listCampaignVersions: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * POST /campaigns/:id/revert — load a prior version's snapshot INTO the draft
+ * POST /automations/:id/revert — load a prior version's snapshot INTO the draft
  * (append-only history: revert NEVER destroys; the user then Saves/publishes to
  * make it live). Sets draft_definition + draft_trigger_segment_id from the version;
- * the LIVE definition is UNTOUCHED. The version must belong to THIS campaign in the
+ * the LIVE definition is UNTOUCHED. The version must belong to THIS automation in the
  * token's workspace (else 404 — inv.2; workspace_id never from the body). Returns
  * the loaded draft.
  */
-export const revertCampaign: Handler = async (ctx, pool, req) => {
+export const revertAutomation: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
   const versionId = typeof b.version_id === 'string' ? b.version_id.trim() : '';
   if (!versionId) return ok({ error: 'version_id required' }, 400);
 
-  // The version must belong to THIS campaign AND this workspace (inv.2).
+  // The version must belong to THIS automation AND this workspace (inv.2).
   const vSel = scopedQuery(
     ctx.workspaceId,
-    'SELECT definition, trigger_segment_id FROM campaign_versions WHERE id = $1 AND campaign_id = $2',
+    'SELECT definition, trigger_segment_id FROM automation_versions WHERE id = $1 AND automation_id = $2',
     [versionId, id],
   );
-  const v = await pool.query<{ definition: CampaignDefinition; trigger_segment_id: string | null }>(vSel.text, vSel.values);
+  const v = await pool.query<{ definition: AutomationDefinition; trigger_segment_id: string | null }>(vSel.text, vSel.values);
   if (!v.rows[0]) return ok({ error: 'not found' }, 404);
 
   // Reverting to the version that is ALREADY live is a no-op (the UI hides Revert
   // on the active row; this is defense-in-depth). 409 rather than silently writing.
-  const cSel = scopedQuery(ctx.workspaceId, 'SELECT active_version_id FROM campaigns WHERE id = $1', [id]);
+  const cSel = scopedQuery(ctx.workspaceId, 'SELECT active_version_id FROM automations WHERE id = $1', [id]);
   const camp = await pool.query<{ active_version_id: string | null }>(cSel.text, cSel.values);
-  if (!camp.rows[0]) return ok({ error: 'not found' }, 404); // foreign campaign id (inv.2)
+  if (!camp.rows[0]) return ok({ error: 'not found' }, 404); // foreign automation id (inv.2)
   if (camp.rows[0].active_version_id === versionId) {
     return ok({ error: "That version is already live — there's nothing to revert to." }, 409);
   }
 
   const upd = scopedQuery(
     ctx.workspaceId,
-    'UPDATE campaigns SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2 WHERE id = $3',
+    'UPDATE automations SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2 WHERE id = $3',
     [JSON.stringify(v.rows[0].definition), v.rows[0].trigger_segment_id, id],
   );
   const { rowCount } = await pool.query(upd.text, upd.values);
-  if (!rowCount) return ok({ error: 'not found' }, 404); // foreign campaign id (inv.2)
+  if (!rowCount) return ok({ error: 'not found' }, 404); // foreign automation id (inv.2)
   return ok({ definition: v.rows[0].definition, trigger_segment_id: v.rows[0].trigger_segment_id });
 };
 
 /**
- * POST /campaigns/:id/enroll — MANUAL/API enrollment (§9B). Enrolls EITHER a
+ * POST /automations/:id/enroll — MANUAL/API enrollment (§9B). Enrolls EITHER a
  * single profile (`profile_id`) OR a point-in-time SEGMENT SNAPSHOT (`segment_id`)
- * at the campaign's start node. Exactly one target is required. Everything is
+ * at the automation's start node. Exactly one target is required. Everything is
  * scoped to the TOKEN's workspace (ctx.workspaceId, NEVER the body — inv.2): the
- * campaign, the profile, and the segment must each resolve INSIDE ctx.workspaceId
+ * automation, the profile, and the segment must each resolve INSIDE ctx.workspaceId
  * or it's a 404 (a foreign id never enrolls another tenant). Idempotent — the
- * 'once' policy (ON CONFLICT (campaign_id, profile_id) DO NOTHING) makes a re-run
- * insert no duplicates. Reuses the campaign-runner enroll cores.
+ * 'once' policy (ON CONFLICT (automation_id, profile_id) DO NOTHING) makes a re-run
+ * insert no duplicates. Reuses the automation-runner enroll cores.
  */
-export const enrollIntoCampaign: Handler = async (ctx, pool, req) => {
+export const enrollIntoAutomation: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
   const profileId = typeof b.profile_id === 'string' ? b.profile_id.trim() : '';
@@ -4427,8 +4427,8 @@ export const enrollIntoCampaign: Handler = async (ctx, pool, req) => {
   if (hasProfile && !profileId) return ok({ error: 'profile_id must be a non-empty string' }, 400);
   if (hasSegment && !segmentId) return ok({ error: 'segment_id must be a non-empty string' }, 400);
 
-  // The campaign must belong to the token's workspace (else 404 — inv.2).
-  if (!(await ownsResource(pool, ctx.workspaceId, 'campaigns', id))) {
+  // The automation must belong to the token's workspace (else 404 — inv.2).
+  if (!(await ownsResource(pool, ctx.workspaceId, 'automations', id))) {
     return ok({ error: 'not found' }, 404);
   }
 
@@ -4439,7 +4439,7 @@ export const enrollIntoCampaign: Handler = async (ctx, pool, req) => {
     if (!present.rowCount) return ok({ error: 'not found' }, 404);
     const res = await enrollProfileManually(deps, {
       workspaceId: ctx.workspaceId,
-      campaignId: id,
+      automationId: id,
       profileId,
     });
     return ok({ enrolled: res.enrolled });
@@ -4450,25 +4450,25 @@ export const enrollIntoCampaign: Handler = async (ctx, pool, req) => {
   if (!seg.rowCount) return ok({ error: 'not found' }, 404);
   const res = await enrollSegmentSnapshot(deps, {
     workspaceId: ctx.workspaceId,
-    campaignId: id,
+    automationId: id,
     segmentId,
   });
   return ok({ enrolled: res.enrolled });
 };
 
 /**
- * GET /campaigns/:id/enrollments — the profiles that have passed through THIS
- * campaign (the Journeys tab). Joins campaign_enrollments → profiles for the
+ * GET /automations/:id/enrollments — the profiles that have passed through THIS
+ * automation (the Journeys tab). Joins automation_enrollments → profiles for the
  * email, newest-enrolled first, capped to 200. Everything is scoped to the
  * TOKEN's workspace (ctx.workspaceId, NEVER a body/query workspace_id — inv.1/
- * inv.2): a campaign in another workspace 404s and the enrollment + profile rows
+ * inv.2): a automation in another workspace 404s and the enrollment + profile rows
  * are both bound to ctx.workspaceId so a foreign id never surfaces another
  * tenant's people. Capability-gated (manage_content, routes.ts).
  */
-export const listCampaignEnrollments: Handler = async (ctx, pool, req) => {
+export const listAutomationEnrollments: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  // The campaign must belong to the token's workspace (else 404 — inv.2).
-  if (!(await ownsResource(pool, ctx.workspaceId, 'campaigns', id))) {
+  // The automation must belong to the token's workspace (else 404 — inv.2).
+  if (!(await ownsResource(pool, ctx.workspaceId, 'automations', id))) {
     return ok({ error: 'not found' }, 404);
   }
   // Both the enrollment and the joined profile are pinned to ctx.workspaceId so a
@@ -4483,9 +4483,9 @@ export const listCampaignEnrollments: Handler = async (ctx, pool, req) => {
     updated_at: string;
   }>(
     `SELECT e.profile_id, p.email, e.status, e.current_node, e.enrolled_at, e.updated_at
-     FROM campaign_enrollments e
+     FROM automation_enrollments e
      JOIN profiles p ON p.id = e.profile_id AND p.workspace_id = e.workspace_id
-     WHERE e.workspace_id = $1 AND e.campaign_id = $2
+     WHERE e.workspace_id = $1 AND e.automation_id = $2
      ORDER BY e.enrolled_at DESC
      LIMIT 200`,
     [ctx.workspaceId, id],
@@ -4646,7 +4646,7 @@ export const createProfile: Handler = async (ctx, pool, req) => {
       [ctx.workspaceId, profileId],
     );
     // PROFILE-TRIGGER ENROLLMENT (§9B): enroll this new profile into active
-    // profile-trigger campaigns whose profileChange is created/any. Idempotent (ON
+    // profile-trigger automations whose profileChange is created/any. Idempotent (ON
     // CONFLICT 'once'). Composed into the SAME tx; never trusts a body workspace_id.
     await enrollFromProfileChange(enrollDepsOnClient(client), {
       workspace_id: ctx.workspaceId,
@@ -4737,8 +4737,8 @@ export const importProfilesCsv: Handler = async (ctx, pool, req) => {
     );
   }
   // PROFILE-TRIGGER ENROLLMENT (§9B): each IMPORTED (created) profile enrolls into
-  // active profile-trigger campaigns whose profileChange is created/any. Idempotent
-  // (ON CONFLICT 'once'). Workspace-scoped; per-profile so a slow campaign-set read
+  // active profile-trigger automations whose profileChange is created/any. Idempotent
+  // (ON CONFLICT 'once'). Workspace-scoped; per-profile so a slow automation-set read
   // per row is bounded by the import cap. (Updates via CSV merge are NOT treated as
   // an 'updated' profile-trigger event here — only first-time creation enrolls.)
   if (createdIds.length > 0) {
@@ -4954,7 +4954,7 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
         [ctx.workspaceId, id, changed.length ? `edited ${changed.join(', ')}` : 'edited'],
       );
       // PROFILE-TRIGGER ENROLLMENT (§9B): enroll into active profile-trigger
-      // campaigns whose profileChange is updated/any (ON CONFLICT 'once'), on the
+      // automations whose profileChange is updated/any (ON CONFLICT 'once'), on the
       // SAME tx client. Scoped; never trusts a body workspace_id.
       await enrollFromProfileChange(enrollDepsOnClient(client), {
         workspace_id: ctx.workspaceId,
@@ -4977,7 +4977,7 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
  * POST /profiles/:id/merge — merge `secondary_id` INTO `:id` (the lead/survivor),
  * then delete the secondary. In ONE workspace-scoped transaction:
  *   - reassign every row that references the secondary (events, email_events,
- *     messages_log, outbox, campaign_enrollments, segment_change_log) to the lead,
+ *     messages_log, outbox, automation_enrollments, segment_change_log) to the lead,
  *   - move segment memberships to the lead (manual memberships now point at the
  *     survivor; conflicts dropped),
  *   - set the lead's attributes to the caller-resolved merged object,
@@ -5035,16 +5035,16 @@ export const mergeProfiles: Handler = async (ctx, pool, req) => {
       ws,
       secondary,
     ]);
-    // Campaign enrollments: UNIQUE(campaign_id, profile_id) — move missing, drop rest.
+    // Automation enrollments: UNIQUE(automation_id, profile_id) — move missing, drop rest.
     await client.query(
-      `INSERT INTO campaign_enrollments
-         (workspace_id, campaign_id, profile_id, current_node, status, next_run_at, state, enrolled_at, updated_at)
-       SELECT workspace_id, campaign_id, $2, current_node, status, next_run_at, state, enrolled_at, now()
-         FROM campaign_enrollments WHERE workspace_id = $1 AND profile_id = $3
-       ON CONFLICT (campaign_id, profile_id) DO NOTHING`,
+      `INSERT INTO automation_enrollments
+         (workspace_id, automation_id, profile_id, current_node, status, next_run_at, state, enrolled_at, updated_at)
+       SELECT workspace_id, automation_id, $2, current_node, status, next_run_at, state, enrolled_at, now()
+         FROM automation_enrollments WHERE workspace_id = $1 AND profile_id = $3
+       ON CONFLICT (automation_id, profile_id) DO NOTHING`,
       [ws, lead, secondary],
     );
-    await client.query('DELETE FROM campaign_enrollments WHERE workspace_id = $1 AND profile_id = $2', [
+    await client.query('DELETE FROM automation_enrollments WHERE workspace_id = $1 AND profile_id = $2', [
       ws,
       secondary,
     ]);
@@ -5090,7 +5090,7 @@ const PROFILE_CHILD_TABLES = [
   'outbox',
   'segment_change_log',
   'segment_memberships',
-  'campaign_enrollments',
+  'automation_enrollments',
   'topic_subscriptions',
   'channel_optouts',
   'tracked_opens',
@@ -5174,9 +5174,9 @@ async function recomputeFeaturesAndSegments(client: PoolClient, ws: string, prof
     profileId,
   );
   // SEGMENT-ENTRY ENROLLMENT (§9B): the membership change_log rows just written
-  // above drive campaign enrollment — fire enrollFromSegmentChange for each
+  // above drive automation enrollment — fire enrollFromSegmentChange for each
   // entered/exited delta on the SAME tx client (no nested BEGIN/COMMIT). This is
-  // the live hook: entering a campaign's trigger segment really enrolls the
+  // the live hook: entering a automation's trigger segment really enrolls the
   // profile. Workspace-scoped; idempotent (ON CONFLICT 'once').
   const enrollDeps = enrollDepsOnClient(client);
   for (const delta of evalRes.deltas) {
@@ -5194,7 +5194,7 @@ async function recomputeFeaturesAndSegments(client: PoolClient, ws: string, prof
  * Build EnrollDeps bound to a single tx client — so an enrollment write composes
  * into the CALLER's open transaction (no nested BEGIN/COMMIT) and every read/write
  * runs on the same connection. workspace_id scoping is in-code (every statement
- * binds workspace_id at $1; the asserted-scope tx runner lives in the campaign-
+ * binds workspace_id at $1; the asserted-scope tx runner lives in the automation-
  * runner — here we run on the open client directly).
  */
 function enrollDepsOnClient(client: PoolClient): EnrollDeps {
@@ -5301,7 +5301,7 @@ export const sendProfileEvent: Handler = async (ctx, pool, req) => {
     await recomputeFeaturesAndSegments(client, ws, id);
     // EVENT-TRIGGER ENROLLMENT (§9B): the dev mirror of the processor hook — fires
     // at the SAME point segment re-eval does, on the SAME tx client (no nested
-    // BEGIN/COMMIT). Enrolls the profile into active event-trigger campaigns whose
+    // BEGIN/COMMIT). Enrolls the profile into active event-trigger automations whose
     // eventType (+ optional payload filter) matches this event; idempotent (ON
     // CONFLICT 'once'). Workspace-scoped; never trusts a body workspace_id.
     await enrollFromEvent(enrollDepsOnClient(client), {
@@ -5481,13 +5481,13 @@ export const listActivity: Handler = async (ctx, pool, req) => {
                 id,
                 -- Retryable only while it's a FAILED send the recipient has NOT since
                 -- received: once a retry lands a 'sent' row for the same broadcast/
-                -- campaign, this failed row stops offering a (no-op) re-send.
+                -- automation, this failed row stops offering a (no-op) re-send.
                 (status = 'failed' AND NOT EXISTS (
                    SELECT 1 FROM messages_log s
                     WHERE s.workspace_id = messages_log.workspace_id
                       AND s.profile_id = messages_log.profile_id
                       AND s.status = 'sent'
-                      AND ( (messages_log.campaign_id IS NOT NULL AND s.campaign_id = messages_log.campaign_id)
+                      AND ( (messages_log.automation_id IS NOT NULL AND s.automation_id = messages_log.automation_id)
                          OR (messages_log.broadcast_id IS NOT NULL AND s.broadcast_id = messages_log.broadcast_id) )
                 )) AS retryable
            FROM messages_log WHERE workspace_id = $1
@@ -5549,19 +5549,19 @@ async function dispatchOneOutboxNow(
  * re-dispatch — reusing the exact content and the CURRENT (now-fixed) credentials.
  * Only a status='failed' messages_log entry is retryable (a skip is deliberate).
  * Guarded against double-sending: refuses if this recipient already has a 'sent'
- * row for the same broadcast/campaign. Scoped to the token's workspace.
+ * row for the same broadcast/automation. Scoped to the token's workspace.
  */
 export const retryMessage: Handler = async (ctx, pool, req, deps) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT profile_id, broadcast_id, campaign_id, medium, status FROM messages_log WHERE id = $1',
+    'SELECT profile_id, broadcast_id, automation_id, medium, status FROM messages_log WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query<{
     profile_id: string;
     broadcast_id: string | null;
-    campaign_id: string | null;
+    automation_id: string | null;
     medium: string;
     status: string;
   }>(q.text, q.values);
@@ -5569,13 +5569,13 @@ export const retryMessage: Handler = async (ctx, pool, req, deps) => {
   if (!m) return ok({ error: 'not found' }, 404);
   if (m.status !== 'failed') return ok({ error: 'only a failed send can be retried' }, 400);
   const bid = m.broadcast_id;
-  const cid = m.campaign_id;
+  const cid = m.automation_id;
 
   // Double-send guard: don't re-send if this recipient already GOT it.
   const already = await pool.query(
     `SELECT 1 FROM messages_log
       WHERE workspace_id = $1 AND profile_id = $2 AND status = 'sent'
-        AND ( ($3::uuid IS NOT NULL AND campaign_id = $3) OR ($4::uuid IS NOT NULL AND broadcast_id = $4) )
+        AND ( ($3::uuid IS NOT NULL AND automation_id = $3) OR ($4::uuid IS NOT NULL AND broadcast_id = $4) )
       LIMIT 1`,
     [ctx.workspaceId, m.profile_id, cid, bid],
   );
@@ -5583,11 +5583,11 @@ export const retryMessage: Handler = async (ctx, pool, req, deps) => {
     return ok({ error: 'this recipient already received this message' }, 409);
   }
 
-  // The single outbox dedupe row for this recipient + broadcast/campaign.
+  // The single outbox dedupe row for this recipient + broadcast/automation.
   const ob = await pool.query<{ id: string }>(
     `SELECT id FROM outbox
       WHERE workspace_id = $1 AND profile_id = $2
-        AND ( ($3::uuid IS NOT NULL AND campaign_id = $3)
+        AND ( ($3::uuid IS NOT NULL AND automation_id = $3)
            OR ($4::uuid IS NOT NULL AND payload->>'broadcast_id' = $4::text) )
       ORDER BY created_at DESC LIMIT 1`,
     [ctx.workspaceId, m.profile_id, cid, bid],
@@ -5920,7 +5920,7 @@ export const adminUpdateWorkspace: Handler = async (ctx, pool, req) => {
 const WORKSPACE_CHILD_TABLES = [
   'segment_change_log',
   'segment_memberships',
-  'campaign_enrollments',
+  'automation_enrollments',
   'messages_log',
   'email_events',
   'outbox',
@@ -5928,7 +5928,7 @@ const WORKSPACE_CHILD_TABLES = [
   'profile_features',
   'usage_counters',
   'broadcasts',
-  'campaigns',
+  'automations',
   'segments',
   'email_templates',
   'suppressions',
@@ -6378,22 +6378,22 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'DELETE /broadcasts/:id': deleteBroadcast,
   'POST /broadcasts/:id/duplicate': duplicateBroadcast,
   'POST /broadcasts/:id/send': sendBroadcast,
-  'GET /campaigns': listCampaigns,
-  'GET /campaigns/:id': getCampaign,
-  'GET /campaigns/:id/versions': listCampaignVersions,
-  'GET /campaigns/:id/enrollments': listCampaignEnrollments,
-  'POST /campaigns': createCampaign,
-  'DELETE /campaigns/:id': deleteCampaign,
-  'PUT /campaigns/:id': updateCampaign,
-  'PUT /campaigns/:id/draft': saveCampaignDraft,
-  'POST /campaigns/:id/publish': publishCampaign,
-  'POST /campaigns/:id/revert': revertCampaign,
-  'POST /campaigns/:id/activate': activateCampaign,
-  'POST /campaigns/:id/pause': pauseCampaign,
-  'POST /campaigns/:id/resume': resumeCampaign,
-  'POST /campaigns/:id/archive': archiveCampaign,
-  'POST /campaigns/:id/send-nodes/:nodeId/attach-template': attachCampaignSendTemplate,
-  'POST /campaigns/:id/enroll': enrollIntoCampaign,
+  'GET /automations': listAutomations,
+  'GET /automations/:id': getAutomation,
+  'GET /automations/:id/versions': listAutomationVersions,
+  'GET /automations/:id/enrollments': listAutomationEnrollments,
+  'POST /automations': createAutomation,
+  'DELETE /automations/:id': deleteAutomation,
+  'PUT /automations/:id': updateAutomation,
+  'PUT /automations/:id/draft': saveAutomationDraft,
+  'POST /automations/:id/publish': publishAutomation,
+  'POST /automations/:id/revert': revertAutomation,
+  'POST /automations/:id/activate': activateAutomation,
+  'POST /automations/:id/pause': pauseAutomation,
+  'POST /automations/:id/resume': resumeAutomation,
+  'POST /automations/:id/archive': archiveAutomation,
+  'POST /automations/:id/send-nodes/:nodeId/attach-template': attachAutomationSendTemplate,
+  'POST /automations/:id/enroll': enrollIntoAutomation,
   'GET /profiles': listProfiles,
   'POST /profiles/query': queryProfiles,
   'POST /profiles': createProfile,

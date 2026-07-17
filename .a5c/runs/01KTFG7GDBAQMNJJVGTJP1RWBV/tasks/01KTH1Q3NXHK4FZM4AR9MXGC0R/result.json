@@ -59,7 +59,7 @@
         "verified": true
       },
       {
-        "criterion": "Campaigns advance + idempotent through Dispatcher",
+        "criterion": "Automations advance + idempotent through Dispatcher",
         "evidence": "enroll idempotent; trigger->wait->condition->action send via dispatchOutbox; re-run terminal skipped, messages_log 1.",
         "verified": true
       },
@@ -156,7 +156,7 @@
         "verified": true
       },
       {
-        "criterion": "Campaigns advance + idempotent through Dispatcher",
+        "criterion": "Automations advance + idempotent through Dispatcher",
         "evidence": "enroll idempotent; trigger->wait->condition->action send via dispatchOutbox; re-run terminal skipped, messages_log 1.",
         "verified": true
       },

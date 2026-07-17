@@ -1,4 +1,4 @@
-// Pure tests for the campaign-IF rule kinds added to the shared builder: SEGMENT
+// Pure tests for the automation-IF rule kinds added to the shared builder: SEGMENT
 // membership and TRIGGER-EVENT (payload-only). The emitted AST must match the
 // @cdp/segments shapes (SegmentNode / TriggerEventNode) and round-trip back into
 // editable rows.

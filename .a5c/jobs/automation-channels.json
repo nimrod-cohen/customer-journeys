@@ -1,0 +1,36 @@
+{
+  "filesModified": [
+    "package.json",
+    "CLAUDE.md",
+    "services/automation-runner/src/dsl.ts",
+    "services/automation-runner/src/core.ts",
+    "services/automation-runner/src/run.ts",
+    "services/automation-runner/package.json",
+    "services/automation-runner/tsconfig.json",
+    "services/dispatcher/src/dispatch.ts",
+    "services/local-api/src/handlers.ts",
+    "web/src/automations/node-config.ts",
+    "web/src/automations/mutate.ts",
+    "web/src/automations/editors/NodeEditor.tsx",
+    "web/src/screens/AutomationBuilder.tsx",
+    "services/automation-runner/test/process-node-decision.test.ts",
+    "web/src/automations/node-config.test.ts",
+    "web/src/automations/mutate.test.ts",
+    "services/local-api/test/automation-activate-gate.integration.test.ts",
+    "services/local-api/test/get-automation.integration.test.ts",
+    "services/local-api/test/automation-versioning.integration.test.ts",
+    "pnpm-lock.yaml"
+  ],
+  "filesCreated": [
+    "services/automation-runner/test/send-node-channel.test.ts",
+    "services/local-api/test/automation-channel-send.integration.test.ts",
+    "web/e2e/automation-channel-send.browser.e2e.spec.ts"
+  ],
+  "approach": "Automation SEND node gains optional medium + text_body. DSL validates (text send needs non-blank body). collectSendNodeEnvelopeGaps channel-aware (text -> 'body' gap, skips envelope/domain). Runner send SideEffect carries medium+textBody; buildAutomationOutboxInsert writes {medium,text_body} into outbox.payload for text sends. Dispatcher reads medium+text_body from outbox.payload for automation sends (broadcast path unchanged) -> existing text path renders {{customer.phone}} + mock provider + messages_log medium. dispatchAutomationOutboxNow now delivers text via mock even without real SES. Automation topic: updateAutomation sets automations.topic_id (foreign rejected), surfaced in getAutomation; AutomationDetail automation-topic Select. SEND editor send-medium Select + send-text-body Textarea; nodeSummary reflects medium. NO migration. Single-winner/idempotency unchanged.",
+  "unitPass": true,
+  "integrationPass": true,
+  "e2ePass": true,
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "All green. automation-runner 233 (40 files incl integration), dispatcher 106, local-api 277 (59 files), web unit 264; ALL 70 automation e2e specs pass solo incl the new SMS spec. Lint: only the 7 pre-existing react-hooks/exhaustive-deps errors in EmailDesigner.tsx (no NEW). Typecheck clean (cold). Fixed a PRE-EXISTING parallel-run prefix collision (automation-versioning 0c0d0e96 -> 0c0d0ed1 vs automation-activate-gate). Version bumped 0.53.0 -> 0.54.0. NOT committed."
+}

@@ -16,7 +16,7 @@
     { "path": "../api" },
     { "path": "../authorizer" },
     { "path": "../broadcast" },
-    { "path": "../campaign-runner" },
+    { "path": "../automation-runner" },
     { "path": "../metering" },
     { "path": "../onboarding" }
   ]

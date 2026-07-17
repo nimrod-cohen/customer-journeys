@@ -2,18 +2,18 @@
   "schemaVersion": "2026.01.results-v1",
   "effectId": "01KVG9AERFRY03ZJ875DET426E",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000012:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000012:commit-phase",
   "status": "ok",
   "result": {
     "commitHash": "8710ad4398d7bd9e7f402708bcd65f666f3540e0",
     "committed": true,
-    "message": "feat(campaigns): phase 3 — event + manual enrollment, segment-entry wired live, re-enrollment policy"
+    "message": "feat(automations): phase 3 — event + manual enrollment, segment-entry wired live, re-enrollment policy"
   },
   "startedAt": "2026-06-19T15:53:19.134Z",
   "finishedAt": "2026-06-19T15:53:19.134Z",
   "value": {
     "commitHash": "8710ad4398d7bd9e7f402708bcd65f666f3540e0",
     "committed": true,
-    "message": "feat(campaigns): phase 3 — event + manual enrollment, segment-entry wired live, re-enrollment policy"
+    "message": "feat(automations): phase 3 — event + manual enrollment, segment-entry wired live, re-enrollment policy"
   }
 }

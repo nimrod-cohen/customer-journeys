@@ -55,8 +55,8 @@
           "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
           "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
           "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
-          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
-          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "All sends (broadcasts §9A and automation actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the automation runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
           "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
           "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
           "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
@@ -66,14 +66,14 @@
         "loop": "Backend phase: pure unit tests + DB-integration against REAL local Postgres (localhost:5433); mock AWS (aws-sdk-client-mock) / LocalStack. No frontend.",
         "phase": {
           "criteria": [
-            "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+            "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, automations, cost attribution).",
             "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
             "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
           ],
           "frontend": false,
           "id": "phase14-hardening",
           "scope": [
-            "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.",
+            "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + automation + cost criteria) runnable as one gate — the pass/fail merge gate.",
             "CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).",
             "A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).",
             "An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception)."
@@ -124,8 +124,8 @@
               "coveredBy": "spec18 'Broadcasts send-once'"
             },
             {
-              "§18": "Campaigns advance",
-              "coveredBy": "spec18 'Campaigns advance'"
+              "§18": "Automations advance",
+              "coveredBy": "spec18 'Automations advance'"
             },
             {
               "§18": "Cost attribution",
@@ -181,7 +181,7 @@
                 "Suppression scoping: A unsub != B; hard bounce in-workspace + global_hard_bounces",
                 "Reputation auto-suspend: offender suspended peer active, suspended refuses dispatch",
                 "Broadcasts send-once: dedupe per (broadcast_id,profile_id), retry no double-send, SES once",
-                "Campaigns advance trigger->wait->condition->action->exit idempotent runner",
+                "Automations advance trigger->wait->condition->action->exit idempotent runner",
                 "Cost sums to total: per-ws emails_sent reconciles messages_log, sum===direct+fixed to cent",
                 "Sending gated on verification: non-active refused no SES"
               ],
@@ -289,14 +289,14 @@
     "iteration": 1,
     "phase": {
       "criteria": [
-        "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+        "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, automations, cost attribution).",
         "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
         "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
       ],
       "frontend": false,
       "id": "phase14-hardening",
       "scope": [
-        "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.",
+        "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + automation + cost criteria) runnable as one gate — the pass/fail merge gate.",
         "CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).",
         "A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).",
         "An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception)."
@@ -347,8 +347,8 @@
           "coveredBy": "spec18 'Broadcasts send-once'"
         },
         {
-          "§18": "Campaigns advance",
-          "coveredBy": "spec18 'Campaigns advance'"
+          "§18": "Automations advance",
+          "coveredBy": "spec18 'Automations advance'"
         },
         {
           "§18": "Cost attribution",
@@ -404,7 +404,7 @@
             "Suppression scoping: A unsub != B; hard bounce in-workspace + global_hard_bounces",
             "Reputation auto-suspend: offender suspended peer active, suspended refuses dispatch",
             "Broadcasts send-once: dedupe per (broadcast_id,profile_id), retry no double-send, SES once",
-            "Campaigns advance trigger->wait->condition->action->exit idempotent runner",
+            "Automations advance trigger->wait->condition->action->exit idempotent runner",
             "Cost sums to total: per-ws emails_sent reconciles messages_log, sum===direct+fixed to cent",
             "Sending gated on verification: non-active refused no SES"
           ],

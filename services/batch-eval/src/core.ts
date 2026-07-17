@@ -11,7 +11,7 @@
 
 import {
   selectActiveBatchSegments,
-  selectCampaignTriggerSegments,
+  selectAutomationTriggerSegments,
   isTimeSensitive,
   buildSegmentMatch,
   selectEvaluatorMembership,
@@ -129,26 +129,26 @@ export async function runBatchEvalForWorkspace(
   return { workspaceId, segments: results };
 }
 
-/** Plan the read that lists campaign-trigger segments for a workspace (sweep scope). */
-export function planCampaignTimeSweep(workspaceId: string): SqlStatement {
-  return selectCampaignTriggerSegments(workspaceId);
+/** Plan the read that lists automation-trigger segments for a workspace (sweep scope). */
+export function planAutomationTimeSweep(workspaceId: string): SqlStatement {
+  return selectAutomationTriggerSegments(workspaceId);
 }
 
 /**
- * Re-evaluate the TIME-SENSITIVE segments that trigger active campaigns in one
+ * Re-evaluate the TIME-SENSITIVE segments that trigger active automations in one
  * workspace and emit their membership transitions. A time-windowed segment's
  * membership drifts with the clock (a profile ages out with no event), so it must
  * be re-checked periodically: match the whole workspace, diff vs current evaluator
  * membership, apply membership + segment_change_log (entered/exited) per segment in
- * its own tx. The emitted change_log is what drives time-based campaign enter/exit.
+ * its own tx. The emitted change_log is what drives time-based automation enter/exit.
  * Non-time-sensitive trigger segments are skipped — the realtime processor owns
  * those (they change only on data changes). Same builders/scoping as the batch sweep.
  */
-export async function runCampaignTimeSweepForWorkspace(
+export async function runAutomationTimeSweepForWorkspace(
   deps: BatchEvalDeps,
   workspaceId: string,
 ): Promise<BatchEvalResult> {
-  const segQ = planCampaignTimeSweep(workspaceId);
+  const segQ = planAutomationTimeSweep(workspaceId);
   const segRes = await deps.reader.query(segQ.text, segQ.values);
   const segments = (segRes.rows as unknown as SegmentRow[]).filter((s) => isTimeSensitive(asAst(s.definition)));
 

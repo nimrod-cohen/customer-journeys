@@ -4,7 +4,7 @@
 // workspace's error never blocks the rest of the sweep.
 import {
   runBatchEvalForWorkspace,
-  runCampaignTimeSweepForWorkspace,
+  runAutomationTimeSweepForWorkspace,
   type BatchEvalDeps,
   type BatchEvalResult,
 } from './core.js';
@@ -29,10 +29,10 @@ export function makeBatchEvalHandler(deps: BatchEvalHandlerDeps) {
     const failures: { workspaceId: string; error: string }[] = [];
     for (const ws of ids) {
       try {
-        // dynamic_batch segments + time-sensitive campaign-trigger segments (the
-        // latter so a profile aging out of a window fires its campaign enter/exit).
+        // dynamic_batch segments + time-sensitive automation-trigger segments (the
+        // latter so a profile aging out of a window fires its automation enter/exit).
         const batch = await runBatchEvalForWorkspace(deps, ws);
-        const timeSweep = await runCampaignTimeSweepForWorkspace(deps, ws);
+        const timeSweep = await runAutomationTimeSweepForWorkspace(deps, ws);
         workspaces.push({ workspaceId: ws, segments: [...batch.segments, ...timeSweep.segments] });
       } catch (err) {
         failures.push({ workspaceId: ws, error: err instanceof Error ? err.message : String(err) });

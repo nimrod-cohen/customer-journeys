@@ -159,7 +159,7 @@ describe('packSubscriptionToken / unpackSubscriptionToken (compact self-containe
       email: 'a@x.com',
       secret,
       broadcastId: 'bbbb1111-0000-0000-0000-000000000001',
-      campaignId: null,
+      automationId: null,
     });
     const parsed = new URL(url);
     const t = parsed.searchParams.get('t');

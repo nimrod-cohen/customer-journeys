@@ -2,7 +2,7 @@
 // vocabulary). Suggestions appear on focus and filter as you type (debounced
 // 250ms so we only fetch on a pause); click a suggestion to fill the field;
 // click-outside closes. A null fetcher makes it a plain text box. Extracted from
-// the segment RuleBuilder so the campaign trigger editor reuses the SAME combobox
+// the segment RuleBuilder so the automation trigger editor reuses the SAME combobox
 // (one autocomplete UX everywhere).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Input } from './kit.js';

@@ -52,7 +52,7 @@ export function removeManualMembers(
 
 /**
  * Resolve a segment's audience (all member profile ids, both sources) — used by
- * broadcasts/campaigns. Thin re-export of `buildResolveAudience` so callers can
+ * broadcasts/automations. Thin re-export of `buildResolveAudience` so callers can
  * import audience resolution from the manual module too. workspace_id at $1.
  */
 export function resolveAudience(workspaceId: string, segmentId: string): SqlStatement {

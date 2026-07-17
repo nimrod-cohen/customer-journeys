@@ -37,7 +37,7 @@ export function TemplatesList() {
   const deleteTemplate = async (t: Template): Promise<void> => {
     const ok = await askConfirm({
       title: 'Delete template',
-      message: `Delete “${t.name}”? This can't be undone. Broadcasts and campaigns keep their own copy, so they're unaffected.`,
+      message: `Delete “${t.name}”? This can't be undone. Broadcasts and automations keep their own copy, so they're unaffected.`,
       danger: true,
       confirmLabel: 'Delete',
     });

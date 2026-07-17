@@ -347,7 +347,7 @@ function DomainEditor({ id }: { id: string }) {
             </p>
           ) : (
             <>
-              <p class="mt-1 text-sm text-stone-500">The named “From” identities broadcasts and campaigns can send as.</p>
+              <p class="mt-1 text-sm text-stone-500">The named “From” identities broadcasts and automations can send as.</p>
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <Input
                   data-testid="sender-name-input"

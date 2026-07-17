@@ -93,7 +93,7 @@ describe('CdpStack §14 resource graph', () => {
     template.resourceCountIs('AWS::CloudFront::Distribution', 1);
   });
 
-  it('EventBridge schedule rules: batch-eval, soft-bounce retry, usage rollups (+campaign runner)', () => {
+  it('EventBridge schedule rules: batch-eval, soft-bounce retry, usage rollups (+automation runner)', () => {
     const rules = template.findResources('AWS::Events::Rule');
     expect(Object.keys(rules).length).toBeGreaterThanOrEqual(3);
   });

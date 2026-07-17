@@ -5,7 +5,7 @@
   "criteriaCoverage": [
     {"criterion":"AC1","met":true,"evidence":"login-workspace-switch real Chromium: switcher lists both WS, switching flips active; DB-level no-cross-bleed proven in workspace-scope.integration (wsA reads only SEG_A, after switch only SEG_B). WEAKNESS: browser spec doesn't assert WS_A data GONE in-DOM after switch (only select value)."},
     {"criterion":"AC2","met":true,"evidence":"role-visibility real Chromium: marketer nav hides billing/settings/admin; owner shows them. nav uses can() (§3A). accounting billing-only, system-admin console asserted in unit."},
-    {"criterion":"AC3","met":true,"evidence":"build-segment (live preview from real §8 compiler, WS_B excluded), broadcast-and-campaign (real runBroadcast, validateCampaignDefinition), editor — pass real Chromium. handlers delegate to real cores, scoped by ctx.workspaceId."},
+    {"criterion":"AC3","met":true,"evidence":"build-segment (live preview from real §8 compiler, WS_B excluded), broadcast-and-automation (real runBroadcast, validateAutomationDefinition), editor — pass real Chromium. handlers delegate to real cores, scoped by ctx.workspaceId."},
     {"criterion":"AC4","met":true,"evidence":"dispatch: authorizer->contextFromAuthorizer->enforceRoute per route; router-role-enforcement.integration: marketer 403 billing/members/domain, accounting 403 POST segments, owner 403 /admin, no token 401. role-visibility e2e proves marketer 403 on /billing via in-browser fetch. apiClient assertNoWorkspaceIdInBody."}
   ],
   "isolationOk": false,

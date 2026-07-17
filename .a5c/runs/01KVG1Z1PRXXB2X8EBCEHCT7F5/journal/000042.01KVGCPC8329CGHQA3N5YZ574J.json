@@ -3,7 +3,7 @@
   "recordedAt": "2026-06-19T16:51:13.283Z",
   "data": {
     "effectId": "01KVGCPC7HQ92C5HQ505S48C7W",
-    "invocationKey": "cdp/campaign-builder:S000021:plan-phase",
+    "invocationKey": "cdp/automation-builder:S000021:plan-phase",
     "invocationHash": "21cd07671fc0c7325efed9edce66c6fc5285561d6ecef2faa02dd9414ea26833",
     "stepId": "S000021",
     "taskId": "plan-phase",

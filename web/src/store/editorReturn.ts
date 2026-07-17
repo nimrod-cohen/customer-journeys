@@ -10,7 +10,7 @@ interface EditorReturn {
   readonly returnPath: string;
   /**
    * How a NEW template created in this flow should be saved: 'copy' = a working
-   * copy owned by the originating broadcast/campaign (not a library entry).
+   * copy owned by the originating broadcast/automation (not a library entry).
    */
   readonly createAs?: 'copy';
 }
@@ -18,7 +18,7 @@ interface EditorReturn {
 // The return context is PERSISTED in sessionStorage so it survives a page reload
 // inside the editor: a refresh used to wipe this module's memory, and the editor's
 // Back button then fell back to the template library instead of the originating
-// broadcast/campaign. sessionStorage is per-tab and cleared when the tab closes —
+// broadcast/automation. sessionStorage is per-tab and cleared when the tab closes —
 // the right lifetime for "where did I come from in this tab".
 const STORAGE_KEY = 'cdp.editorReturn';
 
@@ -52,7 +52,7 @@ export function setEditorReturn(returnPath: string, opts?: { createAs?: 'copy' }
 /**
  * Clear any return context. Standalone editor opens (the template library, the
  * "Design email" shortcuts) MUST call this so a return left over from an
- * abandoned broadcast/campaign flow can't mislabel the Back button or send the
+ * abandoned broadcast/automation flow can't mislabel the Back button or send the
  * user to the wrong place.
  */
 export function clearEditorReturn(): void {

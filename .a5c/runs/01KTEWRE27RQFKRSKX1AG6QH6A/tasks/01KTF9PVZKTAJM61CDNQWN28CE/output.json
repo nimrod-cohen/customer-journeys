@@ -9,7 +9,7 @@
     {"criterion":"AC2 ordering convergence","verified":true,"evidence":"created->progress and progress-first both profileCount=1 total=2; created attrs merged onto stub (k=late)."},
     {"criterion":"AC3 idempotency","verified":true,"evidence":"replay same event_id: total stays 1, monetary stays 40, one events row. Real CTE gate."},
     {"criterion":"AC4 segment enter/exit","verified":true,"evidence":"real compiled {total_events<3} segment via evaluator in prod tx: event1 enters, event2 no change, event3 exits; WS_B never enters A's segment. Evaluator-diff-driven."},
-    {"criterion":"No scope creep","verified":true,"evidence":"only legitimate email attribute; no broadcast/campaign/dispatch/metering."},
+    {"criterion":"No scope creep","verified":true,"evidence":"only legitimate email attribute; no broadcast/automation/dispatch/metering."},
     {"criterion":"Cold suite green, no regression","verified":true,"evidence":"29/29 turbo tasks 0 cached; processor 50/1 skipped, batch-eval 11, api 17, authorizer 18; typecheck+lint exit 0."}
   ],
   "recommendations": [

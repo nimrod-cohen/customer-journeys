@@ -26,30 +26,30 @@
             "An enrolled profile advances through trigger -> wait -> condition -> action -> exit.",
             "A wait defers until next_run_at; a branch (condition) routes correctly using the §8 compiler against profile/features/membership.",
             "The runner is idempotent (no double-advance on retry / concurrent sweep).",
-            "Campaign action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
+            "Automation action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
           ],
           "frontend": false,
-          "id": "phase10-campaigns",
+          "id": "phase10-automations",
           "scope": [
-            "A campaign DSL: campaigns.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.",
-            "Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a campaign_enrollments row at the start node (UNIQUE (campaign_id, profile_id)).",
-            "services/campaign-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.",
+            "A automation DSL: automations.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.",
+            "Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a automation_enrollments row at the start node (UNIQUE (automation_id, profile_id)).",
+            "services/automation-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.",
             "Idempotent advance (tolerate retries without double-advancing — use updated_at / optimistic checks). Define and implement the re-enrollment policy."
           ],
-          "specSections": "§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log)",
-          "title": "Campaign workflow engine"
+          "specSections": "§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Automation-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (automations, automation_enrollments, segment_change_log)",
+          "title": "Automation workflow engine"
         },
         "score": 96
       },
       "instructions": [
         "Run `git add -A`.",
-        "Commit with a clear conventional message describing the phase (Campaign workflow engine), gate score (96), converged=true.",
+        "Commit with a clear conventional message describing the phase (Automation workflow engine), gate score (96), converged=true.",
         "End the commit message body with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
         "Do NOT push. Return the commit hash. Return ONLY the JSON."
       ],
       "outputFormat": "JSON: { committed: boolean, commitHash: string, message: string }",
       "role": "engineer committing completed, verified work",
-      "task": "Stage and git-commit the work for \"Campaign workflow engine\"."
+      "task": "Stage and git-commit the work for \"Automation workflow engine\"."
     }
   },
   "io": {
@@ -59,9 +59,9 @@
   "kind": "agent",
   "labels": [
     "commit",
-    "phase10-campaigns"
+    "phase10-automations"
   ],
-  "title": "Commit: Campaign workflow engine",
+  "title": "Commit: Automation workflow engine",
   "schemaVersion": "2026.01.tasks-v1",
   "effectId": "01KTGG5JFDG2GBHKT7RZ4DF9ET",
   "taskId": "commit-phase",
@@ -74,18 +74,18 @@
         "An enrolled profile advances through trigger -> wait -> condition -> action -> exit.",
         "A wait defers until next_run_at; a branch (condition) routes correctly using the §8 compiler against profile/features/membership.",
         "The runner is idempotent (no double-advance on retry / concurrent sweep).",
-        "Campaign action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
+        "Automation action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped."
       ],
       "frontend": false,
-      "id": "phase10-campaigns",
+      "id": "phase10-automations",
       "scope": [
-        "A campaign DSL: campaigns.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.",
-        "Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a campaign_enrollments row at the start node (UNIQUE (campaign_id, profile_id)).",
-        "services/campaign-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.",
+        "A automation DSL: automations.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.",
+        "Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a automation_enrollments row at the start node (UNIQUE (automation_id, profile_id)).",
+        "services/automation-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.",
         "Idempotent advance (tolerate retries without double-advancing — use updated_at / optimistic checks). Define and implement the re-enrollment policy."
       ],
-      "specSections": "§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log)",
-      "title": "Campaign workflow engine"
+      "specSections": "§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Automation-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (automations, automation_enrollments, segment_change_log)",
+      "title": "Automation workflow engine"
     },
     "score": 96
   }

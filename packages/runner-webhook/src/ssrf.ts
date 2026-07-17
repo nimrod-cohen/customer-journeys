@@ -1,5 +1,5 @@
 // Webhook SSRF / allowlist guard (§9B webhook safety). Outbound HTTP from a
-// campaign webhook action is OPT-IN per workspace: a deny-by-default HOST
+// automation webhook action is OPT-IN per workspace: a deny-by-default HOST
 // allowlist (stored in workspaces.settings, never client-trusted) PLUS a
 // literal-IP/host classifier that refuses loopback, the 169.254 link-local /
 // cloud-metadata range, RFC1918 private ranges and IPv6 ULA/loopback, and any

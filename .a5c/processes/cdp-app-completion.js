@@ -1,7 +1,7 @@
 /**
  * @process cdp/app-completion
  * @description Build spec §17 phases 9–14 to completion on top of phases 2–8:
- *   (9) broadcasts §9A, (10) campaign workflow engine §9B, (11) image pipeline +
+ *   (9) broadcasts §9A, (10) automation workflow engine §9B, (11) image pipeline +
  *   WYSIWYG §11, (12) admin frontend §12 (Vite+Preact, Playwright e2e), (13)
  *   usage metering + IP advisor §20/§10, (14) hardening §14. Test-first (§16A),
  *   per-phase adversarial quality gate, fully autonomous. LOCAL-only: AWS
@@ -22,8 +22,8 @@ const INVARIANTS = [
   'Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.',
   'workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.',
   'Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.',
-  'All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.',
-  'Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.',
+  'All sends (broadcasts §9A and automation actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.',
+  'Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the automation runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.',
   'LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.',
   'Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).',
   'Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).',
@@ -49,20 +49,20 @@ const PHASES = [
     ],
   },
   {
-    id: 'phase10-campaigns', frontend: false,
-    title: 'Campaign workflow engine',
-    specSections: '§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Campaign-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (campaigns, campaign_enrollments, segment_change_log)',
+    id: 'phase10-automations', frontend: false,
+    title: 'Automation workflow engine',
+    specSections: '§9B (table-driven per-profile state machine: nodes trigger/wait/condition/action/exit; Automation-runner sweep on next_run_at; enrollment via segment entry), §8 (reuse compiler for branch conditions), §9 (Dispatcher for action sends), §6 (automations, automation_enrollments, segment_change_log)',
     scope: [
-      'A campaign DSL: campaigns.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.',
-      'Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a campaign_enrollments row at the start node (UNIQUE (campaign_id, profile_id)).',
-      'services/campaign-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.',
+      'A automation DSL: automations.definition is a graph of nodes [trigger|wait|condition|action|exit] + edges. Define the node schema in this phase.',
+      'Enrollment: a trigger (segment entry via segment_change_log, an event, or manual) inserts a automation_enrollments row at the start node (UNIQUE (automation_id, profile_id)).',
+      'services/automation-runner: scheduled sweep WHERE status=active AND next_run_at <= now(); process the current node: wait -> set next_run_at; condition -> evaluate via the §8 compiler, pick next node, process immediately; action(send) -> insert outbox row -> Dispatcher; exit -> completed.',
       'Idempotent advance (tolerate retries without double-advancing — use updated_at / optimistic checks). Define and implement the re-enrollment policy.',
     ],
     criteria: [
       'An enrolled profile advances through trigger -> wait -> condition -> action -> exit.',
       'A wait defers until next_run_at; a branch (condition) routes correctly using the §8 compiler against profile/features/membership.',
       'The runner is idempotent (no double-advance on retry / concurrent sweep).',
-      'Campaign action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped.',
+      'Automation action sends pass through the Dispatcher guards (suppression/cap/quiet-hours); enrollment via segment entry works; re-enrollment policy is enforced. Everything workspace-scoped.',
     ],
   },
   {
@@ -83,16 +83,16 @@ const PHASES = [
   {
     id: 'phase12-frontend', frontend: true,
     title: 'Admin frontend (role-aware SPA)',
-    specSections: '§12 (Vite SPA, Supabase Auth, workspace switcher, role-aware + workspace-scoped UI, segment builder dynamic+manual, broadcast composer, campaign/workflow builder, email editor, dashboards, suppression list, profile explorer, billing/usage view, system-admin console), §3A (roles), §10A (onboarding wizard UI)',
+    specSections: '§12 (Vite SPA, Supabase Auth, workspace switcher, role-aware + workspace-scoped UI, segment builder dynamic+manual, broadcast composer, automation/workflow builder, email editor, dashboards, suppression list, profile explorer, billing/usage view, system-admin console), §3A (roles), §10A (onboarding wizard UI)',
     scope: [
       'A Vite + Preact (or React) SPA in /web wired to the API Gateway REST API (via the Lambda handlers; stand up a LOCAL API — e.g. a thin adapter/serverless-offline + LocalStack — so the SPA + Playwright run end-to-end locally). Supabase Auth login + a workspace switcher that sets the active workspace_id claim and re-scopes the app.',
-      'Role-aware, workspace-scoped screens (§3A capability matrix): workspace onboarding wizard (§10A), workspace settings (members+roles, sending domain status), segment builder (dynamic rule-AST + manual hand-pick/CSV) with live size preview, broadcast composer, campaign/workflow visual builder (trigger/wait/condition/action/exit), email editor (GrapesJS+MJML from phase 11), dashboards (deliverability/segment sizes/send volume), suppression list, profile explorer, billing/usage view (owner+accounting), system-admin cross-company console (system-admin only).',
+      'Role-aware, workspace-scoped screens (§3A capability matrix): workspace onboarding wizard (§10A), workspace settings (members+roles, sending domain status), segment builder (dynamic rule-AST + manual hand-pick/CSV) with live size preview, broadcast composer, automation/workflow visual builder (trigger/wait/condition/action/exit), email editor (GrapesJS+MJML from phase 11), dashboards (deliverability/segment sizes/send volume), suppression list, profile explorer, billing/usage view (owner+accounting), system-admin cross-company console (system-admin only).',
       'The UI shows only what the role permits AND is scoped to the active workspace; the API still enforces roles + scope independently.',
     ],
     criteria: [
       'Login (Supabase Auth) + a workspace switcher: a user in two workspaces sees only the active workspace; switching re-scopes all reads/writes (no cross-bleed). Verified in a real browser (Playwright).',
-      'Role-aware UI (§3A): marketer cannot see/use user/domain/billing admin; accounting sees billing but cannot edit segments/campaigns; owner can do both; system-admin sees the cross-company console. Verified in-browser per role.',
-      'The core screens work end-to-end against the local API: build a segment (dynamic + manual), compose+send a broadcast, build a campaign, view dashboards/suppressions/profiles — exercising the real phase 2–11 backends.',
+      'Role-aware UI (§3A): marketer cannot see/use user/domain/billing admin; accounting sees billing but cannot edit segments/automations; owner can do both; system-admin sees the cross-company console. Verified in-browser per role.',
+      'The core screens work end-to-end against the local API: build a segment (dynamic + manual), compose+send a broadcast, build a automation, view dashboards/suppressions/profiles — exercising the real phase 2–11 backends.',
       'The API enforces role + workspace scope regardless of the UI (a forbidden action is rejected server-side, not just hidden).',
     ],
   },
@@ -117,13 +117,13 @@ const PHASES = [
     title: 'Hardening (acceptance suite, WAF, DLQ runbook, load)',
     specSections: '§13 (security/tenancy), §14 (IaC: WAF, least-privilege IAM, alarms), §16 (observability, DLQ runbook), §18 (full acceptance criteria), §17 phase 14',
     scope: [
-      'A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.',
+      'A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + automation + cost criteria) runnable as one gate — the pass/fail merge gate.',
       'CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).',
       'A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).',
       'An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception).',
     ],
     criteria: [
-      'The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).',
+      'The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, automations, cost attribution).',
       'CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).',
       'A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited).',
     ],
@@ -367,7 +367,7 @@ export const integrationTask = defineTask('integration', (args, taskCtx) => ({
         env: 'Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp. Extend the existing /tests suites + pnpm test:integration.' },
       instructions: [
         `Read ${SPEC} §18 (all acceptance criteria) and §16A.`,
-        'Assemble a consolidated §18 acceptance suite that exercises the real cores end-to-end: ingest->processor->features->segments->(broadcast & campaign)->outbox->Dispatcher->messages_log, plus feedback->suppression->reputation, plus metering/cost attribution — all workspace-scoped, against real Postgres. AWS mocked/LocalStack.',
+        'Assemble a consolidated §18 acceptance suite that exercises the real cores end-to-end: ingest->processor->features->segments->(broadcast & automation)->outbox->Dispatcher->messages_log, plus feedback->suppression->reputation, plus metering/cost attribution — all workspace-scoped, against real Postgres. AWS mocked/LocalStack.',
         'Add a thin Playwright browser smoke of the admin app (login -> workspace switch -> a core screen) against the local app + API, proving the UI is wired to the real backend.',
         'Prove the headline cross-cutting guarantees one more time at the system level: tenant isolation across ALL paths, role enforcement server-side, all sends through the Dispatcher, idempotency, and the §20 cost figures summing to the true total.',
         'Provide/extend `pnpm test:integration` (and a `pnpm test:e2e` for browser). Run until green (cold); report real output. Address previousGateFeedback if present. Return ONLY the JSON.',
@@ -405,7 +405,7 @@ export const integrationGateTask = defineTask('integration-gate', (args, taskCtx
         env: 'Real Postgres: DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp.' },
       instructions: [
         'Independently run the acceptance entrypoint + the Playwright browser smoke (cold). Record real results. Confirm a REAL database and that AWS is mocked/LocalStack (no real AWS/mail).',
-        'Confirm each §18 criterion across ALL phases is proven by an assertion: tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution, and the UI wired to the backend.',
+        'Confirm each §18 criterion across ALL phases is proven by an assertion: tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, automations, cost attribution, and the UI wired to the backend.',
         'Confirm no regression and no scope creep, and that the §20 cost figures reconcile and sum to the true total.',
         'Score 0-100 and set allCriteriaVerified honestly. Give concrete recommendations for any gap.',
       ],

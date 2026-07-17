@@ -1,5 +1,5 @@
 // Shared rule-AST builder UI (§8/§12). EXTRACTED from SegmentBuilder so BOTH the
-// segment editor AND the campaign IF/condition node editor mount the EXACT same
+// segment editor AND the automation IF/condition node editor mount the EXACT same
 // component — they emit the SAME §8 AstNode (buildAstFromGroup), so the server's
 // rule→SQL compiler whitelists ONE AST shape (invariant 6 untouched). Every
 // data-testid is preserved verbatim (rule-row/rule-field/rule-operator/rule-value/
@@ -35,7 +35,7 @@ import {
 
 // Fetchers for the autosuggest boxes — each returns the existing distinct values
 // matching `q` (workspace-scoped, capped server-side). A null fetcher = plain box.
-// The `Suggest` combobox itself lives in ../ui/Suggest (shared with the campaign
+// The `Suggest` combobox itself lives in ../ui/Suggest (shared with the automation
 // trigger editor); these just bind it to the right endpoint.
 const fetchAttrValues = (key: string): Fetcher =>
   key ? (q) => api.get<{ values: string[] }>('/profiles/attribute-values', { query: { key, q } }).then((r) => r.values) : null;
@@ -249,9 +249,9 @@ const EVENT_OP_LABEL: Record<EventCountOp, string> = {
  */
 /** Context extras: which rule kinds are available + the data they need. `audience`
  *  (broadcast audience) is like `segment` PLUS the segment-membership rule kind, but
- *  WITHOUT the campaign-only trigger-event / journey kinds. */
+ *  WITHOUT the automation-only trigger-event / journey kinds. */
 interface RuleBuilderCtx {
-  context: 'segment' | 'campaign' | 'audience';
+  context: 'segment' | 'automation' | 'audience';
   triggerIsEvent: boolean;
   segments: { id: string; name: string }[];
   triggerEventType: string;
@@ -316,13 +316,13 @@ function RuleListEditor({
                 onChange={(e: Event) => setKind(i, (e.target as HTMLSelectElement).value as RuleKind)}
               >
                 <option value="field">Profile attribute</option>
-                {ctx.context === 'campaign' && ctx.triggerIsEvent ? (
+                {ctx.context === 'automation' && ctx.triggerIsEvent ? (
                   <option value="trigger_event">Trigger event</option>
                 ) : null}
-                {ctx.context === 'campaign' || ctx.context === 'audience' ? (
+                {ctx.context === 'automation' || ctx.context === 'audience' ? (
                   <option value="segment">Segment</option>
                 ) : null}
-                {ctx.context === 'campaign' ? <option value="journey">Journey attribute</option> : null}
+                {ctx.context === 'automation' ? <option value="journey">Journey attribute</option> : null}
                 <option value="event">Event</option>
               </Select>
               {rows.length > 1 || allowEmpty ? (
@@ -615,14 +615,14 @@ export function RuleBuilder({
   group: RuleGroup;
   onChange: (group: RuleGroup) => void;
   allowEmptyRootRules?: boolean;
-  /** 'campaign' unlocks Trigger-event + Segment + Journey rule kinds (IF nodes only);
+  /** 'automation' unlocks Trigger-event + Segment + Journey rule kinds (IF nodes only);
    *  'audience' (broadcast) unlocks the Segment rule kind only. */
-  context?: 'segment' | 'campaign' | 'audience';
-  /** Campaign IF: the trigger is an EVENT trigger → offer "Trigger event". */
+  context?: 'segment' | 'automation' | 'audience';
+  /** Automation IF: the trigger is an EVENT trigger → offer "Trigger event". */
   triggerIsEvent?: boolean;
-  /** Campaign IF: the workspace segments, for the "Segment" membership picker. */
+  /** Automation IF: the workspace segments, for the "Segment" membership picker. */
   segments?: { id: string; name: string }[];
-  /** Campaign IF event trigger: the trigger event type, for payload autosuggest. */
+  /** Automation IF event trigger: the trigger event type, for payload autosuggest. */
   triggerEventType?: string;
 }) {
   const ctx: RuleBuilderCtx = { context, triggerIsEvent, segments, triggerEventType };

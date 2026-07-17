@@ -21,7 +21,7 @@
     "@aws-sdk/client-sqs": "^3.620.0",
     "@cdp/db": "workspace:*",
     "@cdp/segments": "workspace:*",
-    "@cdp/service-campaign-runner": "workspace:*",
+    "@cdp/service-automation-runner": "workspace:*",
     "@cdp/service-ingest": "workspace:*",
     "@cdp/shared": "workspace:*",
     "pg": "^8.12.0"

@@ -9,7 +9,7 @@
       "login scoped to A -> only A data -> switcher B -> only B data + nav change -> create in B persists workspace_id=B",
       "per-role visibility (marketer/accounting/owner/system-admin) in real DOM",
       "dynamic segment + live preview + manual hand-pick/CSV -> persisted",
-      "broadcast send (SES mocked) + campaign graph save + enrollment; dashboards/suppression/profiles",
+      "broadcast send (SES mocked) + automation graph save + enrollment; dashboards/suppression/profiles",
       "owner onboarding wizard step (domain -> DNS records -> check mocked DNS/SES)"
     ],
     "implUnits": [
@@ -20,12 +20,12 @@
       "5. web apiClient (token-bearing, no body workspace_id) + auth/session + workspace-switch store reusing @cdp/tenancy [GATE api-client/switch unit]",
       "6. web capability Nav + AppShell + WorkspaceSwitcher [GATE nav unit + role-visibility e2e]",
       "7. web SegmentBuilder (AST + manual/CSV + preview) [GATE segment-ast unit + build-segment e2e]",
-      "8. web BroadcastComposer + CampaignBuilder [GATE campaign-builder unit + broadcast-campaign e2e]",
+      "8. web BroadcastComposer + AutomationBuilder [GATE automation-builder unit + broadcast-automation e2e]",
       "9. web OnboardingWizard/WorkspaceSettings/Dashboards/SuppressionList/ProfileExplorer/BillingUsageView/SystemAdminConsole (lean read-mostly)",
       "10. Playwright seed fixture (multi-workspace via adminPool, data-testid) + 4 e2e specs [GATE all e2e]"
     ],
     "localApi": {
-      "design": "New pnpm package services/local-api: thin Hono http server (pnpm dev:api, drives Playwright). Does NOT reimplement logic. Per request: (1) local authorizer middleware mirrors services/authorizer (verify dev JWT, load memberships + platform_admins from real PG, authorize(), inject SAME string context shape as API GW); (2) handlers call services/api contextFromAuthorizer() then enforceRoute(ctx,capability) via routeTable — role enforced SERVER-SIDE independent of UI; (3) every DB op via @cdp/db scopedQuery (workspace_id from token never body) on real pg :5433; (4) delegates to existing cores: @cdp/segments compileWhere/validateAst/addManualMembers/resolveAudience+COUNT, services/broadcast runBroadcast (SQS+SES mocked), services/campaign-runner validate/enroll, services/onboarding start/check/activate (DNS+SES mocked); (5) cross-tenant reads via handleAdminAccess+writeAuditEntry. Same server reused by integration tests (synthetic context) and e2e (full HTTP). dev-login mints tokens for seeded users.",
+      "design": "New pnpm package services/local-api: thin Hono http server (pnpm dev:api, drives Playwright). Does NOT reimplement logic. Per request: (1) local authorizer middleware mirrors services/authorizer (verify dev JWT, load memberships + platform_admins from real PG, authorize(), inject SAME string context shape as API GW); (2) handlers call services/api contextFromAuthorizer() then enforceRoute(ctx,capability) via routeTable — role enforced SERVER-SIDE independent of UI; (3) every DB op via @cdp/db scopedQuery (workspace_id from token never body) on real pg :5433; (4) delegates to existing cores: @cdp/segments compileWhere/validateAst/addManualMembers/resolveAudience+COUNT, services/broadcast runBroadcast (SQS+SES mocked), services/automation-runner validate/enroll, services/onboarding start/check/activate (DNS+SES mocked); (5) cross-tenant reads via handleAdminAccess+writeAuditEntry. Same server reused by integration tests (synthetic context) and e2e (full HTTP). dev-login mints tokens for seeded users.",
       "routes": [
         "POST /auth/dev-login",
         "GET /me",
@@ -36,7 +36,7 @@
         "POST/DELETE /segments/:id/members + import-csv",
         "GET/POST /templates (MJML compile)",
         "GET/POST /broadcasts + /:id/send (runBroadcast, mocked)",
-        "GET/POST/PUT /campaigns (validateCampaignDefinition)",
+        "GET/POST/PUT /automations (validateAutomationDefinition)",
         "GET /profiles + /:id",
         "GET /dashboards/summary",
         "GET /suppressions",
@@ -52,13 +52,13 @@
       "Supabase Auth client mocked in unit",
       "Postgres NOT mocked (real localhost:5433)"
     ],
-    "notes": "Local API is the load-bearing new piece: REUSES @cdp/tenancy (can/requireCapability/switchActiveWorkspace/buildJwtClaims), services/api (contextFromAuthorizer/enforceRoute/handleAdminAccess/writeAuditEntry), @cdp/db scopedQuery, and the segments/broadcast/campaign/onboarding cores with the SAME injected-context shape as the real authorizer -> role+scope enforcement identical to production, proven SERVER-SIDE in integration (real PG) AND e2e (real browser). Capabilities: manage_content, manage_workspace_users, manage_sending_domain, view_billing, view_all_workspaces. Priority = §18 gates: AC4 server enforcement + AC1 switch/no-cross-bleed highest value, proven both tiers; e2e is widest loop + primary gate. SES always mocked; Postgres never mocked. skipIf(!hasDatabaseUrl). Mock/local auth spec-permitted for e2e (token carries active workspace_id+role). Dedicated-IP advisor + full metering are Phase 13 — only read-only surfaced here.",
+    "notes": "Local API is the load-bearing new piece: REUSES @cdp/tenancy (can/requireCapability/switchActiveWorkspace/buildJwtClaims), services/api (contextFromAuthorizer/enforceRoute/handleAdminAccess/writeAuditEntry), @cdp/db scopedQuery, and the segments/broadcast/automation/onboarding cores with the SAME injected-context shape as the real authorizer -> role+scope enforcement identical to production, proven SERVER-SIDE in integration (real PG) AND e2e (real browser). Capabilities: manage_content, manage_workspace_users, manage_sending_domain, view_billing, view_all_workspaces. Priority = §18 gates: AC4 server enforcement + AC1 switch/no-cross-bleed highest value, proven both tiers; e2e is widest loop + primary gate. SES always mocked; Postgres never mocked. skipIf(!hasDatabaseUrl). Mock/local auth spec-permitted for e2e (token carries active workspace_id+role). Dedicated-IP advisor + full metering are Phase 13 — only read-only surfaced here.",
     "pureFunctions": [
       "buildNav(role,isPlatformAdmin) gated by can()",
       "isActionAllowed(role,capability)",
       "formStateToAst/astToFormState (round-trip, whitelisted)",
       "parseCsvMembers(csv)",
-      "graphToCampaignDefinition/campaignDefinitionToGraph",
+      "graphToAutomationDefinition/automationDefinitionToGraph",
       "buildAuthHeaders(token)/stripWorkspaceFromPayload",
       "resolveActiveContext (switchActiveWorkspace/resolveRole/buildJwtClaims)",
       "routeTable {method,path}->Capability (single source for server enforcement + nav)"
@@ -70,7 +70,7 @@
       "WorkspaceSettings (members+roles, sending domain + IP recommendation)",
       "SegmentBuilder (dynamic AST + manual hand-pick/CSV) + live size preview",
       "BroadcastComposer",
-      "CampaignBuilder (visual graph)",
+      "AutomationBuilder (visual graph)",
       "EmailEditor (reuse Phase 11)",
       "Dashboards",
       "SuppressionList",
@@ -81,7 +81,7 @@
     "testFiles": [
       {
         "assertions": [
-          "buildNav(marketer) includes segments/broadcasts/campaigns/profiles/dashboards, EXCLUDES members/domain/billing/system-admin",
+          "buildNav(marketer) includes segments/broadcasts/automations/profiles/dashboards, EXCLUDES members/domain/billing/system-admin",
           "accounting: billing+dashboards, no content editors",
           "owner: members+domain+billing+content, no system-admin",
           "platform-admin: cross-company console",
@@ -126,19 +126,19 @@
       },
       {
         "assertions": [
-          "graph -> CampaignDefinition accepted by validateCampaignDefinition",
+          "graph -> AutomationDefinition accepted by validateAutomationDefinition",
           "one trigger + reachable exit enforced",
           "wait ISO-8601/delay parseable; condition references whitelisted targets"
         ],
         "criterion": "AC3",
-        "path": "web/test/campaign-builder.test.ts",
+        "path": "web/test/automation-builder.test.ts",
         "tier": "unit"
       },
       {
         "assertions": [
           "marketer POST /workspace/members -> 403 server-side",
           "marketer GET /billing/usage + POST /sending-domain/start -> 403",
-          "accounting POST /segments|/campaigns -> 403, GET /billing/usage -> 200",
+          "accounting POST /segments|/automations -> 403, GET /billing/usage -> 200",
           "owner -> 200 on all",
           "identity ONLY from authorizer context, body workspace_id ignored",
           "no context -> 401"
@@ -222,11 +222,11 @@
       {
         "assertions": [
           "broadcast pick segment+template + send -> status advanced + outbox rows (SES mocked)",
-          "campaign visual builder save -> definition validates+persists, enrollment for seeded profile",
+          "automation visual builder save -> definition validates+persists, enrollment for seeded profile",
           "dashboards/suppression/profile pages render real workspace-scoped data"
         ],
         "criterion": "AC3",
-        "path": "web/e2e/broadcast-and-campaign.browser.e2e.spec.ts",
+        "path": "web/e2e/broadcast-and-automation.browser.e2e.spec.ts",
         "tier": "e2e"
       }
     ]
@@ -238,7 +238,7 @@
       "login scoped to A -> only A data -> switcher B -> only B data + nav change -> create in B persists workspace_id=B",
       "per-role visibility (marketer/accounting/owner/system-admin) in real DOM",
       "dynamic segment + live preview + manual hand-pick/CSV -> persisted",
-      "broadcast send (SES mocked) + campaign graph save + enrollment; dashboards/suppression/profiles",
+      "broadcast send (SES mocked) + automation graph save + enrollment; dashboards/suppression/profiles",
       "owner onboarding wizard step (domain -> DNS records -> check mocked DNS/SES)"
     ],
     "implUnits": [
@@ -249,12 +249,12 @@
       "5. web apiClient (token-bearing, no body workspace_id) + auth/session + workspace-switch store reusing @cdp/tenancy [GATE api-client/switch unit]",
       "6. web capability Nav + AppShell + WorkspaceSwitcher [GATE nav unit + role-visibility e2e]",
       "7. web SegmentBuilder (AST + manual/CSV + preview) [GATE segment-ast unit + build-segment e2e]",
-      "8. web BroadcastComposer + CampaignBuilder [GATE campaign-builder unit + broadcast-campaign e2e]",
+      "8. web BroadcastComposer + AutomationBuilder [GATE automation-builder unit + broadcast-automation e2e]",
       "9. web OnboardingWizard/WorkspaceSettings/Dashboards/SuppressionList/ProfileExplorer/BillingUsageView/SystemAdminConsole (lean read-mostly)",
       "10. Playwright seed fixture (multi-workspace via adminPool, data-testid) + 4 e2e specs [GATE all e2e]"
     ],
     "localApi": {
-      "design": "New pnpm package services/local-api: thin Hono http server (pnpm dev:api, drives Playwright). Does NOT reimplement logic. Per request: (1) local authorizer middleware mirrors services/authorizer (verify dev JWT, load memberships + platform_admins from real PG, authorize(), inject SAME string context shape as API GW); (2) handlers call services/api contextFromAuthorizer() then enforceRoute(ctx,capability) via routeTable — role enforced SERVER-SIDE independent of UI; (3) every DB op via @cdp/db scopedQuery (workspace_id from token never body) on real pg :5433; (4) delegates to existing cores: @cdp/segments compileWhere/validateAst/addManualMembers/resolveAudience+COUNT, services/broadcast runBroadcast (SQS+SES mocked), services/campaign-runner validate/enroll, services/onboarding start/check/activate (DNS+SES mocked); (5) cross-tenant reads via handleAdminAccess+writeAuditEntry. Same server reused by integration tests (synthetic context) and e2e (full HTTP). dev-login mints tokens for seeded users.",
+      "design": "New pnpm package services/local-api: thin Hono http server (pnpm dev:api, drives Playwright). Does NOT reimplement logic. Per request: (1) local authorizer middleware mirrors services/authorizer (verify dev JWT, load memberships + platform_admins from real PG, authorize(), inject SAME string context shape as API GW); (2) handlers call services/api contextFromAuthorizer() then enforceRoute(ctx,capability) via routeTable — role enforced SERVER-SIDE independent of UI; (3) every DB op via @cdp/db scopedQuery (workspace_id from token never body) on real pg :5433; (4) delegates to existing cores: @cdp/segments compileWhere/validateAst/addManualMembers/resolveAudience+COUNT, services/broadcast runBroadcast (SQS+SES mocked), services/automation-runner validate/enroll, services/onboarding start/check/activate (DNS+SES mocked); (5) cross-tenant reads via handleAdminAccess+writeAuditEntry. Same server reused by integration tests (synthetic context) and e2e (full HTTP). dev-login mints tokens for seeded users.",
       "routes": [
         "POST /auth/dev-login",
         "GET /me",
@@ -265,7 +265,7 @@
         "POST/DELETE /segments/:id/members + import-csv",
         "GET/POST /templates (MJML compile)",
         "GET/POST /broadcasts + /:id/send (runBroadcast, mocked)",
-        "GET/POST/PUT /campaigns (validateCampaignDefinition)",
+        "GET/POST/PUT /automations (validateAutomationDefinition)",
         "GET /profiles + /:id",
         "GET /dashboards/summary",
         "GET /suppressions",
@@ -281,13 +281,13 @@
       "Supabase Auth client mocked in unit",
       "Postgres NOT mocked (real localhost:5433)"
     ],
-    "notes": "Local API is the load-bearing new piece: REUSES @cdp/tenancy (can/requireCapability/switchActiveWorkspace/buildJwtClaims), services/api (contextFromAuthorizer/enforceRoute/handleAdminAccess/writeAuditEntry), @cdp/db scopedQuery, and the segments/broadcast/campaign/onboarding cores with the SAME injected-context shape as the real authorizer -> role+scope enforcement identical to production, proven SERVER-SIDE in integration (real PG) AND e2e (real browser). Capabilities: manage_content, manage_workspace_users, manage_sending_domain, view_billing, view_all_workspaces. Priority = §18 gates: AC4 server enforcement + AC1 switch/no-cross-bleed highest value, proven both tiers; e2e is widest loop + primary gate. SES always mocked; Postgres never mocked. skipIf(!hasDatabaseUrl). Mock/local auth spec-permitted for e2e (token carries active workspace_id+role). Dedicated-IP advisor + full metering are Phase 13 — only read-only surfaced here.",
+    "notes": "Local API is the load-bearing new piece: REUSES @cdp/tenancy (can/requireCapability/switchActiveWorkspace/buildJwtClaims), services/api (contextFromAuthorizer/enforceRoute/handleAdminAccess/writeAuditEntry), @cdp/db scopedQuery, and the segments/broadcast/automation/onboarding cores with the SAME injected-context shape as the real authorizer -> role+scope enforcement identical to production, proven SERVER-SIDE in integration (real PG) AND e2e (real browser). Capabilities: manage_content, manage_workspace_users, manage_sending_domain, view_billing, view_all_workspaces. Priority = §18 gates: AC4 server enforcement + AC1 switch/no-cross-bleed highest value, proven both tiers; e2e is widest loop + primary gate. SES always mocked; Postgres never mocked. skipIf(!hasDatabaseUrl). Mock/local auth spec-permitted for e2e (token carries active workspace_id+role). Dedicated-IP advisor + full metering are Phase 13 — only read-only surfaced here.",
     "pureFunctions": [
       "buildNav(role,isPlatformAdmin) gated by can()",
       "isActionAllowed(role,capability)",
       "formStateToAst/astToFormState (round-trip, whitelisted)",
       "parseCsvMembers(csv)",
-      "graphToCampaignDefinition/campaignDefinitionToGraph",
+      "graphToAutomationDefinition/automationDefinitionToGraph",
       "buildAuthHeaders(token)/stripWorkspaceFromPayload",
       "resolveActiveContext (switchActiveWorkspace/resolveRole/buildJwtClaims)",
       "routeTable {method,path}->Capability (single source for server enforcement + nav)"
@@ -299,7 +299,7 @@
       "WorkspaceSettings (members+roles, sending domain + IP recommendation)",
       "SegmentBuilder (dynamic AST + manual hand-pick/CSV) + live size preview",
       "BroadcastComposer",
-      "CampaignBuilder (visual graph)",
+      "AutomationBuilder (visual graph)",
       "EmailEditor (reuse Phase 11)",
       "Dashboards",
       "SuppressionList",
@@ -310,7 +310,7 @@
     "testFiles": [
       {
         "assertions": [
-          "buildNav(marketer) includes segments/broadcasts/campaigns/profiles/dashboards, EXCLUDES members/domain/billing/system-admin",
+          "buildNav(marketer) includes segments/broadcasts/automations/profiles/dashboards, EXCLUDES members/domain/billing/system-admin",
           "accounting: billing+dashboards, no content editors",
           "owner: members+domain+billing+content, no system-admin",
           "platform-admin: cross-company console",
@@ -355,19 +355,19 @@
       },
       {
         "assertions": [
-          "graph -> CampaignDefinition accepted by validateCampaignDefinition",
+          "graph -> AutomationDefinition accepted by validateAutomationDefinition",
           "one trigger + reachable exit enforced",
           "wait ISO-8601/delay parseable; condition references whitelisted targets"
         ],
         "criterion": "AC3",
-        "path": "web/test/campaign-builder.test.ts",
+        "path": "web/test/automation-builder.test.ts",
         "tier": "unit"
       },
       {
         "assertions": [
           "marketer POST /workspace/members -> 403 server-side",
           "marketer GET /billing/usage + POST /sending-domain/start -> 403",
-          "accounting POST /segments|/campaigns -> 403, GET /billing/usage -> 200",
+          "accounting POST /segments|/automations -> 403, GET /billing/usage -> 200",
           "owner -> 200 on all",
           "identity ONLY from authorizer context, body workspace_id ignored",
           "no context -> 401"
@@ -451,11 +451,11 @@
       {
         "assertions": [
           "broadcast pick segment+template + send -> status advanced + outbox rows (SES mocked)",
-          "campaign visual builder save -> definition validates+persists, enrollment for seeded profile",
+          "automation visual builder save -> definition validates+persists, enrollment for seeded profile",
           "dashboards/suppression/profile pages render real workspace-scoped data"
         ],
         "criterion": "AC3",
-        "path": "web/e2e/broadcast-and-campaign.browser.e2e.spec.ts",
+        "path": "web/e2e/broadcast-and-automation.browser.e2e.spec.ts",
         "tier": "e2e"
       }
     ]

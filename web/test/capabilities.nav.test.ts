@@ -8,7 +8,7 @@ describe('capability-driven nav (buildNav via can())', () => {
   it('marketer sees content nav but NOT billing/settings/admin', () => {
     const ids = buildNav('marketer').map((n) => n.id);
     expect(ids).toContain('segments');
-    expect(ids).toContain('campaigns');
+    expect(ids).toContain('automations');
     expect(ids).not.toContain('billing');
     expect(ids).not.toContain('settings'); // settings (with the sending-domains tab) is owner-only
     expect(ids).not.toContain('admin');

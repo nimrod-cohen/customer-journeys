@@ -47,7 +47,7 @@ const PHASES = [
     criteria: [
       'A Workspace-A JWT cannot read/modify Workspace-B rows under RLS; service-role code paths still scope by workspace_id in code.',
       'Two workspaces with the same external_id/email keep fully separate profiles (UNIQUE(workspace_id, external_id)).',
-      'Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/campaigns; owner can do both within the workspace.',
+      'Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/automations; owner can do both within the workspace.',
       'system-admin can view across companies and every cross-tenant access is recorded in admin_audit_log.',
       'Multi-workspace switching: a user in two workspaces sees only the active workspace; switching changes the workspace_id claim and re-scopes; no cross-bleed.',
     ],
@@ -225,7 +225,7 @@ export const scaffoldTask = defineTask('scaffold-monorepo', (args, taskCtx) => (
       },
       instructions: [
         `Read ${SPEC} sections §4, §6, §14, §15, §19 before doing anything.`,
-        'Create the §19 layout: /infra, /services/{ingest,processor,dispatcher,broadcast,campaign-runner,feedback,unsubscribe,image,onboarding,batch-eval,metering,api,authorizer}, /packages/{shared,db,segments,email,tenancy}, /web, /scripts, /tests. Service/package dirs that belong to later phases may be created empty with a placeholder package.json.',
+        'Create the §19 layout: /infra, /services/{ingest,processor,dispatcher,broadcast,automation-runner,feedback,unsubscribe,image,onboarding,batch-eval,metering,api,authorizer}, /packages/{shared,db,segments,email,tenancy}, /web, /scripts, /tests. Service/package dirs that belong to later phases may be created empty with a placeholder package.json.',
         'Root: pnpm-workspace.yaml, turbo.json (build/test/typecheck/lint pipelines), root package.json with scripts (build, test, typecheck, lint), strict tsconfig base, vitest config, .gitignore (node_modules, .env*, dist, coverage, .a5c/runs/*/state, supabase/.temp, cdk.out).',
         'packages/db: encode the ENTIRE §6 SQL schema as ordered migration files (UUID PKs, timestamptz, citext, RLS ENABLED on every tenant-scoped table with policy workspace_id = (auth.jwt()->>workspace_id)::uuid plus the narrow is_platform_admin exception, workspace_id as the leading index column). Provide a pooled pg client helper. Wire Supabase CLI config (supabase/config.toml) and a script to start local Postgres + apply migrations.',
         'Add a docker-compose or scripts for LocalStack (SQS/S3/SNS). Add aws-sdk-client-mock and supabase/testcontainers dev deps for the test tiers (§16A).',

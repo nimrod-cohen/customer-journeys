@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { openPixelToken, buildOpenPixelImg, injectOpenPixel } from '../src/core.js';
 
-const base = { baseUrl: 'https://app.test', workspaceId: 'ws1', broadcastId: 'bc1', campaignId: null, profileId: 'p1' };
+const base = { baseUrl: 'https://app.test', workspaceId: 'ws1', broadcastId: 'bc1', automationId: null, profileId: 'p1' };
 
 describe('openPixelToken', () => {
   it('is deterministic per (workspace, source, profile)', () => {
@@ -15,7 +15,7 @@ describe('openPixelToken', () => {
   it('differs by profile, by source, and by workspace', () => {
     const t = openPixelToken(base);
     expect(openPixelToken({ ...base, profileId: 'p2' })).not.toBe(t);
-    expect(openPixelToken({ ...base, broadcastId: null, campaignId: 'cm1' })).not.toBe(t);
+    expect(openPixelToken({ ...base, broadcastId: null, automationId: 'cm1' })).not.toBe(t);
     expect(openPixelToken({ ...base, workspaceId: 'ws2' })).not.toBe(t);
   });
 });

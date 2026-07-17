@@ -22,7 +22,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'activity', label: 'Activity log', path: '/activity', capability: 'manage_content' },
   { id: 'segments', label: 'Segments', path: '/segments', capability: 'manage_content' },
   { id: 'broadcasts', label: 'Broadcasts', path: '/broadcasts', capability: 'manage_content' },
-  { id: 'campaigns', label: 'Campaigns', path: '/campaigns', capability: 'manage_content' },
+  { id: 'automations', label: 'Automations', path: '/automations', capability: 'manage_content' },
   // Asset management = email templates + image gallery tabs on one screen.
   { id: 'templates', label: 'Asset management', path: '/templates', capability: 'manage_content' },
   // The email editor itself (/editor) has no standalone nav item — it is reached

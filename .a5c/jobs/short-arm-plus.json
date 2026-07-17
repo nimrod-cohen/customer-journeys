@@ -1,17 +1,17 @@
 {
   "filesModified": [
-    "web/src/campaigns/orthogonal-path.ts",
-    "web/src/campaigns/layout.ts",
-    "web/src/campaigns/orthogonal-path.test.ts",
-    "web/src/campaigns/layout.test.ts",
-    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "web/src/automations/orthogonal-path.ts",
+    "web/src/automations/layout.ts",
+    "web/src/automations/orthogonal-path.test.ts",
+    "web/src/automations/layout.test.ts",
+    "web/e2e/automation-builder.browser.e2e.spec.ts",
     "package.json",
     "CLAUDE.md"
   ],
   "rootCause": "For a SHORT arm of an unequal branch (Yes=1 node, No=3), the column extends down an EMPTY tail to the merge depth set by the LONG arm, so the short arm's closing edge (last node -> merge join) is LONG. The v0.41.8 close-knee jog placed its single horizontal crossing at the MIDDLE of that drop (midCrossingY), and verticalAnchor anchored the arm's append-+ on the (short) upper leg whose midpoint therefore drifted far down the tail. mergeAnchor also keyed the merge-+ off the FIRST close-knee edge's lower-run middle. With unequal arms the arm whose closing edge was SHORT (the long arm's last node, near the join) had its + mid coincide with the merge-+ mid -> two adjacent + near the convergence with nothing between them.",
   "fix": "orthogonal-path.ts: replaced midCrossingY with a TOP-biased closeKneeCrossY = from.y + min(RAIL_INSET, drop/2) for the closeKnee jog (and closeKneeLowerRun), so the UPPER leg at from.x (where the arm append-+ anchors) is SHORT -> the + sits right below the source node regardless of tail length, and the LOWER leg at to.x=join.x is the LONG central run. verticalAnchor's closeKnee branch updated to use closeKneeCrossY. layout.ts mergeAnchor: collect ALL close-knee edges on the join column, take the shallowest closure corner (tallest central run), and anchor the merge-+ LOW at a fixed MERGE_PLUS_GAP=40px above the join card (clamped to stay on the run with a line above) -> stable position independent of arm equality, always far below every arm's high append-+. Removed now-unused midCrossingY.",
   "testsPass": true,
-  "e2eSummary": "Playwright run SOLO, one spec group at a time on the e2e stack (cdp_e2e :8788/:5174), ports freed + pkill before. New test 'UNEQUAL arms (Yes=1 / No=3)' green. Full campaign-builder.browser.e2e.spec.ts: 20 passed (after updating one pre-existing geometry assertion 'Compact columns' to match the + by button CENTER, since the closing-edge + now anchors HIGH at the card bottom). campaign-node-editors: 10 passed. campaign-list-detail + campaign-list-no-overflow + campaign-canvas-pan-zoom: 11 passed. No two playwright runs concurrent.",
+  "e2eSummary": "Playwright run SOLO, one spec group at a time on the e2e stack (cdp_e2e :8788/:5174), ports freed + pkill before. New test 'UNEQUAL arms (Yes=1 / No=3)' green. Full automation-builder.browser.e2e.spec.ts: 20 passed (after updating one pre-existing geometry assertion 'Compact columns' to match the + by button CENTER, since the closing-edge + now anchors HIGH at the card bottom). automation-node-editors: 10 passed. automation-list-detail + automation-list-no-overflow + automation-canvas-pan-zoom: 11 passed. No two playwright runs concurrent.",
   "typecheckOk": true,
   "lintOk": true,
   "notes": "pnpm lint shows exactly the 7 known pre-existing react-hooks/exhaustive-deps 'rule not found' errors; no new lint issues. Web unit suite: 200 passed / 4 skipped. Version bumped 0.41.8 -> 0.41.9. CLAUDE.md updated with the v0.41.9 bullet. Did NOT commit or push (orchestrator commits)."

@@ -1,9 +1,9 @@
 // The `journey.*` personalization namespace — per-enrollment variables that
-// live on `campaign_enrollments.state.journey` for the duration of THIS profile's
-// run through THIS campaign. Written by a `set_journey` action node; read in
+// live on `automation_enrollments.state.journey` for the duration of THIS profile's
+// run through THIS automation. Written by a `set_journey` action node; read in
 // merge tags ({{journey.<key>}}) and in set_attribute / set_journey expressions.
 //
-// Keys are FREEFORM (no campaign-level schema): a `set_journey` simply writes the
+// Keys are FREEFORM (no automation-level schema): a `set_journey` simply writes the
 // keys the admin types; reads to a missing key resolve to undefined → safe-empty
 // in the renderer. The structural twin of `event.*` and `customer.*` (read-only
 // string substitution at render time; never interpolated into SQL).

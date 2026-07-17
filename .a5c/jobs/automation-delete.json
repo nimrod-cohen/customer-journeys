@@ -1,0 +1,17 @@
+{
+  "filesModified": [
+    "services/local-api/src/handlers.ts",
+    "services/local-api/src/routes.ts",
+    "services/local-api/test/automation-delete.integration.test.ts",
+    "web/src/screens/AutomationBuilder.tsx",
+    "web/e2e/automation-delete.browser.e2e.spec.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "testsPass": true,
+  "testSummary": "local-api vitest: 52 files, 241 tests passed (incl. new automation-delete.integration.test.ts, 6 tests). DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp",
+  "e2eSummary": "automation-delete spec: 2 passed standalone. First full-suite run revealed the delete spec was deleting the SHARED seeded 'Welcome journey' (CAMP_A), polluting cdp_e2e for downstream automation specs. Fixed: the spec now creates its OWN throwaway draft automations and never touches seeded data; published-variant archives itself to leave the DB clean. Re-running full automation suite.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "notes": "Never-published = active_version_id IS NULL. DELETE /automations/:id (manage_content, workspace-scoped from ctx, foreign/missing->404). 409 when active_version_id set. GET /automations exposes `published`. Lint: only the 7 known pre-existing react-hooks rule-not-found errors, no new. Version 0.43.0 -> 0.44.0. No migration."
+}

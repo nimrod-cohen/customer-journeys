@@ -1,5 +1,5 @@
 // Numbered-page pagination + server-side search for the four list endpoints (broadcasts,
-// campaigns, segments, profiles). Paging is OPT-IN: no ?limit ⇒ the whole list (back-compat
+// automations, segments, profiles). Paging is OPT-IN: no ?limit ⇒ the whole list (back-compat
 // for dropdown consumers); with ?limit&page ⇒ one page + a `total`. `?q` searches server-side
 // (spans the whole table, not just a page). Real Postgres; never mocks the DB.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -24,7 +24,7 @@ describeMaybe('list pagination + search (real Postgres)', () => {
     await cleanup();
     await pool.query("INSERT INTO workspaces (id, name, status) VALUES ($1,'W','active')", [WS]);
     await pool.query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')", [WS, OWNER]);
-    // 7 broadcasts, 7 campaigns, 7 segments, 7 profiles — enough to page with limit 3.
+    // 7 broadcasts, 7 automations, 7 segments, 7 profiles — enough to page with limit 3.
     for (let i = 0; i < 7; i++) {
       const nm = i === 0 ? 'Spring sale' : `Item ${i}`; // one searchable name
       await pool.query(
@@ -32,7 +32,7 @@ describeMaybe('list pagination + search (real Postgres)', () => {
         [WS, nm, String(i)],
       );
       await pool.query(
-        "INSERT INTO campaigns (workspace_id, name, definition, status, created_at) VALUES ($1,$2,'{\"startNode\":\"t\",\"nodes\":{}}'::jsonb,'draft', now() - ($3 || ' seconds')::interval)",
+        "INSERT INTO automations (workspace_id, name, definition, status, created_at) VALUES ($1,$2,'{\"startNode\":\"t\",\"nodes\":{}}'::jsonb,'draft', now() - ($3 || ' seconds')::interval)",
         [WS, nm, String(i)],
       );
       await pool.query("INSERT INTO segments (workspace_id, name, kind) VALUES ($1,$2,'manual')", [WS, nm]);
@@ -48,7 +48,7 @@ describeMaybe('list pagination + search (real Postgres)', () => {
   });
 
   async function cleanup(): Promise<void> {
-    for (const t of ['broadcasts', 'campaigns', 'segments', 'profiles', 'workspace_users']) {
+    for (const t of ['broadcasts', 'automations', 'segments', 'profiles', 'workspace_users']) {
       await pool.query(`DELETE FROM ${t} WHERE workspace_id = $1`, [WS]);
     }
     await pool.query('DELETE FROM workspaces WHERE id = $1', [WS]);
@@ -63,7 +63,7 @@ describeMaybe('list pagination + search (real Postgres)', () => {
 
   for (const [path, key] of [
     ['/broadcasts', 'broadcasts'],
-    ['/campaigns', 'campaigns'],
+    ['/automations', 'automations'],
     ['/segments', 'segments'],
     ['/profiles', 'profiles'],
   ] as const) {
@@ -84,7 +84,7 @@ describeMaybe('list pagination + search (real Postgres)', () => {
   // Name search applies to the name-based lists (profiles search email/external_id instead).
   for (const [path, key] of [
     ['/broadcasts', 'broadcasts'],
-    ['/campaigns', 'campaigns'],
+    ['/automations', 'automations'],
     ['/segments', 'segments'],
   ] as const) {
     it(`${path}: ?q=spring searches the NAME server-side across the whole table`, async () => {

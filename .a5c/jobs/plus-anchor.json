@@ -1,16 +1,16 @@
 {
   "filesModified": [
-    "web/src/campaigns/orthogonal-path.ts",
-    "web/src/campaigns/layout.ts",
-    "web/src/campaigns/orthogonal-path.test.ts",
-    "web/src/campaigns/layout.test.ts",
-    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "web/src/automations/orthogonal-path.ts",
+    "web/src/automations/layout.ts",
+    "web/src/automations/orthogonal-path.test.ts",
+    "web/src/automations/layout.test.ts",
+    "web/e2e/automation-builder.browser.e2e.spec.ts",
     "CLAUDE.md",
     "package.json"
   ],
   "testsPass": true,
-  "e2eSummary": "All campaign e2e suites green, run SOLO one-at-a-time (pkill+free ports between each): campaign-builder 16/16 (incl. new arm-(+)-above-merge gap assertions), campaign-node-editors 10/10, campaign-list-detail 6/6, campaign-list-no-overflow 1/1, campaign-canvas-pan-zoom 4/4.",
+  "e2eSummary": "All automation e2e suites green, run SOLO one-at-a-time (pkill+free ports between each): automation-builder 16/16 (incl. new arm-(+)-above-merge gap assertions), automation-node-editors 10/10, automation-list-detail 6/6, automation-list-no-overflow 1/1, automation-canvas-pan-zoom 4/4.",
   "typecheckOk": true,
   "lintOk": true,
-  "notes": "Source-side-long routing: jogCrossingY flipped from from.y+RAIL_INSET (crossing near TOP) to to.y-RAIL_INSET (crossing near BOTTOM) so the UPPER vertical run descending from the source at from.x is the tall anchorable run. verticalAnchor jog branch now anchors on the upper leg at from.x (midpoint of [from.y, crossY-r]); lane anchor moved to the upper third of the lane V. Because both condition arms leave the same from.x, computeEdges now gives EVERY condition arm a per-slot side lane (onTrue from.x-ARM_LANE left, onFalse +ARM_LANE right) whether fanned or empty, so the source-side upper (+) is distinct-x per arm and never stacks. Net: an arm's (+) is HIGH (straight below its node, before the turn), clearly separated from the LOW merge (+); they no longer adjoin. Down-only/axis-aligned/convergence preserved. Unit: campaigns suite 127/127 (orthogonal-path 14, layout 24). Lint: only the 7 known pre-existing react-hooks 'rule not found' errors, none in modified files; eslint on the two modified .ts files exits 0. Version bumped 0.41.4 -> 0.41.5. CLAUDE.md updated with the v0.41.5 source-side-upper anchor note. NOT committed/pushed (orchestrator commits)."
+  "notes": "Source-side-long routing: jogCrossingY flipped from from.y+RAIL_INSET (crossing near TOP) to to.y-RAIL_INSET (crossing near BOTTOM) so the UPPER vertical run descending from the source at from.x is the tall anchorable run. verticalAnchor jog branch now anchors on the upper leg at from.x (midpoint of [from.y, crossY-r]); lane anchor moved to the upper third of the lane V. Because both condition arms leave the same from.x, computeEdges now gives EVERY condition arm a per-slot side lane (onTrue from.x-ARM_LANE left, onFalse +ARM_LANE right) whether fanned or empty, so the source-side upper (+) is distinct-x per arm and never stacks. Net: an arm's (+) is HIGH (straight below its node, before the turn), clearly separated from the LOW merge (+); they no longer adjoin. Down-only/axis-aligned/convergence preserved. Unit: automations suite 127/127 (orthogonal-path 14, layout 24). Lint: only the 7 known pre-existing react-hooks 'rule not found' errors, none in modified files; eslint on the two modified .ts files exits 0. Version bumped 0.41.4 -> 0.41.5. CLAUDE.md updated with the v0.41.5 source-side-upper anchor note. NOT committed/pushed (orchestrator commits)."
 }

@@ -1,6 +1,6 @@
 // The EMBEDDABLE email designer (§11). A pure component: give it a design and an
 // onChange — it never fetches or persists. Hosts (the template editor screen, the
-// broadcast wizard's design-email flow, future campaign editors) own load/save.
+// broadcast wizard's design-email flow, future automation editors) own load/save.
 // Layout: tabbed left sidebar (Add/Style/Template) + canvas + structure tree.
 import { useEffect } from 'preact/hooks';
 import type { JSX } from 'preact';

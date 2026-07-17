@@ -42,8 +42,8 @@ export interface ParsedUnsubscribe {
   readonly token: string | null;
   /** Optional source broadcast (from the link) for per-send attribution. */
   readonly broadcastId: string | null;
-  /** Optional source campaign (from the link) for per-send attribution. */
-  readonly campaignId: string | null;
+  /** Optional source automation (from the link) for per-send attribution. */
+  readonly automationId: string | null;
 }
 
 /** A request that could not be parsed into a workspace-scoped unsubscribe. */
@@ -98,11 +98,11 @@ export function parseUnsubscribeRequest(
   // Optional per-send attribution (the dispatcher puts these on the link). They
   // are NOT trust-sensitive: they only feed the funnel metric, and the
   // suppression/profile writes stay scoped to the verified workspace_id. Accept
-  // BOTH the new short `b`/`c` and the legacy `broadcast_id`/`campaign_id`.
+  // BOTH the new short `b`/`c` and the legacy `broadcast_id`/`automation_id`.
   const broadcastId =
     parsed.searchParams.get('b') || parsed.searchParams.get('broadcast_id') || null;
-  const campaignId =
-    parsed.searchParams.get('c') || parsed.searchParams.get('campaign_id') || null;
+  const automationId =
+    parsed.searchParams.get('c') || parsed.searchParams.get('automation_id') || null;
 
   // NEW: the compact self-contained token. When present + it decodes, it IS the
   // identity + the forgery proof.
@@ -121,7 +121,7 @@ export function parseUnsubscribeRequest(
       compactVerified: true,
       token: null,
       broadcastId,
-      campaignId,
+      automationId,
     };
   }
 
@@ -138,7 +138,7 @@ export function parseUnsubscribeRequest(
   // against (workspace_id, email) with the shared secret before any write.
   const token = parsed.searchParams.get('token') || null;
 
-  return { valid: true, workspaceId, email, oneClick, compactVerified: false, token, broadcastId, campaignId };
+  return { valid: true, workspaceId, email, oneClick, compactVerified: false, token, broadcastId, automationId };
 }
 
 /**
@@ -237,10 +237,10 @@ export function buildResubscribedAttribute(workspaceId: string, email: string): 
 
 /**
  * Record the opt-out as an `email_events` row (type='unsubscribe') attributed to
- * the SOURCE broadcast/campaign (from the link) + the recipient's profile, so the
+ * the SOURCE broadcast/automation (from the link) + the recipient's profile, so the
  * broadcasts funnel can count unsubscribes per send. Returns NULL when there is
  * no source send to attribute (a generic List-Unsubscribe header click with no
- * broadcast/campaign id) — the suppression + profile flag still happen; there is
+ * broadcast/automation id) — the suppression + profile flag still happen; there is
  * just nothing to attribute. Workspace-scoped (workspace_id at $1); the
  * ses_message_id stays NULL (NULLs are distinct → never collides with the
  * (workspace_id, ses_message_id, type) idempotency index). Throws on a falsy
@@ -250,17 +250,17 @@ export function buildUnsubscribeEvent(
   workspaceId: string,
   email: string,
   broadcastId: string | null,
-  campaignId: string | null,
+  automationId: string | null,
 ): SqlStatement | null {
   if (!workspaceId) {
     throw new Error('buildUnsubscribeEvent: workspaceId is required (tenant-isolation guard)');
   }
-  if (!broadcastId && !campaignId) return null;
+  if (!broadcastId && !automationId) return null;
   return {
-    text: `INSERT INTO email_events (workspace_id, profile_id, broadcast_id, campaign_id, type)
+    text: `INSERT INTO email_events (workspace_id, profile_id, broadcast_id, automation_id, type)
            VALUES ($1, (SELECT id FROM profiles WHERE workspace_id = $1 AND email = $2 LIMIT 1),
                    $3, $4, 'unsubscribe')`,
-    values: [workspaceId, email, broadcastId, campaignId],
+    values: [workspaceId, email, broadcastId, automationId],
   };
 }
 

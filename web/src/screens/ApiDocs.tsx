@@ -40,7 +40,7 @@ export function ApiDocs() {
         <p class="mt-1 text-sm text-stone-600">
           Send your customers and their behaviour into the CDP over plain HTTP (JSON). A profile is a
           person, keyed by <Code>email</Code>; events are the things they do. Events feed segments,
-          the profile timeline, and campaign triggers. There are two ways in:
+          the profile timeline, and automation triggers. There are two ways in:
         </p>
         <ul class="mt-3 space-y-1 text-sm text-stone-700">
           <li>
@@ -154,7 +154,7 @@ curl -X POST ${origin}/profiles/<profile-id>/events \\
         <p class="mt-1 text-sm text-stone-600">
           Whichever method you use, an incoming event immediately updates the profile's rolling stats
           and re-evaluates which <b>segments</b> it belongs to — which can enrol it into{' '}
-          <b>campaigns</b> and make it eligible for <b>broadcasts</b>. <Code>email</Code> is the
+          <b>automations</b> and make it eligible for <b>broadcasts</b>. <Code>email</Code> is the
           identity key: two calls with the same email touch the same person.
         </p>
       </Card>

@@ -1,5 +1,5 @@
 {
   "committed": true,
   "commitHash": "9b71c99ba3c933d8240966a6405dcc4acdf224a7",
-  "message": "feat(campaigns): phase 4 — send-node email instance + publish gating + event-sourced update-profile"
+  "message": "feat(automations): phase 4 — send-node email instance + publish gating + event-sourced update-profile"
 }

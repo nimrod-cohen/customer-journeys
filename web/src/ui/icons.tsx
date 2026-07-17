@@ -28,7 +28,7 @@ export const ICONS: Record<string, JSX.Element> = {
     </I>
   ),
   broadcasts: <I d="M3 11l18-7-7 18-2.5-7.5L3 11Z" />,
-  campaigns: (
+  automations: (
     <I>
       <circle cx="5" cy="6" r="2" />
       <circle cx="5" cy="18" r="2" />

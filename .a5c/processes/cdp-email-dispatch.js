@@ -30,7 +30,7 @@ const INVARIANTS = [
   'Idempotency: outbox.dedupe_key prevents double-sends; feedback handlers are idempotent on the SES message id / event.',
   'Logic in pure injected functions; Lambda handlers stay thin and are unit-tested via the pure function. Reuse the Phase 2-5 harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text, values} shape.',
   'Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id is a GLOBAL PK). No cross-file races.',
-  'Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), campaigns (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points.',
+  'Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), automations (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points.',
 ];
 
 const PHASES = [
@@ -216,7 +216,7 @@ export const implementPhaseTask = defineTask('implement-phase', (args, taskCtx) 
         'Honor every invariant in context.invariants — tenant isolation, suppression scoping, the verification gate, and idempotency are pass/fail.',
         'MOCK SES (SendEmail/identity/config-set), SNS, and DNS/SES-status checks (aws-sdk-client-mock + injected resolvers). NEVER send real mail or hit real DNS/SES. Integration tests run against the REAL local Postgres; do NOT mock the DB. Reuse the Phase 2-5 testutil harness.',
         'Run the relevant `pnpm test` (with DATABASE_URL set), `pnpm typecheck`, `pnpm lint`. Iterate until GREEN, including a COLD turbo run. Confirm no regression in phases 2-5. Report the actual command output summary.',
-        'Implement ONLY what the cited sections require — no broadcasts/campaigns/image/frontend/metering.',
+        'Implement ONLY what the cited sections require — no broadcasts/automations/image/frontend/metering.',
         'Return ONLY the JSON.',
       ],
       outputFormat: 'JSON: { filesCreated: string[], filesModified: string[], testsPass: boolean, testSummary: string, typecheckOk: boolean, lintOk: boolean, commandsRun: string[], notes: string }',
@@ -255,7 +255,7 @@ export const qualityGateTask = defineTask('quality-gate', (args, taskCtx) => ({
         `Verify EACH acceptance criterion is actually covered by a passing, non-vacuous test: ${JSON.stringify(args.phase.criteria)}.`,
         'Highest-priority checks: (a) tenant isolation + suppression is per-(workspace_id,email) and never cross-workspace; (b) the verification/active gate genuinely blocks sends; (c) SES/SNS/DNS are MOCKED (no real mail/calls) yet asserted (e.g. SES SendEmail called with the right Configuration Set only AFTER suppression/cap/quiet-hours); (d) idempotency (re-delivered feedback / outbox retry does not double-write).',
         'If any integration test mocks Postgres, that is a FAIL (must use real local Postgres per §16A).',
-        'Scope check: flag any feature beyond the cited sections (broadcasts/campaigns/image/frontend/metering).',
+        'Scope check: flag any feature beyond the cited sections (broadcasts/automations/image/frontend/metering).',
         'Score 0-100. Set testsPass and criteriaAllMet honestly. Give concrete prioritized recommendations.',
       ],
       outputFormat: 'JSON: { score: number, testsPass: boolean, criteriaAllMet: boolean, criteriaCoverage: [{criterion, met, evidence}], isolationOk: boolean, mocksOk: boolean, scopeCreep: string[], recommendations: string[], criticalIssues: string[] }',
@@ -359,7 +359,7 @@ export const integrationGateTask = defineTask('integration-gate', (args, taskCtx
       instructions: [
         'Independently run the integration entrypoint (cold). Record real results; do not trust the self-report. Confirm the suite uses a REAL database and that SES/SNS/DNS are mocked (no real mail/calls).',
         'Confirm each is proven by an assertion: send gated on active/verified; per-workspace suppression scoping (A does not affect B); reputation auto-suspend isolates the offender; feedback idempotency; dispatcher orders suppression->cap->quiet-hours->send.',
-        'Confirm no regression in phases 2-5 and no scope creep (no broadcasts/campaigns/image/frontend/metering).',
+        'Confirm no regression in phases 2-5 and no scope creep (no broadcasts/automations/image/frontend/metering).',
         'Score 0-100 and set allCriteriaVerified honestly. Give concrete recommendations for any gap.',
       ],
       outputFormat: 'JSON: { score: number, allCriteriaVerified: boolean, usesRealPostgres: boolean, mocksOk: boolean, coverage: [{criterion, verified, evidence}], recommendations: string[], criticalIssues: string[] }',

@@ -5,7 +5,7 @@ The multi-channel architecture is built and works end-to-end in dev/tests with a
 `packages/channels/src/index.ts`). Connecting a **real** provider is a human step —
 it needs accounts + credentials this codebase cannot create (the same situation as
 SES production access). Nothing about the app is blocked: SMS/WhatsApp broadcasts and
-campaign send nodes already render, enqueue, route by medium, gate by
+automation send nodes already render, enqueue, route by medium, gate by
 suppression/topic/medium-group, and "send" via the mock.
 
 ## What's already in place
@@ -15,7 +15,7 @@ suppression/topic/medium-group, and "send" via the mock.
   seam where a real adapter slots in.
 - Dispatcher routes `sms`/`whatsapp` outbox rows through the resolved provider; email
   keeps its SES pipeline (`@cdp/email`).
-- `messages_log.medium`, `broadcasts.medium`/`text_body`, campaign send-node
+- `messages_log.medium`, `broadcasts.medium`/`text_body`, automation send-node
   `medium`/`text_body`, recipient `{{customer.phone}}` resolution.
 
 ## SMS via 019 — WIRED (v0.57.0)
@@ -86,7 +86,7 @@ sends route through the real provider when a company has credentials, else the m
    **non-expiring** token with `whatsapp_business_messaging` + `whatsapp_business_management`.
    (The dashboard token expires in 24h — useless for a server.)
 4. **Approve a message template** in WhatsApp Manager (Marketing/Utility, a language, body with
-   `{{1}} {{2}}` variables). **Business-initiated (broadcast/campaign) WhatsApp can ONLY send an
+   `{{1}} {{2}}` variables). **Business-initiated (broadcast/automation) WhatsApp can ONLY send an
    approved template** — free-form text is blocked outside a 24h customer-service window. Note
    the template **name** + **language code**.
 5. Add a **payment method** to the WABA.

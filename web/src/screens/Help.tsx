@@ -254,7 +254,7 @@ export function Help() {
       <Card class="mb-6 p-6" data-testid="help-merge-tags">
         <h2 class="text-lg font-bold text-ink-950">Personalization tokens <Code>{'{{…}}'}</Code></h2>
         <p class="mt-1 text-sm text-stone-600">
-          Anywhere inside a campaign communication (email subject, email body, SMS / WhatsApp body,
+          Anywhere inside a automation communication (email subject, email body, SMS / WhatsApp body,
           even a webhook body) you can drop a <Code>{'{{token}}'}</Code> placeholder. At send time
           it's substituted with the recipient's value. Unknown / missing tokens render as the
           empty string — they never leak the literal braces.
@@ -281,10 +281,10 @@ export function Help() {
         {/* 2. event.* */}
         <div class="mt-6 border-l-2 border-violet-300 pl-4">
           <h3 class="font-bold text-ink-900">
-            2. <Code>event.*</Code> — the <em>triggering</em> event's payload <span class="text-stone-400">(only for event-triggered campaigns)</span>
+            2. <Code>event.*</Code> — the <em>triggering</em> event's payload <span class="text-stone-400">(only for event-triggered automations)</span>
           </h3>
           <p class="mt-1 text-sm text-stone-600">
-            When a campaign is triggered by an event (e.g. <Code>lead</Code>, <Code>webinar_completed</Code>),
+            When a automation is triggered by an event (e.g. <Code>lead</Code>, <Code>webinar_completed</Code>),
             the <b>whole event payload</b> is frozen on this enrollment. Reach into it with deep
             dotted paths — the same one the event ingested with.
           </p>
@@ -303,12 +303,12 @@ export function Help() {
         {/* 3. journey.* */}
         <div class="mt-6 border-l-2 border-emerald-300 pl-4">
           <h3 class="font-bold text-ink-900">
-            3. <Code>journey.*</Code> — per-enrollment variables <span class="text-stone-400">(this profile's run, this campaign)</span>
+            3. <Code>journey.*</Code> — per-enrollment variables <span class="text-stone-400">(this profile's run, this automation)</span>
           </h3>
           <p class="mt-1 text-sm text-stone-600">
             Use an <b>Update journey</b> node to set a variable that lives <em>only</em> on this
-            profile's journey through <em>this</em> campaign — it never touches the global profile.
-            Read it back later in the same campaign with <Code>{'{{journey.&lt;key&gt;}}'}</Code>.
+            profile's journey through <em>this</em> automation — it never touches the global profile.
+            Read it back later in the same automation with <Code>{'{{journey.&lt;key&gt;}}'}</Code>.
             Keys are <b>freeform</b> — type whatever you want; unset keys read as empty.
           </p>
           <p class="mt-2 text-sm text-stone-700">

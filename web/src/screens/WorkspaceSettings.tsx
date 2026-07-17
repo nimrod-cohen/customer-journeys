@@ -76,7 +76,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
       });
   }, []);
 
-  // The workspace clock for all campaign time math (§9B). The kit Button below
+  // The workspace clock for all automation time math (§9B). The kit Button below
   // auto-locks while this promise is in flight (we RETURN it). Optimistic + rollback.
   const saveTimezone = (next: string) => {
     const previous = timezone;
@@ -272,7 +272,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
         <div class="min-w-[16rem] flex-1">
           <h2 class="text-base font-bold text-ink-900">Timezone</h2>
           <p class="mt-1 text-sm text-stone-500">
-            The clock for campaign waits, wait-until and hour-of-day windows. Sends are scheduled against this zone
+            The clock for automation waits, wait-until and hour-of-day windows. Sends are scheduled against this zone
             (DST-correct). Default UTC.
           </p>
         </div>
@@ -332,7 +332,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
         <div class="mb-4">
           <h2 class="text-base font-bold text-ink-900">Sending guardrails</h2>
           <p class="mt-1 text-sm text-stone-500">
-            Optional safety limits on every send (broadcasts and campaigns). All hours are in your workspace timezone
+            Optional safety limits on every send (broadcasts and automations). All hours are in your workspace timezone
             (<span class="font-mono">{timezone}</span>).
           </p>
         </div>

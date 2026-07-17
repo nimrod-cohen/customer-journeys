@@ -52,7 +52,7 @@
           "Idempotency: outbox.dedupe_key prevents double-sends; feedback handlers are idempotent on the SES message id / event.",
           "Logic in pure injected functions; Lambda handlers stay thin and are unit-tested via the pure function. Reuse the Phase 2-5 harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations, runPlanInWorkspaceTx) and the SqlStatement {text, values} shape.",
           "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id is a GLOBAL PK). No cross-file races.",
-          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), campaigns (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
+          "Scope discipline: implement exactly what the cited sections require for THIS phase — no broadcasts (§9A), automations (§9B), image pipeline, frontend, or metering (those are later phases). Leave clean extension points."
         ],
         "phaseCriteria": [
           {

@@ -25,7 +25,7 @@
       },
       {
         "criterion": "AC4 sweep all path-id handlers",
-        "evidence": "PUT /segments,/campaigns scopedQuery UPDATE (cross-tenant updated=0); GET /profiles/:id scopedQuery 404; broadcasts send guard; admin/:id gated view_all_workspaces + audited. scopedQuery mandatorily prepends workspace_id=$1. No remaining cross-tenant id vector.",
+        "evidence": "PUT /segments,/automations scopedQuery UPDATE (cross-tenant updated=0); GET /profiles/:id scopedQuery 404; broadcasts send guard; admin/:id gated view_all_workspaces + audited. scopedQuery mandatorily prepends workspace_id=$1. No remaining cross-tenant id vector.",
         "met": true
       },
       {
@@ -48,7 +48,7 @@
     "isolationOk": true,
     "recommendations": [
       "Add cross-tenant integration cases for DELETE /segments/:id/members and POST import-csv (share the same guard, untested for the vector).",
-      "createBroadcast/createCampaign accept template_id/audience_ref/trigger_segment_id from body without verifying ownership; not exploitable (dispatcher loads templates scoped; audience resolved scoped) but validate at creation for defense-in-depth.",
+      "createBroadcast/createAutomation accept template_id/audience_ref/trigger_segment_id from body without verifying ownership; not exploitable (dispatcher loads templates scoped; audience resolved scoped) but validate at creation for defense-in-depth.",
       "Consider composite FK (workspace_id,id) on broadcasts.template_id/trigger_segment_id to make cross-workspace refs structurally impossible."
     ],
     "scopeCreep": [],
@@ -78,7 +78,7 @@
       },
       {
         "criterion": "AC4 sweep all path-id handlers",
-        "evidence": "PUT /segments,/campaigns scopedQuery UPDATE (cross-tenant updated=0); GET /profiles/:id scopedQuery 404; broadcasts send guard; admin/:id gated view_all_workspaces + audited. scopedQuery mandatorily prepends workspace_id=$1. No remaining cross-tenant id vector.",
+        "evidence": "PUT /segments,/automations scopedQuery UPDATE (cross-tenant updated=0); GET /profiles/:id scopedQuery 404; broadcasts send guard; admin/:id gated view_all_workspaces + audited. scopedQuery mandatorily prepends workspace_id=$1. No remaining cross-tenant id vector.",
         "met": true
       },
       {
@@ -101,7 +101,7 @@
     "isolationOk": true,
     "recommendations": [
       "Add cross-tenant integration cases for DELETE /segments/:id/members and POST import-csv (share the same guard, untested for the vector).",
-      "createBroadcast/createCampaign accept template_id/audience_ref/trigger_segment_id from body without verifying ownership; not exploitable (dispatcher loads templates scoped; audience resolved scoped) but validate at creation for defense-in-depth.",
+      "createBroadcast/createAutomation accept template_id/audience_ref/trigger_segment_id from body without verifying ownership; not exploitable (dispatcher loads templates scoped; audience resolved scoped) but validate at creation for defense-in-depth.",
       "Consider composite FK (workspace_id,id) on broadcasts.template_id/trigger_segment_id to make cross-workspace refs structurally impossible."
     ],
     "scopeCreep": [],

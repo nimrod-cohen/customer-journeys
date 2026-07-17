@@ -1,7 +1,7 @@
 // SMS templates (CLAUDE.md text_templates): a reusable plain-text message library for
 // SMS sends. (WhatsApp uses its OWN approved Meta message templates — the "WhatsApp
 // templates" tab — because Meta requires template approval for business-initiated sends;
-// so this library is SMS-only.) Picking a template in the broadcast/campaign SMS body
+// so this library is SMS-only.) Picking a template in the broadcast/automation SMS body
 // step COPIES its body into the send (copy-on-select, no live reference) — this is the
 // LIBRARY admin (create / edit name+body / delete). It lives as a TAB on the Asset
 // management screen, beside Email templates. Re-fetches on the active workspace.
@@ -88,7 +88,7 @@ export function TextTemplatesPanel() {
   const remove = async (t: TextTemplate) => {
     const ok = await askConfirm({
       title: 'Delete SMS template?',
-      message: `“${t.name}” will be removed. Broadcasts and campaigns keep their own copied body, so they're unaffected.`,
+      message: `“${t.name}” will be removed. Broadcasts and automations keep their own copied body, so they're unaffected.`,
       confirmLabel: 'Delete',
       danger: true,
     });
@@ -106,7 +106,7 @@ export function TextTemplatesPanel() {
   return (
     <section data-testid="text-templates-screen">
       <p class="mb-4 text-sm text-stone-500">
-        Reusable messages for <strong>SMS</strong>. Pick one when composing an SMS broadcast or a campaign SMS step to
+        Reusable messages for <strong>SMS</strong>. Pick one when composing an SMS broadcast or a automation SMS step to
         fill the message body. Use merge tags like{' '}
         <code class="rounded bg-stone-100 px-1">{'{{customer.first_name}}'}</code> to personalize. (WhatsApp uses its own
         approved templates — see the <strong>WhatsApp templates</strong> tab.)

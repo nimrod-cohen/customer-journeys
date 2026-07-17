@@ -1,8 +1,8 @@
 {
   "filesModified": [
-    "web/src/campaigns/layout.ts",
-    "web/src/campaigns/layout.test.ts",
-    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "web/src/automations/layout.ts",
+    "web/src/automations/layout.test.ts",
+    "web/e2e/automation-builder.browser.e2e.spec.ts",
     "package.json",
     "CLAUDE.md"
   ],
@@ -12,9 +12,9 @@
   "depthConsistency": "A simple If's arm-card columns are exactly center +/- BRANCH_HALF_GAP (240px apart, ~40px card gap) at top-level AND nested depth, because exclusiveArmWidth=1 regardless of how long the shared post-merge trunk is. Only an arm that actually contains a nested If widens, by exactly that nested branch's exclusive half-width.",
   "testsPass": true,
   "unit": "web layout.test.ts (44) + branch-invariants.test.ts (33) = 77 pass; full @cdp/web vitest 242 pass + 4 skipped.",
-  "e2eSummary": "Ran SOLO, one at a time, ports freed + pkill before each. campaign-builder.browser.e2e.spec.ts: 23/23 pass (incl. new 'branch arm spacing is FIXED & depth-consistent'). campaign-canvas-pan-zoom + campaign-list-detail + campaign-list-no-overflow + campaign-node-editors: 21/21 pass.",
+  "e2eSummary": "Ran SOLO, one at a time, ports freed + pkill before each. automation-builder.browser.e2e.spec.ts: 23/23 pass (incl. new 'branch arm spacing is FIXED & depth-consistent'). automation-canvas-pan-zoom + automation-list-detail + automation-list-no-overflow + automation-node-editors: 21/21 pass.",
   "typecheckOk": true,
   "lintOk": true,
   "lintNotes": "pnpm lint (src) shows only the 7 known pre-existing react-hooks 'rule not found' errors; no new errors. The e2e file has 3 PRE-EXISTING lint issues (PLUS_DIAMETER unused @594, let arms @826/936) outside my added range and not covered by the project's src-only lint.",
-  "notes": "Version bumped 0.42.3 -> 0.42.4. CLAUDE.md updated with a v0.42.4 bullet under campaign-canvas geometry. Not committed/pushed (orchestrator commits)."
+  "notes": "Version bumped 0.42.3 -> 0.42.4. CLAUDE.md updated with a v0.42.4 bullet under automation-canvas geometry. Not committed/pushed (orchestrator commits)."
 }

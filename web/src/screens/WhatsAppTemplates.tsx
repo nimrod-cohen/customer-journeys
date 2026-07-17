@@ -3,7 +3,7 @@
 // the Asset management "WhatsApp templates" tab. This is a LIVE proxy to the Meta Graph API
 // (the server uses the company's WABA id + decrypted token); the app does NOT store the
 // templates, Meta does. An approved template is then referenced by name in a WhatsApp
-// broadcast/campaign send. Requires the company's WhatsApp credentials + WABA id (Company
+// broadcast/automation send. Requires the company's WhatsApp credentials + WABA id (Company
 // settings → Sending).
 import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
@@ -148,7 +148,7 @@ export function WhatsAppTemplatesPanel() {
   return (
     <section data-testid="whatsapp-templates-screen">
       <p class="mb-4 text-sm text-stone-500">
-        Message templates are created + approved by Meta, then referenced by name in a WhatsApp broadcast/campaign
+        Message templates are created + approved by Meta, then referenced by name in a WhatsApp broadcast/automation
         send. Business-initiated WhatsApp <strong>requires an approved template</strong>. Approval usually takes minutes
         to a few hours.
       </p>

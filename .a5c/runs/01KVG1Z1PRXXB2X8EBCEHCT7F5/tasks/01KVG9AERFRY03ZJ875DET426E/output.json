@@ -1,5 +1,5 @@
 {
   "committed": true,
   "commitHash": "8710ad4398d7bd9e7f402708bcd65f666f3540e0",
-  "message": "feat(campaigns): phase 3 — event + manual enrollment, segment-entry wired live, re-enrollment policy"
+  "message": "feat(automations): phase 3 — event + manual enrollment, segment-entry wired live, re-enrollment policy"
 }

@@ -165,7 +165,7 @@ export function ProfileDetail({ id }: { id: string }) {
     const confirmed = await askConfirm({
       title: 'Delete this profile?',
       message:
-        'This permanently erases the profile and ALL of its data — events, send history, campaign enrollments, segment memberships and subscription choices. This cannot be undone.',
+        'This permanently erases the profile and ALL of its data — events, send history, automation enrollments, segment memberships and subscription choices. This cannot be undone.',
       confirmLabel: 'Delete profile',
       danger: true,
     });
@@ -521,7 +521,7 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
           <p class="text-sm font-semibold text-ink-900">Unsubscribed</p>
           <p class="text-xs text-stone-500">
             Toggling on opts this profile out of <em>all</em> sends from this workspace —
-            broadcasts, campaign sends, and topic-gated messages.
+            broadcasts, automation sends, and topic-gated messages.
           </p>
         </div>
         <Switch

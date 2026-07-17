@@ -23,19 +23,19 @@
         "converged": true,
         "phase": {
           "criteria": [
-            "The campaigns screen is a LIST (like broadcasts); creating/opening a campaign routes to a SEPARATE /campaigns/:id builder page; there is NO \"Design email\" button on the campaigns list page (email design is only inside a send-node editor). Verified in a REAL browser.",
-            "The campaign list shows lifecycle status + enrollment counts; publish/pause/resume work and are capability-gated + workspace-scoped; an active campaign enrolls + advances profiles. Verified in a REAL browser + against REAL Postgres.",
-            "The full journey acceptance test passes: a built campaign enrolls (segment/event/manual), advances through wait/hour-window/if/send/webhook/exit with an injected clock, sends via the Dispatcher (messages_log, campaign_id) and fires the mocked webhook, idempotently, all workspace-scoped.",
+            "The automations screen is a LIST (like broadcasts); creating/opening a automation routes to a SEPARATE /automations/:id builder page; there is NO \"Design email\" button on the automations list page (email design is only inside a send-node editor). Verified in a REAL browser.",
+            "The automation list shows lifecycle status + enrollment counts; publish/pause/resume work and are capability-gated + workspace-scoped; an active automation enrolls + advances profiles. Verified in a REAL browser + against REAL Postgres.",
+            "The full journey acceptance test passes: a built automation enrolls (segment/event/manual), advances through wait/hour-window/if/send/webhook/exit with an injected clock, sends via the Dispatcher (messages_log, automation_id) and fires the mocked webhook, idempotently, all workspace-scoped.",
             "CLAUDE.md updated; root version bumped; no regression across the full Vitest + e2e suite (cold)."
           ],
           "frontend": true,
           "id": "phase7-lifecycle-journey",
           "refs": "§9B + CLAUDE.md (broadcast list/lifecycle patterns, activity log, dashboards)",
           "scope": [
-            "Campaigns is a LIST page that MIRRORS Broadcasts (BroadcastComposer): the /campaigns route shows a table/list of campaigns (name, lifecycle status, enrollment counts) with a \"New campaign\" action; opening/creating a campaign navigates to a SEPARATE edit page at route /campaigns/:id (the canvas builder) — the builder is NOT the top-level campaigns page. REMOVE any top-level \"Design email\" affordance from the campaigns list/page: email design lives ONLY inside a send-node editor (reached from a send node in the builder), never as a standalone campaigns-page button. Reuse the broadcasts list/detail routing + kit (ActionMenu row actions, etc.).",
-            "Campaign LIFECYCLE: draft / active / paused (and the existing completed/exited/failed enrollment states); publish (validate→active), pause/resume, archive. Show per-campaign enrollment counts (active / completed / exited / failed) and optionally per-node counts.",
-            "A full END-TO-END journey acceptance test against the local stack: define a campaign in the builder (trigger → wait → hour-window → if → update-profile → send + webhook → exit), enroll a profile (each trigger kind — INCLUDING POSTing to the live local-api /profiles/:id/events path to assert event-trigger enrollment, closing the phase-3 coverage gap), advance via the runner (injected clock), and assert the update-profile step wrote an event-sourced attribute, it sends through the Dispatcher (messages_log) + fires the (mocked) webhook + completes — workspace-scoped, idempotent.",
-            "Docs + hygiene: update CLAUDE.md (the campaign builder + new nodes + tz + triggers), bump the root version, ensure migrations applied to cdp + cdp_e2e."
+            "Automations is a LIST page that MIRRORS Broadcasts (BroadcastComposer): the /automations route shows a table/list of automations (name, lifecycle status, enrollment counts) with a \"New automation\" action; opening/creating a automation navigates to a SEPARATE edit page at route /automations/:id (the canvas builder) — the builder is NOT the top-level automations page. REMOVE any top-level \"Design email\" affordance from the automations list/page: email design lives ONLY inside a send-node editor (reached from a send node in the builder), never as a standalone automations-page button. Reuse the broadcasts list/detail routing + kit (ActionMenu row actions, etc.).",
+            "Automation LIFECYCLE: draft / active / paused (and the existing completed/exited/failed enrollment states); publish (validate→active), pause/resume, archive. Show per-automation enrollment counts (active / completed / exited / failed) and optionally per-node counts.",
+            "A full END-TO-END journey acceptance test against the local stack: define a automation in the builder (trigger → wait → hour-window → if → update-profile → send + webhook → exit), enroll a profile (each trigger kind — INCLUDING POSTing to the live local-api /profiles/:id/events path to assert event-trigger enrollment, closing the phase-3 coverage gap), advance via the runner (injected clock), and assert the update-profile step wrote an event-sourced attribute, it sends through the Dispatcher (messages_log) + fires the (mocked) webhook + completes — workspace-scoped, idempotent.",
+            "Docs + hygiene: update CLAUDE.md (the automation builder + new nodes + tz + triggers), bump the root version, ensure migrations applied to cdp + cdp_e2e."
           ],
           "title": "Lifecycle, dashboards + full end-to-end journey"
         },
@@ -65,25 +65,25 @@
   "schemaVersion": "2026.01.tasks-v1",
   "effectId": "01KVH1RE6KB0DVV51BDN3D0HQN",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000032:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000032:commit-phase",
   "stepId": "S000032",
   "inputs": {
     "converged": true,
     "phase": {
       "criteria": [
-        "The campaigns screen is a LIST (like broadcasts); creating/opening a campaign routes to a SEPARATE /campaigns/:id builder page; there is NO \"Design email\" button on the campaigns list page (email design is only inside a send-node editor). Verified in a REAL browser.",
-        "The campaign list shows lifecycle status + enrollment counts; publish/pause/resume work and are capability-gated + workspace-scoped; an active campaign enrolls + advances profiles. Verified in a REAL browser + against REAL Postgres.",
-        "The full journey acceptance test passes: a built campaign enrolls (segment/event/manual), advances through wait/hour-window/if/send/webhook/exit with an injected clock, sends via the Dispatcher (messages_log, campaign_id) and fires the mocked webhook, idempotently, all workspace-scoped.",
+        "The automations screen is a LIST (like broadcasts); creating/opening a automation routes to a SEPARATE /automations/:id builder page; there is NO \"Design email\" button on the automations list page (email design is only inside a send-node editor). Verified in a REAL browser.",
+        "The automation list shows lifecycle status + enrollment counts; publish/pause/resume work and are capability-gated + workspace-scoped; an active automation enrolls + advances profiles. Verified in a REAL browser + against REAL Postgres.",
+        "The full journey acceptance test passes: a built automation enrolls (segment/event/manual), advances through wait/hour-window/if/send/webhook/exit with an injected clock, sends via the Dispatcher (messages_log, automation_id) and fires the mocked webhook, idempotently, all workspace-scoped.",
         "CLAUDE.md updated; root version bumped; no regression across the full Vitest + e2e suite (cold)."
       ],
       "frontend": true,
       "id": "phase7-lifecycle-journey",
       "refs": "§9B + CLAUDE.md (broadcast list/lifecycle patterns, activity log, dashboards)",
       "scope": [
-        "Campaigns is a LIST page that MIRRORS Broadcasts (BroadcastComposer): the /campaigns route shows a table/list of campaigns (name, lifecycle status, enrollment counts) with a \"New campaign\" action; opening/creating a campaign navigates to a SEPARATE edit page at route /campaigns/:id (the canvas builder) — the builder is NOT the top-level campaigns page. REMOVE any top-level \"Design email\" affordance from the campaigns list/page: email design lives ONLY inside a send-node editor (reached from a send node in the builder), never as a standalone campaigns-page button. Reuse the broadcasts list/detail routing + kit (ActionMenu row actions, etc.).",
-        "Campaign LIFECYCLE: draft / active / paused (and the existing completed/exited/failed enrollment states); publish (validate→active), pause/resume, archive. Show per-campaign enrollment counts (active / completed / exited / failed) and optionally per-node counts.",
-        "A full END-TO-END journey acceptance test against the local stack: define a campaign in the builder (trigger → wait → hour-window → if → update-profile → send + webhook → exit), enroll a profile (each trigger kind — INCLUDING POSTing to the live local-api /profiles/:id/events path to assert event-trigger enrollment, closing the phase-3 coverage gap), advance via the runner (injected clock), and assert the update-profile step wrote an event-sourced attribute, it sends through the Dispatcher (messages_log) + fires the (mocked) webhook + completes — workspace-scoped, idempotent.",
-        "Docs + hygiene: update CLAUDE.md (the campaign builder + new nodes + tz + triggers), bump the root version, ensure migrations applied to cdp + cdp_e2e."
+        "Automations is a LIST page that MIRRORS Broadcasts (BroadcastComposer): the /automations route shows a table/list of automations (name, lifecycle status, enrollment counts) with a \"New automation\" action; opening/creating a automation navigates to a SEPARATE edit page at route /automations/:id (the canvas builder) — the builder is NOT the top-level automations page. REMOVE any top-level \"Design email\" affordance from the automations list/page: email design lives ONLY inside a send-node editor (reached from a send node in the builder), never as a standalone automations-page button. Reuse the broadcasts list/detail routing + kit (ActionMenu row actions, etc.).",
+        "Automation LIFECYCLE: draft / active / paused (and the existing completed/exited/failed enrollment states); publish (validate→active), pause/resume, archive. Show per-automation enrollment counts (active / completed / exited / failed) and optionally per-node counts.",
+        "A full END-TO-END journey acceptance test against the local stack: define a automation in the builder (trigger → wait → hour-window → if → update-profile → send + webhook → exit), enroll a profile (each trigger kind — INCLUDING POSTing to the live local-api /profiles/:id/events path to assert event-trigger enrollment, closing the phase-3 coverage gap), advance via the runner (injected clock), and assert the update-profile step wrote an event-sourced attribute, it sends through the Dispatcher (messages_log) + fires the (mocked) webhook + completes — workspace-scoped, idempotent.",
+        "Docs + hygiene: update CLAUDE.md (the automation builder + new nodes + tz + triggers), bump the root version, ensure migrations applied to cdp + cdp_e2e."
       ],
       "title": "Lifecycle, dashboards + full end-to-end journey"
     },

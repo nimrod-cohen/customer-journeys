@@ -2,18 +2,18 @@
   "schemaVersion": "2026.01.results-v1",
   "effectId": "01KVGWH2Y6BV3ASB54VVXEK5VG",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000024:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000024:commit-phase",
   "status": "ok",
   "result": {
     "commitHash": "46f3a0a07c50cd579da0c5c20a73176f4a38bed1",
     "committed": true,
-    "message": "feat(campaigns): phase 6 — per-node editors + publish validation"
+    "message": "feat(automations): phase 6 — per-node editors + publish validation"
   },
   "startedAt": "2026-06-19T21:29:02.101Z",
   "finishedAt": "2026-06-19T21:29:02.101Z",
   "value": {
     "commitHash": "46f3a0a07c50cd579da0c5c20a73176f4a38bed1",
     "committed": true,
-    "message": "feat(campaigns): phase 6 — per-node editors + publish validation"
+    "message": "feat(automations): phase 6 — per-node editors + publish validation"
   }
 }

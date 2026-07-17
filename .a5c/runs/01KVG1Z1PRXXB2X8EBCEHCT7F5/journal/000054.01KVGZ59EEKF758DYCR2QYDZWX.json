@@ -3,7 +3,7 @@
   "recordedAt": "2026-06-19T22:13:56.302Z",
   "data": {
     "effectId": "01KVGZ59DX2TG7R005Q9G7RA1E",
-    "invocationKey": "cdp/campaign-builder:S000027:quality-gate",
+    "invocationKey": "cdp/automation-builder:S000027:quality-gate",
     "invocationHash": "bf18bf4d30b57bd7026a3a6696340d1d9e9ab6b6966ca12d158f106d338c5f9e",
     "stepId": "S000027",
     "taskId": "quality-gate",

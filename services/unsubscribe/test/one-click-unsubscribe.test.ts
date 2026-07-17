@@ -57,7 +57,7 @@ describe('parseUnsubscribeRequest', () => {
     expect(r.valid && r.workspaceId).toBe('ws-9');
   });
 
-  it('extracts optional broadcast_id / campaign_id for attribution', () => {
+  it('extracts optional broadcast_id / automation_id for attribution', () => {
     const r = parseUnsubscribeRequest(
       'POST',
       '/unsubscribe?workspace_id=ws-1&email=a%40b.com&broadcast_id=bc1',
@@ -66,16 +66,16 @@ describe('parseUnsubscribeRequest', () => {
     expect(r.valid).toBe(true);
     if (r.valid) {
       expect(r.broadcastId).toBe('bc1');
-      expect(r.campaignId).toBeNull();
+      expect(r.automationId).toBeNull();
     }
   });
 
-  it('leaves broadcastId / campaignId null when absent', () => {
+  it('leaves broadcastId / automationId null when absent', () => {
     const r = parseUnsubscribeRequest('GET', '/unsubscribe?workspace_id=ws-1&email=a%40b.com', null);
     expect(r.valid).toBe(true);
     if (r.valid) {
       expect(r.broadcastId).toBeNull();
-      expect(r.campaignId).toBeNull();
+      expect(r.automationId).toBeNull();
       expect(r.compactVerified).toBe(false);
     }
   });
@@ -116,13 +116,13 @@ describe('parseUnsubscribeRequest', () => {
     if (r.valid) {
       expect(r.oneClick).toBe(true);
       expect(r.broadcastId).toBe('bc1');
-      expect(r.campaignId).toBe('cm2');
+      expect(r.automationId).toBe('cm2');
     }
   });
 
-  it('still accepts legacy broadcast_id / campaign_id when no b/c', () => {
-    const r = parseUnsubscribeRequest('GET', '/unsubscribe?workspace_id=ws-1&email=a%40b.com&campaign_id=cmL', null);
-    expect(r.valid && r.campaignId).toBe('cmL');
+  it('still accepts legacy broadcast_id / automation_id when no b/c', () => {
+    const r = parseUnsubscribeRequest('GET', '/unsubscribe?workspace_id=ws-1&email=a%40b.com&automation_id=cmL', null);
+    expect(r.valid && r.automationId).toBe('cmL');
   });
 });
 
@@ -137,7 +137,7 @@ describe('buildUnsubscribeEvent', () => {
     expect(s.text).not.toContain('ws-1');
   });
 
-  it('omits the row entirely when there is no source broadcast/campaign (returns null)', () => {
+  it('omits the row entirely when there is no source broadcast/automation (returns null)', () => {
     expect(buildUnsubscribeEvent('ws-1', 'a@b.com', null, null)).toBeNull();
   });
 

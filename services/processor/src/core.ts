@@ -41,7 +41,7 @@ export interface SegmentReeval {
   readonly profileEmail: string;
   /**
    * Phase 3 (§9B): the ingested event's details so deps.ts can ALSO fire
-   * event-trigger campaign enrollment (enrollFromEvent) in the SAME tx, alongside
+   * event-trigger automation enrollment (enrollFromEvent) in the SAME tx, alongside
    * the segment-entry enrollment driven by the membership change_log. type/payload
    * come straight from the trusted envelope; event_id is the producer dedupe key.
    */

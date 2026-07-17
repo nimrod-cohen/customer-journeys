@@ -62,7 +62,7 @@
           "criteria": [
             "A Workspace-A JWT cannot read/modify Workspace-B rows under RLS; service-role code paths still scope by workspace_id in code.",
             "Two workspaces with the same external_id/email keep fully separate profiles (UNIQUE(workspace_id, external_id)).",
-            "Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/campaigns; owner can do both within the workspace.",
+            "Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/automations; owner can do both within the workspace.",
             "system-admin can view across companies and every cross-tenant access is recorded in admin_audit_log.",
             "Multi-workspace switching: a user in two workspaces sees only the active workspace; switching changes the workspace_id claim and re-scopes; no cross-bleed."
           ],
@@ -155,7 +155,7 @@
             {
               "assertions": [
                 "requireCapability denies marketer on manage_users/domain/billing",
-                "accounting denied segment/campaign edit, allowed billing read",
+                "accounting denied segment/automation edit, allowed billing read",
                 "owner allowed users+billing",
                 "deny carries reason no data"
               ],
@@ -277,7 +277,7 @@
       "criteria": [
         "A Workspace-A JWT cannot read/modify Workspace-B rows under RLS; service-role code paths still scope by workspace_id in code.",
         "Two workspaces with the same external_id/email keep fully separate profiles (UNIQUE(workspace_id, external_id)).",
-        "Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/campaigns; owner can do both within the workspace.",
+        "Roles (§3A): marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/automations; owner can do both within the workspace.",
         "system-admin can view across companies and every cross-tenant access is recorded in admin_audit_log.",
         "Multi-workspace switching: a user in two workspaces sees only the active workspace; switching changes the workspace_id claim and re-scopes; no cross-bleed."
       ],
@@ -370,7 +370,7 @@
         {
           "assertions": [
             "requireCapability denies marketer on manage_users/domain/billing",
-            "accounting denied segment/campaign edit, allowed billing read",
+            "accounting denied segment/automation edit, allowed billing read",
             "owner allowed users+billing",
             "deny carries reason no data"
           ],

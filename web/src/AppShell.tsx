@@ -12,7 +12,7 @@ import { ICONS } from './ui/icons.js';
 import { SegmentBuilder } from './screens/SegmentBuilder.js';
 import { SegmentsList } from './screens/SegmentsList.js';
 import { BroadcastComposer, BroadcastWizard } from './screens/BroadcastComposer.js';
-import { CampaignsList, CampaignDetail } from './screens/CampaignBuilder.js';
+import { AutomationsList, AutomationDetail } from './screens/AutomationBuilder.js';
 import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
 import { CompanySettings } from './screens/CompanySettings.js';
 import { SendingDomainDetail } from './screens/SendingDomainDetail.tsx';
@@ -56,13 +56,13 @@ function screenFor(path: string): JSX.Element {
   if (path.startsWith('/editor/')) {
     return <TemplateEditor id={path.slice('/editor/'.length)} />;
   }
-  // Campaigns: the LIST at /campaigns; the canvas builder at /campaigns/new and
-  // /campaigns/:id (mirrors the broadcasts list/wizard split). Returning from a
-  // send node's "Design email" navigates to /campaigns/:id → CampaignDetail
-  // re-opens that campaign on mount (openById from the path id).
-  if (path.startsWith('/campaigns/')) {
-    const rest = path.slice('/campaigns/'.length);
-    return rest === 'new' ? <CampaignDetail /> : <CampaignDetail id={rest} />;
+  // Automations: the LIST at /automations; the canvas builder at /automations/new and
+  // /automations/:id (mirrors the broadcasts list/wizard split). Returning from a
+  // send node's "Design email" navigates to /automations/:id → AutomationDetail
+  // re-opens that automation on mount (openById from the path id).
+  if (path.startsWith('/automations/')) {
+    const rest = path.slice('/automations/'.length);
+    return rest === 'new' ? <AutomationDetail /> : <AutomationDetail id={rest} />;
   }
   // Workspace settings tabs: /settings (workspace), /settings/domains (sending
   // domains, per-workspace), and /settings/topics (subscription topics admin). The
@@ -92,8 +92,8 @@ function screenFor(path: string): JSX.Element {
       return <BroadcastComposer />;
     case '/templates':
       return <TemplatesList />;
-    case '/campaigns':
-      return <CampaignsList />;
+    case '/automations':
+      return <AutomationsList />;
     case '/editor':
       return <TemplateEditor />;
     case '/profiles':
@@ -135,7 +135,7 @@ export function AppShell(): JSX.Element {
   // Land on a permitted screen: if the current route isn't in the role's nav
   // (e.g. a system-admin with no active workspace can't open /dashboards),
   // fall back to the first permitted item (the System Admin console for them).
-  // The email editor has no nav item (reached from Broadcasts/Campaigns), but is
+  // The email editor has no nav item (reached from Broadcasts/Automations), but is
   // still permitted for anyone who can manage content (i.e. has those screens).
   const canEditor = (route === '/editor' || route.startsWith('/editor/')) && nav.some((n) => n.id === 'broadcasts');
   // The account screen has no nav item — any signed-in user may edit their own details.
@@ -269,7 +269,7 @@ export function AppShell(): JSX.Element {
       <ToastHost />
       <EmailDesignerDrawer />
       {/* min-w-0: a flex child's default min-width:auto would let `main` grow past
-          the viewport to fit wide content (e.g. the campaigns list row) instead of
+          the viewport to fit wide content (e.g. the automations list row) instead of
           shrinking — causing page-level horizontal overflow. min-w-0 lets it shrink
           to the flex track so overflow-x-hidden + inner max-w-6xl/truncation apply. */}
       <main data-testid="app-body" class="flex min-w-0 flex-1 flex-col overflow-x-hidden">
@@ -293,7 +293,7 @@ export function AppShell(): JSX.Element {
         {/* Key by route AND active workspace so switching company/workspace
             remounts the screen and re-fetches its (now re-scoped) data, even when
             the route is unchanged (e.g. switching while already on Dashboards). */}
-        {/* Canvas screens (campaign builder, etc.) need the full viewport width
+        {/* Canvas screens (automation builder, etc.) need the full viewport width
             so the workflow grid can breathe; everything else gets a readable
             max-w-6xl gutter. */}
         <div
@@ -309,12 +309,12 @@ export function AppShell(): JSX.Element {
   );
 }
 
-/** Routes whose primary content is a canvas (campaign builder workflow grid).
+/** Routes whose primary content is a canvas (automation builder workflow grid).
  *  These opt out of the readable max-w-6xl gutter so the canvas can use the
  *  full viewport width minus the sidebar. */
 function isFullBleedRoute(path: string): boolean {
-  // /campaigns/new and /campaigns/:id (the canvas), but NOT /campaigns (the list).
-  return path.startsWith('/campaigns/');
+  // /automations/new and /automations/:id (the canvas), but NOT /automations (the list).
+  return path.startsWith('/automations/');
 }
 
 function shortWs(id: string): string {

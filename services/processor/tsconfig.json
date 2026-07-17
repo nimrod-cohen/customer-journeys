@@ -9,6 +9,6 @@
     { "path": "../../packages/shared" },
     { "path": "../../packages/db" },
     { "path": "../../packages/segments" },
-    { "path": "../campaign-runner" }
+    { "path": "../automation-runner" }
   ]
 }

@@ -10,7 +10,7 @@
     "criteriaCoverage": [
       {
         "criterion": "AC1",
-        "evidence": "full-lifecycle.integration (real PG): trigger->wait->sweep deferral->condition->action(send)->exit across ticks; completed terminal, one outbox dedupe_key campaign:<c>:<p>:a. campaign-journey cross-phase repeats via real enrollFromSegmentChange + runEnrollment + real dispatchOutbox + §8 compiler, messages_log written.",
+        "evidence": "full-lifecycle.integration (real PG): trigger->wait->sweep deferral->condition->action(send)->exit across ticks; completed terminal, one outbox dedupe_key automation:<c>:<p>:a. automation-journey cross-phase repeats via real enrollFromSegmentChange + runEnrollment + real dispatchOutbox + §8 compiler, messages_log written.",
         "met": true
       },
       {
@@ -48,7 +48,7 @@
     "criteriaCoverage": [
       {
         "criterion": "AC1",
-        "evidence": "full-lifecycle.integration (real PG): trigger->wait->sweep deferral->condition->action(send)->exit across ticks; completed terminal, one outbox dedupe_key campaign:<c>:<p>:a. campaign-journey cross-phase repeats via real enrollFromSegmentChange + runEnrollment + real dispatchOutbox + §8 compiler, messages_log written.",
+        "evidence": "full-lifecycle.integration (real PG): trigger->wait->sweep deferral->condition->action(send)->exit across ticks; completed terminal, one outbox dedupe_key automation:<c>:<p>:a. automation-journey cross-phase repeats via real enrollFromSegmentChange + runEnrollment + real dispatchOutbox + §8 compiler, messages_log written.",
         "met": true
       },
       {

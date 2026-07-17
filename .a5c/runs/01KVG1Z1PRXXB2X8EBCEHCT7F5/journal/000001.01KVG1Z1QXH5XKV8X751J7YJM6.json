@@ -3,9 +3,9 @@
   "recordedAt": "2026-06-19T13:43:43.101Z",
   "data": {
     "runId": "01KVG1Z1PRXXB2X8EBCEHCT7F5",
-    "processId": "cdp/campaign-builder",
+    "processId": "cdp/automation-builder",
     "entrypoint": {
-      "importPath": "../../processes/cdp-campaign-builder.js",
+      "importPath": "../../processes/cdp-automation-builder.js",
       "exportName": "process"
     },
     "inputsRef": "inputs.json"

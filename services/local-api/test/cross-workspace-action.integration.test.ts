@@ -80,8 +80,8 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
       [BCAST_B, WS_B, TPL_B, SEG_B],
     );
     await world.pool.query(
-      `INSERT INTO campaigns (id, workspace_id, name, definition, status)
-       VALUES ($1,$2,'B campaign','{}'::jsonb,'draft')`,
+      `INSERT INTO automations (id, workspace_id, name, definition, status)
+       VALUES ($1,$2,'B automation','{}'::jsonb,'draft')`,
       [CAMP_B, WS_B],
     );
   });
@@ -97,7 +97,7 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
     // outbox/memberships first (FKs), then content, then memberships, then ws.
     await world.pool.query('DELETE FROM outbox WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
     await world.pool.query('DELETE FROM broadcasts WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
-    await world.pool.query('DELETE FROM campaigns WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
+    await world.pool.query('DELETE FROM automations WHERE workspace_id = ANY($1)', [[WS_A, WS_B]]);
     await world.pool.query('DELETE FROM segment_memberships WHERE workspace_id = ANY($1)', [
       [WS_A, WS_B],
     ]);
@@ -203,8 +203,8 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
     expect(await outboxCount()).toBe(0);
   });
 
-  it('WS-A token CANNOT mutate a WS-B campaign by id (PUT) → row unchanged', async () => {
-    const r = await call(world.env, 'PUT', `/campaigns/${CAMP_B}`, {
+  it('WS-A token CANNOT mutate a WS-B automation by id (PUT) → row unchanged', async () => {
+    const r = await call(world.env, 'PUT', `/automations/${CAMP_B}`, {
       token: tokenFor(MKT_A, WS_A),
       body: { name: 'HIJACKED', status: 'archived' },
     });
@@ -212,10 +212,10 @@ describeMaybe('cross-workspace action isolation (real Postgres)', () => {
     expect(r.status).toBe(200);
     expect((r.body as { updated: number }).updated).toBe(0);
     const { rows } = await world.pool.query<{ name: string; status: string }>(
-      'SELECT name, status FROM campaigns WHERE id = $1',
+      'SELECT name, status FROM automations WHERE id = $1',
       [CAMP_B],
     );
-    expect(rows[0]?.name).toBe('B campaign');
+    expect(rows[0]?.name).toBe('B automation');
     expect(rows[0]?.status).toBe('draft');
   });
 

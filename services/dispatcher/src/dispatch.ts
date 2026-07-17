@@ -136,7 +136,7 @@ interface OutboxRow {
   readonly id: string;
   readonly workspace_id: string;
   readonly profile_id: string;
-  readonly campaign_id: string | null;
+  readonly automation_id: string | null;
   readonly template_id: string | null;
   readonly dedupe_key: string | null;
   readonly attempts: number;
@@ -194,7 +194,7 @@ function asStringRecord(raw: unknown): Record<string, string> {
   return out;
 }
 
-/** Parse a WhatsApp template selection (from a broadcast column or a campaign payload) into
+/** Parse a WhatsApp template selection (from a broadcast column or a automation payload) into
  *  `{ name, language, params }`, or null when absent/malformed (→ a plain text_body send). */
 function parseWhatsAppTemplate(raw: unknown): { name: string; language: string; params: string[] } | null {
   if (typeof raw !== 'object' || raw === null) return null;
@@ -218,7 +218,7 @@ export async function dispatchOutbox(
   // 1. Load the outbox row (NO workspace scoping yet — workspace_id comes FROM
   //    the row, never from the SQS body). Only a pending row matters.
   const { rows: obRows } = await deps.reader.query<OutboxRow>(
-    `SELECT id, workspace_id, profile_id, campaign_id, template_id, dedupe_key, attempts, payload
+    `SELECT id, workspace_id, profile_id, automation_id, template_id, dedupe_key, attempts, payload
      FROM outbox WHERE id = $1`,
     [outboxId],
   );
@@ -286,7 +286,7 @@ export async function dispatchOutbox(
     if (!profile) return { result: 'noop', reason: 'profile not found' };
 
     // The email instance (template) holds the body AND the envelope (subject /
-    // From sender / To token) — NOT the broadcast/campaign. Load all of them.
+    // From sender / To token) — NOT the broadcast/automation. Load all of them.
     let compiledHtml = '';
     let subject = '';
     let toAddress = '';
@@ -323,23 +323,23 @@ export async function dispatchOutbox(
         fromName = sndRows[0].name;
       }
     }
-    // Broadcasts tag their outbox rows with broadcast_id (campaigns use ob.campaign_id);
+    // Broadcasts tag their outbox rows with broadcast_id (automations use ob.automation_id);
     // carry it into messages_log so per-broadcast stats are a simple GROUP BY.
     const broadcastId = typeof payload['broadcast_id'] === 'string' ? (payload['broadcast_id'] as string) : null;
 
     // MEDIUM routing (CLAUDE.md multi-channel). For a BROADCAST the medium +
     // text_body live on the broadcast row (the payload carries `medium` as the
-    // authoritative hint). For a CAMPAIGN send there is NO broadcast row, so the
+    // authoritative hint). For a AUTOMATION send there is NO broadcast row, so the
     // runner carries the medium + plain text_body in the OUTBOX PAYLOAD (the
-    // campaign send-node config); email is the default for anything untagged.
+    // automation send-node config); email is the default for anything untagged.
     let medium: Medium = 'email';
     let textBody: string | null = null;
     // A WhatsApp APPROVED TEMPLATE (Meta requires it for business-initiated sends). For a
-    // broadcast it lives on the row (`whatsapp_template` jsonb); for a campaign it rides the
+    // broadcast it lives on the row (`whatsapp_template` jsonb); for a automation it rides the
     // outbox payload (`wa_template`). null → a plain text_body send.
     let whatsappTemplate: { name: string; language: string; params: string[] } | null = null;
     // The message's optional TOPIC (CLAUDE.md topic-subscriptions): lives on the
-    // broadcast/campaign row. A recipient unsubscribed from it is skipped.
+    // broadcast/automation row. A recipient unsubscribed from it is skipped.
     let topicId: string | null = null;
     const payloadMedium = payload['medium'];
     if (broadcastId) {
@@ -364,9 +364,9 @@ export async function dispatchOutbox(
           if (medium === 'whatsapp') whatsappTemplate = parseWhatsAppTemplate(bcRows[0].whatsapp_template);
         }
       }
-    } else if (ob.campaign_id) {
-      // Campaign send: the medium + text body + per-node topic + wa_template ride the OUTBOX
-      // PAYLOAD. Campaigns don't carry a topic_id column — the runner stamps
+    } else if (ob.automation_id) {
+      // Automation send: the medium + text body + per-node topic + wa_template ride the OUTBOX
+      // PAYLOAD. Automations don't carry a topic_id column — the runner stamps
       // the send-node's config directly onto the payload at enqueue time.
       const payloadTopic = payload['topic_id'];
       topicId = typeof payloadTopic === 'string' && payloadTopic.length > 0 ? payloadTopic : null;
@@ -399,7 +399,7 @@ export async function dispatchOutbox(
       // The preference center shares the scoped-link shape; derive its base from
       // the unsubscribe base (…/unsubscribe → …/manage-subscription).
       const manageBaseUrl = deps.unsubscribeBaseUrl.replace(/\/unsubscribe$/, '/manage-subscription');
-      // Carry the source broadcast/campaign as SEPARATE short params (b/c) so a
+      // Carry the source broadcast/automation as SEPARATE short params (b/c) so a
       // full opt-out can be attributed to the send (per-broadcast funnel metric).
       const unsubUrl = buildUnsubscribeUrl({
         baseUrl: manageBaseUrl,
@@ -407,7 +407,7 @@ export async function dispatchOutbox(
         email: profile.email,
         secret: linkSecret,
         broadcastId,
-        campaignId: ob.campaign_id ?? null,
+        automationId: ob.automation_id ?? null,
       });
       merge.unsubscribe_url = unsubUrl;
       merge.unsubscribe = `<a href="${unsubUrl}">Unsubscribe</a>`;
@@ -430,7 +430,7 @@ export async function dispatchOutbox(
 
     // Click tracking (§10): when the workspace enables it, rewrite every link in
     // the email to a /t/<token> tracking link. Applies to EVERY outgoing email
-    // (broadcast or campaign) — this is the one place all sends pass through.
+    // (broadcast or automation) — this is the one place all sends pass through.
     // Text channels (sms/whatsapp) carry no HTML, so tracking is email-only.
     let trackedLinks: TrackedLink[] = [];
     // Open tracking shares the same per-workspace opt-in as click tracking. The
@@ -452,7 +452,7 @@ export async function dispatchOutbox(
         baseUrl: deps.linkTrackingBaseUrl,
         workspaceId,
         broadcastId,
-        campaignId: ob.campaign_id ?? null,
+        automationId: ob.automation_id ?? null,
       });
       compiledHtml = rw.html;
       trackedLinks = rw.links;
@@ -461,7 +461,7 @@ export async function dispatchOutbox(
         baseUrl: deps.linkTrackingBaseUrl,
         workspaceId,
         broadcastId,
-        campaignId: ob.campaign_id ?? null,
+        automationId: ob.automation_id ?? null,
         profileId: profile.id,
       });
       compiledHtml = op.html;
@@ -539,7 +539,7 @@ export async function dispatchOutbox(
       fromName,
       toAddress: effectiveToAddress,
       broadcastId,
-      campaignId: ob.campaign_id ?? null,
+      automationId: ob.automation_id ?? null,
     };
 
     const decision: DispatchDecision = decideDispatch(ctx);
@@ -549,7 +549,7 @@ export async function dispatchOutbox(
     if (decision.action !== 'send') {
       return finalizeNonSend(deps, workspaceId, outboxId, decision, {
         profileId: profile.id,
-        campaignId: ob.campaign_id ?? null,
+        automationId: ob.automation_id ?? null,
         broadcastId,
         medium,
       });
@@ -564,7 +564,7 @@ export async function dispatchOutbox(
         outboxId,
         ctx,
         medium,
-        campaignId: ob.campaign_id ?? null,
+        automationId: ob.automation_id ?? null,
         broadcastId,
         profileId: profile.id,
         now,
@@ -581,7 +581,7 @@ export async function dispatchOutbox(
         buildMessagesLogFailure(
           workspaceId,
           profile.id,
-          ob.campaign_id ?? null,
+          ob.automation_id ?? null,
           broadcastId,
           'email',
           'skipped',
@@ -604,11 +604,11 @@ export async function dispatchOutbox(
 
       // 7. ONE tx: tracked links (idempotent) + messages_log + usage + mark sent.
       await deps.runInWorkspaceTx(workspaceId, [
-        ...trackedLinks.map((l) => buildTrackedLinkInsert(workspaceId, l, broadcastId, ob.campaign_id ?? null)),
+        ...trackedLinks.map((l) => buildTrackedLinkInsert(workspaceId, l, broadcastId, ob.automation_id ?? null)),
         ...(openToken
-          ? [buildTrackedOpenInsert(workspaceId, openToken, broadcastId, ob.campaign_id ?? null, profile.id)]
+          ? [buildTrackedOpenInsert(workspaceId, openToken, broadcastId, ob.automation_id ?? null, profile.id)]
           : []),
-        buildMessagesLogInsert(workspaceId, profile.id, ob.campaign_id, sesMessageId, broadcastId, 'email'),
+        buildMessagesLogInsert(workspaceId, profile.id, ob.automation_id, sesMessageId, broadcastId, 'email'),
         buildUsageCounterIncrement(workspaceId, now),
         buildOutboxMarkSent(workspaceId, outboxId),
       ]);
@@ -618,7 +618,7 @@ export async function dispatchOutbox(
       if (!isPermanentSendError(sendErr)) throw sendErr; // transient → outer catch (retry)
       const reason = sendErr instanceof Error ? sendErr.message : String(sendErr);
       await deps.runInWorkspaceTx(workspaceId, [
-        buildMessagesLogFailure(workspaceId, profile.id, ob.campaign_id ?? null, broadcastId, 'email', 'failed', reason),
+        buildMessagesLogFailure(workspaceId, profile.id, ob.automation_id ?? null, broadcastId, 'email', 'failed', reason),
         buildOutboxMarkFailed(workspaceId, outboxId),
       ]);
       return { result: 'failure', reason };
@@ -638,7 +638,7 @@ interface TextSendArgs {
   readonly outboxId: string;
   readonly ctx: DispatchContext;
   readonly medium: TextMedium;
-  readonly campaignId: string | null;
+  readonly automationId: string | null;
   readonly broadcastId: string | null;
   readonly profileId: string;
   readonly now: Date;
@@ -654,12 +654,12 @@ interface TextSendArgs {
  * failure resets the claim for a retry (bounded → DLQ).
  */
 async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Promise<DispatchOutcome> {
-  const { workspaceId, outboxId, ctx, medium, campaignId, broadcastId, profileId, now } = args;
+  const { workspaceId, outboxId, ctx, medium, automationId, broadcastId, profileId, now } = args;
   // No phone → skip (terminal). Record a skipped messages_log row + mark done.
   const rawTo = resolveTextRecipient(ctx);
   if (!rawTo) {
     await deps.runInWorkspaceTx(workspaceId, [
-      buildMessagesLogFailure(workspaceId, profileId, campaignId, broadcastId, medium, 'skipped', 'recipient has no phone'),
+      buildMessagesLogFailure(workspaceId, profileId, automationId, broadcastId, medium, 'skipped', 'recipient has no phone'),
       buildOutboxMarkSent(workspaceId, outboxId),
     ]);
     return { result: 'skip', reason: 'recipient has no phone' };
@@ -678,7 +678,7 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
   const e164 = normalizePhone(rawTo, cfg.defaultCountry ?? null);
   if (!e164) {
     await deps.runInWorkspaceTx(workspaceId, [
-      buildMessagesLogFailure(workspaceId, profileId, campaignId, broadcastId, medium, 'skipped', 'invalid phone number'),
+      buildMessagesLogFailure(workspaceId, profileId, automationId, broadcastId, medium, 'skipped', 'invalid phone number'),
       buildOutboxMarkSent(workspaceId, outboxId),
     ]);
     return { result: 'skip', reason: 'invalid phone number' };
@@ -711,14 +711,14 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
     // messages_log row with the reason and mark the outbox row done (terminal, never
     // crashing the batch / blocking other recipients).
     await deps.runInWorkspaceTx(workspaceId, [
-      buildMessagesLogFailure(workspaceId, profileId, campaignId, broadcastId, medium, 'failed', reason),
+      buildMessagesLogFailure(workspaceId, profileId, automationId, broadcastId, medium, 'failed', reason),
       buildOutboxMarkSent(workspaceId, outboxId),
     ]);
     return { result: 'skip', reason };
   }
 
   await deps.runInWorkspaceTx(workspaceId, [
-    buildMessagesLogInsert(workspaceId, profileId, campaignId, providerMessageId, broadcastId, medium),
+    buildMessagesLogInsert(workspaceId, profileId, automationId, providerMessageId, broadcastId, medium),
     buildUsageCounterIncrement(workspaceId, now, `${medium}_sent`),
     buildOutboxMarkSent(workspaceId, outboxId),
   ]);
@@ -728,7 +728,7 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
 /** The send identity a non-send finalize needs to record a messages_log row. */
 interface NonSendTarget {
   readonly profileId: string;
-  readonly campaignId: string | null;
+  readonly automationId: string | null;
   readonly broadcastId: string | null;
   readonly medium: Medium;
 }
@@ -763,7 +763,7 @@ async function finalizeNonSend(
           buildMessagesLogFailure(
             workspaceId,
             target.profileId,
-            target.campaignId,
+            target.automationId,
             target.broadcastId,
             target.medium,
             'skipped',

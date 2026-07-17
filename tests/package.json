@@ -20,7 +20,7 @@
     "@cdp/service-api": "workspace:*",
     "@cdp/service-authorizer": "workspace:*",
     "@cdp/service-broadcast": "workspace:*",
-    "@cdp/service-campaign-runner": "workspace:*",
+    "@cdp/service-automation-runner": "workspace:*",
     "@cdp/service-dispatcher": "workspace:*",
     "@cdp/service-feedback": "workspace:*",
     "@cdp/service-image": "workspace:*",

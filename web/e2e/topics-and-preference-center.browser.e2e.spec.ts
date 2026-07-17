@@ -19,7 +19,7 @@ const prefLink = `${API_BASE}/manage-subscription?t=${encodeURIComponent(prefTok
 
 test('admin creates a topic on the Topics tab in Workspace settings', async ({ page }) => {
   // Topics admin lives inside Workspace settings (owner-gated). Marketers still pick
-  // topics in the broadcast/campaign selector, but managing them is an owner task.
+  // topics in the broadcast/automation selector, but managing them is an owner task.
   await loginAs(page, DEV_OWNER);
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('settings-tab-topics').click();

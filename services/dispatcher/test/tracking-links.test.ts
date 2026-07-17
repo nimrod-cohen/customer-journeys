@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { rewriteTrackingLinks } from '../src/core.js';
 
-const opts = { baseUrl: 'https://app.test', workspaceId: 'ws1', broadcastId: 'bc1', campaignId: null };
+const opts = { baseUrl: 'https://app.test', workspaceId: 'ws1', broadcastId: 'bc1', automationId: null };
 
 describe('rewriteTrackingLinks', () => {
   it('rewrites http(s) links to /t/<token> and returns them', () => {
@@ -30,10 +30,10 @@ describe('rewriteTrackingLinks', () => {
     expect(out).toBe(html);
   });
 
-  it('different source (broadcast vs campaign) → different token for the same url', () => {
+  it('different source (broadcast vs automation) → different token for the same url', () => {
     const html = '<a href="https://a.com/x">x</a>';
-    const bc = rewriteTrackingLinks(html, { ...opts, broadcastId: 'bc1', campaignId: null });
-    const cm = rewriteTrackingLinks(html, { ...opts, broadcastId: null, campaignId: 'cm1' });
+    const bc = rewriteTrackingLinks(html, { ...opts, broadcastId: 'bc1', automationId: null });
+    const cm = rewriteTrackingLinks(html, { ...opts, broadcastId: null, automationId: 'cm1' });
     expect(bc.links[0]!.token).not.toBe(cm.links[0]!.token);
   });
 });

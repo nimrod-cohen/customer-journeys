@@ -67,7 +67,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /sending-domains/:id': 'manage_sending_domain',
   'POST /sending-domains/:id/check': 'manage_sending_domain',
   'DELETE /sending-domains/:id': 'manage_sending_domain',
-  // Listing senders is a READ needed when composing a broadcast/campaign (the
+  // Listing senders is a READ needed when composing a broadcast/automation (the
   // From dropdown), so it's allowed with manage_content; creating/deleting a
   // sender stays an owner-level manage_sending_domain action.
   'GET /domain-senders': 'manage_content',
@@ -142,23 +142,23 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /broadcasts/:id/duplicate': 'manage_content',
   'POST /broadcasts/:id/send': 'manage_content',
 
-  // --- campaigns (manage_content) ---
-  'GET /campaigns': 'manage_content',
-  'GET /campaigns/:id': 'manage_content',
-  'GET /campaigns/:id/versions': 'manage_content',
-  'GET /campaigns/:id/enrollments': 'manage_content',
-  'POST /campaigns': 'manage_content',
-  'DELETE /campaigns/:id': 'manage_content',
-  'PUT /campaigns/:id': 'manage_content',
-  'PUT /campaigns/:id/draft': 'manage_content',
-  'POST /campaigns/:id/publish': 'manage_content',
-  'POST /campaigns/:id/revert': 'manage_content',
-  'POST /campaigns/:id/activate': 'manage_content',
-  'POST /campaigns/:id/pause': 'manage_content',
-  'POST /campaigns/:id/resume': 'manage_content',
-  'POST /campaigns/:id/archive': 'manage_content',
-  'POST /campaigns/:id/send-nodes/:nodeId/attach-template': 'manage_content',
-  'POST /campaigns/:id/enroll': 'manage_content',
+  // --- automations (manage_content) ---
+  'GET /automations': 'manage_content',
+  'GET /automations/:id': 'manage_content',
+  'GET /automations/:id/versions': 'manage_content',
+  'GET /automations/:id/enrollments': 'manage_content',
+  'POST /automations': 'manage_content',
+  'DELETE /automations/:id': 'manage_content',
+  'PUT /automations/:id': 'manage_content',
+  'PUT /automations/:id/draft': 'manage_content',
+  'POST /automations/:id/publish': 'manage_content',
+  'POST /automations/:id/revert': 'manage_content',
+  'POST /automations/:id/activate': 'manage_content',
+  'POST /automations/:id/pause': 'manage_content',
+  'POST /automations/:id/resume': 'manage_content',
+  'POST /automations/:id/archive': 'manage_content',
+  'POST /automations/:id/send-nodes/:nodeId/attach-template': 'manage_content',
+  'POST /automations/:id/enroll': 'manage_content',
 
   // --- profiles (manage_content) ---
   'GET /profiles': 'manage_content',

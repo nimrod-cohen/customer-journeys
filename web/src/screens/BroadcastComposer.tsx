@@ -426,7 +426,7 @@ const MIN_SCHEDULE_LEAD_MS = 5 * 60 * 1000;
 
 // DST-correct zoned↔UTC helpers + the IANA picker list now live in @cdp/shared
 // (timeZoneList / tzOffsetMs / zonedInputToUtcIso / utcIsoToZonedInput) so the
-// broadcast scheduler and campaign time math share ONE implementation (§9B).
+// broadcast scheduler and automation time math share ONE implementation (§9B).
 
 /** The browser's IANA zone — the sensible default for "send at this time". */
 const BROWSER_TZ = (() => {

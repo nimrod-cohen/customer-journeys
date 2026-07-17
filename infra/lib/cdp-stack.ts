@@ -163,7 +163,7 @@ export class CdpStack extends Stack {
     const broadcastFn = makeFn('BroadcastFn', {
       DISPATCH_QUEUE_URL: dispatch.queue.queueUrl,
     });
-    const campaignRunnerFn = makeFn('CampaignRunnerFn', {
+    const automationRunnerFn = makeFn('AutomationRunnerFn', {
       DISPATCH_QUEUE_URL: dispatch.queue.queueUrl,
     });
     const onboardingFn = makeFn('OnboardingFn');
@@ -180,7 +180,7 @@ export class CdpStack extends Stack {
       feedbackFn,
       unsubscribeFn,
       broadcastFn,
-      campaignRunnerFn,
+      automationRunnerFn,
       onboardingFn,
       imageFn,
       batchEvalFn,
@@ -197,7 +197,7 @@ export class CdpStack extends Stack {
     ingest.queue.grantConsumeMessages(processorFn); // processor consumes ingest FIFO
     dispatch.queue.grantSendMessages(processorFn); // processor → dispatch FIFO
     dispatch.queue.grantSendMessages(broadcastFn); // broadcast → dispatch FIFO
-    dispatch.queue.grantSendMessages(campaignRunnerFn); // campaign runner → dispatch
+    dispatch.queue.grantSendMessages(automationRunnerFn); // automation runner → dispatch
     dispatch.queue.grantConsumeMessages(dispatcherFn); // dispatcher consumes dispatch FIFO
 
     // Event-source mappings: FIFO main queues → their consumers.
@@ -390,9 +390,9 @@ export class CdpStack extends Stack {
       schedule: events.Schedule.rate(Duration.hours(1)),
       targets: [new targets.LambdaFunction(meteringFn)],
     });
-    new events.Rule(this, 'CampaignRunnerSchedule', {
+    new events.Rule(this, 'AutomationRunnerSchedule', {
       schedule: events.Schedule.rate(Duration.minutes(1)),
-      targets: [new targets.LambdaFunction(campaignRunnerFn)],
+      targets: [new targets.LambdaFunction(automationRunnerFn)],
     });
 
     // ──────────────────────────────────────────────────────────────────────
@@ -468,7 +468,7 @@ export class CdpStack extends Stack {
       Feedback: feedbackFn,
       Unsubscribe: unsubscribeFn,
       Broadcast: broadcastFn,
-      CampaignRunner: campaignRunnerFn,
+      AutomationRunner: automationRunnerFn,
       Onboarding: onboardingFn,
       Image: imageFn,
       BatchEval: batchEvalFn,

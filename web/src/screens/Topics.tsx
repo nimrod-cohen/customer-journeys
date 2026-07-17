@@ -1,9 +1,9 @@
 // Topics (CLAUDE.md topic-subscriptions): the workspace's subscription topics.
-// A topic can be attached to a broadcast/campaign; a recipient unsubscribed from
+// A topic can be attached to a broadcast/automation; a recipient unsubscribed from
 // it (via the preference center) is skipped at send. This is the admin panel:
 // create, rename, archive/unarchive, and delete topics — it lives as a TAB inside
 // Workspace settings (owner-managed config; marketers still pick topics in the
-// broadcast/campaign selector via the manage_content GET). Re-fetches on the
+// broadcast/automation selector via the manage_content GET). Re-fetches on the
 // active workspace so a switch re-scopes in place.
 import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';

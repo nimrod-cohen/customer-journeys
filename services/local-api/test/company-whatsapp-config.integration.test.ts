@@ -2,7 +2,7 @@
 // config is stored per COMPANY, the access token is write-only (never returned) and
 // ENVELOPE-ENCRYPTED at rest, a blank token on update keeps the stored one, one company
 // can't read another's config, and DELETE clears it. (The full WhatsApp SEND through the
-// real MetaWhatsAppProvider is covered by the broadcast/campaign send tests.)
+// real MetaWhatsAppProvider is covered by the broadcast/automation send tests.)
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { hasDatabaseUrl, adminPool, decryptSecret, isEncryptedSecret } from '@cdp/db';
 import { makePgLookups, makeLocalDeps, dispatch, type DispatchEnv } from '../src/index.js';

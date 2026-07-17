@@ -1,13 +1,13 @@
 // The `event.*` personalization namespace — the structural TWIN of `customer.*`
 // (customer.ts), for referencing the TRIGGER EVENT payload that enrolled a profile
-// into a campaign (§9B). It is used ONLY in the set_attribute value resolver
+// into a automation (§9B). It is used ONLY in the set_attribute value resolver
 // (resolveValueSpec) so an update-profile step can copy a value FROM the event
 // that started the journey, e.g. `attributes.last_purchase_amount = {{event.amount}}`.
 //
 //   event.<path>   → the leaf at <path> in the persisted enrollment.state.event
 //                    payload (deep-dot, array indices supported: `items.0.sku`).
 //
-// The payload is persisted at enroll time (campaign_enrollments.state.event); it is
+// The payload is persisted at enroll time (automation_enrollments.state.event); it is
 // already a trusted, closed-grammar object (the §8 payload filter ran against it).
 // Resolution here is READ-ONLY string substitution — NEVER interpolated into SQL
 // (invariant 6 untouched). A missing path resolves to undefined → safe-empty in the

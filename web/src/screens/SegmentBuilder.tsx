@@ -24,7 +24,7 @@ import { Button, Card, Field, Input, PageHeader, Select, Textarea } from '../ui/
  * new segment (/segments/new); with an `id` it loads that segment and edits it
  * (/segments/:id). Saving routes back to the list, which re-fetches → reactive.
  * The rule-group editor itself is the shared RuleBuilder (also mounted by the
- * campaign IF/condition node editor) — ONE rule-AST UI, ONE emitted §8 AstNode.
+ * automation IF/condition node editor) — ONE rule-AST UI, ONE emitted §8 AstNode.
  */
 export function SegmentBuilder({ id }: { id?: string }) {
   const editing = Boolean(id);

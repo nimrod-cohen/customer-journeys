@@ -23,17 +23,17 @@
         "converged": true,
         "phase": {
           "criteria": [
-            "Segment-entry enrollment still works (no regression). Event ingestion of the configured type enrolls the profile into the active campaign exactly once (idempotent on replay); a non-matching event/filter does NOT enroll.",
-            "The manual/API enroll endpoint enrolls a profile (and a segment snapshot) at the start node, is capability-gated + workspace-scoped, and refuses a cross-workspace campaign/profile/segment id (404/inv.2).",
+            "Segment-entry enrollment still works (no regression). Event ingestion of the configured type enrolls the profile into the active automation exactly once (idempotent on replay); a non-matching event/filter does NOT enroll.",
+            "The manual/API enroll endpoint enrolls a profile (and a segment snapshot) at the start node, is capability-gated + workspace-scoped, and refuses a cross-workspace automation/profile/segment id (404/inv.2).",
             "The re-enrollment policy is documented + enforced for all three trigger kinds. All verified against REAL Postgres; everything workspace-scoped."
           ],
           "frontend": false,
           "id": "phase3-triggers-enrollment",
           "refs": "§9B (enrollment), CLAUDE.md (segment_change_log → enrollFromSegmentChange; ingest/processor), the re-enrollment policy",
           "scope": [
-            "Persist + validate the TRIGGER definition for all three kinds: segment_entry (campaigns.trigger_segment_id, already wired via enrollFromSegmentChange), event (event type + optional payload filter — store in the trigger node/definition), manual (no auto-source).",
-            "EVENT-trigger enrollment: wire processor-time enrollment — when an event of the configured type (matching the optional filter) is ingested for a profile, enroll into the matching active campaigns (insert campaign_enrollments at the start node, UNIQUE(campaign_id, profile_id), ON CONFLICT DO NOTHING, workspace-scoped). Idempotent (a replayed event enrolls at most once).",
-            "MANUAL/API enrollment: a workspace-scoped endpoint (e.g. POST /campaigns/:id/enroll) to enroll a single profile or a segment snapshot; capability-gated (manage_content); rejects cross-workspace ids (inv.2). Define + enforce the re-enrollment policy (once vs re-enter) consistently across all three kinds."
+            "Persist + validate the TRIGGER definition for all three kinds: segment_entry (automations.trigger_segment_id, already wired via enrollFromSegmentChange), event (event type + optional payload filter — store in the trigger node/definition), manual (no auto-source).",
+            "EVENT-trigger enrollment: wire processor-time enrollment — when an event of the configured type (matching the optional filter) is ingested for a profile, enroll into the matching active automations (insert automation_enrollments at the start node, UNIQUE(automation_id, profile_id), ON CONFLICT DO NOTHING, workspace-scoped). Idempotent (a replayed event enrolls at most once).",
+            "MANUAL/API enrollment: a workspace-scoped endpoint (e.g. POST /automations/:id/enroll) to enroll a single profile or a segment snapshot; capability-gated (manage_content); rejects cross-workspace ids (inv.2). Define + enforce the re-enrollment policy (once vs re-enter) consistently across all three kinds."
           ],
           "title": "Triggers & enrollment: segment-entry + event + manual"
         },
@@ -63,23 +63,23 @@
   "schemaVersion": "2026.01.tasks-v1",
   "effectId": "01KVG9AERFRY03ZJ875DET426E",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000012:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000012:commit-phase",
   "stepId": "S000012",
   "inputs": {
     "converged": true,
     "phase": {
       "criteria": [
-        "Segment-entry enrollment still works (no regression). Event ingestion of the configured type enrolls the profile into the active campaign exactly once (idempotent on replay); a non-matching event/filter does NOT enroll.",
-        "The manual/API enroll endpoint enrolls a profile (and a segment snapshot) at the start node, is capability-gated + workspace-scoped, and refuses a cross-workspace campaign/profile/segment id (404/inv.2).",
+        "Segment-entry enrollment still works (no regression). Event ingestion of the configured type enrolls the profile into the active automation exactly once (idempotent on replay); a non-matching event/filter does NOT enroll.",
+        "The manual/API enroll endpoint enrolls a profile (and a segment snapshot) at the start node, is capability-gated + workspace-scoped, and refuses a cross-workspace automation/profile/segment id (404/inv.2).",
         "The re-enrollment policy is documented + enforced for all three trigger kinds. All verified against REAL Postgres; everything workspace-scoped."
       ],
       "frontend": false,
       "id": "phase3-triggers-enrollment",
       "refs": "§9B (enrollment), CLAUDE.md (segment_change_log → enrollFromSegmentChange; ingest/processor), the re-enrollment policy",
       "scope": [
-        "Persist + validate the TRIGGER definition for all three kinds: segment_entry (campaigns.trigger_segment_id, already wired via enrollFromSegmentChange), event (event type + optional payload filter — store in the trigger node/definition), manual (no auto-source).",
-        "EVENT-trigger enrollment: wire processor-time enrollment — when an event of the configured type (matching the optional filter) is ingested for a profile, enroll into the matching active campaigns (insert campaign_enrollments at the start node, UNIQUE(campaign_id, profile_id), ON CONFLICT DO NOTHING, workspace-scoped). Idempotent (a replayed event enrolls at most once).",
-        "MANUAL/API enrollment: a workspace-scoped endpoint (e.g. POST /campaigns/:id/enroll) to enroll a single profile or a segment snapshot; capability-gated (manage_content); rejects cross-workspace ids (inv.2). Define + enforce the re-enrollment policy (once vs re-enter) consistently across all three kinds."
+        "Persist + validate the TRIGGER definition for all three kinds: segment_entry (automations.trigger_segment_id, already wired via enrollFromSegmentChange), event (event type + optional payload filter — store in the trigger node/definition), manual (no auto-source).",
+        "EVENT-trigger enrollment: wire processor-time enrollment — when an event of the configured type (matching the optional filter) is ingested for a profile, enroll into the matching active automations (insert automation_enrollments at the start node, UNIQUE(automation_id, profile_id), ON CONFLICT DO NOTHING, workspace-scoped). Idempotent (a replayed event enrolls at most once).",
+        "MANUAL/API enrollment: a workspace-scoped endpoint (e.g. POST /automations/:id/enroll) to enroll a single profile or a segment snapshot; capability-gated (manage_content); rejects cross-workspace ids (inv.2). Define + enforce the re-enrollment policy (once vs re-enter) consistently across all three kinds."
       ],
       "title": "Triggers & enrollment: segment-entry + event + manual"
     },

@@ -53,11 +53,11 @@ export function selectActiveBatchSegments(workspaceId: string): SqlStatement {
 
 /**
  * Select active dynamic_realtime segments that are the enrollment trigger of an
- * active campaign (campaigns.trigger_segment_id). These are the segments the
+ * active automation (automations.trigger_segment_id). These are the segments the
  * scheduled sweep must re-evaluate over time so enter/exit transitions fire for
- * campaigns — the rest are left to the realtime processor. workspace_id at $1.
+ * automations — the rest are left to the realtime processor. workspace_id at $1.
  */
-export function selectCampaignTriggerSegments(workspaceId: string): SqlStatement {
+export function selectAutomationTriggerSegments(workspaceId: string): SqlStatement {
   return {
     text: `SELECT s.id, s.workspace_id, s.definition, s.kind
            FROM segments s
@@ -65,7 +65,7 @@ export function selectCampaignTriggerSegments(workspaceId: string): SqlStatement
              AND s.status = 'active'
              AND s.kind = 'dynamic_realtime'
              AND EXISTS (
-               SELECT 1 FROM campaigns c
+               SELECT 1 FROM automations c
                WHERE c.workspace_id = $1 AND c.status = 'active' AND c.trigger_segment_id = s.id
              )`,
     values: [workspaceId],
@@ -182,7 +182,7 @@ export function buildChangeLog(
 
 /**
  * Resolve a segment's current audience (member profile ids) for broadcasts /
- * campaigns (§9A). Works for BOTH kinds — dynamic memberships (source='evaluator')
+ * automations (§9A). Works for BOTH kinds — dynamic memberships (source='evaluator')
  * and manual memberships (source='manual') live in the same table, so this
  * returns ALL members regardless of source. workspace_id at $1.
  */

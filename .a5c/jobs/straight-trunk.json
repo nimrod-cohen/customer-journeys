@@ -1,8 +1,8 @@
 {
   "filesModified": [
-    "web/src/campaigns/layout.ts",
-    "web/src/campaigns/layout.test.ts",
-    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "web/src/automations/layout.ts",
+    "web/src/automations/layout.test.ts",
+    "web/e2e/automation-builder.browser.e2e.spec.ts",
     "package.json",
     "CLAUDE.md"
   ],
@@ -10,8 +10,8 @@
   "fixA": "In layout.ts: (1) recenterJoins now computes the delta to the parents' midpoint and drags the join's WHOLE downstream subtree by the same delta via shiftSubtree (stopping at any further join; joins processed shallowest-first so outer re-centering settles before inner). (2) Added alignSingleOutChildren (shallow->deep) that forces every single-out node's non-join child onto the parent's column, guaranteeing a pure straight vertical (fromPoint.x === toPoint.x, zero H run) on every single-child edge including the post-merge trunk and final ->Exit. Join stays centered under its two arms AND its downstream chain now sits straight below it.",
   "fixB": "Added computeJoinDrops + JOIN_EXTRA_DROP (48px) in layout.ts: an additive per-depth y-offset pushes every row at/below a join's depth down, so the closure->next-node run is rowHeight-cardHeight+48 (comfortably larger than the normal trunk gap and >= MIN_SEGMENT) while the rest of the trunk keeps its normal gap and rows stay aligned across the canvas.",
   "testsPass": true,
-  "e2eSummary": "All campaign e2e green, run SOLO one at a time (ports freed between runs): campaign-builder 18/18 (incl. new 'post-merge trunk is STRAIGHT below the join' test); campaign-canvas-pan-zoom + list-no-overflow + node-editors + list-detail 21/21; lifecycle + versioning + publish-gate + journey-smoke + broadcast-and-campaign 19/19. Web unit suite 190 passed / 4 skipped; campaign units 134/134 (layout 30, orthogonal-path 15).",
+  "e2eSummary": "All automation e2e green, run SOLO one at a time (ports freed between runs): automation-builder 18/18 (incl. new 'post-merge trunk is STRAIGHT below the join' test); automation-canvas-pan-zoom + list-no-overflow + node-editors + list-detail 21/21; lifecycle + versioning + publish-gate + journey-smoke + broadcast-and-automation 19/19. Web unit suite 190 passed / 4 skipped; automation units 134/134 (layout 30, orthogonal-path 15).",
   "typecheckOk": true,
   "lintOk": true,
-  "notes": "Version bumped 0.41.6 -> 0.41.7. Lint: only the 7 known pre-existing react-hooks/exhaustive-deps 'rule not found' errors in web, no new problems. New unit tests added to layout.test.ts (mergeThenTrunk fixture: single-out straight, post-merge trunk follows join x, gap-below-merge > normal). New e2e in campaign-builder works purely in path-d space (compares path endpoints, never screen boundingBoxes, to avoid pan/zoom transform). Not committed/pushed per instructions."
+  "notes": "Version bumped 0.41.6 -> 0.41.7. Lint: only the 7 known pre-existing react-hooks/exhaustive-deps 'rule not found' errors in web, no new problems. New unit tests added to layout.test.ts (mergeThenTrunk fixture: single-out straight, post-merge trunk follows join x, gap-below-merge > normal). New e2e in automation-builder works purely in path-d space (compares path endpoints, never screen boundingBoxes, to avoid pan/zoom transform). Not committed/pushed per instructions."
 }

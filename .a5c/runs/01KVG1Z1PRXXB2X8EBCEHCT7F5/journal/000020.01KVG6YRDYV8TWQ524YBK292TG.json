@@ -3,7 +3,7 @@
   "recordedAt": "2026-06-19T15:10:56.446Z",
   "data": {
     "effectId": "01KVG6YRDBQ7H0MX53NBY4Q364",
-    "invocationKey": "cdp/campaign-builder:S000010:implement-phase",
+    "invocationKey": "cdp/automation-builder:S000010:implement-phase",
     "invocationHash": "b2b7d4931a71ec2d23b1c9a0c67360d00a7cd2264444b6c6f71da2fc63b616c8",
     "stepId": "S000010",
     "taskId": "implement-phase",

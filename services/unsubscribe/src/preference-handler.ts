@@ -365,7 +365,7 @@ export function makePreferenceCenterHandler(deps: PreferenceCenterDeps) {
         }
         await deps.runInWorkspaceTx(
           workspaceId,
-          simpleUnsubscribeStatements(workspaceId, email, parsed.broadcastId, parsed.campaignId, 'preference-center'),
+          simpleUnsubscribeStatements(workspaceId, email, parsed.broadcastId, parsed.automationId, 'preference-center'),
         );
         return { statusCode: 200, headers: HTML_HEADERS, body: donePage(email, logoHtml, lang) };
       }

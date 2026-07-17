@@ -1,5 +1,5 @@
 // DST-correct zoned↔UTC helpers + an IANA validator (§8/§10/§9B). EXTRACTED from
-// web/src/screens/BroadcastComposer.tsx so the broadcast scheduler AND campaign
+// web/src/screens/BroadcastComposer.tsx so the broadcast scheduler AND automation
 // time math share ONE implementation. These tests LOCK the exact ISO outputs so the
 // extraction is behavior-preserving.
 import { describe, it, expect } from 'vitest';

@@ -2,18 +2,18 @@
   "schemaVersion": "2026.01.results-v1",
   "effectId": "01KVG6NE7Q0MXATE36JSZP1T7B",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000008:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000008:commit-phase",
   "status": "ok",
   "result": {
     "commitHash": "1906acc9358ac8c45d73a14c7eb91fc59c7440fe",
     "committed": true,
-    "message": "feat(campaigns): phase 2 — runner executes hour-of-day window + webhook (tz-aware)"
+    "message": "feat(automations): phase 2 — runner executes hour-of-day window + webhook (tz-aware)"
   },
   "startedAt": "2026-06-19T15:06:45.128Z",
   "finishedAt": "2026-06-19T15:06:45.128Z",
   "value": {
     "commitHash": "1906acc9358ac8c45d73a14c7eb91fc59c7440fe",
     "committed": true,
-    "message": "feat(campaigns): phase 2 — runner executes hour-of-day window + webhook (tz-aware)"
+    "message": "feat(automations): phase 2 — runner executes hour-of-day window + webhook (tz-aware)"
   }
 }

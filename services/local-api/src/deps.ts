@@ -1,6 +1,6 @@
 // Injectable dependency boundary for the local API (§12, §16A). SES/SQS/DNS are
 // MOCKED here for local dev + integration/e2e; Postgres is REAL. The onboarding,
-// broadcast, and campaign cores all take injected SES/DNS/SQS surfaces, so we
+// broadcast, and automation cores all take injected SES/DNS/SQS surfaces, so we
 // build local/fake implementations once and wire them into the handlers.
 //
 // This keeps the CRITICAL invariant testable: real role + workspace scope (PG)

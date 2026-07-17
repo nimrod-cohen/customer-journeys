@@ -33,7 +33,7 @@
           "scope": [
             "Make wait / wait-until / hour_of_day_window tz-aware using the WORKSPACE timezone: compute the next due instant DST-correctly (reuse/extract the zoned↔UTC helper from the broadcast scheduler into a shared spot). hour_of_day_window: if now (in ws tz) is inside the allowed window/day → advance immediately; else PARK with next_run_at = the next window opening (ws tz → UTC).",
             "Execute the webhook action in the runner tick: call the injected HTTP client to the configured url/method/headers/body (merge-rendered) with the timeout; on a non-2xx or error, retry up to maxRetries (bounded), then either continue (record failure) or park-as-failed per a documented policy; record the outcome (status, attempt count) on the enrollment state / an activity_log row. ENFORCE the domain allowlist + SSRF guard BEFORE calling. The HTTP client is injected (mocked in tests) — never hit a real host.",
-            "Preserve the single-winner concurrency guarantee (FOR UPDATE / CAS), the per-(campaign,profile,node) outbox dedupe for sends, and MAX_STEPS_PER_TICK. The webhook call must not break the one-tx tick model (decide + document: call inside vs after the tx; keep idempotency on retry)."
+            "Preserve the single-winner concurrency guarantee (FOR UPDATE / CAS), the per-(automation,profile,node) outbox dedupe for sends, and MAX_STEPS_PER_TICK. The webhook call must not break the one-tx tick model (decide + document: call inside vs after the tx; keep idempotency on retry)."
           ],
           "title": "Runner: execute hour-of-day window + webhook (tz-aware)"
         },
@@ -63,7 +63,7 @@
   "schemaVersion": "2026.01.tasks-v1",
   "effectId": "01KVG6NE7Q0MXATE36JSZP1T7B",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000008:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000008:commit-phase",
   "stepId": "S000008",
   "inputs": {
     "converged": true,
@@ -79,7 +79,7 @@
       "scope": [
         "Make wait / wait-until / hour_of_day_window tz-aware using the WORKSPACE timezone: compute the next due instant DST-correctly (reuse/extract the zoned↔UTC helper from the broadcast scheduler into a shared spot). hour_of_day_window: if now (in ws tz) is inside the allowed window/day → advance immediately; else PARK with next_run_at = the next window opening (ws tz → UTC).",
         "Execute the webhook action in the runner tick: call the injected HTTP client to the configured url/method/headers/body (merge-rendered) with the timeout; on a non-2xx or error, retry up to maxRetries (bounded), then either continue (record failure) or park-as-failed per a documented policy; record the outcome (status, attempt count) on the enrollment state / an activity_log row. ENFORCE the domain allowlist + SSRF guard BEFORE calling. The HTTP client is injected (mocked in tests) — never hit a real host.",
-        "Preserve the single-winner concurrency guarantee (FOR UPDATE / CAS), the per-(campaign,profile,node) outbox dedupe for sends, and MAX_STEPS_PER_TICK. The webhook call must not break the one-tx tick model (decide + document: call inside vs after the tx; keep idempotency on retry)."
+        "Preserve the single-winner concurrency guarantee (FOR UPDATE / CAS), the per-(automation,profile,node) outbox dedupe for sends, and MAX_STEPS_PER_TICK. The webhook call must not break the one-tx tick model (decide + document: call inside vs after the tx; keep idempotency on retry)."
       ],
       "title": "Runner: execute hour-of-day window + webhook (tz-aware)"
     },

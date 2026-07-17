@@ -6,7 +6,7 @@
     {"criterion":"AC1 sendBroadcast guard","met":true,"evidence":"handlers sendBroadcast scopedQuery SELECT 1 FROM broadcasts WHERE id=$1 with ctx.workspaceId before runBroadcast, 404 if not owned; id from params, workspace_id from token never body."},
     {"criterion":"AC2 cross-workspace test + positive control","met":true,"evidence":"cross-workspace-action.integration: marketer+owner WS-A token -> WS-B broadcast id 404, B status draft, no B outbox; positive control WS-A own -> 200 sent, outbox A=1 B=0. Real PG, 6/6."},
     {"criterion":"AC3 segment-member ownership","met":true,"evidence":"add/remove/import-csv call ownsResource(ctx.workspaceId,'segments',id) -> 404 before addManualMembers; test proves WS-B id -> 404 zero rows."},
-    {"criterion":"AC4 sweep all path-id handlers","met":true,"evidence":"PUT /segments,/campaigns scopedQuery UPDATE (cross-tenant updated=0); GET /profiles/:id scopedQuery 404; broadcasts send guard; admin/:id gated view_all_workspaces + audited. scopedQuery mandatorily prepends workspace_id=$1. No remaining cross-tenant id vector."},
+    {"criterion":"AC4 sweep all path-id handlers","met":true,"evidence":"PUT /segments,/automations scopedQuery UPDATE (cross-tenant updated=0); GET /profiles/:id scopedQuery 404; broadcasts send guard; admin/:id gated view_all_workspaces + audited. scopedQuery mandatorily prepends workspace_id=$1. No remaining cross-tenant id vector."},
     {"criterion":"AC5 switch e2e stronger","met":true,"evidence":"after switch to B: 'Beta Loyalty Club' visible AND 'Manual VIPs' count 0 in segment-list testid. Real DOM re-scoping, real Chromium."},
     {"criterion":"AC6 no body workspace_id / no scope creep","met":true,"evidence":"workspace_id only from ctx; no Phase-13 metering/IP-advisor logic."},
     {"criterion":"AC7 tests","met":true,"evidence":"local-api 24/24; web 29 pass/4 skip; Playwright 9/9 real Chromium; cold suite 39/39 0 cached; typecheck+lint 0."}
@@ -16,7 +16,7 @@
   "scopeCreep": [],
   "recommendations": [
     "Add cross-tenant integration cases for DELETE /segments/:id/members and POST import-csv (share the same guard, untested for the vector).",
-    "createBroadcast/createCampaign accept template_id/audience_ref/trigger_segment_id from body without verifying ownership; not exploitable (dispatcher loads templates scoped; audience resolved scoped) but validate at creation for defense-in-depth.",
+    "createBroadcast/createAutomation accept template_id/audience_ref/trigger_segment_id from body without verifying ownership; not exploitable (dispatcher loads templates scoped; audience resolved scoped) but validate at creation for defense-in-depth.",
     "Consider composite FK (workspace_id,id) on broadcasts.template_id/trigger_segment_id to make cross-workspace refs structurally impossible."
   ],
   "criticalIssues": []

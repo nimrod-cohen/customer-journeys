@@ -33,5 +33,5 @@
   "e2ePass": true,
   "typecheckOk": true,
   "lintOk": true,
-  "notes": "ALL GREEN. Integration: dispatcher gating 12 + pipeline 6, topics CRUD 6, preference center 7, preference core 10. Full vitest: dispatcher 106, unsubscribe 32, channels 13, email 33, local-api 269, web-unit 262 — all pass. Typecheck 45/45. Lint: only the 7 KNOWN pre-existing react-hooks errors, NO new. E2E SOLO full suite: 133 passed (+ 1 pre-existing flaky company-ses-config that passes on retry, unrelated). Version bumped to 0.52.0. CLAUDE.md updated. NOTHING committed. campaigns.topic_id column added + dispatcher gates it; campaign-builder topic selector is the noted follow-up."
+  "notes": "ALL GREEN. Integration: dispatcher gating 12 + pipeline 6, topics CRUD 6, preference center 7, preference core 10. Full vitest: dispatcher 106, unsubscribe 32, channels 13, email 33, local-api 269, web-unit 262 — all pass. Typecheck 45/45. Lint: only the 7 KNOWN pre-existing react-hooks errors, NO new. E2E SOLO full suite: 133 passed (+ 1 pre-existing flaky company-ses-config that passes on retry, unrelated). Version bumped to 0.52.0. CLAUDE.md updated. NOTHING committed. automations.topic_id column added + dispatcher gates it; automation-builder topic selector is the noted follow-up."
 }

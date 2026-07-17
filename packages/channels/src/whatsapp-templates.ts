@@ -1,6 +1,6 @@
 // WhatsApp message-template MANAGEMENT over the Meta Graph API (§10). Templates are
 // created/approved at the WhatsApp Business ACCOUNT (WABA) level, then referenced by a
-// broadcast/campaign send. This module is a thin, INJECTABLE proxy to the Graph API:
+// broadcast/automation send. This module is a thin, INJECTABLE proxy to the Graph API:
 //   list   → GET    /<version>/<WABA_ID>/message_templates
 //   create → POST   /<version>/<WABA_ID>/message_templates   (submits for Meta approval)
 //   delete → DELETE /<version>/<WABA_ID>/message_templates?name=<name>

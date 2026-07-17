@@ -234,7 +234,10 @@ describeMaybe('email/dispatch pipeline (onboard → gate → dispatch → feedba
         // SES called exactly once with WS_A's Configuration Set + rendered body.
         expect(ses.sends).toHaveLength(1);
         expect(ses.sends[0].configurationSetName).toBe(configSetNameFor(WS_A));
-        expect(ses.sends[0].html).toBe('<html>Hi Ada</html>');
+        // Body is delivered as-is; the dispatcher also appends a compliance unsubscribe
+        // footer (no {{unsubscribe}} token in this template), so assert containment.
+        expect(ses.sends[0].html).toContain('<html>Hi Ada</html>');
+        expect(ses.sends[0].html).toMatch(/unsubscribe/i);
         expect(ses.sends[0].to).toBe('recipient@e2e8.example');
         const ml = await pool.query('SELECT count(*)::int n FROM messages_log WHERE workspace_id = $1 AND profile_id = $2', [WS_A, profileId]);
         expect(ml.rows[0].n).toBe(1);

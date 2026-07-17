@@ -88,11 +88,11 @@ export const OPERATOR_GROUPS: ReadonlyArray<{ group: OperatorGroup; label: strin
  * A rule row's kind:
  *   - 'field'         → a profile attribute / scalar field / counter condition
  *   - 'event'         → "did event X" (count + time window + payload attrs)
- *   - 'segment'       → IS / IS NOT a member of a segment (CAMPAIGN IF only)
+ *   - 'segment'       → IS / IS NOT a member of a segment (AUTOMATION IF only)
  *   - 'trigger_event' → the ENROLLING event's data — a payload-only filter, NO
- *                       occurrence/time test (CAMPAIGN IF, event-triggered only)
+ *                       occurrence/time test (AUTOMATION IF, event-triggered only)
  *   - 'journey'       → a per-enrollment journey VARIABLE (set by an Update-journey
- *                       step), matched in-memory by the runner (CAMPAIGN IF only)
+ *                       step), matched in-memory by the runner (AUTOMATION IF only)
  */
 export type RuleKind = 'field' | 'event' | 'segment' | 'trigger_event' | 'journey';
 
@@ -185,7 +185,7 @@ export interface TriggerEventNode {
   filter?: AstNode;
 }
 
-/** An AST journey-attribute leaf (matches @cdp/segments JourneyNode). Campaign IF
+/** An AST journey-attribute leaf (matches @cdp/segments JourneyNode). Automation IF
  *  only — evaluated in-memory against the enrollment's state.journey by the runner. */
 export interface JourneyNode {
   journeyKey: string;
@@ -219,12 +219,12 @@ export function emptyEventCondition(): EventCondition {
   return { field: '', operator: '=', value: '' };
 }
 
-/** A blank segment-membership rule (CAMPAIGN IF). */
+/** A blank segment-membership rule (AUTOMATION IF). */
 export function emptySegmentRow(): RuleRow {
   return { kind: 'segment', field: '', operator: '=', value: '', segmentId: '', segmentNegate: false, conditions: [] };
 }
 
-/** A blank trigger-event rule (CAMPAIGN IF, payload-only filter). */
+/** A blank trigger-event rule (AUTOMATION IF, payload-only filter). */
 export function emptyJourneyRow(): RuleRow {
   return { kind: 'journey', field: '', operator: '=', value: '', eventOp: 'occurred', conditions: [] };
 }

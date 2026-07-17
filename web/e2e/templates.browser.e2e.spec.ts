@@ -18,7 +18,7 @@ test('create a template in the designer, then re-open it to edit', async ({ page
 
   await page.getByTestId('template-name').fill('Newsletter');
   // A library template is just a DESIGN — it has NO From/To/Subject envelope.
-  // (The envelope appears only on a broadcast/campaign's own email copy.)
+  // (The envelope appears only on a broadcast/automation's own email copy.)
   await expect(page.getByTestId('email-subject')).toHaveCount(0);
   await expect(page.getByTestId('email-to')).toHaveCount(0);
   await expect(page.getByTestId('email-sender')).toHaveCount(0);

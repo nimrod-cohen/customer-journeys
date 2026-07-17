@@ -1,6 +1,6 @@
 # Serverless Marketing CDP — Build Specification (v8)
 
-**Purpose:** a complete, implementation-ready plan for an engineer or Claude Code to build the system. v8 adds the **4-role model** (§3A) and scopes the **core features** — segments (dynamic + manual), broadcasts (§9A), and campaigns as a multi-step workflow engine (§9B). All major decisions are locked (§0).
+**Purpose:** a complete, implementation-ready plan for an engineer or Claude Code to build the system. v8 adds the **4-role model** (§3A) and scopes the **core features** — segments (dynamic + manual), broadcasts (§9A), and automations as a multi-step workflow engine (§9B). All major decisions are locked (§0).
 
 ---
 
@@ -33,7 +33,7 @@ A self-hosted, **multi-tenant** marketing Customer Data Platform (CDP) that othe
 4. Lets each workspace's marketers define **complex segments**.
 5. Evaluates segment membership in **near-real-time** and fires **triggers** (e.g. send email) on entry/exit.
 6. Sends email via **Amazon SES** with full **bounce/complaint/suppression** handling, isolated and policed per workspace.
-7. Provides an **admin web app** (React/Preact) scoped to the logged-in user's workspace, with a **WYSIWYG email editor**, segment builder, campaigns, dashboards.
+7. Provides an **admin web app** (React/Preact) scoped to the logged-in user's workspace, with a **WYSIWYG email editor**, segment builder, automations, dashboards.
 8. **Meters per-workspace usage** so each company's cost share can be computed.
 
 ### Design goals (priority order)
@@ -54,9 +54,9 @@ Three user-facing capabilities, all workspace-scoped. (Kept intentionally high-l
   - **Dynamic** — rule-based on **events they did or attributes they have** (the §8 rule-AST engine; realtime + batch). Membership auto-updates.
   - **Manual** — a static group the user explicitly curates (hand-pick / CSV import). Membership changes only when the user edits it.
 - **Broadcasts** — a **single email sent once** to a segment or manual group (a one-off blast). Resolves the audience at send time and runs each recipient through suppression / frequency-cap / quiet-hours before sending (§9A).
-- **Campaigns** — a **multi-step workflow / journey**: triggers, conditions, branches, waits, and actions (e.g. enroll on segment entry → wait 2 days → if opened, send B, else send C). A durable per-profile state machine (§9B).
+- **Automations** — a **multi-step workflow / journey**: triggers, conditions, branches, waits, and actions (e.g. enroll on segment entry → wait 2 days → if opened, send B, else send C). A durable per-profile state machine (§9B).
 
-Segments feed both broadcasts and campaigns. Broadcasts and campaigns both emit sends through the same Dispatcher → SES pipeline (§9).
+Segments feed both broadcasts and automations. Broadcasts and automations both emit sends through the same Dispatcher → SES pipeline (§9).
 
 ---
 
@@ -91,7 +91,7 @@ Segments feed both broadcasts and campaigns. Broadcasts and campaigns both emit 
 - `workspaces` — the company/tenant (plus its sending-identity config and status).
 - `workspace_users` — membership linking a Supabase Auth user to a workspace, with a **workspace role** (`owner` / `marketer` / `accounting`). A user may hold different roles in different workspaces.
 - `platform_admins` — separate table of **`system-admin`** users (the platform operator). Cross-tenant; *not* workspace-scoped. See §3A.
-- Every domain table (profiles, events, segments, campaigns, templates, outbox, messages_log, suppressions, email_events, …) has `workspace_id NOT NULL`.
+- Every domain table (profiles, events, segments, automations, templates, outbox, messages_log, suppressions, email_events, …) has `workspace_id NOT NULL`.
 
 ### Uniqueness becomes per-workspace
 - `profiles.external_id` is unique **per workspace**, not globally (`UNIQUE(workspace_id, external_id)`). Two companies can have a customer with the same external id.
@@ -112,13 +112,13 @@ Four roles. `system-admin` is **platform-level (cross-tenant)**; the other three
 | View **all** companies & workspaces (cross-tenant) | ✓ | – | – | – |
 | Manage workspace users & roles | ✓ | ✓ | – | – |
 | Manage sending domain / IP upgrade | ✓ | ✓ | – | – |
-| Segments, broadcasts, campaigns, templates, profiles | ✓ | ✓ | ✓ | – |
+| Segments, broadcasts, automations, templates, profiles | ✓ | ✓ | ✓ | – |
 | Billing / spend / usage view | ✓ | ✓ | – | ✓ |
 
 - **system-admin** — the platform operator (you). Sees and supports every company's workspaces. The **only** role that crosses tenant boundaries.
 - **owner** — full control *within* their workspace(s): users/roles, domain & IP, plus everything marketer and accounting can do.
-- **marketer** — builds and runs segments, broadcasts, campaigns, templates; views profiles. No user/domain/billing admin.
-- **accounting** — read access to billing/spend/usage (the §20 cost data). No campaign/segment editing.
+- **marketer** — builds and runs segments, broadcasts, automations, templates; views profiles. No user/domain/billing admin.
+- **accounting** — read access to billing/spend/usage (the §20 cost data). No automation/segment editing.
 
 ### system-admin: handling the one cross-tenant role (security-sensitive)
 - Stored in `platform_admins` (user_id). The Lambda authorizer detects membership and injects an `is_platform_admin` claim.
@@ -282,8 +282,8 @@ CREATE TABLE segment_change_log (
   occurred_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- Campaign = a multi-step workflow (graph of nodes). See §9B.
-CREATE TABLE campaigns (
+-- Automation = a multi-step workflow (graph of nodes). See §9B.
+CREATE TABLE automations (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id       uuid NOT NULL REFERENCES workspaces(id),
   name               text NOT NULL,
@@ -296,10 +296,10 @@ CREATE TABLE campaigns (
 );
 
 -- Per-profile journey state (the "waits" + position live here). See §9B.
-CREATE TABLE campaign_enrollments (
+CREATE TABLE automation_enrollments (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id uuid NOT NULL REFERENCES workspaces(id),
-  campaign_id  uuid NOT NULL REFERENCES campaigns(id),
+  automation_id  uuid NOT NULL REFERENCES automations(id),
   profile_id   uuid NOT NULL REFERENCES profiles(id),
   current_node text NOT NULL,
   status       text NOT NULL DEFAULT 'active',        -- active|completed|exited|failed
@@ -307,9 +307,9 @@ CREATE TABLE campaign_enrollments (
   state        jsonb NOT NULL DEFAULT '{}',
   enrolled_at  timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (campaign_id, profile_id)                    -- one active enrollment per profile (re-enrollment policy TBD per phase)
+  UNIQUE (automation_id, profile_id)                    -- one active enrollment per profile (re-enrollment policy TBD per phase)
 );
-CREATE INDEX ON campaign_enrollments (status, next_run_at);  -- the runner's sweep query
+CREATE INDEX ON automation_enrollments (status, next_run_at);  -- the runner's sweep query
 
 -- Broadcast = a single email sent once to a segment or manual group. See §9A.
 CREATE TABLE broadcasts (
@@ -339,7 +339,7 @@ CREATE TABLE outbox (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id uuid NOT NULL REFERENCES workspaces(id),
   profile_id   uuid NOT NULL REFERENCES profiles(id),
-  campaign_id  uuid REFERENCES campaigns(id),
+  automation_id  uuid REFERENCES automations(id),
   template_id  uuid REFERENCES email_templates(id),
   dedupe_key   text UNIQUE,
   status       text NOT NULL DEFAULT 'pending',
@@ -354,7 +354,7 @@ CREATE TABLE messages_log (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id   uuid NOT NULL REFERENCES workspaces(id),
   profile_id     uuid NOT NULL REFERENCES profiles(id),
-  campaign_id    uuid REFERENCES campaigns(id),
+  automation_id    uuid REFERENCES automations(id),
   ses_message_id text,
   status         text NOT NULL DEFAULT 'sent',
   sent_at        timestamptz NOT NULL DEFAULT now()
@@ -436,7 +436,7 @@ CREATE TABLE usage_counters (
 2. Upsert profile by `(workspace_id, external_id)` (creates a stub if a `progress` arrives first).
 3. Update `profile_features` (scoped).
 4. Re-evaluate the profile's **workspace's** active segments; diff vs memberships.
-5. On change: update memberships, append `segment_change_log`. Segment entry then drives **campaign enrollment** (§9B) and is available to **broadcasts** (§9A); a campaign `action` produces the actual `outbox` send.
+5. On change: update memberships, append `segment_change_log`. Segment entry then drives **automation enrollment** (§9B) and is available to **broadcasts** (§9A); a automation `action` produces the actual `outbox` send.
 6. Ack on success; repeated failures → **DLQ**.
 
 > Ordering is per profile (`MessageGroupId = profile_id`); different profiles/workspaces process in parallel. `workspace_id` is a scoping attribute, not the ordering key.
@@ -459,13 +459,13 @@ PostgreSQL queries; **every query filters by `workspace_id`**, and the SQL compi
 
 - **Dynamic realtime** (`kind=dynamic_realtime`): evaluated by the Processor on each profile change.
 - **Dynamic batch** (`kind=dynamic_batch`): an EventBridge-scheduled Lambda evaluates time-based segments per workspace periodically; diff + emit enter/exit.
-- **Manual** (`kind=manual`): no evaluation — membership rows in `segment_memberships` (`source='manual'`) are added/removed directly by the user (hand-pick or CSV import). Used as audiences for broadcasts/campaigns just like dynamic segments.
+- **Manual** (`kind=manual`): no evaluation — membership rows in `segment_memberships` (`source='manual'`) are added/removed directly by the user (hand-pick or CSV import). Used as audiences for broadcasts/automations just like dynamic segments.
 
 ---
 
-## 9. Dispatch core (shared by broadcasts & campaigns, per workspace)
+## 9. Dispatch core (shared by broadcasts & automations, per workspace)
 
-Both broadcasts (§9A) and campaign actions (§9B) emit sends the same way: insert a `pending` `outbox` row (with `workspace_id`, `dedupe_key`) and enqueue its id onto a **second SQS queue** that triggers the Dispatcher (event-driven, near-real-time).
+Both broadcasts (§9A) and automation actions (§9B) emit sends the same way: insert a `pending` `outbox` row (with `workspace_id`, `dedupe_key`) and enqueue its id onto a **second SQS queue** that triggers the Dispatcher (event-driven, near-real-time).
 
 - **Dispatcher Lambda** (SQS-triggered):
   1. Load profile + template (scoped to workspace); refuse if workspace not `active`/verified.
@@ -488,12 +488,12 @@ A single email to a segment or manual group.
 
 ---
 
-## 9B. Campaigns (multi-step workflow engine)
+## 9B. Automations (multi-step workflow engine)
 
-A campaign is a **durable per-profile state machine**: a graph of nodes — `trigger`, `wait`, `condition` (branch), `action` (e.g. send email, update attribute), `exit` — stored in `campaigns.definition`. (Exact node DSL defined in this phase.)
+A automation is a **durable per-profile state machine**: a graph of nodes — `trigger`, `wait`, `condition` (branch), `action` (e.g. send email, update attribute), `exit` — stored in `automations.definition`. (Exact node DSL defined in this phase.)
 
-- **Engine choice:** a **table-driven state machine** (recommended at this scale/cost) over `campaign_enrollments`, advanced by a scheduled **Campaign-runner Lambda**. *(AWS Step Functions is the alternative but is costlier for long, multi-day waits and high enrollment counts — table-driven is the standard for marketing journeys.)*
-- **Enrollment:** a trigger (segment entry via `segment_change_log`, an event, or manual) inserts a `campaign_enrollments` row at the start node.
+- **Engine choice:** a **table-driven state machine** (recommended at this scale/cost) over `automation_enrollments`, advanced by a scheduled **Automation-runner Lambda**. *(AWS Step Functions is the alternative but is costlier for long, multi-day waits and high enrollment counts — table-driven is the standard for marketing journeys.)*
+- **Enrollment:** a trigger (segment entry via `segment_change_log`, an event, or manual) inserts a `automation_enrollments` row at the start node.
 - **Advancing (the "waits"):** the runner sweeps `WHERE status='active' AND next_run_at <= now()` (EventBridge every ~minute) and processes the current node:
   - `wait` → set `next_run_at = now() + delay` (or until a date/condition), stay.
   - `condition`/branch → evaluate against profile/features/segment membership (reuse the §8 compiler), pick the next node, process immediately.
@@ -608,7 +608,7 @@ Vite SPA on **S3 + CloudFront**. **Role-aware** (§3A): the UI shows only what t
 - **Workspace settings** (owner) — members + roles, sending domain status + dedicated-IP recommendation/upgrade (§10).
 - **Segments** — builder for **dynamic** (rule AST) and **manual** (hand-pick + CSV import) segments, with live size preview (marketer+).
 - **Broadcasts** (marketer+) — pick audience (segment/manual) + template → schedule/send (§9A).
-- **Campaigns** (marketer+) — visual **workflow builder** (trigger / wait / condition / action / exit) (§9B).
+- **Automations** (marketer+) — visual **workflow builder** (trigger / wait / condition / action / exit) (§9B).
 - **Email editor** (GrapesJS+MJML), **dashboards** (deliverability, segment sizes, send volume), **suppression list**, **profile explorer**.
 - **Billing/usage view** (owner + accounting) — per-workspace cost (§20).
 - **System-admin console** (system-admin only) — cross-company list of workspaces, status, support views; all access written to `admin_audit_log`.
@@ -693,9 +693,9 @@ A *few* happy-path flows (SQS FIFO → Processor → outbox; SES feedback → su
 7. **Dispatch core** (§9) — outbox + **second SQS queue → SQS-triggered Dispatcher**, per-workspace suppression + cap + quiet hours, messages_log.
 8. **Feedback + compliance + reputation policing** — SNS → Feedback Lambda → per-workspace suppression + status; per-workspace reputation alarms + auto-suspend; Unsubscribe Lambda.
 9. **Broadcasts** (§9A) — audience resolution (segment/manual), batched enumeration → outbox, scheduling, status tracking.
-10. **Campaign workflow engine** (§9B) — `campaigns.definition` + `campaign_enrollments`, Campaign-runner sweep, node types (trigger/wait/condition/action/exit), enrollment via segment entry.
+10. **Automation workflow engine** (§9B) — `automations.definition` + `automation_enrollments`, Automation-runner sweep, node types (trigger/wait/condition/action/exit), enrollment via segment entry.
 11. **Image pipeline + WYSIWYG** — presigned upload (workspace-prefixed), sharp, CloudFront, GrapesJS+MJML editor.
-12. **Admin frontend** — role-aware, workspace-scoped UI: members/roles, segment builder (dynamic + manual), broadcast composer, campaign/workflow builder, dashboards; **system-admin cross-company console**.
+12. **Admin frontend** — role-aware, workspace-scoped UI: members/roles, segment builder (dynamic + manual), broadcast composer, automation/workflow builder, dashboards; **system-admin cross-company console**.
 13. **Usage metering + cost attribution + IP advisor** (§20, §10) — counters + rollup job + per-workspace cost view (accounting role); monthly **IP-advisor** recommendations; **`upgrade-ip`** migration flow.
 14. **Hardening** — DLQ runbook, WAF, isolation pen-test (incl. system-admin audit), load test, acceptance tests.
 
@@ -713,10 +713,10 @@ A *few* happy-path flows (SQS FIFO → Processor → outbox; SES feedback → su
 - **IP strategy:** workspaces send on the **shared pool by default**; the **IP-advisor recommends** a dedicated IP only when sustained-volume + cadence + reputation criteria are met; the **`upgrade-ip`** flow provisions a dedicated IP/pool, warms it gradually (split routing), and cuts over — with `ip_mode`/`warmup_status` tracked per workspace.
 - **Sending gated on verification:** a workspace whose domain isn't verified (`status != active`) cannot send; once DKIM verifies, sending is enabled from its own domain with aligned DKIM/SPF/DMARC.
 - **Multi-workspace switching:** a user in two workspaces sees only the active workspace's data; switching changes the `workspace_id` claim and re-scopes all reads/writes; no cross-bleed.
-- **Roles (§3A):** marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/campaigns; owner can do both within the workspace; **system-admin** can view across companies and every cross-tenant access is recorded in `admin_audit_log`.
+- **Roles (§3A):** marketer cannot manage users/domains/billing; accounting can read billing but cannot edit segments/automations; owner can do both within the workspace; **system-admin** can view across companies and every cross-tenant access is recorded in `admin_audit_log`.
 - **Segments:** dynamic segments auto-update on events/attributes; **manual** segments change only via user edit/CSV and are not touched by the evaluator; both are usable as audiences.
 - **Broadcasts:** a broadcast to a segment/manual group sends once to the resolved audience, each recipient passing suppression/cap/quiet-hours; retries don't double-send (dedupe per `(broadcast_id, profile_id)`).
-- **Campaigns:** an enrolled profile advances through trigger→wait→condition→action→exit; a `wait` defers until `next_run_at`; a branch routes correctly; the runner is idempotent (no double-advance on retry); sends pass through Dispatcher guards.
+- **Automations:** an enrolled profile advances through trigger→wait→condition→action→exit; a `wait` defers until `next_run_at`; a branch routes correctly; the runner is idempotent (no double-advance on retry); sends pass through Dispatcher guards.
 - **Frequency cap / quiet hours / compliance** (one-click unsubscribe) hold.
 - **Cost attribution:** per-workspace `emails_sent`/`events_ingested` reconcile with `messages_log`/`events`; the cost view = direct usage cost + an equal share of fixed costs, and per-workspace figures sum to the true total.
 
@@ -731,7 +731,7 @@ A *few* happy-path flows (SQS FIFO → Processor → outbox; SES feedback → su
   /processor           # FIFO consumer: profiles, features, segments, outbox (workspace-scoped)
   /dispatcher          # outbox → SES (per-workspace suppression/identity)
   /broadcast           # one-off send: resolve audience (segment/manual) → outbox (§9A)
-  /campaign-runner     # workflow engine: enroll + sweep enrollments + advance nodes (§9B)
+  /automation-runner     # workflow engine: enroll + sweep enrollments + advance nodes (§9B)
   /feedback            # SNS → per-workspace suppression/status + reputation
   /unsubscribe         # one-click unsubscribe (workspace-scoped)
   /image               # presigned upload (workspace-prefixed) + sharp
@@ -800,10 +800,10 @@ Baseline returns to **~$115–135/mo**; each *upgraded* workspace adds $25. Emai
 **Added (v5):** guided onboarding & domain-verification wizard (§10A) ✓ · TDD testing strategy (§16A), test-first build ✓.
 **Changed (v6→v7):** **shared IP by default with an opt-in dedicated-IP upgrade the system recommends** (volume + cadence + reputation criteria), replacing unconditional per-workspace IPs — best deliverability for small tenants, IP cost only where earned ✓.
 
-**Added (v8):** **4-role model** (system-admin cross-tenant + owner/marketer/accounting per workspace, §3A) ✓ · **core features** scoped — **segments** (dynamic + manual), **broadcasts** (§9A), **campaigns** as a multi-step **workflow engine** (§9B) ✓.
+**Added (v8):** **4-role model** (system-admin cross-tenant + owner/marketer/accounting per workspace, §3A) ✓ · **core features** scoped — **segments** (dynamic + manual), **broadcasts** (§9A), **automations** as a multi-step **workflow engine** (§9B) ✓.
 
 **Remaining (minor / to define in-phase):**
-1. **Campaign node DSL & re-enrollment policy** — exact workflow node types/options and whether a profile can re-enter a campaign — defined in the §9B phase.
+1. **Automation node DSL & re-enrollment policy** — exact workflow node types/options and whether a profile can re-enter a automation — defined in the §9B phase.
 2. **IP-recommendation thresholds** — tunable defaults (≥~100k/mo, cadence, reputation ceiling); confirm against observed deliverability.
 3. **Account-level isolation** — shared SES *account* couples workspaces regardless of IP; full isolation needs a separate AWS account per tenant (heavy). Per-workspace policing is the guard.
 4. **GrapesJS → Unlayer fallback** — only if core GrapesJS integration runs long.

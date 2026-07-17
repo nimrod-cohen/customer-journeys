@@ -2,46 +2,46 @@
   "schemaVersion": "2026.01.results-v1",
   "effectId": "01KVG6Q3APAJCBQEGZ9TCHE7AD",
   "taskId": "plan-phase",
-  "invocationKey": "cdp/campaign-builder:S000009:plan-phase",
+  "invocationKey": "cdp/automation-builder:S000009:plan-phase",
   "status": "ok",
   "result": {
     "e2eFlows": [],
     "implUnits": [
       "1. dsl.ts: extend TriggerNode for kind:'event' with `eventType: string` (required) + optional `filter?: AstNode` payload filter; manual stays {kind,next}; segment_entry unchanged. Extend validateNodeFields trigger case to require eventType for event triggers and to structurally check an optional filter. (No migration — event config lives in definition JSON.)",
       "2. core.ts: add parseEventEnrollmentTrigger (event analogue of parseEnrollmentTrigger) + evaluateEventPayloadFilter (pure filter eval). Reuse decideReenrollment + buildEnrollmentInsert unchanged. Add an EventRow type (workspace_id, profile_id, type, payload, event_id).",
-      "3. enroll.ts: add enrollFromEvent(deps, eventRow) — reads active campaigns in the event's workspace whose definition has an event trigger matching the type (load definition, validate, resolveStartNode, read eventType+filter from the trigger node), evaluate the optional filter against the payload, build intents (parseEventEnrollmentTrigger), and apply buildEnrollmentInsert statements in ONE workspace-scoped tx — mirrors enrollFromSegmentChange exactly (in-code workspace scoping, ON CONFLICT 'once').",
-      "4. enroll.ts: add enrollProfileManually(deps, {workspaceId, campaignId, profileId}) and enrollSegmentSnapshot(deps, {workspaceId, campaignId, segmentId}) — resolve startNode from the campaign's validated definition; the segment snapshot resolves current members (dynamic via @cdp/segments buildSegmentMatch/compileWhere; manual via segment_memberships) and inserts one enrollment per member; all workspace-scoped, ON CONFLICT 'once'.",
+      "3. enroll.ts: add enrollFromEvent(deps, eventRow) — reads active automations in the event's workspace whose definition has an event trigger matching the type (load definition, validate, resolveStartNode, read eventType+filter from the trigger node), evaluate the optional filter against the payload, build intents (parseEventEnrollmentTrigger), and apply buildEnrollmentInsert statements in ONE workspace-scoped tx — mirrors enrollFromSegmentChange exactly (in-code workspace scoping, ON CONFLICT 'once').",
+      "4. enroll.ts: add enrollProfileManually(deps, {workspaceId, automationId, profileId}) and enrollSegmentSnapshot(deps, {workspaceId, automationId, segmentId}) — resolve startNode from the automation's validated definition; the segment snapshot resolves current members (dynamic via @cdp/segments buildSegmentMatch/compileWhere; manual via segment_memberships) and inserts one enrollment per member; all workspace-scoped, ON CONFLICT 'once'.",
       "5. index.ts: export enrollFromEvent, enrollProfileManually, enrollSegmentSnapshot, parseEventEnrollmentTrigger, evaluateEventPayloadFilter, and the new EventRow/TriggerNode types.",
-      "6. local-api handlers.ts: add enrollIntoCampaign handler for POST /campaigns/:id/enroll — validate body (exactly one of profile_id|segment_id), resolve the campaign scoped to ctx.workspaceId (404 if absent), verify the profile/segment exists in ctx.workspaceId (404 cross-workspace), then call the campaign-runner enroll core via an injected Reader+runInWorkspaceTx bound to the request pool (reuse the recomputeFeaturesAndSegments dependency-wiring style). Return enrolled count.",
+      "6. local-api handlers.ts: add enrollIntoAutomation handler for POST /automations/:id/enroll — validate body (exactly one of profile_id|segment_id), resolve the automation scoped to ctx.workspaceId (404 if absent), verify the profile/segment exists in ctx.workspaceId (404 cross-workspace), then call the automation-runner enroll core via an injected Reader+runInWorkspaceTx bound to the request pool (reuse the recomputeFeaturesAndSegments dependency-wiring style). Return enrolled count.",
       "7. local-api handlers.ts: wire EVENT-trigger enrollment into the event landing path. In sendProfileEvent (and document the prod processor equivalent in services/processor/src/deps.ts.runSegmentReevalInTx neighbor), AFTER the event row is written + recomputeFeaturesAndSegments, call enrollFromEvent with the just-recorded event (type+payload+profile) on the SAME tx client. This is the local hook point that mirrors the processor; keep it idempotent and non-throwing.",
-      "8. local-api routes.ts: register 'POST /campaigns/:id/enroll' : 'manage_content'.",
-      "9. local-api handlers.ts handler map: add 'POST /campaigns/:id/enroll' : enrollIntoCampaign.",
-      "10. CLAUDE.md: document the re-enrollment policy (default 'once' across all three kinds; structural ON CONFLICT(campaign_id,profile_id) guard) + the event-trigger config location (definition trigger node: eventType + optional payload filter) + the new endpoint. Bump root package.json (minor — feature).",
-      "11. (no migration) — if a 'once'/'always' policy ever needs persistence it would be a campaigns column; THIS phase keeps the default 'once' in code (decideReenrollment) so NO migration. If the design review insists on persisting the policy, add a campaigns.reenrollment_policy column and apply to BOTH cdp AND cdp_e2e via a node pg script (psql unavailable) — flagged, not assumed."
+      "8. local-api routes.ts: register 'POST /automations/:id/enroll' : 'manage_content'.",
+      "9. local-api handlers.ts handler map: add 'POST /automations/:id/enroll' : enrollIntoAutomation.",
+      "10. CLAUDE.md: document the re-enrollment policy (default 'once' across all three kinds; structural ON CONFLICT(automation_id,profile_id) guard) + the event-trigger config location (definition trigger node: eventType + optional payload filter) + the new endpoint. Bump root package.json (minor — feature).",
+      "11. (no migration) — if a 'once'/'always' policy ever needs persistence it would be a automations column; THIS phase keeps the default 'once' in code (decideReenrollment) so NO migration. If the design review insists on persisting the policy, add a automations.reenrollment_policy column and apply to BOTH cdp AND cdp_e2e via a node pg script (psql unavailable) — flagged, not assumed."
     ],
     "mocks": [
-      "NONE for the DB tier — integration tests use REAL local Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp) via adminPool()/hasDatabaseUrl(), with describe.skipIf(!RUN) and unique per-file workspace/campaign/segment/profile UUID namespaces (parity with enrollment-from-segment-entry.integration.test.ts).",
-      "NO SES/SQS/Dispatcher in this phase — enrollment writes campaign_enrollments only; it does NOT enqueue sends, so no aws-sdk-client-mock / LocalStack needed here.",
+      "NONE for the DB tier — integration tests use REAL local Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp) via adminPool()/hasDatabaseUrl(), with describe.skipIf(!RUN) and unique per-file workspace/automation/segment/profile UUID namespaces (parity with enrollment-from-segment-entry.integration.test.ts).",
+      "NO SES/SQS/Dispatcher in this phase — enrollment writes automation_enrollments only; it does NOT enqueue sends, so no aws-sdk-client-mock / LocalStack needed here.",
       "Reader + runInWorkspaceTx are INJECTED (EnrollDeps), bound to the test's admin pool via runStatementsInWorkspaceTx — same dependency-injection seam the segment-entry test uses; no Postgres mock.",
       "The local-api endpoint test drives the handler through the real app/router with a manage_content ctx; no AWS mocks."
     ],
-    "notes": "WHERE EVENT-TRIGGER ENROLLMENT HOOKS IN: events land in the events table in two places that share semantics — (a) the production processor (services/processor: planProcessing → runPlanInWorkspaceTx, which after the event/feature upsert runs runSegmentReevalInTx on the open tx client), and (b) the local dev path POST /profiles/:id/events (sendProfileEvent → recomputeFeaturesAndSegments) which is the dev mirror (the local-api has no SQS/processor). The event-trigger enroll call (enrollFromEvent) should fire AT THE SAME POINT the segment re-eval fires — right after the event row + feature recompute, on the SAME workspace-scoped tx client (no nested BEGIN/COMMIT). For the dev tier that's inside sendProfileEvent; for prod it's the processor deps tx. IMPORTANT: enrollFromSegmentChange is currently EXPORTED but NOT yet wired into any live flow (only covered by tests) — so the segment-entry trigger is materialized but not auto-invoked at processor time today; this phase should NOT regress that (keep its tests green) and may optionally wire it alongside the event hook, but the criteria only require event + manual to be wired. RE-ENROLLMENT POLICY (recommended): default 'once' for ALL THREE kinds, enforced structurally by UNIQUE(campaign_id, profile_id) + INSERT ... ON CONFLICT DO NOTHING (buildEnrollmentInsert) and decided in code by decideReenrollment(hasExisting,'once'); 'always' (re-entry) stays a forward-compat enum value but is NOT enabled this phase. This is consistent because segment_entry, event, and manual ALL funnel through buildEnrollmentInsert. MIGRATION: NONE required — the event trigger's eventType + optional payload filter live in the campaign definition JSON (the TriggerNode), and the 'once' policy is a code default; campaign_enrollments already has UNIQUE(campaign_id, profile_id). If a future design review wants the policy persisted per-campaign, that single column (campaigns.reenrollment_policy default 'once') is the only migration and MUST be applied to BOTH cdp and cdp_e2e via a node pg script (psql unavailable) — flagged but out of scope. TENANT ISOLATION: every read filters WHERE workspace_id=$1 and every enrollment insert binds workspace_id at $1 (service role bypasses RLS); the endpoint takes workspace_id from the authorizer ctx ONLY and refuses cross-workspace campaign/profile/segment ids with 404 (inv.2). The manual-enroll SEGMENT SNAPSHOT is point-in-time: resolve current members at call time (dynamic via buildSegmentMatch, manual via segment_memberships) and insert one enrollment each — later segment changes do not retroactively enroll. No sends are emitted in this phase (enrollment only), so no SES/SQS mocking needed. Follow process hygiene: bump root package.json (minor), update CLAUDE.md, restart dev API + rebuild changed packages after edits.",
+    "notes": "WHERE EVENT-TRIGGER ENROLLMENT HOOKS IN: events land in the events table in two places that share semantics — (a) the production processor (services/processor: planProcessing → runPlanInWorkspaceTx, which after the event/feature upsert runs runSegmentReevalInTx on the open tx client), and (b) the local dev path POST /profiles/:id/events (sendProfileEvent → recomputeFeaturesAndSegments) which is the dev mirror (the local-api has no SQS/processor). The event-trigger enroll call (enrollFromEvent) should fire AT THE SAME POINT the segment re-eval fires — right after the event row + feature recompute, on the SAME workspace-scoped tx client (no nested BEGIN/COMMIT). For the dev tier that's inside sendProfileEvent; for prod it's the processor deps tx. IMPORTANT: enrollFromSegmentChange is currently EXPORTED but NOT yet wired into any live flow (only covered by tests) — so the segment-entry trigger is materialized but not auto-invoked at processor time today; this phase should NOT regress that (keep its tests green) and may optionally wire it alongside the event hook, but the criteria only require event + manual to be wired. RE-ENROLLMENT POLICY (recommended): default 'once' for ALL THREE kinds, enforced structurally by UNIQUE(automation_id, profile_id) + INSERT ... ON CONFLICT DO NOTHING (buildEnrollmentInsert) and decided in code by decideReenrollment(hasExisting,'once'); 'always' (re-entry) stays a forward-compat enum value but is NOT enabled this phase. This is consistent because segment_entry, event, and manual ALL funnel through buildEnrollmentInsert. MIGRATION: NONE required — the event trigger's eventType + optional payload filter live in the automation definition JSON (the TriggerNode), and the 'once' policy is a code default; automation_enrollments already has UNIQUE(automation_id, profile_id). If a future design review wants the policy persisted per-automation, that single column (automations.reenrollment_policy default 'once') is the only migration and MUST be applied to BOTH cdp and cdp_e2e via a node pg script (psql unavailable) — flagged but out of scope. TENANT ISOLATION: every read filters WHERE workspace_id=$1 and every enrollment insert binds workspace_id at $1 (service role bypasses RLS); the endpoint takes workspace_id from the authorizer ctx ONLY and refuses cross-workspace automation/profile/segment ids with 404 (inv.2). The manual-enroll SEGMENT SNAPSHOT is point-in-time: resolve current members at call time (dynamic via buildSegmentMatch, manual via segment_memberships) and insert one enrollment each — later segment changes do not retroactively enroll. No sends are emitted in this phase (enrollment only), so no SES/SQS mocking needed. Follow process hygiene: bump root package.json (minor), update CLAUDE.md, restart dev API + rebuild changed packages after edits.",
     "pureFunctions": [
-      "parseEventEnrollmentTrigger(eventRow, campaignTriggerRows) → EnrollmentIntent[] — event-kind analogue of parseEnrollmentTrigger; matches eventType, filters by workspace_id, drops intents whose payload-filter result is false (added to services/campaign-runner/src/core.ts).",
+      "parseEventEnrollmentTrigger(eventRow, automationTriggerRows) → EnrollmentIntent[] — event-kind analogue of parseEnrollmentTrigger; matches eventType, filters by workspace_id, drops intents whose payload-filter result is false (added to services/automation-runner/src/core.ts).",
       "evaluateEventPayloadFilter(filter | undefined, payload) → boolean — pure, in-memory, closed-grammar evaluation of the optional event trigger filter against the event payload (payload.* namespace; reuses @cdp/segments operator/field whitelist conventions; no DB, never interpolated). In core.ts or a small filter module.",
       "decideReenrollment(hasExisting, policy='once') → boolean — ALREADY EXISTS in core.ts; reused unchanged as the single re-enrollment decision for all three kinds.",
-      "buildEnrollmentInsert(ws, campaign, profile, startNode) → SqlStatement — ALREADY EXISTS; the structural ON CONFLICT 'once' guard shared by segment_entry / event / manual.",
-      "validateCampaignDefinition (extended) — add event-trigger field validation (required eventType string; optional well-formed payload-filter AstNode) inside the existing trigger case of validateNodeFields in dsl.ts; no new public function.",
+      "buildEnrollmentInsert(ws, automation, profile, startNode) → SqlStatement — ALREADY EXISTS; the structural ON CONFLICT 'once' guard shared by segment_entry / event / manual.",
+      "validateAutomationDefinition (extended) — add event-trigger field validation (required eventType string; optional well-formed payload-filter AstNode) inside the existing trigger case of validateNodeFields in dsl.ts; no new public function.",
       "resolveStartNode / parseEnrollmentTrigger — ALREADY EXIST; reused by the event + manual enroll orchestrators to compute startNode and shape intents."
     ],
     "reuse": [
-      "enrollFromSegmentChange (enroll.ts) — the EXACT pattern to extend for enrollFromEvent: read active campaigns scoped to the workspace, validate+resolveStartNode, build intents, apply in one workspace-scoped tx. Same EnrollDeps { reader, runInWorkspaceTx } seam.",
-      "parseEnrollmentTrigger + EnrollmentIntent + CampaignTriggerRow (core.ts) — copy the shape for parseEventEnrollmentTrigger.",
+      "enrollFromSegmentChange (enroll.ts) — the EXACT pattern to extend for enrollFromEvent: read active automations scoped to the workspace, validate+resolveStartNode, build intents, apply in one workspace-scoped tx. Same EnrollDeps { reader, runInWorkspaceTx } seam.",
+      "parseEnrollmentTrigger + EnrollmentIntent + AutomationTriggerRow (core.ts) — copy the shape for parseEventEnrollmentTrigger.",
       "decideReenrollment + buildEnrollmentInsert (core.ts) — the single re-enrollment decision + structural ON CONFLICT 'once' insert, shared verbatim across all three trigger kinds.",
-      "validateCampaignDefinition / validateNodeFields / resolveStartNode (dsl.ts) — extend the trigger case; reuse the structural gate so the event fields ride the existing cycle/orphan/edge checks.",
+      "validateAutomationDefinition / validateNodeFields / resolveStartNode (dsl.ts) — extend the trigger case; reuse the structural gate so the event fields ride the existing cycle/orphan/edge checks.",
       "@cdp/segments buildSegmentMatch + compileWhere (statements.ts/compile.ts) — resolve the manual-enroll SEGMENT SNAPSHOT members (dynamic) parameterized with workspace_id at $1; segment_memberships query for manual segments (parity with listProfiles' segment branch in handlers.ts).",
       "@cdp/segments AstNode + operator/field whitelist conventions — reuse for the event payload filter grammar (payload.* namespace) so it is compiled/whitelisted, never interpolated (invariant 6 spirit).",
-      "runStatementsInWorkspaceTx / withWorkspaceTx (campaign-runner deps.ts) — the workspace-scoped tx runner the integration tests bind to adminPool(); asserts each statement is scoped to the requested workspace.",
+      "runStatementsInWorkspaceTx / withWorkspaceTx (automation-runner deps.ts) — the workspace-scoped tx runner the integration tests bind to adminPool(); asserts each statement is scoped to the requested workspace.",
       "sendProfileEvent + recomputeFeaturesAndSegments (local-api handlers.ts) — the event landing path + the in-tx injected {reader, runInWorkspaceTx} wiring; the event-trigger enroll hook plugs in right after, on the same client.",
       "scopedQuery (@cdp/db) + the validateSenderId cross-workspace-refusal pattern (handlers.ts) — for the endpoint's workspace scoping and 404-on-foreign-id behavior.",
       "adminPool()/hasDatabaseUrl()/describe.skipIf + unique-UUID-namespace harness (enrollment-from-segment-entry.integration.test.ts) — the integration test scaffold to copy."
@@ -49,28 +49,28 @@
     "testFiles": [
       {
         "assertions": [
-          "validateCampaignDefinition ACCEPTS a definition whose single trigger is { type:'trigger', kind:'event', eventType:'purchase', next:'x' } with no filter.",
-          "validateCampaignDefinition ACCEPTS an event trigger with an optional payload filter (an AstNode / rule object) and a valid eventType string.",
-          "validateCampaignDefinition THROWS when kind:'event' has a missing/empty eventType (event triggers MUST name the event type).",
-          "validateCampaignDefinition THROWS when the optional event-trigger filter is present but malformed (not an object / not a valid AstNode shape).",
-          "validateCampaignDefinition ACCEPTS kind:'manual' with only { kind, next } (no auto-source fields) and ACCEPTS kind:'segment_entry' unchanged (segment lives in campaigns.trigger_segment_id, NOT on the node) — segment_entry regression guard.",
+          "validateAutomationDefinition ACCEPTS a definition whose single trigger is { type:'trigger', kind:'event', eventType:'purchase', next:'x' } with no filter.",
+          "validateAutomationDefinition ACCEPTS an event trigger with an optional payload filter (an AstNode / rule object) and a valid eventType string.",
+          "validateAutomationDefinition THROWS when kind:'event' has a missing/empty eventType (event triggers MUST name the event type).",
+          "validateAutomationDefinition THROWS when the optional event-trigger filter is present but malformed (not an object / not a valid AstNode shape).",
+          "validateAutomationDefinition ACCEPTS kind:'manual' with only { kind, next } (no auto-source fields) and ACCEPTS kind:'segment_entry' unchanged (segment lives in automations.trigger_segment_id, NOT on the node) — segment_entry regression guard.",
           "the exactly-ONE-trigger / resolvable-edges / no-cycle / no-orphan invariants are unaffected by the new event fields (a definition that was valid before stays valid; reuses existing detectCycle/hasReachableExit/findOrphans paths)."
         ],
-        "criterion": "Persist + validate the trigger definition for all three kinds (segment_entry | event | manual). The event trigger node must carry an event type + optional payload filter; manual carries no auto-source; the structural gate (validateCampaignDefinition) still passes/fails correctly.",
-        "path": "services/campaign-runner/test/trigger-definition-validation.test.ts",
+        "criterion": "Persist + validate the trigger definition for all three kinds (segment_entry | event | manual). The event trigger node must carry an event type + optional payload filter; manual carries no auto-source; the structural gate (validateAutomationDefinition) still passes/fails correctly.",
+        "path": "services/automation-runner/test/trigger-definition-validation.test.ts",
         "tier": "unit"
       },
       {
         "assertions": [
-          "parseEventEnrollmentTrigger(eventRow, campaignTriggerRows) returns one EnrollmentIntent per active campaign whose event trigger's eventType === the event's type (same workspace) — mirrors parseEnrollmentTrigger's shape (workspaceId/campaignId/profileId/startNode).",
-          "an event type that matches NO campaign's eventType yields zero intents.",
-          "a campaign whose workspace_id !== the event row's workspace_id is filtered out (in-code tenant isolation; never enrolls cross-workspace).",
+          "parseEventEnrollmentTrigger(eventRow, automationTriggerRows) returns one EnrollmentIntent per active automation whose event trigger's eventType === the event's type (same workspace) — mirrors parseEnrollmentTrigger's shape (workspaceId/automationId/profileId/startNode).",
+          "an event type that matches NO automation's eventType yields zero intents.",
+          "a automation whose workspace_id !== the event row's workspace_id is filtered out (in-code tenant isolation; never enrolls cross-workspace).",
           "when the event trigger has NO payload filter, a matching-type event always produces an intent.",
           "when the event trigger HAS a payload filter, the intent is produced ONLY when matchesFilter===true is fed in (parse layer takes the boolean; the actual SQL match is the integration test's job) — a false filter result drops the intent.",
           "THROWS on a falsy workspace_id (tenant-isolation guard, parity with parseEnrollmentTrigger)."
         ],
-        "criterion": "Event ingestion of the configured type (matching an optional payload filter) enrolls the profile into matching active campaigns exactly once; a non-matching event/filter does NOT enroll. (Pure parse layer — the SQL/idempotency is exercised in the integration test.)",
-        "path": "services/campaign-runner/test/parse-event-trigger.test.ts",
+        "criterion": "Event ingestion of the configured type (matching an optional payload filter) enrolls the profile into matching active automations exactly once; a non-matching event/filter does NOT enroll. (Pure parse layer — the SQL/idempotency is exercised in the integration test.)",
+        "path": "services/automation-runner/test/parse-event-trigger.test.ts",
         "tier": "unit"
       },
       {
@@ -82,33 +82,33 @@
           "the function is PURE and in-memory over the event payload object (no DB) so it is unit-testable without Postgres."
         ],
         "criterion": "The optional payload filter is evaluated against the INGESTED EVENT (not the profile), deterministically and safely (whitelist/parameterized — never interpolated).",
-        "path": "services/campaign-runner/test/event-payload-filter.test.ts",
+        "path": "services/automation-runner/test/event-payload-filter.test.ts",
         "tier": "unit"
       },
       {
         "assertions": [
           "decideReenrollment(hasExisting=false, 'once') === true; decideReenrollment(true, 'once') === false (default 'once').",
           "decideReenrollment(true, 'always') === true; decideReenrollment(false, 'always') === true.",
-          "buildEnrollmentInsert always emits ON CONFLICT (campaign_id, profile_id) DO NOTHING — the structural 'once' guard is identical regardless of trigger kind (segment_entry / event / manual all go through buildEnrollmentInsert).",
+          "buildEnrollmentInsert always emits ON CONFLICT (automation_id, profile_id) DO NOTHING — the structural 'once' guard is identical regardless of trigger kind (segment_entry / event / manual all go through buildEnrollmentInsert).",
           "the policy default is 'once' for ALL three kinds (assert the resolver/default used by enrollFromSegmentChange, the event-enroll path, and the manual-enroll path is the same decideReenrollment('once'))."
         ],
         "criterion": "The re-enrollment policy is documented + enforced consistently across all three trigger kinds (decideReenrollment is the single decision point).",
-        "path": "services/campaign-runner/test/reenrollment-policy.test.ts",
+        "path": "services/automation-runner/test/reenrollment-policy.test.ts",
         "tier": "unit"
       },
       {
         "assertions": [
-          "Given an ACTIVE campaign with an event trigger (eventType='purchase', no filter), calling enrollFromEvent(deps, {workspace_id, profile_id, type:'purchase', payload, event_id}) inserts ONE campaign_enrollments row at the start node with status='active' (current_node === definition.startNode).",
-          "REPLAY idempotency: invoking enrollFromEvent twice for the same (campaign, profile) leaves exactly ONE enrollment row (ON CONFLICT (campaign_id, profile_id) DO NOTHING) — count === 1.",
-          "an event of a DIFFERENT type than the campaign's eventType enrolls NOBODY (0 rows for a fresh profile).",
+          "Given an ACTIVE automation with an event trigger (eventType='purchase', no filter), calling enrollFromEvent(deps, {workspace_id, profile_id, type:'purchase', payload, event_id}) inserts ONE automation_enrollments row at the start node with status='active' (current_node === definition.startNode).",
+          "REPLAY idempotency: invoking enrollFromEvent twice for the same (automation, profile) leaves exactly ONE enrollment row (ON CONFLICT (automation_id, profile_id) DO NOTHING) — count === 1.",
+          "an event of a DIFFERENT type than the automation's eventType enrolls NOBODY (0 rows for a fresh profile).",
           "with a payload filter (payload.amount >= 100): a 'purchase' with amount=150 enrolls; a 'purchase' with amount=50 does NOT enroll (filter evaluated against the event payload; SQL/in-memory parameterized, never interpolated).",
-          "TENANT ISOLATION: a campaign in workspace B with the same eventType is NOT enrolled when the event row belongs to workspace A; only workspace-A campaigns are read (WHERE workspace_id=$1) and every write binds workspace_id at $1.",
-          "an event trigger campaign whose status != 'active' (draft/paused) does NOT enroll.",
+          "TENANT ISOLATION: a automation in workspace B with the same eventType is NOT enrolled when the event row belongs to workspace A; only workspace-A automations are read (WHERE workspace_id=$1) and every write binds workspace_id at $1.",
+          "an event trigger automation whose status != 'active' (draft/paused) does NOT enroll.",
           "SEGMENT-ENTRY REGRESSION: in the SAME suite (or a shared harness), enrollFromSegmentChange on an 'entered' row still enrolls exactly once — assert the segment-entry path is untouched.",
-          "all three kinds share buildEnrollmentInsert → a profile already enrolled via segment_entry is NOT re-enrolled by a later matching event (single UNIQUE(campaign_id,profile_id) row), proving the 'once' policy is consistent across kinds."
+          "all three kinds share buildEnrollmentInsert → a profile already enrolled via segment_entry is NOT re-enrolled by a later matching event (single UNIQUE(automation_id,profile_id) row), proving the 'once' policy is consistent across kinds."
         ],
-        "criterion": "Event ingestion of the configured type (matching the optional payload filter) enrolls the profile into matching active campaigns EXACTLY once (idempotent on replay); a non-matching event/filter does NOT enroll; segment-entry still works (no regression). Real Postgres, workspace-scoped.",
-        "path": "services/campaign-runner/test/enroll-from-event.integration.test.ts",
+        "criterion": "Event ingestion of the configured type (matching the optional payload filter) enrolls the profile into matching active automations EXACTLY once (idempotent on replay); a non-matching event/filter does NOT enroll; segment-entry still works (no regression). Real Postgres, workspace-scoped.",
+        "path": "services/automation-runner/test/enroll-from-event.integration.test.ts",
         "tier": "integration"
       },
       {
@@ -116,26 +116,26 @@
           "Recording an event via the production processor-style path (the event row written + the post-event hook) invokes enrollFromEvent and produces the enrollment — proving the hook fires after the event lands (events row exists AND enrollment row exists).",
           "the hook runs in/with the SAME workspace-scoped tx semantics as the existing feature/segment re-eval (no nested BEGIN/COMMIT against an open client; statements bind workspace_id at $1).",
           "a replayed event_id (ON CONFLICT(event_id) DO NOTHING in the event insert) does NOT cause a second enrollment — the enroll hook is idempotent even when the underlying event insert was a no-op (assert enrollment count stays 1).",
-          "an event that matches no event-trigger campaign leaves campaign_enrollments empty (hook is a no-op, never throws, never blocks the event write)."
+          "an event that matches no event-trigger automation leaves automation_enrollments empty (hook is a no-op, never throws, never blocks the event write)."
         ],
-        "criterion": "Event-trigger enrollment is wired at processor/ingest time: when an event of the configured type is recorded for a profile (the SAME code path POST /profiles/:id/events and the processor use), the profile is enrolled into matching active campaigns in the same workspace-scoped flow. Real Postgres.",
-        "path": "services/campaign-runner/test/event-enrollment-from-processor.integration.test.ts",
+        "criterion": "Event-trigger enrollment is wired at processor/ingest time: when an event of the configured type is recorded for a profile (the SAME code path POST /profiles/:id/events and the processor use), the profile is enrolled into matching active automations in the same workspace-scoped flow. Real Postgres.",
+        "path": "services/automation-runner/test/event-enrollment-from-processor.integration.test.ts",
         "tier": "integration"
       },
       {
         "assertions": [
-          "POST /campaigns/:id/enroll { profile_id } enrolls that profile at the campaign's start node (current_node === startNode, status 'active'); response reports enrolled count 1.",
-          "POST /campaigns/:id/enroll { segment_id } enrolls a SNAPSHOT of the segment's current members (each at the start node) — assert N enrollments for an N-member segment; the snapshot is resolved server-side (dynamic via compileWhere/buildSegmentMatch, manual via segment_memberships) and is point-in-time (a profile added to the segment AFTER the call is NOT enrolled).",
-          "IDEMPOTENT: a second identical enroll call inserts no duplicates (ON CONFLICT (campaign_id, profile_id) DO NOTHING) — re-enroll a 3-member snapshot ⇒ still 3 rows.",
-          "CROSS-WORKSPACE campaign id (a campaign in another workspace): 404 (scopedQuery resolves nothing in the token's workspace) — no enrollment written.",
+          "POST /automations/:id/enroll { profile_id } enrolls that profile at the automation's start node (current_node === startNode, status 'active'); response reports enrolled count 1.",
+          "POST /automations/:id/enroll { segment_id } enrolls a SNAPSHOT of the segment's current members (each at the start node) — assert N enrollments for an N-member segment; the snapshot is resolved server-side (dynamic via compileWhere/buildSegmentMatch, manual via segment_memberships) and is point-in-time (a profile added to the segment AFTER the call is NOT enrolled).",
+          "IDEMPOTENT: a second identical enroll call inserts no duplicates (ON CONFLICT (automation_id, profile_id) DO NOTHING) — re-enroll a 3-member snapshot ⇒ still 3 rows.",
+          "CROSS-WORKSPACE automation id (a automation in another workspace): 404 (scopedQuery resolves nothing in the token's workspace) — no enrollment written.",
           "CROSS-WORKSPACE profile_id: 404/refused (the profile must exist in ctx.workspaceId, mirrors sendProfileEvent's present-check) — never enrolls another tenant's profile.",
           "CROSS-WORKSPACE segment_id: 404/refused (segment resolved scoped to ctx.workspaceId; a foreign id resolves to nothing) — inv.2.",
           "workspace_id is taken from ctx (authorizer claim) ONLY — a workspace_id in the request body is ignored (assert a body workspace_id does not leak into the write).",
-          "CAPABILITY GATE: the route is registered as 'POST /campaigns/:id/enroll' : 'manage_content' in routes.ts (assert the entry exists / a non-manage_content token is rejected by the gate).",
-          "the inserted enrollment's workspace_id === ctx.workspaceId and campaign_id === the path id (every write binds workspace_id at $1)."
+          "CAPABILITY GATE: the route is registered as 'POST /automations/:id/enroll' : 'manage_content' in routes.ts (assert the entry exists / a non-manage_content token is rejected by the gate).",
+          "the inserted enrollment's workspace_id === ctx.workspaceId and automation_id === the path id (every write binds workspace_id at $1)."
         ],
-        "criterion": "The manual/API enroll endpoint (POST /campaigns/:id/enroll) enrolls a single profile OR a segment snapshot at the start node, is capability-gated (manage_content) + workspace-scoped, and refuses cross-workspace campaign/profile/segment ids (404/inv.2). Real Postgres.",
-        "path": "services/local-api/test/campaign-enroll-endpoint.integration.test.ts",
+        "criterion": "The manual/API enroll endpoint (POST /automations/:id/enroll) enrolls a single profile OR a segment snapshot at the start node, is capability-gated (manage_content) + workspace-scoped, and refuses cross-workspace automation/profile/segment ids (404/inv.2). Real Postgres.",
+        "path": "services/local-api/test/automation-enroll-endpoint.integration.test.ts",
         "tier": "integration"
       },
       {
@@ -146,7 +146,7 @@
           "the handler RETURNS the promise so the kit Button auto-lock contract holds (no implementation detail leaked — assert via the handler signature/return, consistent with existing handlers)."
         ],
         "criterion": "The manual-enroll handler input contract: exactly one of profile_id | segment_id required; bad input rejected before any DB write.",
-        "path": "services/local-api/test/campaign-enroll-endpoint.unit.test.ts",
+        "path": "services/local-api/test/automation-enroll-endpoint.unit.test.ts",
         "tier": "unit"
       }
     ]
@@ -158,39 +158,39 @@
     "implUnits": [
       "1. dsl.ts: extend TriggerNode for kind:'event' with `eventType: string` (required) + optional `filter?: AstNode` payload filter; manual stays {kind,next}; segment_entry unchanged. Extend validateNodeFields trigger case to require eventType for event triggers and to structurally check an optional filter. (No migration — event config lives in definition JSON.)",
       "2. core.ts: add parseEventEnrollmentTrigger (event analogue of parseEnrollmentTrigger) + evaluateEventPayloadFilter (pure filter eval). Reuse decideReenrollment + buildEnrollmentInsert unchanged. Add an EventRow type (workspace_id, profile_id, type, payload, event_id).",
-      "3. enroll.ts: add enrollFromEvent(deps, eventRow) — reads active campaigns in the event's workspace whose definition has an event trigger matching the type (load definition, validate, resolveStartNode, read eventType+filter from the trigger node), evaluate the optional filter against the payload, build intents (parseEventEnrollmentTrigger), and apply buildEnrollmentInsert statements in ONE workspace-scoped tx — mirrors enrollFromSegmentChange exactly (in-code workspace scoping, ON CONFLICT 'once').",
-      "4. enroll.ts: add enrollProfileManually(deps, {workspaceId, campaignId, profileId}) and enrollSegmentSnapshot(deps, {workspaceId, campaignId, segmentId}) — resolve startNode from the campaign's validated definition; the segment snapshot resolves current members (dynamic via @cdp/segments buildSegmentMatch/compileWhere; manual via segment_memberships) and inserts one enrollment per member; all workspace-scoped, ON CONFLICT 'once'.",
+      "3. enroll.ts: add enrollFromEvent(deps, eventRow) — reads active automations in the event's workspace whose definition has an event trigger matching the type (load definition, validate, resolveStartNode, read eventType+filter from the trigger node), evaluate the optional filter against the payload, build intents (parseEventEnrollmentTrigger), and apply buildEnrollmentInsert statements in ONE workspace-scoped tx — mirrors enrollFromSegmentChange exactly (in-code workspace scoping, ON CONFLICT 'once').",
+      "4. enroll.ts: add enrollProfileManually(deps, {workspaceId, automationId, profileId}) and enrollSegmentSnapshot(deps, {workspaceId, automationId, segmentId}) — resolve startNode from the automation's validated definition; the segment snapshot resolves current members (dynamic via @cdp/segments buildSegmentMatch/compileWhere; manual via segment_memberships) and inserts one enrollment per member; all workspace-scoped, ON CONFLICT 'once'.",
       "5. index.ts: export enrollFromEvent, enrollProfileManually, enrollSegmentSnapshot, parseEventEnrollmentTrigger, evaluateEventPayloadFilter, and the new EventRow/TriggerNode types.",
-      "6. local-api handlers.ts: add enrollIntoCampaign handler for POST /campaigns/:id/enroll — validate body (exactly one of profile_id|segment_id), resolve the campaign scoped to ctx.workspaceId (404 if absent), verify the profile/segment exists in ctx.workspaceId (404 cross-workspace), then call the campaign-runner enroll core via an injected Reader+runInWorkspaceTx bound to the request pool (reuse the recomputeFeaturesAndSegments dependency-wiring style). Return enrolled count.",
+      "6. local-api handlers.ts: add enrollIntoAutomation handler for POST /automations/:id/enroll — validate body (exactly one of profile_id|segment_id), resolve the automation scoped to ctx.workspaceId (404 if absent), verify the profile/segment exists in ctx.workspaceId (404 cross-workspace), then call the automation-runner enroll core via an injected Reader+runInWorkspaceTx bound to the request pool (reuse the recomputeFeaturesAndSegments dependency-wiring style). Return enrolled count.",
       "7. local-api handlers.ts: wire EVENT-trigger enrollment into the event landing path. In sendProfileEvent (and document the prod processor equivalent in services/processor/src/deps.ts.runSegmentReevalInTx neighbor), AFTER the event row is written + recomputeFeaturesAndSegments, call enrollFromEvent with the just-recorded event (type+payload+profile) on the SAME tx client. This is the local hook point that mirrors the processor; keep it idempotent and non-throwing.",
-      "8. local-api routes.ts: register 'POST /campaigns/:id/enroll' : 'manage_content'.",
-      "9. local-api handlers.ts handler map: add 'POST /campaigns/:id/enroll' : enrollIntoCampaign.",
-      "10. CLAUDE.md: document the re-enrollment policy (default 'once' across all three kinds; structural ON CONFLICT(campaign_id,profile_id) guard) + the event-trigger config location (definition trigger node: eventType + optional payload filter) + the new endpoint. Bump root package.json (minor — feature).",
-      "11. (no migration) — if a 'once'/'always' policy ever needs persistence it would be a campaigns column; THIS phase keeps the default 'once' in code (decideReenrollment) so NO migration. If the design review insists on persisting the policy, add a campaigns.reenrollment_policy column and apply to BOTH cdp AND cdp_e2e via a node pg script (psql unavailable) — flagged, not assumed."
+      "8. local-api routes.ts: register 'POST /automations/:id/enroll' : 'manage_content'.",
+      "9. local-api handlers.ts handler map: add 'POST /automations/:id/enroll' : enrollIntoAutomation.",
+      "10. CLAUDE.md: document the re-enrollment policy (default 'once' across all three kinds; structural ON CONFLICT(automation_id,profile_id) guard) + the event-trigger config location (definition trigger node: eventType + optional payload filter) + the new endpoint. Bump root package.json (minor — feature).",
+      "11. (no migration) — if a 'once'/'always' policy ever needs persistence it would be a automations column; THIS phase keeps the default 'once' in code (decideReenrollment) so NO migration. If the design review insists on persisting the policy, add a automations.reenrollment_policy column and apply to BOTH cdp AND cdp_e2e via a node pg script (psql unavailable) — flagged, not assumed."
     ],
     "mocks": [
-      "NONE for the DB tier — integration tests use REAL local Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp) via adminPool()/hasDatabaseUrl(), with describe.skipIf(!RUN) and unique per-file workspace/campaign/segment/profile UUID namespaces (parity with enrollment-from-segment-entry.integration.test.ts).",
-      "NO SES/SQS/Dispatcher in this phase — enrollment writes campaign_enrollments only; it does NOT enqueue sends, so no aws-sdk-client-mock / LocalStack needed here.",
+      "NONE for the DB tier — integration tests use REAL local Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp) via adminPool()/hasDatabaseUrl(), with describe.skipIf(!RUN) and unique per-file workspace/automation/segment/profile UUID namespaces (parity with enrollment-from-segment-entry.integration.test.ts).",
+      "NO SES/SQS/Dispatcher in this phase — enrollment writes automation_enrollments only; it does NOT enqueue sends, so no aws-sdk-client-mock / LocalStack needed here.",
       "Reader + runInWorkspaceTx are INJECTED (EnrollDeps), bound to the test's admin pool via runStatementsInWorkspaceTx — same dependency-injection seam the segment-entry test uses; no Postgres mock.",
       "The local-api endpoint test drives the handler through the real app/router with a manage_content ctx; no AWS mocks."
     ],
-    "notes": "WHERE EVENT-TRIGGER ENROLLMENT HOOKS IN: events land in the events table in two places that share semantics — (a) the production processor (services/processor: planProcessing → runPlanInWorkspaceTx, which after the event/feature upsert runs runSegmentReevalInTx on the open tx client), and (b) the local dev path POST /profiles/:id/events (sendProfileEvent → recomputeFeaturesAndSegments) which is the dev mirror (the local-api has no SQS/processor). The event-trigger enroll call (enrollFromEvent) should fire AT THE SAME POINT the segment re-eval fires — right after the event row + feature recompute, on the SAME workspace-scoped tx client (no nested BEGIN/COMMIT). For the dev tier that's inside sendProfileEvent; for prod it's the processor deps tx. IMPORTANT: enrollFromSegmentChange is currently EXPORTED but NOT yet wired into any live flow (only covered by tests) — so the segment-entry trigger is materialized but not auto-invoked at processor time today; this phase should NOT regress that (keep its tests green) and may optionally wire it alongside the event hook, but the criteria only require event + manual to be wired. RE-ENROLLMENT POLICY (recommended): default 'once' for ALL THREE kinds, enforced structurally by UNIQUE(campaign_id, profile_id) + INSERT ... ON CONFLICT DO NOTHING (buildEnrollmentInsert) and decided in code by decideReenrollment(hasExisting,'once'); 'always' (re-entry) stays a forward-compat enum value but is NOT enabled this phase. This is consistent because segment_entry, event, and manual ALL funnel through buildEnrollmentInsert. MIGRATION: NONE required — the event trigger's eventType + optional payload filter live in the campaign definition JSON (the TriggerNode), and the 'once' policy is a code default; campaign_enrollments already has UNIQUE(campaign_id, profile_id). If a future design review wants the policy persisted per-campaign, that single column (campaigns.reenrollment_policy default 'once') is the only migration and MUST be applied to BOTH cdp and cdp_e2e via a node pg script (psql unavailable) — flagged but out of scope. TENANT ISOLATION: every read filters WHERE workspace_id=$1 and every enrollment insert binds workspace_id at $1 (service role bypasses RLS); the endpoint takes workspace_id from the authorizer ctx ONLY and refuses cross-workspace campaign/profile/segment ids with 404 (inv.2). The manual-enroll SEGMENT SNAPSHOT is point-in-time: resolve current members at call time (dynamic via buildSegmentMatch, manual via segment_memberships) and insert one enrollment each — later segment changes do not retroactively enroll. No sends are emitted in this phase (enrollment only), so no SES/SQS mocking needed. Follow process hygiene: bump root package.json (minor), update CLAUDE.md, restart dev API + rebuild changed packages after edits.",
+    "notes": "WHERE EVENT-TRIGGER ENROLLMENT HOOKS IN: events land in the events table in two places that share semantics — (a) the production processor (services/processor: planProcessing → runPlanInWorkspaceTx, which after the event/feature upsert runs runSegmentReevalInTx on the open tx client), and (b) the local dev path POST /profiles/:id/events (sendProfileEvent → recomputeFeaturesAndSegments) which is the dev mirror (the local-api has no SQS/processor). The event-trigger enroll call (enrollFromEvent) should fire AT THE SAME POINT the segment re-eval fires — right after the event row + feature recompute, on the SAME workspace-scoped tx client (no nested BEGIN/COMMIT). For the dev tier that's inside sendProfileEvent; for prod it's the processor deps tx. IMPORTANT: enrollFromSegmentChange is currently EXPORTED but NOT yet wired into any live flow (only covered by tests) — so the segment-entry trigger is materialized but not auto-invoked at processor time today; this phase should NOT regress that (keep its tests green) and may optionally wire it alongside the event hook, but the criteria only require event + manual to be wired. RE-ENROLLMENT POLICY (recommended): default 'once' for ALL THREE kinds, enforced structurally by UNIQUE(automation_id, profile_id) + INSERT ... ON CONFLICT DO NOTHING (buildEnrollmentInsert) and decided in code by decideReenrollment(hasExisting,'once'); 'always' (re-entry) stays a forward-compat enum value but is NOT enabled this phase. This is consistent because segment_entry, event, and manual ALL funnel through buildEnrollmentInsert. MIGRATION: NONE required — the event trigger's eventType + optional payload filter live in the automation definition JSON (the TriggerNode), and the 'once' policy is a code default; automation_enrollments already has UNIQUE(automation_id, profile_id). If a future design review wants the policy persisted per-automation, that single column (automations.reenrollment_policy default 'once') is the only migration and MUST be applied to BOTH cdp and cdp_e2e via a node pg script (psql unavailable) — flagged but out of scope. TENANT ISOLATION: every read filters WHERE workspace_id=$1 and every enrollment insert binds workspace_id at $1 (service role bypasses RLS); the endpoint takes workspace_id from the authorizer ctx ONLY and refuses cross-workspace automation/profile/segment ids with 404 (inv.2). The manual-enroll SEGMENT SNAPSHOT is point-in-time: resolve current members at call time (dynamic via buildSegmentMatch, manual via segment_memberships) and insert one enrollment each — later segment changes do not retroactively enroll. No sends are emitted in this phase (enrollment only), so no SES/SQS mocking needed. Follow process hygiene: bump root package.json (minor), update CLAUDE.md, restart dev API + rebuild changed packages after edits.",
     "pureFunctions": [
-      "parseEventEnrollmentTrigger(eventRow, campaignTriggerRows) → EnrollmentIntent[] — event-kind analogue of parseEnrollmentTrigger; matches eventType, filters by workspace_id, drops intents whose payload-filter result is false (added to services/campaign-runner/src/core.ts).",
+      "parseEventEnrollmentTrigger(eventRow, automationTriggerRows) → EnrollmentIntent[] — event-kind analogue of parseEnrollmentTrigger; matches eventType, filters by workspace_id, drops intents whose payload-filter result is false (added to services/automation-runner/src/core.ts).",
       "evaluateEventPayloadFilter(filter | undefined, payload) → boolean — pure, in-memory, closed-grammar evaluation of the optional event trigger filter against the event payload (payload.* namespace; reuses @cdp/segments operator/field whitelist conventions; no DB, never interpolated). In core.ts or a small filter module.",
       "decideReenrollment(hasExisting, policy='once') → boolean — ALREADY EXISTS in core.ts; reused unchanged as the single re-enrollment decision for all three kinds.",
-      "buildEnrollmentInsert(ws, campaign, profile, startNode) → SqlStatement — ALREADY EXISTS; the structural ON CONFLICT 'once' guard shared by segment_entry / event / manual.",
-      "validateCampaignDefinition (extended) — add event-trigger field validation (required eventType string; optional well-formed payload-filter AstNode) inside the existing trigger case of validateNodeFields in dsl.ts; no new public function.",
+      "buildEnrollmentInsert(ws, automation, profile, startNode) → SqlStatement — ALREADY EXISTS; the structural ON CONFLICT 'once' guard shared by segment_entry / event / manual.",
+      "validateAutomationDefinition (extended) — add event-trigger field validation (required eventType string; optional well-formed payload-filter AstNode) inside the existing trigger case of validateNodeFields in dsl.ts; no new public function.",
       "resolveStartNode / parseEnrollmentTrigger — ALREADY EXIST; reused by the event + manual enroll orchestrators to compute startNode and shape intents."
     ],
     "reuse": [
-      "enrollFromSegmentChange (enroll.ts) — the EXACT pattern to extend for enrollFromEvent: read active campaigns scoped to the workspace, validate+resolveStartNode, build intents, apply in one workspace-scoped tx. Same EnrollDeps { reader, runInWorkspaceTx } seam.",
-      "parseEnrollmentTrigger + EnrollmentIntent + CampaignTriggerRow (core.ts) — copy the shape for parseEventEnrollmentTrigger.",
+      "enrollFromSegmentChange (enroll.ts) — the EXACT pattern to extend for enrollFromEvent: read active automations scoped to the workspace, validate+resolveStartNode, build intents, apply in one workspace-scoped tx. Same EnrollDeps { reader, runInWorkspaceTx } seam.",
+      "parseEnrollmentTrigger + EnrollmentIntent + AutomationTriggerRow (core.ts) — copy the shape for parseEventEnrollmentTrigger.",
       "decideReenrollment + buildEnrollmentInsert (core.ts) — the single re-enrollment decision + structural ON CONFLICT 'once' insert, shared verbatim across all three trigger kinds.",
-      "validateCampaignDefinition / validateNodeFields / resolveStartNode (dsl.ts) — extend the trigger case; reuse the structural gate so the event fields ride the existing cycle/orphan/edge checks.",
+      "validateAutomationDefinition / validateNodeFields / resolveStartNode (dsl.ts) — extend the trigger case; reuse the structural gate so the event fields ride the existing cycle/orphan/edge checks.",
       "@cdp/segments buildSegmentMatch + compileWhere (statements.ts/compile.ts) — resolve the manual-enroll SEGMENT SNAPSHOT members (dynamic) parameterized with workspace_id at $1; segment_memberships query for manual segments (parity with listProfiles' segment branch in handlers.ts).",
       "@cdp/segments AstNode + operator/field whitelist conventions — reuse for the event payload filter grammar (payload.* namespace) so it is compiled/whitelisted, never interpolated (invariant 6 spirit).",
-      "runStatementsInWorkspaceTx / withWorkspaceTx (campaign-runner deps.ts) — the workspace-scoped tx runner the integration tests bind to adminPool(); asserts each statement is scoped to the requested workspace.",
+      "runStatementsInWorkspaceTx / withWorkspaceTx (automation-runner deps.ts) — the workspace-scoped tx runner the integration tests bind to adminPool(); asserts each statement is scoped to the requested workspace.",
       "sendProfileEvent + recomputeFeaturesAndSegments (local-api handlers.ts) — the event landing path + the in-tx injected {reader, runInWorkspaceTx} wiring; the event-trigger enroll hook plugs in right after, on the same client.",
       "scopedQuery (@cdp/db) + the validateSenderId cross-workspace-refusal pattern (handlers.ts) — for the endpoint's workspace scoping and 404-on-foreign-id behavior.",
       "adminPool()/hasDatabaseUrl()/describe.skipIf + unique-UUID-namespace harness (enrollment-from-segment-entry.integration.test.ts) — the integration test scaffold to copy."
@@ -198,28 +198,28 @@
     "testFiles": [
       {
         "assertions": [
-          "validateCampaignDefinition ACCEPTS a definition whose single trigger is { type:'trigger', kind:'event', eventType:'purchase', next:'x' } with no filter.",
-          "validateCampaignDefinition ACCEPTS an event trigger with an optional payload filter (an AstNode / rule object) and a valid eventType string.",
-          "validateCampaignDefinition THROWS when kind:'event' has a missing/empty eventType (event triggers MUST name the event type).",
-          "validateCampaignDefinition THROWS when the optional event-trigger filter is present but malformed (not an object / not a valid AstNode shape).",
-          "validateCampaignDefinition ACCEPTS kind:'manual' with only { kind, next } (no auto-source fields) and ACCEPTS kind:'segment_entry' unchanged (segment lives in campaigns.trigger_segment_id, NOT on the node) — segment_entry regression guard.",
+          "validateAutomationDefinition ACCEPTS a definition whose single trigger is { type:'trigger', kind:'event', eventType:'purchase', next:'x' } with no filter.",
+          "validateAutomationDefinition ACCEPTS an event trigger with an optional payload filter (an AstNode / rule object) and a valid eventType string.",
+          "validateAutomationDefinition THROWS when kind:'event' has a missing/empty eventType (event triggers MUST name the event type).",
+          "validateAutomationDefinition THROWS when the optional event-trigger filter is present but malformed (not an object / not a valid AstNode shape).",
+          "validateAutomationDefinition ACCEPTS kind:'manual' with only { kind, next } (no auto-source fields) and ACCEPTS kind:'segment_entry' unchanged (segment lives in automations.trigger_segment_id, NOT on the node) — segment_entry regression guard.",
           "the exactly-ONE-trigger / resolvable-edges / no-cycle / no-orphan invariants are unaffected by the new event fields (a definition that was valid before stays valid; reuses existing detectCycle/hasReachableExit/findOrphans paths)."
         ],
-        "criterion": "Persist + validate the trigger definition for all three kinds (segment_entry | event | manual). The event trigger node must carry an event type + optional payload filter; manual carries no auto-source; the structural gate (validateCampaignDefinition) still passes/fails correctly.",
-        "path": "services/campaign-runner/test/trigger-definition-validation.test.ts",
+        "criterion": "Persist + validate the trigger definition for all three kinds (segment_entry | event | manual). The event trigger node must carry an event type + optional payload filter; manual carries no auto-source; the structural gate (validateAutomationDefinition) still passes/fails correctly.",
+        "path": "services/automation-runner/test/trigger-definition-validation.test.ts",
         "tier": "unit"
       },
       {
         "assertions": [
-          "parseEventEnrollmentTrigger(eventRow, campaignTriggerRows) returns one EnrollmentIntent per active campaign whose event trigger's eventType === the event's type (same workspace) — mirrors parseEnrollmentTrigger's shape (workspaceId/campaignId/profileId/startNode).",
-          "an event type that matches NO campaign's eventType yields zero intents.",
-          "a campaign whose workspace_id !== the event row's workspace_id is filtered out (in-code tenant isolation; never enrolls cross-workspace).",
+          "parseEventEnrollmentTrigger(eventRow, automationTriggerRows) returns one EnrollmentIntent per active automation whose event trigger's eventType === the event's type (same workspace) — mirrors parseEnrollmentTrigger's shape (workspaceId/automationId/profileId/startNode).",
+          "an event type that matches NO automation's eventType yields zero intents.",
+          "a automation whose workspace_id !== the event row's workspace_id is filtered out (in-code tenant isolation; never enrolls cross-workspace).",
           "when the event trigger has NO payload filter, a matching-type event always produces an intent.",
           "when the event trigger HAS a payload filter, the intent is produced ONLY when matchesFilter===true is fed in (parse layer takes the boolean; the actual SQL match is the integration test's job) — a false filter result drops the intent.",
           "THROWS on a falsy workspace_id (tenant-isolation guard, parity with parseEnrollmentTrigger)."
         ],
-        "criterion": "Event ingestion of the configured type (matching an optional payload filter) enrolls the profile into matching active campaigns exactly once; a non-matching event/filter does NOT enroll. (Pure parse layer — the SQL/idempotency is exercised in the integration test.)",
-        "path": "services/campaign-runner/test/parse-event-trigger.test.ts",
+        "criterion": "Event ingestion of the configured type (matching an optional payload filter) enrolls the profile into matching active automations exactly once; a non-matching event/filter does NOT enroll. (Pure parse layer — the SQL/idempotency is exercised in the integration test.)",
+        "path": "services/automation-runner/test/parse-event-trigger.test.ts",
         "tier": "unit"
       },
       {
@@ -231,33 +231,33 @@
           "the function is PURE and in-memory over the event payload object (no DB) so it is unit-testable without Postgres."
         ],
         "criterion": "The optional payload filter is evaluated against the INGESTED EVENT (not the profile), deterministically and safely (whitelist/parameterized — never interpolated).",
-        "path": "services/campaign-runner/test/event-payload-filter.test.ts",
+        "path": "services/automation-runner/test/event-payload-filter.test.ts",
         "tier": "unit"
       },
       {
         "assertions": [
           "decideReenrollment(hasExisting=false, 'once') === true; decideReenrollment(true, 'once') === false (default 'once').",
           "decideReenrollment(true, 'always') === true; decideReenrollment(false, 'always') === true.",
-          "buildEnrollmentInsert always emits ON CONFLICT (campaign_id, profile_id) DO NOTHING — the structural 'once' guard is identical regardless of trigger kind (segment_entry / event / manual all go through buildEnrollmentInsert).",
+          "buildEnrollmentInsert always emits ON CONFLICT (automation_id, profile_id) DO NOTHING — the structural 'once' guard is identical regardless of trigger kind (segment_entry / event / manual all go through buildEnrollmentInsert).",
           "the policy default is 'once' for ALL three kinds (assert the resolver/default used by enrollFromSegmentChange, the event-enroll path, and the manual-enroll path is the same decideReenrollment('once'))."
         ],
         "criterion": "The re-enrollment policy is documented + enforced consistently across all three trigger kinds (decideReenrollment is the single decision point).",
-        "path": "services/campaign-runner/test/reenrollment-policy.test.ts",
+        "path": "services/automation-runner/test/reenrollment-policy.test.ts",
         "tier": "unit"
       },
       {
         "assertions": [
-          "Given an ACTIVE campaign with an event trigger (eventType='purchase', no filter), calling enrollFromEvent(deps, {workspace_id, profile_id, type:'purchase', payload, event_id}) inserts ONE campaign_enrollments row at the start node with status='active' (current_node === definition.startNode).",
-          "REPLAY idempotency: invoking enrollFromEvent twice for the same (campaign, profile) leaves exactly ONE enrollment row (ON CONFLICT (campaign_id, profile_id) DO NOTHING) — count === 1.",
-          "an event of a DIFFERENT type than the campaign's eventType enrolls NOBODY (0 rows for a fresh profile).",
+          "Given an ACTIVE automation with an event trigger (eventType='purchase', no filter), calling enrollFromEvent(deps, {workspace_id, profile_id, type:'purchase', payload, event_id}) inserts ONE automation_enrollments row at the start node with status='active' (current_node === definition.startNode).",
+          "REPLAY idempotency: invoking enrollFromEvent twice for the same (automation, profile) leaves exactly ONE enrollment row (ON CONFLICT (automation_id, profile_id) DO NOTHING) — count === 1.",
+          "an event of a DIFFERENT type than the automation's eventType enrolls NOBODY (0 rows for a fresh profile).",
           "with a payload filter (payload.amount >= 100): a 'purchase' with amount=150 enrolls; a 'purchase' with amount=50 does NOT enroll (filter evaluated against the event payload; SQL/in-memory parameterized, never interpolated).",
-          "TENANT ISOLATION: a campaign in workspace B with the same eventType is NOT enrolled when the event row belongs to workspace A; only workspace-A campaigns are read (WHERE workspace_id=$1) and every write binds workspace_id at $1.",
-          "an event trigger campaign whose status != 'active' (draft/paused) does NOT enroll.",
+          "TENANT ISOLATION: a automation in workspace B with the same eventType is NOT enrolled when the event row belongs to workspace A; only workspace-A automations are read (WHERE workspace_id=$1) and every write binds workspace_id at $1.",
+          "an event trigger automation whose status != 'active' (draft/paused) does NOT enroll.",
           "SEGMENT-ENTRY REGRESSION: in the SAME suite (or a shared harness), enrollFromSegmentChange on an 'entered' row still enrolls exactly once — assert the segment-entry path is untouched.",
-          "all three kinds share buildEnrollmentInsert → a profile already enrolled via segment_entry is NOT re-enrolled by a later matching event (single UNIQUE(campaign_id,profile_id) row), proving the 'once' policy is consistent across kinds."
+          "all three kinds share buildEnrollmentInsert → a profile already enrolled via segment_entry is NOT re-enrolled by a later matching event (single UNIQUE(automation_id,profile_id) row), proving the 'once' policy is consistent across kinds."
         ],
-        "criterion": "Event ingestion of the configured type (matching the optional payload filter) enrolls the profile into matching active campaigns EXACTLY once (idempotent on replay); a non-matching event/filter does NOT enroll; segment-entry still works (no regression). Real Postgres, workspace-scoped.",
-        "path": "services/campaign-runner/test/enroll-from-event.integration.test.ts",
+        "criterion": "Event ingestion of the configured type (matching the optional payload filter) enrolls the profile into matching active automations EXACTLY once (idempotent on replay); a non-matching event/filter does NOT enroll; segment-entry still works (no regression). Real Postgres, workspace-scoped.",
+        "path": "services/automation-runner/test/enroll-from-event.integration.test.ts",
         "tier": "integration"
       },
       {
@@ -265,26 +265,26 @@
           "Recording an event via the production processor-style path (the event row written + the post-event hook) invokes enrollFromEvent and produces the enrollment — proving the hook fires after the event lands (events row exists AND enrollment row exists).",
           "the hook runs in/with the SAME workspace-scoped tx semantics as the existing feature/segment re-eval (no nested BEGIN/COMMIT against an open client; statements bind workspace_id at $1).",
           "a replayed event_id (ON CONFLICT(event_id) DO NOTHING in the event insert) does NOT cause a second enrollment — the enroll hook is idempotent even when the underlying event insert was a no-op (assert enrollment count stays 1).",
-          "an event that matches no event-trigger campaign leaves campaign_enrollments empty (hook is a no-op, never throws, never blocks the event write)."
+          "an event that matches no event-trigger automation leaves automation_enrollments empty (hook is a no-op, never throws, never blocks the event write)."
         ],
-        "criterion": "Event-trigger enrollment is wired at processor/ingest time: when an event of the configured type is recorded for a profile (the SAME code path POST /profiles/:id/events and the processor use), the profile is enrolled into matching active campaigns in the same workspace-scoped flow. Real Postgres.",
-        "path": "services/campaign-runner/test/event-enrollment-from-processor.integration.test.ts",
+        "criterion": "Event-trigger enrollment is wired at processor/ingest time: when an event of the configured type is recorded for a profile (the SAME code path POST /profiles/:id/events and the processor use), the profile is enrolled into matching active automations in the same workspace-scoped flow. Real Postgres.",
+        "path": "services/automation-runner/test/event-enrollment-from-processor.integration.test.ts",
         "tier": "integration"
       },
       {
         "assertions": [
-          "POST /campaigns/:id/enroll { profile_id } enrolls that profile at the campaign's start node (current_node === startNode, status 'active'); response reports enrolled count 1.",
-          "POST /campaigns/:id/enroll { segment_id } enrolls a SNAPSHOT of the segment's current members (each at the start node) — assert N enrollments for an N-member segment; the snapshot is resolved server-side (dynamic via compileWhere/buildSegmentMatch, manual via segment_memberships) and is point-in-time (a profile added to the segment AFTER the call is NOT enrolled).",
-          "IDEMPOTENT: a second identical enroll call inserts no duplicates (ON CONFLICT (campaign_id, profile_id) DO NOTHING) — re-enroll a 3-member snapshot ⇒ still 3 rows.",
-          "CROSS-WORKSPACE campaign id (a campaign in another workspace): 404 (scopedQuery resolves nothing in the token's workspace) — no enrollment written.",
+          "POST /automations/:id/enroll { profile_id } enrolls that profile at the automation's start node (current_node === startNode, status 'active'); response reports enrolled count 1.",
+          "POST /automations/:id/enroll { segment_id } enrolls a SNAPSHOT of the segment's current members (each at the start node) — assert N enrollments for an N-member segment; the snapshot is resolved server-side (dynamic via compileWhere/buildSegmentMatch, manual via segment_memberships) and is point-in-time (a profile added to the segment AFTER the call is NOT enrolled).",
+          "IDEMPOTENT: a second identical enroll call inserts no duplicates (ON CONFLICT (automation_id, profile_id) DO NOTHING) — re-enroll a 3-member snapshot ⇒ still 3 rows.",
+          "CROSS-WORKSPACE automation id (a automation in another workspace): 404 (scopedQuery resolves nothing in the token's workspace) — no enrollment written.",
           "CROSS-WORKSPACE profile_id: 404/refused (the profile must exist in ctx.workspaceId, mirrors sendProfileEvent's present-check) — never enrolls another tenant's profile.",
           "CROSS-WORKSPACE segment_id: 404/refused (segment resolved scoped to ctx.workspaceId; a foreign id resolves to nothing) — inv.2.",
           "workspace_id is taken from ctx (authorizer claim) ONLY — a workspace_id in the request body is ignored (assert a body workspace_id does not leak into the write).",
-          "CAPABILITY GATE: the route is registered as 'POST /campaigns/:id/enroll' : 'manage_content' in routes.ts (assert the entry exists / a non-manage_content token is rejected by the gate).",
-          "the inserted enrollment's workspace_id === ctx.workspaceId and campaign_id === the path id (every write binds workspace_id at $1)."
+          "CAPABILITY GATE: the route is registered as 'POST /automations/:id/enroll' : 'manage_content' in routes.ts (assert the entry exists / a non-manage_content token is rejected by the gate).",
+          "the inserted enrollment's workspace_id === ctx.workspaceId and automation_id === the path id (every write binds workspace_id at $1)."
         ],
-        "criterion": "The manual/API enroll endpoint (POST /campaigns/:id/enroll) enrolls a single profile OR a segment snapshot at the start node, is capability-gated (manage_content) + workspace-scoped, and refuses cross-workspace campaign/profile/segment ids (404/inv.2). Real Postgres.",
-        "path": "services/local-api/test/campaign-enroll-endpoint.integration.test.ts",
+        "criterion": "The manual/API enroll endpoint (POST /automations/:id/enroll) enrolls a single profile OR a segment snapshot at the start node, is capability-gated (manage_content) + workspace-scoped, and refuses cross-workspace automation/profile/segment ids (404/inv.2). Real Postgres.",
+        "path": "services/local-api/test/automation-enroll-endpoint.integration.test.ts",
         "tier": "integration"
       },
       {
@@ -295,7 +295,7 @@
           "the handler RETURNS the promise so the kit Button auto-lock contract holds (no implementation detail leaked — assert via the handler signature/return, consistent with existing handlers)."
         ],
         "criterion": "The manual-enroll handler input contract: exactly one of profile_id | segment_id required; bad input rejected before any DB write.",
-        "path": "services/local-api/test/campaign-enroll-endpoint.unit.test.ts",
+        "path": "services/local-api/test/automation-enroll-endpoint.unit.test.ts",
         "tier": "unit"
       }
     ]

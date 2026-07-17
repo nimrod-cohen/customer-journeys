@@ -25,15 +25,15 @@
           "criteria": [
             "Inserting an If/branch on an edge yields a converging diamond: both arms lead to the SAME continuation node and the trunk continues below it; rendered with arms fanning sideways and connectors converging into the single join (no diagonal/upward edges, auto-layout). Verified in a REAL browser (Playwright tokenizes the connector paths + asserts convergence into one node).",
             "Each arm has its own + ; adding a node to ONE arm while the other stays empty keeps the diamond and both sides rejoin the trunk (the user screenshot case); placing an Exit on an arm terminates only that arm. Round-trips through the DSL (save+reload same graph).",
-            "Delete re-links to a valid converging graph; no loops/orphans; validateCampaignDefinition passes for the diamond; workspace-scoped. No regression in the phase-5/6 canvas + editor e2e."
+            "Delete re-links to a valid converging graph; no loops/orphans; validateAutomationDefinition passes for the diamond; workspace-scoped. No regression in the phase-5/6 canvas + editor e2e."
           ],
           "frontend": true,
           "id": "phase6b-branch-convergence",
-          "refs": "CLAUDE.md (the phase-5 canvas: layout.ts/orthogonal-path.ts/mutate.ts/CampaignCanvas.tsx) + the locked converging-diamond design",
+          "refs": "CLAUDE.md (the phase-5 canvas: layout.ts/orthogonal-path.ts/mutate.ts/AutomationCanvas.tsx) + the locked converging-diamond design",
           "scope": [
             "Redesign the IF/branch (and any future multi-way branch) so its arms OPEN and REJOIN a single trunk (a converging diamond), NOT two separate exits. Inserting an If/branch on an edge A→B produces A→If with BOTH arms (onTrue/onFalse) leading to the continuation B; the trunk continues downward from that single join node. (Today insertBranch wires each arm to its own fresh exit — change it to rejoin.)",
             "Each arm gets its OWN + insertion control to add action nodes into THAT arm only (If.onTrue→New→join); an EMPTY arm passes straight through to the join (matches the user screenshot: one populated arm, one empty, both reunite). An explicit EXIT node dropped on an arm terminates just that arm (that side does not rejoin).",
-            "Layout + connectors: the join node has 2+ incoming edges; draw the arms fanning to the SIDES and the connectors CONVERGING back into the single join, trunk continuing below — extend the existing Reingold-Tilford layout (a node with multiple parents laid out ONCE at max parent depth) and the orthogonal-path renderer (still rounded, axis-aligned, no diagonals, no up/back edges). Update mutate.ts (insertBranch rejoins; per-arm insert; delete re-links keeping a valid converging graph), CampaignCanvas.tsx (per-arm + controls + the convergence connectors). validateCampaignDefinition stays the gate (diamonds are already allowed — ensure no false cycle/orphan). The RUNNER is unchanged (it just follows current_node through the join)."
+            "Layout + connectors: the join node has 2+ incoming edges; draw the arms fanning to the SIDES and the connectors CONVERGING back into the single join, trunk continuing below — extend the existing Reingold-Tilford layout (a node with multiple parents laid out ONCE at max parent depth) and the orthogonal-path renderer (still rounded, axis-aligned, no diagonals, no up/back edges). Update mutate.ts (insertBranch rejoins; per-arm insert; delete re-links keeping a valid converging graph), AutomationCanvas.tsx (per-arm + controls + the convergence connectors). validateAutomationDefinition stays the gate (diamonds are already allowed — ensure no false cycle/orphan). The RUNNER is unchanged (it just follows current_node through the join)."
           ],
           "title": "Builder: converging branches (arms open and rejoin a single trunk)"
         },
@@ -63,7 +63,7 @@
   "schemaVersion": "2026.01.tasks-v1",
   "effectId": "01KVGZH2Z5KQBRCBEQXC3TB117",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000028:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000028:commit-phase",
   "stepId": "S000028",
   "inputs": {
     "converged": true,
@@ -71,15 +71,15 @@
       "criteria": [
         "Inserting an If/branch on an edge yields a converging diamond: both arms lead to the SAME continuation node and the trunk continues below it; rendered with arms fanning sideways and connectors converging into the single join (no diagonal/upward edges, auto-layout). Verified in a REAL browser (Playwright tokenizes the connector paths + asserts convergence into one node).",
         "Each arm has its own + ; adding a node to ONE arm while the other stays empty keeps the diamond and both sides rejoin the trunk (the user screenshot case); placing an Exit on an arm terminates only that arm. Round-trips through the DSL (save+reload same graph).",
-        "Delete re-links to a valid converging graph; no loops/orphans; validateCampaignDefinition passes for the diamond; workspace-scoped. No regression in the phase-5/6 canvas + editor e2e."
+        "Delete re-links to a valid converging graph; no loops/orphans; validateAutomationDefinition passes for the diamond; workspace-scoped. No regression in the phase-5/6 canvas + editor e2e."
       ],
       "frontend": true,
       "id": "phase6b-branch-convergence",
-      "refs": "CLAUDE.md (the phase-5 canvas: layout.ts/orthogonal-path.ts/mutate.ts/CampaignCanvas.tsx) + the locked converging-diamond design",
+      "refs": "CLAUDE.md (the phase-5 canvas: layout.ts/orthogonal-path.ts/mutate.ts/AutomationCanvas.tsx) + the locked converging-diamond design",
       "scope": [
         "Redesign the IF/branch (and any future multi-way branch) so its arms OPEN and REJOIN a single trunk (a converging diamond), NOT two separate exits. Inserting an If/branch on an edge A→B produces A→If with BOTH arms (onTrue/onFalse) leading to the continuation B; the trunk continues downward from that single join node. (Today insertBranch wires each arm to its own fresh exit — change it to rejoin.)",
         "Each arm gets its OWN + insertion control to add action nodes into THAT arm only (If.onTrue→New→join); an EMPTY arm passes straight through to the join (matches the user screenshot: one populated arm, one empty, both reunite). An explicit EXIT node dropped on an arm terminates just that arm (that side does not rejoin).",
-        "Layout + connectors: the join node has 2+ incoming edges; draw the arms fanning to the SIDES and the connectors CONVERGING back into the single join, trunk continuing below — extend the existing Reingold-Tilford layout (a node with multiple parents laid out ONCE at max parent depth) and the orthogonal-path renderer (still rounded, axis-aligned, no diagonals, no up/back edges). Update mutate.ts (insertBranch rejoins; per-arm insert; delete re-links keeping a valid converging graph), CampaignCanvas.tsx (per-arm + controls + the convergence connectors). validateCampaignDefinition stays the gate (diamonds are already allowed — ensure no false cycle/orphan). The RUNNER is unchanged (it just follows current_node through the join)."
+        "Layout + connectors: the join node has 2+ incoming edges; draw the arms fanning to the SIDES and the connectors CONVERGING back into the single join, trunk continuing below — extend the existing Reingold-Tilford layout (a node with multiple parents laid out ONCE at max parent depth) and the orthogonal-path renderer (still rounded, axis-aligned, no diagonals, no up/back edges). Update mutate.ts (insertBranch rejoins; per-arm insert; delete re-links keeping a valid converging graph), AutomationCanvas.tsx (per-arm + controls + the convergence connectors). validateAutomationDefinition stays the gate (diamonds are already allowed — ensure no false cycle/orphan). The RUNNER is unchanged (it just follows current_node through the join)."
       ],
       "title": "Builder: converging branches (arms open and rejoin a single trunk)"
     },

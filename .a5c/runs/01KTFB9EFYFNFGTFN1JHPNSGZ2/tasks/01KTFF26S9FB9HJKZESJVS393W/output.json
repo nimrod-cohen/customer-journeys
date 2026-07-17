@@ -10,7 +10,7 @@
     {"criterion":"Feedback closes loop","verified":true,"evidence":"hard bounce via handleNotification -> suppression hard_bounce + global_hard_bounces + profiles bounced + email_events; subsequent send to recipient -> 'skip', ses.sends 0 via real buildIsSuppressedQuery."},
     {"criterion":"Per-workspace isolation","verified":true,"evidence":"same email in A+B; unsubscribe suppresses A only; isSuppressed(A) true, (B) false; B dispatchOutbox 'send' ses.sends 1."},
     {"criterion":"Reputation isolation","verified":true,"evidence":"60 sends + 4 hard bounces (6.7%>5%, MIN_SENT_FOR_RATE 50 met) via real core -> WS_REP suspended, WS_A active; suspended offender then 'refuse'. Rate from messages_log sent + email_events bounces, not rigged."},
-    {"criterion":"No scope creep","verified":true,"evidence":"no broadcast/campaign/image/metering/frontend imports."}
+    {"criterion":"No scope creep","verified":true,"evidence":"no broadcast/automation/image/metering/frontend imports."}
   ],
   "recommendations": [
     "Add CI assert-not-skipped guard (gate is DATABASE_URL presence only).",

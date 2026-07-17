@@ -1,4 +1,4 @@
-// Broadcast/campaign AUDIENCE composition (§9A). A broadcast audience is a §8 rule AST
+// Broadcast/automation AUDIENCE composition (§9A). A broadcast audience is a §8 rule AST
 // (the SAME shape as a segment definition): profile-attribute + event conditions AND
 // segment-membership leaves ("is / is NOT a member of segment X"), combined with AND/OR
 // groups. It compiles via `compileWhere` (workspace_id = $1 always prepended) exactly like

@@ -3,7 +3,7 @@
   "recordedAt": "2026-06-19T23:14:32.064Z",
   "data": {
     "effectId": "01KVH2M7ZFYNWH0333KN2R0QXY",
-    "invocationKey": "cdp/campaign-builder:S000034:integration-gate",
+    "invocationKey": "cdp/automation-builder:S000034:integration-gate",
     "invocationHash": "4a4dbd1fc1ed7bcce917dc2054ddc8b46c9cac3a7fb3e797b43c973c01c4db92",
     "stepId": "S000034",
     "taskId": "integration-gate",

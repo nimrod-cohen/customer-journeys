@@ -1,6 +1,6 @@
 // DST-correct zoned↔UTC time helpers + an IANA validator — the SINGLE source of
 // truth for "interpret a wall-clock in a timezone" (§8/§10/§9B). EXTRACTED from
-// web/src/screens/BroadcastComposer.tsx so the broadcast scheduler AND campaign
+// web/src/screens/BroadcastComposer.tsx so the broadcast scheduler AND automation
 // time math (waits, wait-until, hour-of-day windows) reuse ONE implementation.
 // Behavior-preserving — the exact ISO outputs are locked by tests.
 

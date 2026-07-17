@@ -1,0 +1,1218 @@
+// Automations (§12, §9B phases 5–7). Like Broadcasts, this is a LIST page
+// (AutomationsList at #/automations) + a SEPARATE edit page (AutomationDetail, the
+// constrained downward CANVAS builder, at #/automations/new and #/automations/:id).
+//
+// AutomationsList: a table of automations (name, lifecycle status, enrollment counts)
+// with a "New automation" action and a per-row ActionMenu (Open · Pause/Resume ·
+// Archive). Lifecycle actions are server-calling buttons (kit auto-locks on a
+// returned promise) + askConfirm for archive (NEVER a native dialog) + a toast.
+// There is NO "Design email" button here — email design lives ONLY inside a send
+// node's editor (AutomationDetail → NodeEditor).
+//
+// AutomationDetail: the canvas builder (the bulk of the old combined screen, moved
+// verbatim). It RENDERS a AutomationDefinition with auto-layout + rounded orthogonal
+// connectors, inserts/deletes/edits steps via the (+) palette + per-node Drawer,
+// SAVES via POST/PUT /automations (server re-validates) and PUBLISHES (Draft →
+// Active) through the send-node envelope + verified-domain gate. Returning from a
+// send node's "Design email" lands here (the editor's setEditorReturn targets
+// /automations/:id). Server-calling buttons RETURN the promise; no native dialogs.
+import { useEffect, useState } from 'preact/hooks';
+import { api } from '../store/session.js';
+import { navigate, replaceRoute } from '../router.js';
+import { Badge, Button, Card, Input, PageHeader, Pagination, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
+import { usePagedList } from '../ui/usePagedList.js';
+import { formatDateTime } from '../ui/datetime.js';
+import type { ActionMenuItem } from '../ui/kit.js';
+import { askConfirm } from '../ui/dialog.js';
+import { showToast } from '../ui/toast.js';
+import { AutomationCanvas, type Placement } from '../automations/AutomationCanvas.js';
+import {
+  parseDefinition,
+  buildDefinition,
+  starterModel,
+  type AutomationDefinition,
+  type CanvasModel,
+  type CanvasEdge,
+  type CanvasNode,
+  type PaletteType,
+} from '../automations/model.js';
+import { backfillAllowed, draftDiffersFrom, type PublishScope } from '../automations/versioning.js';
+import { PublishVersionModal } from '../automations/PublishVersionModal.js';
+import { nodeSummary } from '../automations/mutate.js';
+import { applyNodeConfig } from '../automations/node-config.js';
+import {
+  insertOnEdge,
+  insertAfterBranch,
+  deleteNode,
+  moveSubtree,
+  moveAfterBranch,
+  duplicateSubtree,
+  duplicateAfterBranch,
+  MutationError,
+} from '../automations/mutate.js';
+import { NodeEditorBody, nodeEditorTestId, nodeEditorTitle } from '../automations/editors/NodeEditor.js';
+
+/** Enrollment-status buckets surfaced per automation on the list. */
+interface EnrollmentCounts {
+  active: number;
+  completed: number;
+  exited: number;
+  failed: number;
+}
+
+interface AutomationListItem {
+  id: string;
+  name: string;
+  status: string;
+  counts: EnrollmentCounts;
+  // True once the automation has had at least one publish (active_version_id set).
+  // A never-published automation (false) can be hard-DELETED; a published one is
+  // history and is archive-only.
+  published?: boolean;
+  // True when an unsaved draft exists that differs from the live definition. With
+  // status === 'draft' (never published), it drives the list's "Publish…" action.
+  hasDraft?: boolean;
+}
+
+interface SegmentLite {
+  id: string;
+  name: string;
+}
+
+/** One published version in the History tab. */
+interface AutomationVersion {
+  id: string;
+  version: number;
+  name: string;
+  created_at: string;
+  created_by: string | null;
+  is_active: boolean;
+}
+
+/** One enrollment in the Journeys tab — a profile that has entered this automation. */
+interface AutomationEnrollment {
+  profile_id: string;
+  email: string | null;
+  status: string;
+  current_node: string;
+  enrolled_at: string;
+  updated_at: string;
+}
+
+/** Format a version's created_at for the History list (locale, fail-soft). */
+function whenLabel(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  return formatDateTime(new Date(t));
+}
+
+/** Lifecycle statuses that hide a automation from the default (non-archived) list. */
+const ARCHIVED = 'archived';
+
+// --- The LIST page -----------------------------------------------------------
+
+export function AutomationsList() {
+  // Server-paged + server-searched (numbered pages). Archived automations are filtered
+  // SERVER-SIDE now (so paging totals are correct), so the client no longer drops them.
+  const list = usePagedList<AutomationListItem>(async ({ limit, page, q }) => {
+    const c = await api.get<{ automations: AutomationListItem[]; total: number }>('/automations', {
+      query: { limit: String(limit), page: String(page), q },
+    });
+    return { rows: c.automations, total: c.total };
+  });
+  const automations = list.loaded ? list.rows : null;
+  const reload = async (): Promise<void> => list.reload();
+  // The automation whose "Publish…" dialog is open (its def decides backfill), plus a
+  // publish-gate reason surfaced inline in the same modal the detail screen uses.
+  const [publishing, setPublishing] = useState<{ id: string; name: string; canBackfill: boolean } | null>(null);
+  const [publishReason, setPublishReason] = useState('');
+
+  // Lifecycle transitions — each RETURNS its promise so the ActionMenu spins +
+  // locks the item until the response (no double-submits). Archive is confirmed
+  // via the styled dialog (never window.confirm). All reload the list after.
+  const lifecycle = async (id: string, action: 'pause' | 'resume', label: string): Promise<void> => {
+    try {
+      await api.post(`/automations/${id}/${action}`, { body: {} });
+      showToast(`Automation ${label}.`, { tone: 'success' });
+      await reload();
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? `Could not ${action} the automation.`, { tone: 'error' });
+    }
+  };
+  const archive = async (id: string, name: string): Promise<void> => {
+    const ok = await askConfirm({
+      title: 'Archive automation?',
+      message: `“${name}” will be archived and stop enrolling. You can still find it later.`,
+      confirmLabel: 'Archive',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.post(`/automations/${id}/archive`, { body: {} });
+      showToast('Automation archived.', { tone: 'success' });
+      await reload();
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not archive the automation.', { tone: 'error' });
+    }
+  };
+  // Hard-delete a NEVER-published automation (offered instead of Archive when
+  // published === false). Confirmed via the styled dialog (never window.confirm);
+  // on success the row drops from the list; a 409 (the server's never-delete-a-
+  // published-automation guard) surfaces as a toast.
+  const remove = async (id: string, name: string): Promise<void> => {
+    const ok = await askConfirm({
+      title: 'Delete automation?',
+      message: `Delete “${name}”? This can’t be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.del(`/automations/${id}`);
+      await reload();
+      showToast('Automation deleted.', { tone: 'success' });
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not delete the automation.', { tone: 'error' });
+    }
+  };
+
+  // Open the SAME publish dialog the detail screen uses, from the list. We fetch the
+  // automation first so the modal can decide whether backfill is offered (a
+  // segment_entry trigger with a segment) — exactly like the detail's canBackfill.
+  const openPublish = async (id: string, name: string): Promise<void> => {
+    setPublishReason('');
+    try {
+      const res = await api.get<{
+        automation: { definition: AutomationDefinition; trigger_segment_id: string | null };
+      }>(`/automations/${id}`);
+      const canBackfill = backfillAllowed(res.automation.definition, res.automation.trigger_segment_id ?? null);
+      setPublishing({ id, name, canBackfill });
+    } catch (e) {
+      showToast((e as { error?: string })?.error ?? 'Could not load the automation.', { tone: 'error' });
+    }
+  };
+
+  // Confirm the publish from the list modal. On the gate's 400/409 (incomplete send
+  // node / invalid def / no verified domain) we surface the reason INLINE in the
+  // modal (it renders publish reasons); on success we toast (incl. the backfilled
+  // count) + refresh the list (status → active, hasDraft → false).
+  const publish = async (name: string, scope: PublishScope): Promise<void> => {
+    if (!publishing) return;
+    setPublishReason('');
+    try {
+      const res = await api.post<{ version: number; name: string; enrolled: number }>(
+        `/automations/${publishing.id}/publish`,
+        { body: { name, scope } },
+      );
+      setPublishing(null);
+      await reload();
+      const msg =
+        scope === 'backfill' && res.enrolled > 0
+          ? `Published v${res.version} · enrolled ${res.enrolled} existing profile${res.enrolled === 1 ? '' : 's'}`
+          : `Published v${res.version}`;
+      showToast(msg, { tone: 'success' });
+    } catch (e) {
+      setPublishReason((e as { error?: string })?.error ?? 'Could not publish this automation.');
+    }
+  };
+
+  // Archived are already excluded server-side; keep the guard as defense-in-depth.
+  const visible = (automations ?? []).filter((c) => c.status !== ARCHIVED);
+
+  return (
+    <section data-testid="automations-list-screen">
+      <PageHeader
+        title="Automations"
+        subtitle="Design a multi-step journey: it flows downward, branches fan sideways."
+        actions={
+          <Button data-testid="automation-new" onClick={() => navigate('/automations/new')}>
+            New automation
+          </Button>
+        }
+      />
+
+      <div class="mb-4 max-w-sm">
+        <Input
+          data-testid="automation-search"
+          type="search"
+          placeholder="Search automations by name…"
+          value={list.q}
+          onInput={(e: Event) => list.setQ((e.target as HTMLInputElement).value)}
+        />
+      </div>
+
+      <Pagination
+        testid="pagination-top"
+        alwaysShowSummary
+        class="mb-3 flex flex-wrap items-center justify-between gap-3"
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPage={list.setPage}
+      />
+
+      {automations === null ? (
+        <p class="text-sm text-stone-500">Loading…</p>
+      ) : visible.length ? (
+        <ul data-testid="automation-list" class="space-y-2">
+          {visible.map((c) => {
+            const total = c.counts.active + c.counts.completed + c.counts.exited + c.counts.failed;
+            return (
+              <li
+                data-testid="automation-item"
+                key={c.id}
+                // Mobile: name + kebab on row 1, status + counts wrapping below.
+                // At sm+ the original four-track grid (name · status · counts · actions).
+                class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card sm:grid-cols-[minmax(0,1fr)_8rem_minmax(0,auto)_auto] sm:gap-4"
+              >
+                {/* Name */}
+                <a
+                  data-testid="automation-open"
+                  class="min-w-0 cursor-pointer truncate font-semibold text-ink-900 hover:text-brand-700"
+                  onClick={() => navigate(`/automations/${c.id}`)}
+                >
+                  {c.name}
+                </a>
+
+                {/* Status badge — order so the kebab stays on row 1 at mobile. */}
+                <span class="order-3 col-start-1 justify-self-start sm:order-none sm:col-start-auto">
+                  <Badge data-testid="automation-status" tone={toneFor(c.status)}>
+                    {c.status}
+                  </Badge>
+                </span>
+
+                {/* Enrollment counts summary — min-w-0 + wrap so the auto grid
+                    track can shrink at narrow widths (graceful degrade, no clip). */}
+                <span
+                  data-testid="automation-counts"
+                  class="order-4 col-start-1 flex min-w-0 flex-wrap items-center justify-start gap-x-4 gap-y-1 text-center text-sm tabular-nums sm:order-none sm:col-start-auto sm:justify-end"
+                  title={`${total} enrolled`}
+                >
+                  <span class="flex flex-col" data-testid="automation-count-active">
+                    <span class="text-[11px] uppercase tracking-wide text-stone-400">Active</span>
+                    <span class="font-semibold text-ink-900">{c.counts.active}</span>
+                  </span>
+                  <span class="flex flex-col" data-testid="automation-count-completed">
+                    <span class="text-[11px] uppercase tracking-wide text-stone-400">Completed</span>
+                    <span class="font-semibold text-emerald-700">{c.counts.completed}</span>
+                  </span>
+                  <span class="flex flex-col" data-testid="automation-count-exited">
+                    <span class="text-[11px] uppercase tracking-wide text-stone-400">Exited</span>
+                    <span class="text-stone-500">{c.counts.exited}</span>
+                  </span>
+                  <span class="flex flex-col" data-testid="automation-count-failed">
+                    <span class="text-[11px] uppercase tracking-wide text-stone-400">Failed</span>
+                    <span class={c.counts.failed > 0 ? 'font-semibold text-rose-600' : 'text-stone-500'}>
+                      {c.counts.failed}
+                    </span>
+                  </span>
+                </span>
+
+                {/* Row actions — one kebab (⋮) menu mirroring broadcasts. */}
+                <ActionMenu
+                  data-testid="automation-actions"
+                  items={[
+                    {
+                      label: 'Open',
+                      onSelect: () => navigate(`/automations/${c.id}`),
+                      'data-testid': 'automation-edit',
+                    } satisfies ActionMenuItem,
+                    // "Publish…" is offered when the automation is PUBLISHABLE: a
+                    // never-published draft (status === 'draft') OR it has an unsaved
+                    // draft differing from live. Opens the same publish dialog as the
+                    // detail screen.
+                    ...(c.status === 'draft' || c.hasDraft
+                      ? [
+                          {
+                            label: 'Publish…',
+                            onSelect: () => openPublish(c.id, c.name),
+                            'data-testid': 'automation-publish',
+                          } satisfies ActionMenuItem,
+                        ]
+                      : []),
+                    ...(c.status === 'active'
+                      ? [
+                          {
+                            label: 'Pause',
+                            onSelect: () => lifecycle(c.id, 'pause', 'paused'),
+                            'data-testid': 'automation-pause',
+                          } satisfies ActionMenuItem,
+                        ]
+                      : []),
+                    ...(c.status === 'paused'
+                      ? [
+                          {
+                            label: 'Resume',
+                            onSelect: () => lifecycle(c.id, 'resume', 'resumed'),
+                            'data-testid': 'automation-resume',
+                          } satisfies ActionMenuItem,
+                        ]
+                      : []),
+                    // A never-published automation (published === false) can be
+                    // hard-DELETED; a published one is history and stays archive-only.
+                    c.published === false
+                      ? ({
+                          label: 'Delete',
+                          onSelect: () => remove(c.id, c.name),
+                          danger: true,
+                          'data-testid': 'automation-delete',
+                        } satisfies ActionMenuItem)
+                      : ({
+                          label: 'Archive',
+                          onSelect: () => archive(c.id, c.name),
+                          danger: true,
+                          'data-testid': 'automation-archive',
+                        } satisfies ActionMenuItem),
+                  ]}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <div data-testid="automation-list">
+          <EmptyState>{list.q ? 'No automations match your search.' : 'No automations yet — create one with “New automation”.'}</EmptyState>
+        </div>
+      )}
+
+      <Pagination page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} />
+
+      {/* Publish from the list — the same modal the detail builder uses. */}
+      {publishing ? (
+        <PublishVersionModal
+          defaultName={publishing.name || 'Untitled automation'}
+          canBackfill={publishing.canBackfill}
+          reason={publishReason}
+          onPublish={publish}
+          onClose={() => setPublishing(null)}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+/** The insert palette — all eight node types, each with a stable testid. */
+const PALETTE: { type: PaletteType; label: string; testId: string; hint: string }[] = [
+  { type: 'wait', label: 'Wait', testId: 'palette-wait', hint: 'Pause for a relative delay' },
+  { type: 'wait_until', label: 'Wait until', testId: 'palette-wait-until', hint: 'Pause until a date' },
+  { type: 'hour_of_day_window', label: 'Hour-of-day window', testId: 'palette-hour-window', hint: 'Only send within hours' },
+  { type: 'condition', label: 'If / branch', testId: 'palette-if', hint: 'Split on a profile rule' },
+  { type: 'send', label: 'Send communication', testId: 'palette-send', hint: 'Email, SMS, or WhatsApp' },
+  { type: 'set_attribute', label: 'Update profile', testId: 'palette-update-profile', hint: 'Set a profile attribute' },
+  { type: 'set_journey', label: 'Update journey', testId: 'palette-update-journey', hint: 'Set a per-enrollment journey variable' },
+  { type: 'webhook', label: 'Webhook', testId: 'palette-webhook', hint: 'Call an external URL' },
+  { type: 'exit', label: 'Exit', testId: 'palette-exit', hint: 'End the journey here' },
+];
+
+// --- The DETAIL page (the canvas builder) ------------------------------------
+
+export function AutomationDetail({ id }: { id?: string }) {
+  // `id` is the path param: undefined / 'new' = a brand-new automation; a uuid = an
+  // existing one to load. editingId is the SERVER id once persisted (it starts as
+  // the path id for an existing automation, or null for a new one).
+  const existingId = id && id !== 'new' ? id : null;
+  const [automations, setAutomations] = useState<AutomationListItem[]>([]);
+  const [name, setName] = useState('');
+  const [model, setModel] = useState<CanvasModel>(() => starterModel());
+  const [editingId, setEditingId] = useState<string | null>(existingId);
+  const [status, setStatus] = useState<string>('draft');
+  const [timeZone, setTimeZone] = useState('UTC');
+  const [triggerSegmentId, setTriggerSegmentId] = useState<string | null>(null);
+  const [triggerOn, setTriggerOn] = useState<'enter' | 'exit'>('enter');
+  const [segments, setSegments] = useState<SegmentLite[]>([]);
+  // Topics list — fed into the per-send-node Topic picker in the node editor.
+  // The dispatcher gates each send on its own node's topic_id (no automation-level
+  // topic anymore). "No topic" = null = never gated.
+  const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
+  // Channel availability (from connectors): a SEND node whose channel has no
+  // connector renders inactive on the canvas (the runner skips it).
+  const [channels, setChannels] = useState<{ email: boolean; sms: boolean; whatsapp: boolean } | null>(null);
+  useEffect(() => {
+    void api
+      .get<{ channels: { email: boolean; sms: boolean; whatsapp: boolean } }>('/company/channels')
+      .then((r) => setChannels(r.channels))
+      .catch(() => {});
+  }, []);
+  const [paletteEdge, setPaletteEdge] = useState<CanvasEdge | null>(null);
+  // When set, the palette is opened to insert a step AFTER this condition's branch
+  // (the merge (+)); the chosen type splices in BEFORE the continuation.
+  const [mergeConditionId, setMergeConditionId] = useState<string | null>(null);
+  const [openNode, setOpenNode] = useState<CanvasNode | null>(null);
+  // An in-progress Move / Duplicate placement (pick a destination + to splice at).
+  const [placement, setPlacement] = useState<Placement | null>(null);
+  const [error, setError] = useState('');
+  // Publish-gate feedback: a top-level reason + a per-node-id error for the card.
+  const [publishReason, setPublishReason] = useState('');
+  const [publishErrors, setPublishErrors] = useState<Record<string, string>>({});
+  // The currently SELECTED node (highlighted + auto-centered on the canvas). Persisted
+  // per-automation in sessionStorage so a refresh — or opening the editor drawer and
+  // coming back — returns to the same node, selected + centered. `centerTick` is bumped
+  // to RE-center after the drawer closes (the user may have panned while it was open).
+  const selectedKey = editingId ? `cdp.automationSelected:${editingId}` : null;
+  const [selectedNodeId, setSelectedNodeIdState] = useState<string | null>(() => {
+    if (existingId && typeof sessionStorage !== 'undefined') return sessionStorage.getItem(`cdp.automationSelected:${existingId}`);
+    return null;
+  });
+  const [centerTick, setCenterTick] = useState(0);
+  const selectNode = (id: string | null): void => {
+    setSelectedNodeIdState(id);
+    if (selectedKey && typeof sessionStorage !== 'undefined') {
+      if (id) sessionStorage.setItem(selectedKey, id);
+      else sessionStorage.removeItem(selectedKey);
+    }
+    setCenterTick((t) => t + 1);
+  };
+  // VERSIONING. The builder edits the DRAFT; live is the last published definition.
+  // `live*` snapshot what was published (for the unsaved-draft diff); a fresh new
+  // automation has no live baseline (so any edit reads as an unsaved draft).
+  const [tab, setTab] = useState<'builder' | 'history' | 'journeys'>('builder');
+  const [liveDefinition, setLiveDefinition] = useState<AutomationDefinition | null>(null);
+  const [liveTriggerSegmentId, setLiveTriggerSegmentId] = useState<string | null>(null);
+  const [liveTriggerOn, setLiveTriggerOn] = useState<'enter' | 'exit'>('enter');
+  const [versions, setVersions] = useState<AutomationVersion[] | null>(null);
+  const [enrollments, setEnrollments] = useState<AutomationEnrollment[] | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+
+  // (The list of automations is loaded only so save/reload can keep it fresh for the
+  // contextual flows; the LIST page owns the user-facing table.)
+  const reloadList = async (): Promise<void> => {
+    const c = await api.get<{ automations: AutomationListItem[] }>('/automations');
+    setAutomations(c.automations);
+  };
+
+  useEffect(() => {
+    void reloadList();
+    void api.get<{ segments: SegmentLite[] }>('/segments').then((r) => setSegments(r.segments)).catch(() => undefined);
+    void api.get<{ topics: { id: string; name: string }[] }>('/topics').then((r) => setTopics(r.topics)).catch(() => undefined);
+    if (existingId) void openById(existingId);
+  }, [existingId]);
+
+  const clearPublish = (): void => {
+    setPublishReason('');
+    setPublishErrors({});
+  };
+
+  // Load an existing automation — GET /automations/:id round-trips the DSL → canvas.
+  // `definition` is the DRAFT to edit (draft ?? live); `liveDefinition` is the last
+  // published one (the diff baseline for the unsaved-draft indicator). Also carries
+  // the workspace timezone + trigger_segment_id (draft trigger) for the editors.
+  const openById = async (cid: string): Promise<void> => {
+    const res = await api.get<{
+      automation: {
+        id: string;
+        name: string;
+        status: string;
+        definition: AutomationDefinition;
+        liveDefinition: AutomationDefinition;
+        hasDraft: boolean;
+        trigger_segment_id: string | null;
+        trigger_on: 'enter' | 'exit' | null;
+      };
+      timezone: string;
+    }>(`/automations/${cid}`);
+    setEditingId(res.automation.id);
+    setName(res.automation.name);
+    setStatus(res.automation.status);
+    setModel(parseDefinition(res.automation.definition));
+    setTriggerSegmentId(res.automation.trigger_segment_id ?? null);
+    const to = res.automation.trigger_on === 'exit' ? 'exit' : 'enter';
+    setTriggerOn(to);
+    setLiveDefinition(res.automation.liveDefinition);
+    // The server resolves trigger_segment_id to the DRAFT trigger when a draft
+    // exists; the LIVE trigger equals it only when there's no unsaved draft. We use
+    // the live trigger as the diff baseline — when no draft, draft == live.
+    setLiveTriggerSegmentId(res.automation.hasDraft ? null : (res.automation.trigger_segment_id ?? null));
+    setLiveTriggerOn(res.automation.hasDraft ? 'enter' : to);
+    setTimeZone(res.timezone || 'UTC');
+    clearPublish();
+    setError('');
+    // Restore the persisted selection for THIS automation + center it now the model is
+    // loaded (the canvas's center effect keys on centerTick). Drop a stale id that no
+    // longer exists in the loaded graph.
+    if (typeof sessionStorage !== 'undefined') {
+      const saved = sessionStorage.getItem(`cdp.automationSelected:${res.automation.id}`);
+      const exists = saved && Object.prototype.hasOwnProperty.call(res.automation.definition.nodes, saved);
+      setSelectedNodeIdState(exists ? saved : null);
+      if (!exists && saved) sessionStorage.removeItem(`cdp.automationSelected:${res.automation.id}`);
+      setCenterTick((t) => t + 1);
+    }
+  };
+
+  // Refresh ONLY the version history (History tab). Workspace-scoped server-side.
+  const reloadVersions = async (cid: string): Promise<void> => {
+    const r = await api.get<{ versions: AutomationVersion[] }>(`/automations/${cid}/versions`);
+    setVersions(r.versions);
+  };
+
+  // Refresh the Journeys tab — the profiles that have passed through this automation.
+  // Workspace-scoped server-side (the automation id resolves inside the token's ws).
+  const reloadEnrollments = async (cid: string): Promise<void> => {
+    const r = await api.get<{ enrollments: AutomationEnrollment[] }>(`/automations/${cid}/enrollments`);
+    setEnrollments(r.enrollments);
+  };
+
+  // Insert a node — either on the chosen edge, or AFTER a condition's branch (the
+  // merge (+)). Both flows go through the same palette + toast-on-refusal handling.
+  const insert = (type: PaletteType): void => {
+    if (mergeConditionId) {
+      const condId = mergeConditionId;
+      try {
+        setModel((m) => insertAfterBranch(m, condId, type));
+        setError('');
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : String(e), { tone: 'error' });
+      }
+      setMergeConditionId(null);
+      return;
+    }
+    if (!paletteEdge) return;
+    try {
+      setModel((m) => insertOnEdge(m, paletteEdge, type));
+      setError('');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e), { tone: 'error' });
+    }
+    setPaletteEdge(null);
+  };
+
+  // Open the palette to insert AFTER a condition's branch (the merge (+)).
+  const startMergeInsert = (conditionId: string): void => {
+    setPaletteEdge(null);
+    setMergeConditionId(conditionId);
+  };
+
+  // Delete a node (confirmed via the styled dialog — never window.confirm).
+  const remove = async (node: CanvasNode): Promise<void> => {
+    const okToDelete = await askConfirm({
+      title: 'Delete this step?',
+      message: 'The journey re-links around it. This cannot be undone.',
+      confirmLabel: 'Delete step',
+      danger: true,
+    });
+    if (!okToDelete) return;
+    try {
+      setModel((m) => deleteNode(m, node.id));
+      setError('');
+    } catch (e) {
+      const msg = e instanceof MutationError || e instanceof Error ? e.message : String(e);
+      showToast(msg, { tone: 'error' });
+    }
+  };
+
+  // Start a Move / Duplicate placement: the canvas then asks the user to pick a
+  // destination (+). (No server call yet — the splice happens on pick.)
+  const startPlacement = (op: 'move' | 'duplicate', node: CanvasNode): void => {
+    setPlacement({ op, rootId: node.id });
+  };
+  const cancelPlacement = (): void => setPlacement(null);
+
+  // The user picked a destination edge while placing: apply the move/duplicate,
+  // persist (server re-validates), and clear placement. A MutationError (the LOCAL
+  // guards) or a server rejection surfaces as a toast and keeps the prior model.
+  const pickTarget = async (edge: CanvasEdge): Promise<void> => {
+    if (!placement) return;
+    const { op, rootId } = placement;
+    let next: CanvasModel;
+    try {
+      next = op === 'move' ? moveSubtree(model, rootId, edge) : duplicateSubtree(model, rootId, edge);
+    } catch (e) {
+      const msg = e instanceof MutationError || e instanceof Error ? e.message : String(e);
+      showToast(msg, { tone: 'error' });
+      return; // stay in placement so the user can pick another spot
+    }
+    setModel(next);
+    setPlacement(null);
+    clearPublish();
+    try {
+      await persist(next);
+      await reloadList();
+      showToast(op === 'move' ? 'Branch moved.' : 'Branch duplicated.', { tone: 'success' });
+    } catch (err) {
+      // The server rejected the new graph (e.g. an orphaned sibling): revert + toast.
+      const msg = (err as { error?: string })?.error ?? String(err);
+      setModel(model);
+      showToast(msg, { tone: 'error' });
+    }
+  };
+
+  // The user picked a branch's MERGE (+) while placing: drop the moved node / copy AFTER
+  // that branch's convergence (it runs the branch, then this node, then the continuation).
+  // MOVE relocates the single node (moveAfterBranch); DUPLICATE drops a copy
+  // (duplicateAfterBranch). Same persist/revert flow as pickTarget.
+  const pickMergeTarget = async (conditionId: string): Promise<void> => {
+    if (!placement) return;
+    const { op, rootId } = placement;
+    let next: CanvasModel;
+    try {
+      next = op === 'move' ? moveAfterBranch(model, rootId, conditionId) : duplicateAfterBranch(model, rootId, conditionId);
+    } catch (e) {
+      const msg = e instanceof MutationError || e instanceof Error ? e.message : String(e);
+      showToast(msg, { tone: 'error' });
+      return; // stay in placement so the user can pick another spot
+    }
+    setModel(next);
+    setPlacement(null);
+    clearPublish();
+    try {
+      await persist(next);
+      await reloadList();
+      showToast(op === 'move' ? 'Branch moved.' : 'Branch duplicated.', { tone: 'success' });
+    } catch (err) {
+      const msg = (err as { error?: string })?.error ?? String(err);
+      setModel(model);
+      showToast(msg, { tone: 'error' });
+    }
+  };
+
+  // Persist the current model — to the DRAFT, never the live definition (live is
+  // untouched until Publish). A BRAND-NEW automation has no row yet, so the first
+  // persist CREATES it via POST /automations (a fresh automation's live == draft, so
+  // there is no draft to split). Once a row exists, EVERY edit (node save / insert /
+  // delete / move / duplicate / trigger-segment) writes the DRAFT via
+  // PUT /automations/:id/draft — including its draft trigger segment. The server
+  // validates the graph; an invalid graph throws (the caller surfaces it). Returns
+  // the automation id.
+  const persist = async (
+    overrideModel?: CanvasModel,
+    overrideTriggerSeg?: string | null,
+    overrideTriggerOn?: 'enter' | 'exit',
+  ): Promise<string> => {
+    const definition = buildDefinition(overrideModel ?? model);
+    const triggerSeg = overrideTriggerSeg !== undefined ? overrideTriggerSeg : triggerSegmentId;
+    const to = overrideTriggerOn !== undefined ? overrideTriggerOn : triggerOn;
+    if (editingId) {
+      await api.put(`/automations/${editingId}/draft`, {
+        body: { definition, trigger_on: to, ...(triggerSeg !== null ? { trigger_segment_id: triggerSeg } : {}) },
+      });
+      return editingId;
+    }
+    // First persist of a NEW automation: create the row (definition is its initial
+    // live + draft). Subsequent edits go to the draft via the branch above.
+    const r = await api.post<{ automation: { id: string } }>('/automations', {
+      body: {
+        name: name || 'Untitled automation',
+        definition,
+        trigger_on: to,
+        ...(triggerSeg !== null ? { trigger_segment_id: triggerSeg } : {}),
+      },
+    });
+    setEditingId(r.automation.id);
+    // Point the URL at the new automation so a REFRESH reloads it instead of a blank
+    // /automations/new (which orphaned the draft + minted a new "Untitled" each retry).
+    // Silent (no remount) so an in-flight edit / open node editor isn't disrupted.
+    replaceRoute(`/automations/${r.automation.id}`);
+    // A freshly-created automation's live == its definition (no unsaved draft yet).
+    setLiveDefinition(definition);
+    setLiveTriggerSegmentId(triggerSeg ?? null);
+    return r.automation.id;
+  };
+
+  // Save: persist the definition to the DRAFT; surface an invalid graph inline +
+  // via toast. (Publishing is a separate, explicit action.)
+  const save = async (): Promise<void> => {
+    setError('');
+    try {
+      await persist();
+      await reloadList();
+      showToast('Draft saved', { tone: 'success' });
+    } catch (err) {
+      const msg = (err as { error?: string })?.error ?? String(err);
+      setError(msg);
+      showToast(msg, { tone: 'error' });
+    }
+  };
+
+  // A node editor saved its config: patch the model immutably, persist, reopen so
+  // the editor reflects the round-tripped state (esp. the SEND clone).
+  const saveNode = async (nodeId: string, patch: AutomationDefinition['nodes'][string]): Promise<void> => {
+    const next = applyNodeConfig(model, nodeId, patch);
+    setModel(next);
+    clearPublish();
+    try {
+      const cid = await persist(next);
+      await openById(cid);
+      await reloadList();
+    } catch (err) {
+      const msg = (err as { error?: string })?.error ?? String(err);
+      showToast(msg, { tone: 'error' });
+      throw err;
+    }
+  };
+
+  // The SEND editor's attach-template / design-email act on the node SERVER-SIDE
+  // (POST .../send-nodes/:nodeId/attach-template reads the node from the stored
+  // definition). So a freshly-inserted node must be PERSISTED before its editor
+  // opens — for an EXISTING automation too, not just a brand-new one (otherwise the
+  // in-memory-only node 404s on attach and the drawer never closes). Node ids are
+  // stable across persist (no re-layout), so the passed node stays valid. A
+  // malformed in-progress graph surfaces as a toast and we don't open.
+  const openEditor = async (node: CanvasNode): Promise<void> => {
+    clearPublish();
+    selectNode(node.id); // highlight + remember (+ center) the node being edited
+    try {
+      await persist();
+      await reloadList();
+    } catch (err) {
+      showToast((err as { error?: string })?.error ?? String(err), { tone: 'error' });
+      return;
+    }
+    setOpenNode(node);
+  };
+
+  // The trigger segment + direction (enter|exit) are part of the DRAFT — persist them
+  // (with the current model) through the draft writer so live is untouched until publish.
+  const saveTriggerSegment = async (segmentId: string | null, on: 'enter' | 'exit'): Promise<void> => {
+    setTriggerSegmentId(segmentId);
+    setTriggerOn(on);
+    await persist(undefined, segmentId, on);
+  };
+
+  // PUBLISH the draft as a new VERSION (Draft → Live). Persist the draft first so
+  // the gate sees the latest copy, then POST /publish {name, scope}. The gate runs
+  // BEFORE any mutation: a 400 is a structural reason; a 409 carries {error, node?,
+  // missing?} → render inline against the offending node. On success the draft is
+  // promoted to live + cleared, status flips to active, and we reload.
+  const publish = async (versionName: string, scope: PublishScope): Promise<void> => {
+    clearPublish();
+    setError('');
+    let cid: string;
+    try {
+      cid = await persist();
+    } catch (err) {
+      const msg = (err as { error?: string })?.error ?? String(err);
+      setPublishReason(msg);
+      return;
+    }
+    try {
+      const res = await api.post<{ version: number; name: string; enrolled: number }>(
+        `/automations/${cid}/publish`,
+        { body: { name: versionName, scope } },
+      );
+      setPublishOpen(false);
+      // Reload the automation so the draft is cleared (hasDraft → false) and live ==
+      // the just-published definition; refresh the list + (if open) history.
+      await openById(cid);
+      await reloadList();
+      if (tab === 'history') await reloadVersions(cid);
+      const msg =
+        scope === 'backfill' && res.enrolled > 0
+          ? `Published v${res.version} · enrolled ${res.enrolled} existing profile${res.enrolled === 1 ? '' : 's'}`
+          : `Published v${res.version}`;
+      showToast(msg, { tone: 'success' });
+    } catch (err) {
+      const body = err as { error?: string; node?: string; missing?: string };
+      const msg = body?.error ?? 'Could not publish this automation.';
+      setPublishReason(msg);
+      if (body?.node) setPublishErrors({ [body.node]: msg });
+    }
+  };
+
+  // Lifecycle (pause/resume) from the EDIT header — mirrors the list-row actions.
+  // RETURNS its promise so the kit Button spins + locks until the response.
+  const lifecycle = async (action: 'pause' | 'resume'): Promise<void> => {
+    if (!editingId) return;
+    try {
+      await api.post(`/automations/${editingId}/${action}`, { body: {} });
+      setStatus(action === 'pause' ? 'paused' : 'active');
+      await reloadList();
+      showToast(action === 'pause' ? 'Automation paused.' : 'Automation resumed.', { tone: 'success' });
+    } catch (err) {
+      showToast((err as { error?: string })?.error ?? `Could not ${action} the automation.`, { tone: 'error' });
+    }
+  };
+
+  // Revert a prior version INTO the draft (live untouched). Confirmed via the styled
+  // dialog (never window.confirm). On success load the returned draft into the
+  // builder model + switch back to the Builder tab.
+  const revert = async (v: AutomationVersion): Promise<void> => {
+    if (!editingId) return;
+    const ok = await askConfirm({
+      title: `Revert to v${v.version}?`,
+      message: `“${v.name}” will be loaded into the draft. Your live automation keeps running until you Save to publish.`,
+      confirmLabel: 'Load into draft',
+    });
+    if (!ok) return;
+    try {
+      const res = await api.post<{ definition: AutomationDefinition; trigger_segment_id: string | null }>(
+        `/automations/${editingId}/revert`,
+        { body: { version_id: v.id } },
+      );
+      setModel(parseDefinition(res.definition));
+      setTriggerSegmentId(res.trigger_segment_id ?? null);
+      clearPublish();
+      setError('');
+      setTab('builder');
+      showToast(`Loaded v${v.version} into the draft — Save to publish.`, { tone: 'success' });
+    } catch (err) {
+      showToast((err as { error?: string })?.error ?? 'Could not revert to that version.', { tone: 'error' });
+    }
+  };
+
+  // Open the History tab — lazily fetch the version list.
+  const openHistory = (): void => {
+    setTab('history');
+    if (editingId) void reloadVersions(editingId);
+  };
+
+  // Open the Journeys tab — lazily fetch the enrollment list.
+  const openJourneys = (): void => {
+    setTab('journeys');
+    if (editingId) void reloadEnrollments(editingId);
+  };
+
+  // Map a current_node id → a human label from the loaded definition (the canvas
+  // model). A node that no longer exists (e.g. an old enrollment on a since-edited
+  // graph) shows '—'.
+  const nodeLabel = (nodeId: string): string => {
+    const cn = model.nodes.find((n) => n.id === nodeId);
+    return cn ? nodeSummary(cn) : '—';
+  };
+
+  // Open the Save-version modal (clears any stale publish reason first).
+  const openPublish = (): void => {
+    clearPublish();
+    setPublishOpen(true);
+  };
+
+  // The unsaved-draft indicator: a fresh new automation (no live baseline) reads dirty
+  // once it has been created; otherwise compare the local model to the published one.
+  const isDirty = draftDiffersFrom(
+    buildDefinition(model),
+    liveDefinition,
+    triggerSegmentId,
+    liveTriggerSegmentId,
+    triggerOn,
+    liveTriggerOn,
+  );
+  const canBackfill = backfillAllowed(buildDefinition(model), triggerSegmentId);
+
+  return (
+    <section data-testid="automation-builder">
+      {/* Inline header: title + automation-name input on a single row, with
+          pause/resume + back link on the right. Saves a whole row of vertical
+          space vs. stacking a PageHeader above the form. */}
+      <header class="mb-3 flex flex-wrap items-center gap-3">
+        <h1 class="text-xl font-bold text-ink-950 sm:text-2xl">{editingId ? 'Edit automation' : 'New automation'}</h1>
+        <Input
+          data-testid="automation-name"
+          placeholder="Welcome series"
+          value={name}
+          onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
+          class="max-w-sm flex-1"
+        />
+        <div class="ml-auto flex items-center gap-2">
+          {editingId && status === 'active' ? (
+            <Button data-testid="automation-pause" variant="secondary" size="sm" onClick={() => lifecycle('pause')}>
+              Pause
+            </Button>
+          ) : null}
+          {editingId && status === 'paused' ? (
+            <Button data-testid="automation-resume" variant="secondary" size="sm" onClick={() => lifecycle('resume')}>
+              Resume
+            </Button>
+          ) : null}
+          <button data-testid="automations-back" class="btn-ghost btn-sm whitespace-nowrap" onClick={() => navigate('/automations')}>
+            ← Back to automations
+          </button>
+        </div>
+      </header>
+
+      {/* Builder / History tabs — the canvas is the default. Status badges
+          (draft indicator + automation status) sit on the right of this row, so
+          the form area above doesn't need to host them. */}
+      {editingId ? (
+        <div role="tablist" class="mb-3 flex items-end justify-between gap-3 border-b border-stone-200">
+          <div class="flex gap-1">
+            {(
+              [
+                { key: 'builder', label: 'Builder', testId: 'automation-tab-builder', onSelect: () => setTab('builder') },
+                { key: 'journeys', label: 'Journeys', testId: 'automation-tab-journeys', onSelect: openJourneys },
+                { key: 'history', label: 'History', testId: 'automation-tab-history', onSelect: openHistory },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                data-testid={t.testId}
+                aria-selected={tab === t.key}
+                onClick={t.onSelect}
+                class={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                  tab === t.key
+                    ? 'border-brand-600 text-brand-700'
+                    : 'border-transparent text-stone-500 hover:text-stone-700'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div class="mb-1.5 flex items-center gap-2">
+            {isDirty ? (
+              <Badge data-testid="draft-indicator" tone="warn">
+                Unsaved draft — not yet published
+              </Badge>
+            ) : null}
+            <Badge data-testid="automation-status" tone={toneFor(status)}>
+              {status}
+            </Badge>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === 'builder' ? (
+        // No Card wrapper — the canvas grid wants the full page width. The
+        // surrounding controls (action buttons, errors) keep their own spacing
+        // so they don't visually collapse against the page chrome.
+        <div data-testid="automation-builder-panel">
+          <span class="label">Workflow</span>
+          <AutomationCanvas
+            model={model}
+            onInsert={(edge) => setPaletteEdge(edge)}
+            onInsertAfterBranch={startMergeInsert}
+            onDelete={remove}
+            onOpen={(node) => void openEditor(node)}
+            publishErrors={publishErrors}
+            placement={placement}
+            onStartPlacement={startPlacement}
+            onPickTarget={(edge) => void pickTarget(edge)}
+            onPickMergeTarget={(condId) => void pickMergeTarget(condId)}
+            onCancelPlacement={cancelPlacement}
+            selectedNodeId={selectedNodeId}
+            centerTick={centerTick}
+            channels={channels}
+          />
+
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <Button data-testid="save-automation" variant="secondary" onClick={save}>
+              Save draft
+            </Button>
+            <Button data-testid="publish-version" onClick={openPublish}>
+              Save &amp; publish
+            </Button>
+          </div>
+          {publishReason ? (
+            <p
+              data-testid="publish-reason"
+              class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200"
+            >
+              {publishReason}
+            </p>
+          ) : null}
+          {error ? (
+            <p
+              data-testid="automation-error"
+              class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-inset ring-rose-200"
+            >
+              {error}
+            </p>
+          ) : null}
+        </div>
+      ) : tab === 'journeys' ? (
+        <AutomationJourneys enrollments={enrollments} nodeLabel={nodeLabel} />
+      ) : (
+        <AutomationHistory versions={versions} onRevert={revert} />
+      )}
+
+      {/* The insert palette (a side drawer). Opens from a (+) edge control. */}
+      <Drawer
+        open={paletteEdge !== null || mergeConditionId !== null}
+        onClose={() => {
+          setPaletteEdge(null);
+          setMergeConditionId(null);
+        }}
+        title={mergeConditionId ? 'Insert a step after the branch' : 'Insert a step'}
+        subtitle={
+          mergeConditionId
+            ? 'Both arms will flow through this step before continuing.'
+            : 'Pick a node type to add on this edge.'
+        }
+        testId="automation-palette"
+      >
+        <div class="grid grid-cols-1 gap-2">
+          {PALETTE.map((p) => {
+            // After-the-branch merge inserts a single LINEAR step (it becomes the
+            // new merge point) — a nested If or a terminal Exit can't be a merge step.
+            const disabled = mergeConditionId !== null && (p.type === 'condition' || p.type === 'exit');
+            return (
+              <button
+                key={p.type}
+                type="button"
+                data-testid={p.testId}
+                disabled={disabled}
+                onClick={() => insert(p.type)}
+                class="flex flex-col items-start rounded-xl border border-stone-200 bg-white px-4 py-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-stone-200 disabled:hover:bg-white"
+              >
+                <span class="text-sm font-semibold text-ink-900">{p.label}</span>
+                <span class="text-xs text-stone-400">{p.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Drawer>
+
+      {/* The per-node config editor (a side drawer, one body per node type). */}
+      <Drawer
+        open={openNode !== null}
+        onClose={() => {
+          setOpenNode(null);
+          setCenterTick((t) => t + 1); // returning from the drawer → re-center the selected node
+        }}
+        title={openNode ? nodeEditorTitle(openNode) : 'Edit step'}
+        subtitle="Configure this step. Changes save into the journey."
+        testId={openNode ? nodeEditorTestId(openNode) : 'node-editor'}
+      >
+        {openNode ? (
+          <NodeEditorBody
+            automationId={editingId}
+            node={openNode}
+            timeZone={timeZone}
+            segments={segments}
+            topics={topics}
+            triggerSegmentId={triggerSegmentId}
+            triggerOn={triggerOn}
+            triggerNode={model.nodes.find((n) => n.node.type === 'trigger')?.node as { kind?: string; eventType?: string } | undefined}
+            onSaveNode={(patch) => saveNode(openNode.id, patch)}
+            onSaveTriggerSegment={saveTriggerSegment}
+            onReloadAutomation={async () => {
+              if (editingId) await openById(editingId);
+            }}
+            onDone={() => {
+              setOpenNode(null);
+              setCenterTick((t) => t + 1); // returning from the drawer → re-center the selected node
+            }}
+          />
+        ) : null}
+      </Drawer>
+      {/* Save-version modal: a required name + forward/backfill scope. */}
+      {publishOpen ? (
+        <PublishVersionModal
+          defaultName={name || 'Untitled automation'}
+          canBackfill={canBackfill}
+          reason={publishReason}
+          onPublish={publish}
+          onClose={() => setPublishOpen(false)}
+        />
+      ) : null}
+
+      {/* automations is loaded for freshness only; reference it so lint stays clean. */}
+      <span hidden>{automations.length}</span>
+    </section>
+  );
+}
+
+// --- The History tab (published versions, newest-first) ----------------------
+
+function AutomationHistory({
+  versions,
+  onRevert,
+}: {
+  versions: AutomationVersion[] | null;
+  onRevert: (v: AutomationVersion) => Promise<void>;
+}): ReturnType<typeof Card> {
+  return (
+    <Card class="p-5" data-testid="automation-history">
+      <h3 class="text-sm font-semibold text-ink-900">Published versions</h3>
+      <p class="mt-1 text-sm text-stone-500">
+        Each publish is saved here. Revert loads a version into the draft — your live automation keeps running until you Save to
+        publish.
+      </p>
+      {versions === null ? (
+        <p class="mt-4 text-sm text-stone-500">Loading…</p>
+      ) : versions.length === 0 ? (
+        <div class="mt-4">
+          <EmptyState>No published versions yet — Save &amp; publish to create one.</EmptyState>
+        </div>
+      ) : (
+        <ul class="mt-4 space-y-2">
+          {versions.map((v) => (
+            <li
+              key={v.id}
+              data-testid="version-row"
+              class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3"
+            >
+              <span class="font-semibold tabular-nums text-ink-900">v{v.version}</span>
+              <span class="min-w-0">
+                <span class="block truncate font-medium text-ink-900">{v.name}</span>
+                <span class="block text-xs text-stone-400">{whenLabel(v.created_at)}</span>
+              </span>
+              {/* Revert is HIDDEN for the active version — reverting to what's already
+                  live is a confusing no-op (the server also 409s, defense-in-depth).
+                  The Active badge stays so the live version is still identifiable. */}
+              <span class="flex items-center gap-2">
+                {v.is_active ? (
+                  <Badge data-testid="version-active" tone="success">
+                    Active
+                  </Badge>
+                ) : (
+                  <Button data-testid="version-revert" variant="secondary" size="sm" onClick={() => onRevert(v)}>
+                    Revert
+                  </Button>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+// --- The Journeys tab (profiles that have passed through this automation) -------
+
+function AutomationJourneys({
+  enrollments,
+  nodeLabel,
+}: {
+  enrollments: AutomationEnrollment[] | null;
+  nodeLabel: (nodeId: string) => string;
+}): ReturnType<typeof Card> {
+  return (
+    <Card class="p-5" data-testid="automation-journeys">
+      <h3 class="text-sm font-semibold text-ink-900">Journeys</h3>
+      <p class="mt-1 text-sm text-stone-500">
+        Everyone who has entered this automation, the step they’re on, and when they joined.
+      </p>
+      {enrollments === null ? (
+        <p class="mt-4 text-sm text-stone-500">Loading…</p>
+      ) : enrollments.length === 0 ? (
+        <div class="mt-4">
+          <EmptyState>No profiles have entered this journey yet.</EmptyState>
+        </div>
+      ) : (
+        <ul class="mt-4 space-y-2">
+          {enrollments.map((e) => (
+            <li
+              key={e.profile_id}
+              data-testid="journey-row"
+              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 rounded-xl border border-stone-200 bg-white px-4 py-3 sm:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_auto_auto] sm:gap-4"
+            >
+              {/* Profile (email, falling back to the profile id). */}
+              <span class="min-w-0">
+                <span class="block truncate font-medium text-ink-900" title={e.email ?? e.profile_id}>
+                  {e.email ?? e.profile_id}
+                </span>
+              </span>
+              {/* Status badge. */}
+              <Badge data-testid="journey-status" tone={toneFor(e.status)}>
+                {e.status}
+              </Badge>
+              {/* Current step (human label from the loaded definition). */}
+              <span class="min-w-0 truncate text-sm text-stone-600" title={nodeLabel(e.current_node)}>
+                {nodeLabel(e.current_node)}
+              </span>
+              {/* Enrolled at. */}
+              <span class="text-xs text-stone-400" title="Enrolled">
+                {whenLabel(e.enrolled_at)}
+              </span>
+              {/* Last updated at. */}
+              <span class="text-xs text-stone-400" title="Last updated">
+                {whenLabel(e.updated_at)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}

@@ -1,0 +1,33 @@
+{
+  "filesCreated": [
+    "web/src/automations/versioning.ts",
+    "web/src/automations/versioning.test.ts",
+    "web/e2e/automation-versioning.browser.e2e.spec.ts"
+  ],
+  "filesModified": [
+    "web/src/screens/AutomationBuilder.tsx",
+    "web/src/automations/editors/NodeEditor.tsx",
+    "web/e2e/helpers.ts",
+    "web/e2e/automation-publish-gate.browser.e2e.spec.ts",
+    "web/e2e/automation-lifecycle.browser.e2e.spec.ts",
+    "web/e2e/automation-journey-smoke.browser.e2e.spec.ts",
+    "services/local-api/src/handlers.ts",
+    "CLAUDE.md"
+  ],
+  "testsPass": true,
+  "testSummary": "web unit: versioning.test.ts 10/10, full automations/ suite 105/105. local-api integration (get-automation, send-node-clone, node-editors, versioning) 30/30. Full repo typecheck 43/43 GREEN.",
+  "e2eSummary": "All new + updated automation e2e GREEN (run SOLO, one at a time): automation-versioning 2/2 NEW; automation-publish-gate 2/2, automation-lifecycle 2/2, automation-journey-smoke 1/1 (updated for the modal-publish flow); automation-builder, automation-node-editors, broadcast-and-automation, automation-list-detail all pass EXCEPT one PRE-EXISTING failure: automation-builder 'placement mode cancels via the banner button and via Escape' (Escape branch) - VERIFIED failing on the base branch with my AutomationBuilder stashed, so NOT a regression (unrelated canvas Escape/ActionMenu interaction).",
+  "typecheckOk": true,
+  "lintOk": true,
+  "commandsRun": [
+    "pnpm --filter @cdp/web exec vitest run src/automations/versioning.test.ts",
+    "pnpm --filter @cdp/web exec vitest run src/automations/",
+    "pnpm typecheck",
+    "pnpm --filter @cdp/web run lint (only the 7 known react-hooks rule-not-found errors; my files clean)",
+    "DATABASE_URL=...cdp pnpm --filter @cdp/service-local-api exec vitest run test/automation-{node-editors,send-node-clone,versioning,get-automation}.integration.test.ts",
+    "pnpm --filter @cdp/web exec playwright test automation-versioning (SOLO)",
+    "pnpm --filter @cdp/web exec playwright test automation-publish-gate automation-lifecycle automation-journey-smoke (SOLO)",
+    "pnpm --filter @cdp/web exec playwright test automation-builder automation-node-editors broadcast-and-automation automation-list-detail automation-versioning (SOLO)"
+  ],
+  "notes": "Frontend automation versioning, test-first. (1) Edits write the DRAFT via PUT /automations/:id/draft for every persist (node save/insert/delete/move/duplicate/trigger-segment); new automation first persist still POSTs. draft-indicator from pure draftDiffersFrom (canonical-JSON) in versioning.ts (+ backfillAllowed). (2) publish-version opens a STYLED modal (publish-modal) with required version-name + publish-scope (forward/backfill radios only when backfillAllowed else forward-only hint); publish-confirm -> POST publish; 400/409 gate inline (publish-reason) + node-publish-error, modal stays open on failure; success toasts (enrolled count on backfill), reload, status active. (3) History tab (automation-tab-builder/-history) lists version-row newest-first with version-active badge + version-revert -> askConfirm -> POST revert -> loads draft into builder + toast. (4) Edit-header automation-pause/-resume kept alongside list-row. BACKEND FOLLOW-UP: attachAutomationSendTemplate made DRAFT-AWARE (draft_definition ?? definition, writes back to draft when one exists else live) - a template-less draft used to shadow a live-only attach and drop the email, blocking publish; backward-compatible. SPEC UPDATES: publishAutomation(page,name) helper; gate/lifecycle/journey-smoke publish via the modal; journey-smoke STALE update-key/value testids fixed to assignment-key/assignment-literal. Version NOT bumped (backend set 0.40.0). NOT committed/pushed."
+}

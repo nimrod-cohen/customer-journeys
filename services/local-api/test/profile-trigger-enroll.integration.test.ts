@@ -1,6 +1,6 @@
-// Profile-trigger campaign enrollment through the LIVE local-api routes (real
+// Profile-trigger automation enrollment through the LIVE local-api routes (real
 // Postgres). POST /profiles enrolls a new profile into active profile/created (+
-// any) campaigns, NOT profile/updated-only; PATCH /profiles/:id enrolls into
+// any) automations, NOT profile/updated-only; PATCH /profiles/:id enrolls into
 // profile/updated (+ any); CSV import enrolls each created profile; idempotent
 // (re-update doesn't double-enroll); cross-workspace isolation (workspace from the
 // token, never the body); a segment/event/manual trigger is unaffected.
@@ -42,8 +42,8 @@ describeMaybe('profile-trigger enrollment via local-api (real Postgres)', () => 
 
   beforeEach(async () => {
     for (const ws of [WS, WS_B]) {
-      await world.pool.query('DELETE FROM campaign_enrollments WHERE workspace_id = $1', [ws]);
-      await world.pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);
+      await world.pool.query('DELETE FROM automation_enrollments WHERE workspace_id = $1', [ws]);
+      await world.pool.query('DELETE FROM automations WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM activity_log WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
@@ -59,8 +59,8 @@ describeMaybe('profile-trigger enrollment via local-api (real Postgres)', () => 
 
   async function cleanup(): Promise<void> {
     for (const ws of [WS, WS_B]) {
-      await world.pool.query('DELETE FROM campaign_enrollments WHERE workspace_id = $1', [ws]);
-      await world.pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);
+      await world.pool.query('DELETE FROM automation_enrollments WHERE workspace_id = $1', [ws]);
+      await world.pool.query('DELETE FROM automations WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM activity_log WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM profile_features WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
@@ -69,25 +69,25 @@ describeMaybe('profile-trigger enrollment via local-api (real Postgres)', () => 
     }
   }
 
-  async function newCampaign(def: unknown, status = 'active', ws = WS): Promise<string> {
+  async function newAutomation(def: unknown, status = 'active', ws = WS): Promise<string> {
     const r = await world.pool.query<{ id: string }>(
-      'INSERT INTO campaigns (workspace_id, name, definition, status) VALUES ($1,$2,$3::jsonb,$4) RETURNING id',
+      'INSERT INTO automations (workspace_id, name, definition, status) VALUES ($1,$2,$3::jsonb,$4) RETURNING id',
       [ws, 'C', JSON.stringify(def), status],
     );
     return r.rows[0]!.id;
   }
   async function enrolled(campId: string, profId: string, ws = WS): Promise<number> {
     const r = await world.pool.query<{ n: number }>(
-      'SELECT count(*)::int n FROM campaign_enrollments WHERE workspace_id = $1 AND campaign_id = $2 AND profile_id = $3',
+      'SELECT count(*)::int n FROM automation_enrollments WHERE workspace_id = $1 AND automation_id = $2 AND profile_id = $3',
       [ws, campId, profId],
     );
     return r.rows[0]!.n;
   }
 
   it('POST /profiles enrolls into profile/created + any, NOT profile/updated', async () => {
-    const created = await newCampaign(profDef('created'));
-    const any = await newCampaign(profDef('any'));
-    const updated = await newCampaign(profDef('updated'));
+    const created = await newAutomation(profDef('created'));
+    const any = await newAutomation(profDef('any'));
+    const updated = await newAutomation(profDef('updated'));
     const res = await call(world.env, 'POST', '/profiles', { token: tok(), body: { email: 'new@acme.com' } });
     expect(res.status).toBe(201);
     const pid = (res.body as { profile: { id: string } }).profile.id;
@@ -97,14 +97,14 @@ describeMaybe('profile-trigger enrollment via local-api (real Postgres)', () => 
   });
 
   it('PATCH /profiles/:id enrolls into profile/updated + any (idempotent re-update)', async () => {
-    const updated = await newCampaign(profDef('updated'));
-    const any = await newCampaign(profDef('any'));
-    const created = await newCampaign(profDef('created'));
-    // Create a profile (no profile/created campaign matched it yet — create those after).
+    const updated = await newAutomation(profDef('updated'));
+    const any = await newAutomation(profDef('any'));
+    const created = await newAutomation(profDef('created'));
+    // Create a profile (no profile/created automation matched it yet — create those after).
     const c = await call(world.env, 'POST', '/profiles', { token: tok(), body: { email: 'edit@acme.com' } });
     const pid = (c.body as { profile: { id: string } }).profile.id;
     // The create already enrolled it into created+any; clear so we isolate the PATCH.
-    await world.pool.query('DELETE FROM campaign_enrollments WHERE workspace_id = $1 AND profile_id = $2', [WS, pid]);
+    await world.pool.query('DELETE FROM automation_enrollments WHERE workspace_id = $1 AND profile_id = $2', [WS, pid]);
 
     const r1 = await call(world.env, 'PATCH', `/profiles/${pid}`, {
       token: tok(),
@@ -126,7 +126,7 @@ describeMaybe('profile-trigger enrollment via local-api (real Postgres)', () => 
   });
 
   it('CSV import enrolls each CREATED profile into profile/created', async () => {
-    const created = await newCampaign(profDef('created'));
+    const created = await newAutomation(profDef('created'));
     const r = await call(world.env, 'POST', '/profiles/import-csv', {
       token: tok(),
       body: { rows: [{ email: 'imp1@acme.com' }, { email: 'imp2@acme.com' }, { email: 'bad-email' }] },
@@ -142,7 +142,7 @@ describeMaybe('profile-trigger enrollment via local-api (real Postgres)', () => 
   });
 
   it('a NON-profile trigger (event) is NOT enrolled by a profile create/update', async () => {
-    const camp = await newCampaign(eventDef);
+    const camp = await newAutomation(eventDef);
     const res = await call(world.env, 'POST', '/profiles', { token: tok(), body: { email: 'evt@acme.com' } });
     const pid = (res.body as { profile: { id: string } }).profile.id;
     expect(await enrolled(camp, pid)).toBe(0);
@@ -150,8 +150,8 @@ describeMaybe('profile-trigger enrollment via local-api (real Postgres)', () => 
     expect(await enrolled(camp, pid)).toBe(0);
   });
 
-  it('TENANT ISOLATION: a WS-B profile-trigger campaign is NOT enrolled by a WS-A create (workspace from token)', async () => {
-    const campB = await newCampaign(profDef('any'), 'active', WS_B);
+  it('TENANT ISOLATION: a WS-B profile-trigger automation is NOT enrolled by a WS-A create (workspace from token)', async () => {
+    const campB = await newAutomation(profDef('any'), 'active', WS_B);
     const res = await call(world.env, 'POST', '/profiles', {
       token: tok(),
       // even if the body carried a workspace_id it must be ignored (inv.2)
@@ -159,7 +159,7 @@ describeMaybe('profile-trigger enrollment via local-api (real Postgres)', () => 
     });
     const pid = (res.body as { profile: { id: string } }).profile.id;
     const c = await world.pool.query<{ n: number }>(
-      'SELECT count(*)::int n FROM campaign_enrollments WHERE campaign_id = $1',
+      'SELECT count(*)::int n FROM automation_enrollments WHERE automation_id = $1',
       [campB],
     );
     expect(c.rows[0]!.n).toBe(0);

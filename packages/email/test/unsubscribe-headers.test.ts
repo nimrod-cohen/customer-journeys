@@ -62,7 +62,7 @@ describe('buildListUnsubscribeHeaders', () => {
     ).toThrow(/workspaceId/);
   });
 
-  it('carries optional broadcast / campaign attribution as the short b/c params', () => {
+  it('carries optional broadcast / automation attribution as the short b/c params', () => {
     const url = buildUnsubscribeUrl({
       baseUrl,
       workspaceId: wsA,
@@ -73,7 +73,7 @@ describe('buildListUnsubscribeHeaders', () => {
     expect(parsed.searchParams.get('b')).toBe('bc1');
     expect(parsed.searchParams.get('c')).toBeNull();
 
-    const url2 = buildUnsubscribeUrl({ baseUrl, workspaceId: wsA, email: 'a@x.com', campaignId: 'cm1' });
+    const url2 = buildUnsubscribeUrl({ baseUrl, workspaceId: wsA, email: 'a@x.com', automationId: 'cm1' });
     expect(new URL(url2).searchParams.get('c')).toBe('cm1');
     expect(new URL(url2).searchParams.get('b')).toBeNull();
   });

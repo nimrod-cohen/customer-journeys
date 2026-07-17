@@ -8,13 +8,13 @@ export * from './customer.js';
 // customer.*, §9B) + the set_attribute value spec + resolver (literal | expression).
 export * from './event.js';
 // The `journey.*` personalization namespace — per-enrollment variables stamped
-// onto campaign_enrollments.state.journey by a `set_journey` action; read in
+// onto automation_enrollments.state.journey by a `set_journey` action; read in
 // merge tags + set_attribute/set_journey expressions.
 export * from './journey.js';
 export * from './expression.js';
 
 // DST-correct zoned↔UTC time helpers + IANA validator (broadcast scheduler +
-// campaign time math share ONE implementation, §9B).
+// automation time math share ONE implementation, §9B).
 export * from './timezone.js';
 
 /** Workspace-scoped roles stored in workspace_users.role (§3A). */
@@ -38,7 +38,7 @@ export type Capability =
   | 'view_all_workspaces' // cross-tenant company/workspace listing (system-admin only)
   | 'manage_workspace_users' // members + roles
   | 'manage_sending_domain' // sending domain / dedicated-IP upgrade
-  | 'manage_content' // segments, broadcasts, campaigns, templates, profiles
+  | 'manage_content' // segments, broadcasts, automations, templates, profiles
   | 'view_billing'; // billing / spend / usage view
 
 /**

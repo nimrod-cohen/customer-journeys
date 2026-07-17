@@ -47,8 +47,8 @@
         "coveredBy": "spec18 'Broadcasts send-once'"
       },
       {
-        "§18": "Campaigns advance",
-        "coveredBy": "spec18 'Campaigns advance'"
+        "§18": "Automations advance",
+        "coveredBy": "spec18 'Automations advance'"
       },
       {
         "§18": "Cost attribution",
@@ -104,7 +104,7 @@
           "Suppression scoping: A unsub != B; hard bounce in-workspace + global_hard_bounces",
           "Reputation auto-suspend: offender suspended peer active, suspended refuses dispatch",
           "Broadcasts send-once: dedupe per (broadcast_id,profile_id), retry no double-send, SES once",
-          "Campaigns advance trigger->wait->condition->action->exit idempotent runner",
+          "Automations advance trigger->wait->condition->action->exit idempotent runner",
           "Cost sums to total: per-ws emails_sent reconciles messages_log, sum===direct+fixed to cent",
           "Sending gated on verification: non-active refused no SES"
         ],
@@ -219,8 +219,8 @@
         "coveredBy": "spec18 'Broadcasts send-once'"
       },
       {
-        "§18": "Campaigns advance",
-        "coveredBy": "spec18 'Campaigns advance'"
+        "§18": "Automations advance",
+        "coveredBy": "spec18 'Automations advance'"
       },
       {
         "§18": "Cost attribution",
@@ -276,7 +276,7 @@
           "Suppression scoping: A unsub != B; hard bounce in-workspace + global_hard_bounces",
           "Reputation auto-suspend: offender suspended peer active, suspended refuses dispatch",
           "Broadcasts send-once: dedupe per (broadcast_id,profile_id), retry no double-send, SES once",
-          "Campaigns advance trigger->wait->condition->action->exit idempotent runner",
+          "Automations advance trigger->wait->condition->action->exit idempotent runner",
           "Cost sums to total: per-ws emails_sent reconciles messages_log, sum===direct+fixed to cent",
           "Sending gated on verification: non-active refused no SES"
         ],

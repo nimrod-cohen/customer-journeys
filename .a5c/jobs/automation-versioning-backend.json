@@ -1,0 +1,37 @@
+{
+  "filesCreated": [
+    "packages/db/supabase/migrations/0037_automation_versions.sql",
+    "services/local-api/test/automation-versioning.integration.test.ts"
+  ],
+  "filesModified": [
+    "services/local-api/src/handlers.ts",
+    "services/local-api/src/routes.ts",
+    "package.json",
+    "CLAUDE.md"
+  ],
+  "migrationsApplied": [
+    "0037_automation_versions.sql -> cdp (verified via information_schema)",
+    "0037_automation_versions.sql -> cdp_e2e (verified via information_schema)"
+  ],
+  "versionBump": "0.39.0 -> 0.40.0 (minor)",
+  "testsPass": true,
+  "testSummary": "local-api: 50 files / 230 tests PASS (incl. new automation-versioning.integration.test.ts 16 tests). automation-runner: 36 files / 207 tests PASS (runner UNCHANGED, still reads live definition). Full `pnpm test`: 43 packages PASS. All run against REAL Postgres (DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp); no Postgres mocking in the integration tier.",
+  "typecheckOk": true,
+  "lintOk": true,
+  "commandsRun": [
+    "node pg apply 0037 to cdp + cdp_e2e",
+    "pnpm typecheck (cold: 43 successful, 0 cached)",
+    "DATABASE_URL=...cdp pnpm --filter @cdp/service-local-api exec vitest run (230 pass)",
+    "DATABASE_URL=...cdp pnpm --filter @cdp/service-automation-runner exec vitest run (207 pass)",
+    "DATABASE_URL=...cdp pnpm test (43 packages pass)",
+    "pnpm lint (only the 7 known pre-existing @cdp/web react-hooks 'rule not found' errors; NO new backend lint errors)"
+  ],
+  "notes": "Test-first. Migration 0037 adds automation_versions (workspace-scoped + tenant_isolation RLS + workspace_id-leading index, UNIQUE(automation_id,version), automation_id FK ON DELETE CASCADE) and automations.{draft_definition, draft_trigger_segment_id, active_version_id}. The runner is UNCHANGED: it keeps reading automations.definition + automations.trigger_segment_id (the LIVE values). The publish-gate envelope/verified-domain logic was extracted from activateAutomation into a shared runAutomationPublishGate() reused by BOTH activate and publish (no behavior change to activate; automation-publish-gate + automation-activate-gate tests still green). activateAutomation remains an in-place re-activate of LIVE; publish is the draft->live flow. Backfill runs enrollSegmentSnapshot on the SAME tx client AFTER setting status='active' so loadStartNode (which requires status='active') sees it. getAutomation uses an explicit LEFT JOIN with c.workspace_id binding (not scopedQuery, which can't disambiguate workspace_id across a join). All five endpoints workspace-scoped: cross-workspace automation/version ids 404, workspace_id never from body. hasDraft on GET is true only when a draft exists AND differs from live.",
+  "apiContract": {
+    "draft": "PUT /automations/:id/draft (manage_content). Request body: { definition: <AutomationDSL>, trigger_segment_id?: uuid|null }. Writes ONLY the draft working copy (draft_definition + draft_trigger_segment_id); never live/status. Invalid graph -> 400 { error } (no write). Foreign/missing id -> 404. trigger_segment_id outside workspace -> 400. Success -> 200 { updated: 1 }.",
+    "getAutomation": "GET /automations/:id (manage_content) -> 200 { automation: { id, name, status, definition (THE DRAFT TO EDIT = draft_definition ?? live), liveDefinition (active def the runner reads), hasDraft (bool: draft present AND differs from live), activeVersion ({version:int,name:string}|null), trigger_segment_id (draft trigger ?? live trigger), trigger_on, keep_while_in_segment }, timezone }. Foreign id -> 404.",
+    "publish": "POST /automations/:id/publish (manage_content). Request body: { name: string (required), scope: 'forward'|'backfill' }. Publishes the draft (?? live). Gate failures (BEFORE any mutation): invalid def -> 400 { error }; incomplete send node -> 409 { error, node, missing:'sender'|'to'|'subject' }; no verified domain -> 409 { error, missing:'verified_domain' }. Success -> 200 { version: int, name: string, enrolled: int }. enrolled>0 only when scope='backfill' AND trigger is segment_entry with a segment (count of current segment members backfilled, ON CONFLICT idempotent); 0 for forward / event / manual. On success: live = published draft, active_version_id set, status='active', draft cleared. name required -> else 400. Foreign id -> 404.",
+    "versions": "GET /automations/:id/versions (manage_content) -> 200 { versions: [{ id: uuid, version: int, name: string, created_at: iso, created_by: uuid|null, is_active: bool (== automations.active_version_id) }] } newest-first (version DESC). Foreign id -> 404.",
+    "revert": "POST /automations/:id/revert (manage_content). Request body: { version_id: uuid }. Loads that version INTO the draft (draft_definition + draft_trigger_segment_id = the version's); LIVE untouched (append-only). Success -> 200 { definition: <AutomationDSL>, trigger_segment_id: uuid|null } (the loaded draft). version_id missing -> 400. version not in this automation+workspace -> 404."
+  }
+}

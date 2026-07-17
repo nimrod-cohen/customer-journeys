@@ -83,7 +83,7 @@
       {
         "assertions": [
           "requireCapability denies marketer on manage_users/domain/billing",
-          "accounting denied segment/campaign edit, allowed billing read",
+          "accounting denied segment/automation edit, allowed billing read",
           "owner allowed users+billing",
           "deny carries reason no data"
         ],
@@ -241,7 +241,7 @@
       {
         "assertions": [
           "requireCapability denies marketer on manage_users/domain/billing",
-          "accounting denied segment/campaign edit, allowed billing read",
+          "accounting denied segment/automation edit, allowed billing read",
           "owner allowed users+billing",
           "deny carries reason no data"
         ],

@@ -6,7 +6,7 @@ import { serve } from '@hono/node-server';
 import { getPool, runPendingMigrations } from '@cdp/db';
 import { createApp } from './app.js';
 import { makeLocalDeps } from './deps.js';
-import { sweepDueScheduledBroadcasts, sweepDueCampaignEnrollments } from './handlers.js';
+import { sweepDueScheduledBroadcasts, sweepDueAutomationEnrollments } from './handlers.js';
 
 const PORT = Number(process.env.PORT ?? process.env.LOCAL_API_PORT ?? 8787);
 // Process role (production runs a `web` service — HTTP, no sweeps — plus ONE
@@ -26,10 +26,10 @@ const WEB_DIST_DIR = process.env.WEB_DIST_DIR;
 // How often the dev server sweeps for scheduled broadcasts whose time arrived
 // (the local stand-in for the production EventBridge cron). 0 disables it.
 const SWEEP_MS = Number(process.env.LOCAL_SCHEDULE_SWEEP_MS ?? 30_000);
-// How often the dev server advances due campaign enrollments (the local stand-in
-// for the production EventBridge campaign sweep / scheduledSweepHandler — without
+// How often the dev server advances due automation enrollments (the local stand-in
+// for the production EventBridge automation sweep / scheduledSweepHandler — without
 // it enrollments are created but never advance). 0 disables it.
-const CAMPAIGN_SWEEP_MS = Number(process.env.LOCAL_CAMPAIGN_SWEEP_MS ?? 30_000);
+const AUTOMATION_SWEEP_MS = Number(process.env.LOCAL_AUTOMATION_SWEEP_MS ?? 30_000);
 
 async function main(): Promise<void> {
   const pool = getPool();
@@ -74,22 +74,22 @@ async function main(): Promise<void> {
     setInterval(() => void sweep(), SWEEP_MS);
   }
 
-  // Campaign-enrollment sweep: advance any enrollment whose next_run_at has passed
+  // Automation-enrollment sweep: advance any enrollment whose next_run_at has passed
   // (production runs this on an EventBridge cron via scheduledSweepHandler; the dev
   // server has no scheduler). Runs ONLY in this long-lived server, never createApp.
-  if (RUN_SWEEPS && CAMPAIGN_SWEEP_MS > 0) {
-    const sweepCampaigns = async (): Promise<void> => {
+  if (RUN_SWEEPS && AUTOMATION_SWEEP_MS > 0) {
+    const sweepAutomations = async (): Promise<void> => {
       try {
-        const n = await sweepDueCampaignEnrollments(pool, deps);
+        const n = await sweepDueAutomationEnrollments(pool, deps);
         // eslint-disable-next-line no-console
-        if (n > 0) console.log(`[local-api] advanced ${n} due campaign enrollment(s)`);
+        if (n > 0) console.log(`[local-api] advanced ${n} due automation enrollment(s)`);
       } catch (e) {
         // eslint-disable-next-line no-console
-        console.error('[local-api] campaign sweep failed', e);
+        console.error('[local-api] automation sweep failed', e);
       }
     };
-    void sweepCampaigns(); // catch any already-due enrollment on boot
-    setInterval(() => void sweepCampaigns(), CAMPAIGN_SWEEP_MS);
+    void sweepAutomations(); // catch any already-due enrollment on boot
+    setInterval(() => void sweepAutomations(), AUTOMATION_SWEEP_MS);
   }
 }
 

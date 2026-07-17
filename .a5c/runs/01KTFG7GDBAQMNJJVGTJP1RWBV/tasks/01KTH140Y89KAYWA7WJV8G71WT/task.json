@@ -93,15 +93,15 @@
           "lintOk": true,
           "notes": "Acceptance suite COMPOSES existing cores (no reimplementation). Fixed cdk.json app -> node dist/bin/infra.js (synth was broken). Full §14 CdpStack: WAFv2 REGIONAL WebACL + stage association; REST API + RequestValidator + Model + UsagePlan + ApiKey + UsagePlanKey + authorizer; 13 Lambdas EACH own least-privilege role (0 Action:'*'/Resource:'*' across all 13 IAM::Policy via findResources); 2 FIFO main queues + FIFO DLQ RedrivePolicy + EventSourceMappings; SNS topic+lambda subscription; SES ConfigurationSet; S3+CloudFront OAC; 4 EventBridge rules; 21 CloudWatch alarms (SES 3%/5% bounce + 0.1% complaint, per-workspace CDP/Reputation custom metric, per-DLQ depth>0, per-function Errors, per-queue oldest-message-age); Secrets Manager/SSM refs no inline secrets. infra tsconfig exactOptionalPropertyTypes:false (CDK typing friction; business packages stay strict). scripts/ added as @cdp/scripts workspace pkg. Pen-test exercises RLS backstop (SET LOCAL ROLE cdp_app_test + setSessionClaims) AND in-code service-role scoping. SES/SNS/S3/SQS/DNS mocked; Postgres never mocked in acceptance/pen tiers. No real AWS deploy.",
           "testsPass": true,
-          "testSummary": "Cold full pnpm test 41/41 packages green, no phase 2-13 regression. §18 acceptance gate 15 it() (one per §18 bullet, composing real ingest/processor/dispatcher/feedback/unsubscribe/onboarding/broadcast/campaign-runner/metering cores + service-api + RLS backstop) + penetration-isolation 9 it() (RLS backstop non-BYPASSRLS read+write block, system-admin RLS exception, ingest/processor service-role scoping forged workspace_id rejected, scopedQuery guard, local-api token isolation, audited cross-read) -> pnpm test:acceptance 24/24. CDK assertions+synth-smoke 11/11. health 5/5, dlq-replay 4/4.",
+          "testSummary": "Cold full pnpm test 41/41 packages green, no phase 2-13 regression. §18 acceptance gate 15 it() (one per §18 bullet, composing real ingest/processor/dispatcher/feedback/unsubscribe/onboarding/broadcast/automation-runner/metering cores + service-api + RLS backstop) + penetration-isolation 9 it() (RLS backstop non-BYPASSRLS read+write block, system-admin RLS exception, ingest/processor service-role scoping forged workspace_id rejected, scopedQuery guard, local-api token isolation, audited cross-read) -> pnpm test:acceptance 24/24. CDK assertions+synth-smoke 11/11. health 5/5, dlq-replay 4/4.",
           "typecheckOk": true
         },
         "invariants": [
           "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL; every query filters by workspace_id. Service-role Lambdas bypass RLS so they MUST scope by workspace_id in code; the admin app uses the user JWT so RLS applies.",
           "workspace_id is NEVER from a client payload — it comes from the API-key/authorizer context or a trusted server-set field. The frontend sends the active-workspace claim via its JWT; the API resolves scope from the authorizer, never from a body field.",
           "Role enforcement (§3A): owner/marketer/accounting are workspace-scoped; system-admin is the only cross-tenant role and every cross-tenant access is audit-logged. The UI shows only what the role permits; the API enforces it regardless of the UI.",
-          "All sends (broadcasts §9A and campaign actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
-          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the campaign runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
+          "All sends (broadcasts §9A and automation actions §9B) go through the SAME outbox -> Dispatcher pipeline (§9) and pass suppression -> frequency-cap -> quiet-hours; sending is gated on workspace active/verified.",
+          "Idempotency: broadcasts dedupe per (broadcast_id, profile_id); the automation runner must tolerate retries without double-advancing (optimistic checks / updated_at); image uploads + metering rollups are idempotent.",
           "LOCAL-only: AWS (SES/SNS/S3/SQS) are MOCKED (aws-sdk-client-mock) or run on LocalStack; never hit real AWS. Do NOT mock Postgres in the integration tier — use the real local DB on localhost:5433. The editor must emit MJML, never hand-rolled email HTML.",
           "Logic in pure injected functions; Lambda handlers stay thin. Reuse the prior harness (packages/db testutil: adminPool, hasDatabaseUrl, applyMigrations; runPlanInWorkspaceTx; SqlStatement {text,values}; @cdp/segments resolveAudience; @cdp/email; the dispatcher core).",
           "Determinism: turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces per integration file (events.event_id / ses_message_id are GLOBAL keys). No cross-file races. Frontend e2e (Playwright) must be deterministic (seeded data, stable selectors).",
@@ -110,14 +110,14 @@
         "loop": "Backend phase: pure unit tests + DB-integration against REAL local Postgres (localhost:5433); mock AWS (aws-sdk-client-mock) / LocalStack. No frontend.",
         "phase": {
           "criteria": [
-            "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+            "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, automations, cost attribution).",
             "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
             "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
           ],
           "frontend": false,
           "id": "phase14-hardening",
           "scope": [
-            "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.",
+            "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + automation + cost criteria) runnable as one gate — the pass/fail merge gate.",
             "CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).",
             "A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).",
             "An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception)."
@@ -168,8 +168,8 @@
               "coveredBy": "spec18 'Broadcasts send-once'"
             },
             {
-              "§18": "Campaigns advance",
-              "coveredBy": "spec18 'Campaigns advance'"
+              "§18": "Automations advance",
+              "coveredBy": "spec18 'Automations advance'"
             },
             {
               "§18": "Cost attribution",
@@ -225,7 +225,7 @@
                 "Suppression scoping: A unsub != B; hard bounce in-workspace + global_hard_bounces",
                 "Reputation auto-suspend: offender suspended peer active, suspended refuses dispatch",
                 "Broadcasts send-once: dedupe per (broadcast_id,profile_id), retry no double-send, SES once",
-                "Campaigns advance trigger->wait->condition->action->exit idempotent runner",
+                "Automations advance trigger->wait->condition->action->exit idempotent runner",
                 "Cost sums to total: per-ws emails_sent reconciles messages_log, sum===direct+fixed to cent",
                 "Sending gated on verification: non-active refused no SES"
               ],
@@ -299,7 +299,7 @@
       },
       "instructions": [
         "Clear the turbo cache and RUN the tests yourself (DATABASE_URL set) twice from cold, plus pnpm typecheck and pnpm lint. For UI phases, RUN the Playwright e2e in a real browser. Record real pass/fail. Confirm the integration tier RUNS (not skipped) and no regression in earlier phases.",
-        "Verify EACH acceptance criterion is covered by a passing, non-vacuous test: [\"The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).\",\"CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).\",\"A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited).\"].",
+        "Verify EACH acceptance criterion is covered by a passing, non-vacuous test: [\"The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, automations, cost attribution).\",\"CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).\",\"A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited).\"].",
         "Highest-priority checks: (a) tenant isolation + role enforcement (server-side, not just UI-hidden); (b) all sends route through the Dispatcher guards; (c) idempotency (broadcast dedupe / no double-advance / idempotent rollups); (d) AWS mocked/LocalStack (no real AWS) yet asserted; (e) for UI, the flow actually works in a real browser against the real backend, not a stub.",
         "If any integration test mocks Postgres, that is a FAIL. If a UI criterion is only unit-tested (no real browser), that is a FAIL.",
         "Scope check: flag any feature beyond the cited sections; verify the §20 cost model is exact.",
@@ -364,20 +364,20 @@
       "lintOk": true,
       "notes": "Acceptance suite COMPOSES existing cores (no reimplementation). Fixed cdk.json app -> node dist/bin/infra.js (synth was broken). Full §14 CdpStack: WAFv2 REGIONAL WebACL + stage association; REST API + RequestValidator + Model + UsagePlan + ApiKey + UsagePlanKey + authorizer; 13 Lambdas EACH own least-privilege role (0 Action:'*'/Resource:'*' across all 13 IAM::Policy via findResources); 2 FIFO main queues + FIFO DLQ RedrivePolicy + EventSourceMappings; SNS topic+lambda subscription; SES ConfigurationSet; S3+CloudFront OAC; 4 EventBridge rules; 21 CloudWatch alarms (SES 3%/5% bounce + 0.1% complaint, per-workspace CDP/Reputation custom metric, per-DLQ depth>0, per-function Errors, per-queue oldest-message-age); Secrets Manager/SSM refs no inline secrets. infra tsconfig exactOptionalPropertyTypes:false (CDK typing friction; business packages stay strict). scripts/ added as @cdp/scripts workspace pkg. Pen-test exercises RLS backstop (SET LOCAL ROLE cdp_app_test + setSessionClaims) AND in-code service-role scoping. SES/SNS/S3/SQS/DNS mocked; Postgres never mocked in acceptance/pen tiers. No real AWS deploy.",
       "testsPass": true,
-      "testSummary": "Cold full pnpm test 41/41 packages green, no phase 2-13 regression. §18 acceptance gate 15 it() (one per §18 bullet, composing real ingest/processor/dispatcher/feedback/unsubscribe/onboarding/broadcast/campaign-runner/metering cores + service-api + RLS backstop) + penetration-isolation 9 it() (RLS backstop non-BYPASSRLS read+write block, system-admin RLS exception, ingest/processor service-role scoping forged workspace_id rejected, scopedQuery guard, local-api token isolation, audited cross-read) -> pnpm test:acceptance 24/24. CDK assertions+synth-smoke 11/11. health 5/5, dlq-replay 4/4.",
+      "testSummary": "Cold full pnpm test 41/41 packages green, no phase 2-13 regression. §18 acceptance gate 15 it() (one per §18 bullet, composing real ingest/processor/dispatcher/feedback/unsubscribe/onboarding/broadcast/automation-runner/metering cores + service-api + RLS backstop) + penetration-isolation 9 it() (RLS backstop non-BYPASSRLS read+write block, system-admin RLS exception, ingest/processor service-role scoping forged workspace_id rejected, scopedQuery guard, local-api token isolation, audited cross-read) -> pnpm test:acceptance 24/24. CDK assertions+synth-smoke 11/11. health 5/5, dlq-replay 4/4.",
       "typecheckOk": true
     },
     "iteration": 1,
     "phase": {
       "criteria": [
-        "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, campaigns, cost attribution).",
+        "The full §18 acceptance suite passes as one gate (tenant isolation, roles, ordering, no-loss, idempotency, segmentation, suppression scoping, reputation policing, broadcasts, automations, cost attribution).",
         "CDK synth produces a WAF-protected REST API, least-privilege IAM per function, and the required alarms (verified by CDK assertions, no real deploy).",
         "A DLQ replay script + /health exist; an isolation/role pen-test asserts no cross-workspace bleed via any path (system-admin access is audited)."
       ],
       "frontend": false,
       "id": "phase14-hardening",
       "scope": [
-        "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + campaign + cost criteria) runnable as one gate — the pass/fail merge gate.",
+        "A consolidated §18 ACCEPTANCE test suite (the isolation + role + ordering + suppression + reputation + broadcast + automation + cost criteria) runnable as one gate — the pass/fail merge gate.",
         "CDK hardening (infra): WAF on the REST API stage, per-function least-privilege IAM, CloudWatch alarms (account + per-workspace reputation, DLQ depth, Lambda errors, SQS oldest-message age). Verify via CDK synth/assertions (no real deploy).",
         "A DLQ runbook + replay script (scripts/) and a /health check; a lightweight load/perf sanity check of the ingest->processor path (local).",
         "An isolation/role pen-test style test asserting no cross-workspace read/write is possible via any service path (incl. the system-admin audited exception)."
@@ -428,8 +428,8 @@
           "coveredBy": "spec18 'Broadcasts send-once'"
         },
         {
-          "§18": "Campaigns advance",
-          "coveredBy": "spec18 'Campaigns advance'"
+          "§18": "Automations advance",
+          "coveredBy": "spec18 'Automations advance'"
         },
         {
           "§18": "Cost attribution",
@@ -485,7 +485,7 @@
             "Suppression scoping: A unsub != B; hard bounce in-workspace + global_hard_bounces",
             "Reputation auto-suspend: offender suspended peer active, suspended refuses dispatch",
             "Broadcasts send-once: dedupe per (broadcast_id,profile_id), retry no double-send, SES once",
-            "Campaigns advance trigger->wait->condition->action->exit idempotent runner",
+            "Automations advance trigger->wait->condition->action->exit idempotent runner",
             "Cost sums to total: per-ws emails_sent reconciles messages_log, sum===direct+fixed to cent",
             "Sending gated on verification: non-active refused no SES"
           ],

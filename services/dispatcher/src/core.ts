@@ -138,7 +138,7 @@ export interface DispatchContext {
   readonly unsubscribeToken?: string | null;
   /**
    * Optional named-sender override (a domain_senders row chosen on the broadcast
-   * or campaign send-node). When present the From becomes `"name" <email>`
+   * or automation send-node). When present the From becomes `"name" <email>`
    * instead of the no-reply@<domain> fallback. The email must be on a verified
    * workspace domain (domain_senders are verified-domain-only).
    */
@@ -152,8 +152,8 @@ export interface DispatchContext {
   readonly toAddress?: string | null;
   /** Source broadcast — carried into the List-Unsubscribe header for attribution. */
   readonly broadcastId?: string | null;
-  /** Source campaign — carried into the List-Unsubscribe header for attribution. */
-  readonly campaignId?: string | null;
+  /** Source automation — carried into the List-Unsubscribe header for attribution. */
+  readonly automationId?: string | null;
 }
 
 /** Hours to hold off mailing an address after a soft bounce (give it time to clear). */
@@ -277,11 +277,11 @@ export interface TrackedLink {
 }
 export function rewriteTrackingLinks(
   html: string,
-  opts: { baseUrl: string; workspaceId: string; broadcastId: string | null; campaignId: string | null },
+  opts: { baseUrl: string; workspaceId: string; broadcastId: string | null; automationId: string | null },
 ): { html: string; links: TrackedLink[] } {
   const seen = new Map<string, string>(); // url → token
   const links: TrackedLink[] = [];
-  const source = opts.broadcastId ?? opts.campaignId ?? '';
+  const source = opts.broadcastId ?? opts.automationId ?? '';
   const out = html.replace(/(\bhref\s*=\s*)(["'])(https?:\/\/[^"']+)\2/gi, (_m, pre: string, q: string, url: string) => {
     let token = seen.get(url);
     if (!token) {
@@ -302,6 +302,10 @@ export function rewriteTrackingLinks(
  * anchor (`#`), `data:`, `cid:`, and `mailto:` URLs are left untouched. Idempotent.
  */
 export function absolutizeUrls(html: string, baseUrl: string): string {
+  // No base → we can't build an absolute URL, so leave root-relative URLs as-is
+  // (rather than throwing). Prod always supplies a base; this guards callers/tests
+  // that don't set one.
+  if (!baseUrl) return html;
   const base = baseUrl.replace(/\/$/, '');
   return html
     .replace(
@@ -343,10 +347,10 @@ export function ensureUnsubscribeFooter(html: string): string {
 export function openPixelToken(opts: {
   workspaceId: string;
   broadcastId: string | null;
-  campaignId: string | null;
+  automationId: string | null;
   profileId: string;
 }): string {
-  const source = opts.broadcastId ?? opts.campaignId ?? '';
+  const source = opts.broadcastId ?? opts.automationId ?? '';
   return createHash('sha256')
     .update(`open|${opts.workspaceId}|${source}|${opts.profileId}`)
     .digest('hex')
@@ -366,7 +370,7 @@ export function buildOpenPixelImg(url: string): string {
  */
 export function injectOpenPixel(
   html: string,
-  opts: { baseUrl: string; workspaceId: string; broadcastId: string | null; campaignId: string | null; profileId: string },
+  opts: { baseUrl: string; workspaceId: string; broadcastId: string | null; automationId: string | null; profileId: string },
 ): { html: string; token: string } {
   const token = openPixelToken(opts);
   const url = `${opts.baseUrl.replace(/\/$/, '')}/o/${token}`;
@@ -388,16 +392,16 @@ export function buildTrackedOpenInsert(
   workspaceId: string,
   token: string,
   broadcastId: string | null,
-  campaignId: string | null,
+  automationId: string | null,
   profileId: string | null,
 ): SqlStatement {
   // workspace_id bound at $1 — the tx scoping guard (runStatementsInWorkspaceTx)
   // requires the first param to be the workspace id (service role bypasses RLS).
   return {
-    text: `INSERT INTO tracked_opens (workspace_id, token, broadcast_id, campaign_id, profile_id)
+    text: `INSERT INTO tracked_opens (workspace_id, token, broadcast_id, automation_id, profile_id)
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (token) DO NOTHING`,
-    values: [workspaceId, token, broadcastId, campaignId, profileId],
+    values: [workspaceId, token, broadcastId, automationId, profileId],
   };
 }
 
@@ -406,15 +410,15 @@ export function buildTrackedLinkInsert(
   workspaceId: string,
   link: TrackedLink,
   broadcastId: string | null,
-  campaignId: string | null,
+  automationId: string | null,
 ): SqlStatement {
   // workspace_id bound at $1 — the tx scoping guard (runStatementsInWorkspaceTx)
   // requires the first param to be the workspace id (service role bypasses RLS).
   return {
-    text: `INSERT INTO tracked_links (workspace_id, token, broadcast_id, campaign_id, url)
+    text: `INSERT INTO tracked_links (workspace_id, token, broadcast_id, automation_id, url)
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (token) DO NOTHING`,
-    values: [workspaceId, link.token, broadcastId, campaignId, link.url],
+    values: [workspaceId, link.token, broadcastId, automationId, link.url],
   };
 }
 
@@ -467,7 +471,7 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
         ? { token: ctx.unsubscribeToken }
         : {}),
     broadcastId: ctx.broadcastId ?? null,
-    campaignId: ctx.campaignId ?? null,
+    automationId: ctx.automationId ?? null,
   });
   const configSet = ctx.workspace.sending_identity?.config_set;
   return {
@@ -578,7 +582,7 @@ export function buildOutboxClaim(workspaceId: string, outboxId: string): SqlStat
     text: `UPDATE outbox
            SET status = 'sending', attempts = attempts + 1
            WHERE workspace_id = $1 AND id = $2 AND status = 'pending'
-           RETURNING id, workspace_id, profile_id, campaign_id, template_id,
+           RETURNING id, workspace_id, profile_id, automation_id, template_id,
                      dedupe_key, attempts, payload`,
     values: [workspaceId, outboxId],
   };
@@ -725,22 +729,22 @@ export function buildLastSoftBounceQuery(workspaceId: string, email: string): Sq
 }
 
 /** A successful send's messages_log row (§9 step 7). workspace_id bound at $1.
- *  Attributed to its campaign OR broadcast (whichever queued it) for per-send stats.
+ *  Attributed to its automation OR broadcast (whichever queued it) for per-send stats.
  *  `medium` records the channel (email default; sms/whatsapp for text sends) and
  *  `ses_message_id` carries the provider message id regardless of channel. */
 export function buildMessagesLogInsert(
   workspaceId: string,
   profileId: string,
-  campaignId: string | null,
+  automationId: string | null,
   sesMessageId: string,
   broadcastId: string | null = null,
   medium: Medium = 'email',
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildMessagesLogInsert: workspaceId is required');
   return {
-    text: `INSERT INTO messages_log (workspace_id, profile_id, campaign_id, broadcast_id, ses_message_id, status, medium)
+    text: `INSERT INTO messages_log (workspace_id, profile_id, automation_id, broadcast_id, ses_message_id, status, medium)
            VALUES ($1, $2, $3, $4, $5, 'sent', $6)`,
-    values: [workspaceId, profileId, campaignId, broadcastId, sesMessageId, medium],
+    values: [workspaceId, profileId, automationId, broadcastId, sesMessageId, medium],
   };
 }
 
@@ -756,7 +760,7 @@ export function buildMessagesLogInsert(
 export function buildMessagesLogFailure(
   workspaceId: string,
   profileId: string,
-  campaignId: string | null,
+  automationId: string | null,
   broadcastId: string | null,
   medium: Medium,
   status: 'failed' | 'skipped',
@@ -764,9 +768,9 @@ export function buildMessagesLogFailure(
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildMessagesLogFailure: workspaceId is required');
   return {
-    text: `INSERT INTO messages_log (workspace_id, profile_id, campaign_id, broadcast_id, ses_message_id, status, medium, reason)
+    text: `INSERT INTO messages_log (workspace_id, profile_id, automation_id, broadcast_id, ses_message_id, status, medium, reason)
            VALUES ($1, $2, $3, $4, NULL, $5, $6, $7)`,
-    values: [workspaceId, profileId, campaignId, broadcastId, status, medium, reason],
+    values: [workspaceId, profileId, automationId, broadcastId, status, medium, reason],
   };
 }
 

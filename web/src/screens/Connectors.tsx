@@ -1,6 +1,6 @@
 // Connectors (§10) — a company connects PROVIDERS; each powers a messaging CHANNEL
 // (email / sms / whatsapp). A channel is enabled when a provider that can send on it
-// is connected; broadcasts + campaigns gate on that (GET /company/channels). A
+// is connected; broadcasts + automations gate on that (GET /company/channels). A
 // channel with several providers (Email: SES or Resend) shows a LOGO PICKER — you
 // choose one provider and see only its connection details. Secrets are write-only.
 import { useEffect, useState } from 'preact/hooks';
@@ -190,8 +190,8 @@ function ChannelBox({ ch, connectors, enabled, onChanged }: { ch: ChannelSpec; c
       </div>
       <p class="mt-1 text-sm text-stone-500">
         {enabled
-          ? `Broadcasts and campaigns can send over ${ch.label}.`
-          : `Connect a provider to enable ${ch.label}. Until then, ${ch.label} steps are ignored in broadcasts and campaigns.`}
+          ? `Broadcasts and automations can send over ${ch.label}.`
+          : `Connect a provider to enable ${ch.label}. Until then, ${ch.label} steps are ignored in broadcasts and automations.`}
       </p>
 
       {multi ? (

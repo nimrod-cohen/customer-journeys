@@ -15,7 +15,7 @@
     {"criterion":"Reputation auto-suspend isolates offender","verified":true,"evidence":"60 sent + 4 bounces -> WS_REP suspended, peer active."},
     {"criterion":"Sending gated on verification","verified":true,"evidence":"PENDING stays onboarding; SUCCESS+DNS activates -> send with config set; non-active -> refuse SES 0."},
     {"criterion":"Broadcasts send-once dedupe","verified":true,"evidence":"runBroadcast sent 1 outbox; replay skipped still 1."},
-    {"criterion":"Campaigns advance + idempotent through Dispatcher","verified":true,"evidence":"enroll idempotent; trigger->wait->condition->action send via dispatchOutbox; re-run terminal skipped, messages_log 1."},
+    {"criterion":"Automations advance + idempotent through Dispatcher","verified":true,"evidence":"enroll idempotent; trigger->wait->condition->action send via dispatchOutbox; re-run terminal skipped, messages_log 1."},
     {"criterion":"Cost sums to total","verified":true,"evidence":"computeAllWorkspaceCosts Σ cents===direct+fixed, fixed $40, IP fee only upgraded."},
     {"criterion":"IP strategy advisor + upgrade/warmup $24.95 only upgraded","verified":true,"evidence":"default shared; advisor true on sustained 3 months false on spike; upgradeIp warming + jsonb merge preserves verified; computeDirectCost delta 24.95 only upgraded."},
     {"criterion":"Multi-workspace switch re-scope no cross-bleed","verified":true,"evidence":"switchActiveWorkspace WS_A sees sw-a only, WS_B sw-b only, non-member throws; browser switch spec confirms."},

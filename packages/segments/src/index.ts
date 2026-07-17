@@ -30,7 +30,7 @@ export { diffMembership, type MembershipDiff } from './diff.js';
 export {
   selectActiveRealtimeSegments,
   selectActiveBatchSegments,
-  selectCampaignTriggerSegments,
+  selectAutomationTriggerSegments,
   buildSegmentMatch,
   selectEvaluatorMembership,
   buildInsertMemberships,

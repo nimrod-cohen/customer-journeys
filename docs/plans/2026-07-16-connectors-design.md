@@ -4,7 +4,7 @@
 Rename **Sending → Connectors**. A company connects providers; each connector powers a
 messaging **channel** (email / sms / whatsapp). A channel is **enabled** iff ≥1 connector
 that can actually send on it is connected. Disabled channels are shown disabled and are
-**ignored** in broadcasts + campaigns (the send is skipped as if the step doesn't exist).
+**ignored** in broadcasts + automations (the send is skipped as if the step doesn't exist).
 Add **Resend** as an alternate email provider so we're not blocked on the SES sandbox.
 
 ## Decisions (locked with the user)
@@ -55,7 +55,7 @@ rendered as today. sms/whatsapp unchanged (019/meta from the connector config).
 ## Gating
 - **Broadcasts:** composer medium picker greys out channels with no connector; `sendBroadcast`
   refuses a disabled-channel send with a clear reason.
-- **Campaigns:** builder marks a send node whose channel is disabled as **inactive**; the
+- **Automations:** builder marks a send node whose channel is disabled as **inactive**; the
   **runner skips** such a send node (advance to `next`, no outbox) as if it doesn't exist;
   publish/activate no longer blocks on a disabled channel's send node.
 
@@ -73,5 +73,5 @@ rendered as today. sms/whatsapp unchanged (019/meta from the connector config).
 3. Connector CRUD + `/company/channels`.
 4. Resend send adapter + provider-branching + email-enabled (SES-verified-or-Resend) gate.
 5. UI: Connectors tab.
-6. Gating: broadcasts + campaign runner skip + builder inactive state.
+6. Gating: broadcasts + automation runner skip + builder inactive state.
 7. Tests (unit/integration/e2e) + CLAUDE.md.

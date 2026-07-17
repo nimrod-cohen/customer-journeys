@@ -596,7 +596,7 @@ describe('SCALAR_FEATURE_FIELDS export is the documented whitelist', () => {
   });
 });
 
-// ── Segment-membership / const / trigger-event leaves (campaign IF, §9B) ────────
+// ── Segment-membership / const / trigger-event leaves (automation IF, §9B) ────────
 describe('segment-membership leaf', () => {
   const SEG = 'bbbbbbbb-0000-0000-0000-000000000777';
   it('compiles "is a member" to a workspace-scoped EXISTS, segment id a bound param', () => {
@@ -633,7 +633,7 @@ describe('const leaf', () => {
   });
 });
 
-describe('trigger-event leaf (campaign-only, in-memory)', () => {
+describe('trigger-event leaf (automation-only, in-memory)', () => {
   it('validateAst accepts a payload-only filter; rejects a non-payload field', () => {
     expect(() => validateAst({ triggerEvent: true, filter: { field: 'payload.amount', operator: '>=', value: 10 } } as AstNode)).not.toThrow();
     expect(() => validateAst({ triggerEvent: true } as AstNode)).not.toThrow();
@@ -644,7 +644,7 @@ describe('trigger-event leaf (campaign-only, in-memory)', () => {
   });
 });
 
-describe('journey-attribute leaf (campaign-only, in-memory)', () => {
+describe('journey-attribute leaf (automation-only, in-memory)', () => {
   it('validateAst accepts a journey leaf; rejects an empty key or unknown operator', () => {
     expect(() => validateAst({ journeyKey: 'day', operator: '=', value: 'saturday' } as AstNode)).not.toThrow();
     expect(() => validateAst({ journeyKey: 'cohort', operator: 'exists' } as AstNode)).not.toThrow();

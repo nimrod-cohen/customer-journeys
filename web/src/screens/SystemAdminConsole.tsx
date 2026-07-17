@@ -306,7 +306,7 @@ export function SystemAdminConsole() {
                 <h3 class="text-lg font-bold text-ink-950">Delete workspace</h3>
                 <p class="mt-2 text-sm text-stone-600">
                   This permanently deletes <b>{deleteTarget.name}</b> and <b>all of its data</b> —
-                  profiles, events, segments, campaigns, broadcasts, suppressions and members. This
+                  profiles, events, segments, automations, broadcasts, suppressions and members. This
                   cannot be undone.
                 </p>
                 <p class="mt-3 text-sm text-stone-600">

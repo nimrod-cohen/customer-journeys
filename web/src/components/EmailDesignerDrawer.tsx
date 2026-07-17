@@ -1,6 +1,6 @@
 // The email-designer DRAWER — a near-full-width panel that slides in from the
 // right and hosts the full TemplateEditor (embedded mode) OVER the current
-// screen. Opened via the `emailDesignerDrawer` store from a broadcast/campaign's
+// screen. Opened via the `emailDesignerDrawer` store from a broadcast/automation's
 // "Design email" action, so editing an email never navigates away (the screen
 // underneath stays mounted; closing returns instantly with no reload).
 //

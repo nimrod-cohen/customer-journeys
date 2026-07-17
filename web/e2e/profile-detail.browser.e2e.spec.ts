@@ -70,8 +70,8 @@ test('filter the profiles list by manual and dynamic segments', async ({ page })
   await page.getByTestId('profile-explorer').waitFor();
 
   // All six seeded A profiles are listed unfiltered: a1/a2/a3 established + a4 new,
-  // plus the two campaign-enrollment fixtures (enr-active / enr-completed) the seed
-  // adds so the campaigns list shows non-zero counts.
+  // plus the two automation-enrollment fixtures (enr-active / enr-completed) the seed
+  // adds so the automations list shows non-zero counts.
   await expect(page.getByTestId('profile-row')).toHaveCount(6);
   // a3 is unsubscribed → exactly one unsubscribed marker in the table.
   await expect(page.getByTestId('profile-unsub')).toHaveCount(1);
@@ -198,24 +198,42 @@ test('merge a secondary profile into the lead (survivor remains, secondary delet
   await page.getByTestId('nav-profiles').click();
   await page.getByTestId('profile-explorer').waitFor();
 
-  // Open the lead (a1) and start a merge with a2.
-  await page.getByTestId('profile-search').fill('a1@acme.com');
+  // Create two throwaway profiles just for THIS test (unique per run + retry) and merge
+  // those. A merge DELETES the secondary, so it must NOT consume a shared seed fixture:
+  // a1/a2 are read by profiles-filter + profile-subscriptions, which run in PARALLEL —
+  // destroying a2 here made those specs flaky (fewer VIPs / a2 not found).
+  const stamp = Date.now();
+  const primary = `merge-primary-${stamp}@acme.com`;
+  const secondary = `merge-secondary-${stamp}@acme.com`;
+  for (const email of [primary, secondary]) {
+    await page.getByTestId('new-profile').click();
+    await page.getByTestId('new-profile-drawer').waitFor();
+    await page.getByTestId('new-profile-email').fill(email);
+    await page.getByTestId('create-profile').click();
+    await expect(page.getByTestId('new-profile-drawer')).toHaveCount(0);
+  }
+
+  // Open the lead (primary) and start a merge with the secondary. Wait for the
+  // debounced search to actually narrow to the primary before clicking — otherwise the
+  // unfiltered first row (newest = the secondary) opens as the lead.
+  await page.getByTestId('profile-search').fill(primary);
+  await expect(page.getByTestId('profile-row').first()).toContainText(primary);
   await page.getByTestId('profile-row').first().click();
   await page.getByTestId('profile-detail').waitFor();
   // Merge now lives in the profile actions (⋮) menu.
   await page.getByTestId('profile-actions').click();
   await page.getByTestId('merge-button').click();
   await page.getByTestId('merge-drawer').waitFor();
-  await page.getByTestId('merge-secondary-select').selectOption({ label: 'a2@acme.com' });
+  await page.getByTestId('merge-secondary-select').selectOption({ label: secondary });
   await page.getByTestId('merge-confirm').click();
 
-  // The survivor (a1) remains; the drawer closes.
+  // The survivor (primary) remains; the drawer closes.
   await expect(page.getByTestId('merge-drawer')).toHaveCount(0);
-  await expect(page.getByTestId('profile-email')).toContainText('a1@acme.com');
+  await expect(page.getByTestId('profile-email')).toContainText(primary);
 
-  // The secondary (a2) is gone from the list.
+  // The secondary is gone from the list.
   await page.getByTestId('profile-back').click();
-  await page.getByTestId('profile-search').fill('a2@acme.com');
+  await page.getByTestId('profile-search').fill(secondary);
   await expect(page.getByTestId('profile-row')).toHaveCount(0);
 });
 

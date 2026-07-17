@@ -180,6 +180,43 @@ importers:
         specifier: ^8.12.0
         version: 8.21.0
 
+  services/automation-runner:
+    dependencies:
+      '@aws-sdk/client-sqs':
+        specifier: ^3.620.0
+        version: 3.1063.0
+      '@cdp/channels':
+        specifier: workspace:*
+        version: link:../../packages/channels
+      '@cdp/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cdp/runner-webhook':
+        specifier: workspace:*
+        version: link:../../packages/runner-webhook
+      '@cdp/segments':
+        specifier: workspace:*
+        version: link:../../packages/segments
+      '@cdp/service-dispatcher':
+        specifier: workspace:*
+        version: link:../dispatcher
+      '@cdp/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      pg:
+        specifier: ^8.12.0
+        version: 8.21.0
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.140
+        version: 8.10.162
+      '@types/pg':
+        specifier: ^8.11.6
+        version: 8.20.0
+      aws-sdk-client-mock:
+        specifier: ^4.0.1
+        version: 4.1.0
+
   services/batch-eval:
     dependencies:
       '@cdp/db':
@@ -229,43 +266,6 @@ importers:
       '@cdp/channels':
         specifier: workspace:*
         version: link:../../packages/channels
-      '@types/aws-lambda':
-        specifier: ^8.10.140
-        version: 8.10.162
-      '@types/pg':
-        specifier: ^8.11.6
-        version: 8.20.0
-      aws-sdk-client-mock:
-        specifier: ^4.0.1
-        version: 4.1.0
-
-  services/campaign-runner:
-    dependencies:
-      '@aws-sdk/client-sqs':
-        specifier: ^3.620.0
-        version: 3.1063.0
-      '@cdp/channels':
-        specifier: workspace:*
-        version: link:../../packages/channels
-      '@cdp/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@cdp/runner-webhook':
-        specifier: workspace:*
-        version: link:../../packages/runner-webhook
-      '@cdp/segments':
-        specifier: workspace:*
-        version: link:../../packages/segments
-      '@cdp/service-dispatcher':
-        specifier: workspace:*
-        version: link:../dispatcher
-      '@cdp/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
-      pg:
-        specifier: ^8.12.0
-        version: 8.21.0
-    devDependencies:
       '@types/aws-lambda':
         specifier: ^8.10.140
         version: 8.10.162
@@ -420,12 +420,12 @@ importers:
       '@cdp/service-authorizer':
         specifier: workspace:*
         version: link:../authorizer
+      '@cdp/service-automation-runner':
+        specifier: workspace:*
+        version: link:../automation-runner
       '@cdp/service-broadcast':
         specifier: workspace:*
         version: link:../broadcast
-      '@cdp/service-campaign-runner':
-        specifier: workspace:*
-        version: link:../campaign-runner
       '@cdp/service-dispatcher':
         specifier: workspace:*
         version: link:../dispatcher
@@ -522,9 +522,9 @@ importers:
       '@cdp/segments':
         specifier: workspace:*
         version: link:../../packages/segments
-      '@cdp/service-campaign-runner':
+      '@cdp/service-automation-runner':
         specifier: workspace:*
-        version: link:../campaign-runner
+        version: link:../automation-runner
       '@cdp/service-ingest':
         specifier: workspace:*
         version: link:../ingest
@@ -593,12 +593,12 @@ importers:
       '@cdp/service-authorizer':
         specifier: workspace:*
         version: link:../services/authorizer
+      '@cdp/service-automation-runner':
+        specifier: workspace:*
+        version: link:../services/automation-runner
       '@cdp/service-broadcast':
         specifier: workspace:*
         version: link:../services/broadcast
-      '@cdp/service-campaign-runner':
-        specifier: workspace:*
-        version: link:../services/campaign-runner
       '@cdp/service-dispatcher':
         specifier: workspace:*
         version: link:../services/dispatcher
@@ -670,9 +670,9 @@ importers:
       '@cdp/segments':
         specifier: workspace:*
         version: link:../packages/segments
-      '@cdp/service-campaign-runner':
+      '@cdp/service-automation-runner':
         specifier: workspace:*
-        version: link:../services/campaign-runner
+        version: link:../services/automation-runner
       '@cdp/service-local-api':
         specifier: workspace:*
         version: link:../services/local-api

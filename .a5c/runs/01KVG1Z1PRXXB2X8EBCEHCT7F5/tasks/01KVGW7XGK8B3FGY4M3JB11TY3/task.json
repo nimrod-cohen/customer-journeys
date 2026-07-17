@@ -61,71 +61,71 @@
     },
     "prompt": {
       "context": {
-        "docs": "CLAUDE.md (living source of truth — overrides the spec on conflict) + CDP-BUILD-SPEC.md §9B (campaign workflow engine), §8 (rule-AST→SQL compiler, reused for branch conditions), §9 (outbox→Dispatcher pipeline)",
+        "docs": "CLAUDE.md (living source of truth — overrides the spec on conflict) + CDP-BUILD-SPEC.md §9B (automation workflow engine), §8 (rule-AST→SQL compiler, reused for branch conditions), §9 (outbox→Dispatcher pipeline)",
         "env": [
           "Monorepo: pnpm workspaces + Turborepo + Vitest + strict TS. Run from repo root. Node 20+.",
           "Real Postgres (dev): DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp (migrations applied). Single test file: pnpm --filter <pkg> exec vitest run path. Whole suite: DATABASE_URL=… pnpm test. Typecheck: pnpm typecheck. Lint: pnpm lint.",
           "Browser e2e: pnpm --filter @cdp/web test:e2e — its OWN DB cdp_e2e on its OWN ports (local-api :8788, web :5174), runs with LOCAL_SES_FORCE_MOCK=1 LOCAL_SES_DKIM_STATUS=SUCCESS; re-seeds web/e2e/seed.ts each run. The dev stack (cdp, :8787/:5173) coexists. Playwright config has retries:1.",
           "Dev API for manual checks: pnpm --filter @cdp/service-local-api dev:api (background, restart after backend edits). Health: GET http://localhost:8787/health.",
-          "Key reuse points: services/campaign-runner (dsl.ts, core.ts, run.ts, enroll.ts), services/local-api (handlers.ts, routes.ts, app.ts, server.ts), services/dispatcher (core.ts, dispatch.ts), packages/segments (AST + compiler + rule builder), packages/email, web/src/screens (BroadcastComposer email-instance flow, TemplateEditor, SegmentBuilder), web/src/ui/kit.tsx (ActionMenu, Drawer, Button, Field, Select), web/e2e/seed.ts."
+          "Key reuse points: services/automation-runner (dsl.ts, core.ts, run.ts, enroll.ts), services/local-api (handlers.ts, routes.ts, app.ts, server.ts), services/dispatcher (core.ts, dispatch.ts), packages/segments (AST + compiler + rule builder), packages/email, web/src/screens (BroadcastComposer email-instance flow, TemplateEditor, SegmentBuilder), web/src/ui/kit.tsx (ActionMenu, Drawer, Button, Field, Select), web/e2e/seed.ts."
         ],
         "implReport": {
           "commandsRun": [
-            "pnpm --filter @cdp/web exec vitest run src/campaigns",
+            "pnpm --filter @cdp/web exec vitest run src/automations",
             "pnpm --filter @cdp/web exec vitest run",
             "pnpm typecheck",
             "pnpm --filter @cdp/web lint",
-            "pnpm exec playwright test campaign-node-editors.browser.e2e.spec.ts",
-            "pnpm exec playwright test campaign-publish-gate.browser.e2e.spec.ts",
-            "pnpm exec playwright test campaign-builder campaign-node-editors campaign-publish-gate",
-            "pnpm exec playwright test broadcast-and-campaign segment"
+            "pnpm exec playwright test automation-node-editors.browser.e2e.spec.ts",
+            "pnpm exec playwright test automation-publish-gate.browser.e2e.spec.ts",
+            "pnpm exec playwright test automation-builder automation-node-editors automation-publish-gate",
+            "pnpm exec playwright test broadcast-and-automation segment"
           ],
-          "e2eSummary": "All 17 campaign specs PASS in ONE invocation: campaign-builder 7 + campaign-node-editors 8 + campaign-publish-gate 2. Regression sweep also green: broadcast-and-campaign 13 + build-segment 9 = 22 passed. One-spec/suite-at-a-time discipline observed (killed playwright/chrome + freed :8788/:5174 between every run).",
+          "e2eSummary": "All 17 automation specs PASS in ONE invocation: automation-builder 7 + automation-node-editors 8 + automation-publish-gate 2. Regression sweep also green: broadcast-and-automation 13 + build-segment 9 = 22 passed. One-spec/suite-at-a-time discipline observed (killed playwright/chrome + freed :8788/:5174 between every run).",
           "filesCreated": [
-            "web/src/campaigns/editors/NodeEditor.tsx",
-            "web/src/campaigns/node-config.ts",
-            "web/src/campaigns/node-config.test.ts",
-            "web/src/campaigns/node-config.serialize.test.ts",
+            "web/src/automations/editors/NodeEditor.tsx",
+            "web/src/automations/node-config.ts",
+            "web/src/automations/node-config.test.ts",
+            "web/src/automations/node-config.serialize.test.ts",
             "web/src/segments/RuleBuilder.tsx",
-            "web/e2e/campaign-node-editors.browser.e2e.spec.ts",
-            "web/e2e/campaign-publish-gate.browser.e2e.spec.ts",
-            "services/local-api/test/campaign-activate-gate.integration.test.ts",
-            "services/local-api/test/campaign-node-editors.integration.test.ts",
-            "services/campaign-runner/test/send-node-default-no-placeholder.test.ts"
+            "web/e2e/automation-node-editors.browser.e2e.spec.ts",
+            "web/e2e/automation-publish-gate.browser.e2e.spec.ts",
+            "services/local-api/test/automation-activate-gate.integration.test.ts",
+            "services/local-api/test/automation-node-editors.integration.test.ts",
+            "services/automation-runner/test/send-node-default-no-placeholder.test.ts"
           ],
           "filesModified": [
-            "web/src/campaigns/orthogonal-path.ts",
-            "web/src/campaigns/orthogonal-path.test.ts",
-            "web/src/campaigns/CampaignCanvas.tsx",
-            "web/src/campaigns/model.ts",
-            "web/src/campaigns/model.test.ts",
+            "web/src/automations/orthogonal-path.ts",
+            "web/src/automations/orthogonal-path.test.ts",
+            "web/src/automations/AutomationCanvas.tsx",
+            "web/src/automations/model.ts",
+            "web/src/automations/model.test.ts",
             "web/src/AppShell.tsx",
             "web/src/api/client.ts",
-            "web/src/screens/CampaignBuilder.tsx",
+            "web/src/screens/AutomationBuilder.tsx",
             "web/src/screens/SegmentBuilder.tsx",
-            "services/campaign-runner/src/dsl.ts",
-            "services/campaign-runner/test/node-dsl-and-validation.test.ts",
+            "services/automation-runner/src/dsl.ts",
+            "services/automation-runner/test/node-dsl-and-validation.test.ts",
             "services/local-api/src/handlers.ts",
-            "services/local-api/test/get-campaign.integration.test.ts",
+            "services/local-api/test/get-automation.integration.test.ts",
             "package.json",
             "CLAUDE.md"
           ],
           "lintOk": true,
           "migrationsApplied": [],
-          "notes": "5 originally-failing specs were 4 APP bugs (multiple root causes) + 1 SPEC bug. APP BUG A (the (+) edge-insert stacked): for a condition's two arms, edgeMidpoint returned identical (from.x, midY), so the two '+' buttons fully overlapped and the lower intercepted the upper's clicks ('intercepts pointer events'); the '+' at z-20 also sat over a card's ActionMenu dropdown. Fixed in orthogonal-path.ts (edgeMidpoint x=(from.x+to.x)/2 -> arms fan to distinct anchors) + CampaignCanvas.tsx ('+' lowered to z-10 so the dropdown paints over it). This alone fixed builder:181(delete), node-editors:106(webhook), node-editors:134(update-profile), and node-editors:155's first hop. Updated the edgeMidpoint unit test (it asserted the buggy behavior) + added a straight-down case. APP BUG B (node-editors:155 SEND attach): openEditor only persisted for NEW campaigns, so a freshly-inserted send node on an EXISTING campaign 404'd on attach-template (drawer never closed) -> openEditor now ALWAYS persists first; and after attach the model wasn't refreshed, so reopening re-persisted the stale no-template model and wiped the attach -> added onReloadCampaign (GET /campaigns/:id) before onDone (this also fixed the cross-test pollution that made publish-gate:18 fail in the combined run). APP BUG C (publish-gate:30 node-publish-error missing): the typed API client threw only {status,error}, DROPPING the activate 409's node/missing -> ApiError now spreads the full error body. APP BUG D (publish-gate:30 / node-editors:155 return): AppShell.screenFor had NO /campaigns/:id sub-route, so the editor's Back fell through to Dashboards -> added /campaigns/:id -> CampaignBuilder (re-opens via takeReturnedTo). SPEC BUG: publish-gate:30 line 58 assumed the abandoned blank-design left an instance (send-start-over); but an immediate editor-back with no edits creates no copy (identical to the broadcast wizard flow), so the node correctly shows the PICKER -> removed the bogus send-start-over round-trip, pick the template directly. Final: 17/17 campaign specs green in a single invocation; no regression in broadcast/segment suites. lintOk=true = the KNOWN-7 pre-existing react-hooks/exhaustive-deps rule-definition errors only (config issue, all in files NOT touched here); changed files add no lint errors. NOT pushed.",
+          "notes": "5 originally-failing specs were 4 APP bugs (multiple root causes) + 1 SPEC bug. APP BUG A (the (+) edge-insert stacked): for a condition's two arms, edgeMidpoint returned identical (from.x, midY), so the two '+' buttons fully overlapped and the lower intercepted the upper's clicks ('intercepts pointer events'); the '+' at z-20 also sat over a card's ActionMenu dropdown. Fixed in orthogonal-path.ts (edgeMidpoint x=(from.x+to.x)/2 -> arms fan to distinct anchors) + AutomationCanvas.tsx ('+' lowered to z-10 so the dropdown paints over it). This alone fixed builder:181(delete), node-editors:106(webhook), node-editors:134(update-profile), and node-editors:155's first hop. Updated the edgeMidpoint unit test (it asserted the buggy behavior) + added a straight-down case. APP BUG B (node-editors:155 SEND attach): openEditor only persisted for NEW automations, so a freshly-inserted send node on an EXISTING automation 404'd on attach-template (drawer never closed) -> openEditor now ALWAYS persists first; and after attach the model wasn't refreshed, so reopening re-persisted the stale no-template model and wiped the attach -> added onReloadAutomation (GET /automations/:id) before onDone (this also fixed the cross-test pollution that made publish-gate:18 fail in the combined run). APP BUG C (publish-gate:30 node-publish-error missing): the typed API client threw only {status,error}, DROPPING the activate 409's node/missing -> ApiError now spreads the full error body. APP BUG D (publish-gate:30 / node-editors:155 return): AppShell.screenFor had NO /automations/:id sub-route, so the editor's Back fell through to Dashboards -> added /automations/:id -> AutomationBuilder (re-opens via takeReturnedTo). SPEC BUG: publish-gate:30 line 58 assumed the abandoned blank-design left an instance (send-start-over); but an immediate editor-back with no edits creates no copy (identical to the broadcast wizard flow), so the node correctly shows the PICKER -> removed the bogus send-start-over round-trip, pick the template directly. Final: 17/17 automation specs green in a single invocation; no regression in broadcast/segment suites. lintOk=true = the KNOWN-7 pre-existing react-hooks/exhaustive-deps rule-definition errors only (config issue, all in files NOT touched here); changed files add no lint errors. NOT pushed.",
           "testsPass": true,
-          "testSummary": "web unit: 115 passed / 4 skipped (campaigns 59 incl. node-config 17 + serialize 3 + model 15 + mutate 9 + layout 9 + orthogonal-path 6 — added 1 edgeMidpoint case). Full workspace typecheck: 43/43 packages clean. local-api integration tier (205) untouched: no local-api SOURCE changed in this finishing pass — the activate handler already returned {error,node,missing}; the bug was the SPA API client dropping those extra fields. SES/AWS mocks unchanged.",
+          "testSummary": "web unit: 115 passed / 4 skipped (automations 59 incl. node-config 17 + serialize 3 + model 15 + mutate 9 + layout 9 + orthogonal-path 6 — added 1 edgeMidpoint case). Full workspace typecheck: 43/43 packages clean. local-api integration tier (205) untouched: no local-api SOURCE changed in this finishing pass — the activate handler already returned {error,node,missing}; the bug was the SPA API client dropping those extra fields. SES/AWS mocks unchanged.",
           "typecheckOk": true,
           "versionBump": "0.34.0"
         },
         "invariants": [
-          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL and every query filters by workspace_id. The campaign-runner + enrollment + handlers connect with the Supabase SERVICE ROLE which BYPASSES RLS — they MUST scope by workspace_id IN CODE (RLS is not their safety net). workspace_id is loaded FROM the enrollment/campaign row, never assumed.",
+          "Tenant isolation: every tenant-scoped row carries workspace_id NOT NULL and every query filters by workspace_id. The automation-runner + enrollment + handlers connect with the Supabase SERVICE ROLE which BYPASSES RLS — they MUST scope by workspace_id IN CODE (RLS is not their safety net). workspace_id is loaded FROM the enrollment/automation row, never assumed.",
           "workspace_id is NEVER client-supplied — it comes from the authorizer-injected claim (admin API) or a trusted server-set field (the enrollment row). Never trust a workspace_id in a request body. Reject a cross-workspace template_id / segment_id / sender_id (inv.2) — like validateSenderId does today.",
-          "All campaign action SENDS go through the SAME outbox → Dispatcher pipeline as broadcasts (§9): suppression → frequency-cap → quiet-hours, gated on a VERIFIED sending domain. A send node carries an email INSTANCE whose envelope (real named From sender + To + Subject) is ALL mandatory — NO no-reply fallback (mirror sendBroadcast gating). The Dispatcher renders merge tags in the SUBJECT, To AND body.",
-          "Runner idempotency + concurrency (unchanged guarantee): one tick advances a due enrollment exactly once (SELECT … FOR UPDATE row lock in one tx, re-check active inside the lock; legacy CAS path for unit tests). Outbox dedupe_key per (campaign_id, profile_id, node_id) prevents double-sends on retry. MAX_STEPS_PER_TICK guards pathological graphs. New node execution must preserve all of this.",
+          "All automation action SENDS go through the SAME outbox → Dispatcher pipeline as broadcasts (§9): suppression → frequency-cap → quiet-hours, gated on a VERIFIED sending domain. A send node carries an email INSTANCE whose envelope (real named From sender + To + Subject) is ALL mandatory — NO no-reply fallback (mirror sendBroadcast gating). The Dispatcher renders merge tags in the SUBJECT, To AND body.",
+          "Runner idempotency + concurrency (unchanged guarantee): one tick advances a due enrollment exactly once (SELECT … FOR UPDATE row lock in one tx, re-check active inside the lock; legacy CAS path for unit tests). Outbox dedupe_key per (automation_id, profile_id, node_id) prevents double-sends on retry. MAX_STEPS_PER_TICK guards pathological graphs. New node execution must preserve all of this.",
           "Webhook action safety: outbound HTTP ONLY to an explicit per-workspace domain ALLOWLIST; enforce a timeout + BOUNDED retries; block SSRF (no internal/link-local/loopback/169.254 metadata targets); secrets (e.g. auth headers) use the @cdp/db secret-crypto envelope pattern, never returned in plaintext over the API; a webhook failure is ISOLATED (recorded; never crashes the tick or double-advances). LOCAL: the HTTP call is mocked/injected — never hit a real external host in tests.",
-          "Workspace timezone governs ALL campaign time math (waits, wait-until, hour-of-day window) — DST-correct (reuse the zoned↔UTC approach from the broadcast scheduler: zonedInputToUtcIso/tzOffsetMs). One configurable timezone per workspace; never per-broadcast guesswork.",
-          "The DSL ({startNode, nodes}) is the SINGLE graph model; validateCampaignDefinition is the structural gate (exactly ONE trigger, every edge resolves, a reachable exit, and — extended — NO cycles / NO orphan nodes / down-only). The builder is an AUTO-LAYOUT RENDER of that graph: compute (x,y) from the tree, draw rounded orthogonal connectors, branches fan sideways. NO separate graph model, NO stored coordinates, NO loops/back-edges.",
+          "Workspace timezone governs ALL automation time math (waits, wait-until, hour-of-day window) — DST-correct (reuse the zoned↔UTC approach from the broadcast scheduler: zonedInputToUtcIso/tzOffsetMs). One configurable timezone per workspace; never per-broadcast guesswork.",
+          "The DSL ({startNode, nodes}) is the SINGLE graph model; validateAutomationDefinition is the structural gate (exactly ONE trigger, every edge resolves, a reachable exit, and — extended — NO cycles / NO orphan nodes / down-only). The builder is an AUTO-LAYOUT RENDER of that graph: compute (x,y) from the tree, draw rounded orthogonal connectors, branches fan sideways. NO separate graph model, NO stored coordinates, NO loops/back-edges.",
           "REUSE, do not reinvent (code-quality bar): the broadcast email-INSTANCE/clone flow (kind=copy, source_template_id, cloneTemplate, the From/To/Subject envelope + editor return flow) for send nodes; the segment rule builder + AstNode for the if/condition node; the kit ActionMenu / Drawer / Button (auto-locks on promise-returning onClick) / Field / Select; the Dispatcher core; scopedQuery; runInWorkspaceTx; evaluateRealtimeSegmentsForProfile. Match the surrounding code style, comment density and naming.",
           "UI standing rules: NEVER use native confirm/alert/prompt — use ui/dialog.tsx (askConfirm) or purpose-built modals. EVERY server-calling button shows a spinner + locks until the response (kit Button auto-locks when onClick RETURNS the promise — wire it that way). The email editor autosaves (no manual save). PRESERVE every existing data-testid; add stable testids for new UI. Floating toasts (ui/toast.tsx showToast) for transient feedback.",
           "Test-first (§16A/§18): write the failing acceptance tests FIRST, then implement to green. Do NOT mock Postgres in the integration tier — use the REAL local DB. Mock SES/AWS (aws-sdk-client-mock / LocalStack); the webhook HTTP client is injected/mocked. Playwright (real browser) for UI phases with seeded data + stable selectors. turbo test task is cache:false — keep it. Unique workspace UUIDs + file-local namespaces (events.event_id / ses_message_id are GLOBAL keys).",
@@ -143,31 +143,31 @@
           "refs": "CLAUDE.md (segment rule builder for if, broadcast email-instance flow for send, kit Drawer/Field) + the trigger design",
           "scope": [
             "Inline/drawer editors for every node: TRIGGER (segment_entry → segment picker; event → event-type + optional filter; manual), WAIT (duration), WAIT-UNTIL (date/time in workspace tz), HOUR-OF-DAY WINDOW (hour range + days), IF (REUSE the segment rule builder → AstNode), SEND (the email-instance picker + \"Design email\" → editor, reusing the broadcast clone/return flow + envelope), UPDATE-PROFILE (attribute key picker + a value that is either a LITERAL or an expression — customer.* / event.* token, with a hint that event.* pulls from the trigger event), WEBHOOK (url/method/headers/body/timeout/retries; secret header write-only).",
-            "PUBLISH flow: a Draft → Active transition that runs validateCampaignDefinition + the send-node envelope gating + trigger validity; surface inline what is missing and BLOCK publish until valid (buttons spinner+lock; no native dialogs).",
-            "Wire the editors to save into the definition (autosave or explicit save consistent with the broadcast wizard); preserve the editor return-context for the send-node email (← Back to campaign)."
+            "PUBLISH flow: a Draft → Active transition that runs validateAutomationDefinition + the send-node envelope gating + trigger validity; surface inline what is missing and BLOCK publish until valid (buttons spinner+lock; no native dialogs).",
+            "Wire the editors to save into the definition (autosave or explicit save consistent with the broadcast wizard); preserve the editor return-context for the send-node email (← Back to automation)."
           ],
           "title": "Builder: per-node editors + publish validation"
         },
         "plan": {
           "e2eFlows": [
-            "Open the seeded campaign (CAMP_A) → click each node card → its editor Drawer opens → edit config → Save (button spinner+lock) → reload via Open → assert the node summary/config round-tripped.",
+            "Open the seeded automation (CAMP_A) → click each node card → its editor Drawer opens → edit config → Save (button spinner+lock) → reload via Open → assert the node summary/config round-tripped.",
             "TRIGGER flow: card→editor→switch kind segment_entry/event/manual; for segment_entry pick a seeded segment (trigger-segment) and assert trigger_segment_id persisted; for event set eventType (+ optional payload filter rows); save+reload.",
             "WAIT / WAIT-UNTIL / HOUR-WINDOW flows: set duration / zoned date-time (assert workspace-tz helper text + DST-correct round-trip) / hour range + weekdays; save+reload.",
             "IF flow: open the condition editor, confirm the SegmentBuilder rule rows render (rule-row/rule-field/rule-operator/rule-value/add-rule), add attributes.tier = vip, save, reload re-hydrates; an empty rule group blocks save with an inline condition-incomplete hint (no native dialog).",
-            "SEND flow (reuses broadcast clone/return): card→editor with no email → 'Start from a template' clones a kind='copy' via attach-template (NOT placeholder) → instance shows → 'Design email' → editor opens with '← Back to campaign' (editorReturn=/campaigns/:id) → edit From/To/Subject (the email-instance envelope card) → autosave → Back → SEND editor shows the configured copy.",
+            "SEND flow (reuses broadcast clone/return): card→editor with no email → 'Start from a template' clones a kind='copy' via attach-template (NOT placeholder) → instance shows → 'Design email' → editor opens with '← Back to automation' (editorReturn=/automations/:id) → edit From/To/Subject (the email-instance envelope card) → autosave → Back → SEND editor shows the configured copy.",
             "UPDATE-PROFILE flow: pick attribute key, toggle value-mode literal↔expression, enter a {{customer.tier}}/{{event.x}} token with the trigger-event hint, save+reload round-trips.",
             "WEBHOOK flow: set url/method/headers/body/timeout/retries + a write-only secret header; save; reload renders the secret empty/placeholder (never echoed); an invalid (non-http) url blocks save inline.",
             "PUBLISH-GATE flow: assemble trigger→send→exit; Publish blocked inline for missing sender→to→subject in order, then for no verified domain, then SUCCEEDS (status→active) with the seeded verified domain; incomplete event-trigger and orphan-graph each block Publish with their specific inline reason; all Publish clicks spinner+lock; no native dialogs."
           ],
           "implUnits": [
-            "1. web/src/campaigns/node-config.ts (PURE) — the per-node read/write serialization helpers + the IF ast-builder bindings + sendNodeNeedsEmail; remove the 'placeholder' template_id from defaultNodeConfig('send') in model.ts. Unit-test first (node-config.test.ts, node-config.serialize.test.ts).",
-            "2. services/campaign-runner: NO new node types (DSL already complete). Add the regression test send-node-default-no-placeholder.test.ts proving collectSendNodeEnvelopeGaps treats an empty template_id as 'needs sender'.",
-            "3. services/local-api/src/handlers.ts: wrap createCampaign/updateCampaign/activateCampaign so a validateCampaignDefinition throw maps to a TYPED 400/409 (not a 500); ensure the activate 409 body carries {error, node?, missing?} for the SPA inline reason. trigger_segment_id already settable via updateCampaign — confirm it stays workspace-scoped (cross-workspace 0-row). Integration tests campaign-node-editors + campaign-activate-gate first.",
-            "4. web/src/campaigns/editors/ — one editor component per node type, each rendered in the kit Drawer, each control with a data-testid: TriggerEditor, WaitEditor, WaitUntilEditor (workspace tz), HourWindowEditor, ConditionEditor (embeds the SegmentBuilder rule-rows component), SendEditor (email-instance picker + Design email reusing editorReturn/clone), UpdateProfileEditor (key + value-mode literal/expression + token hint), WebhookEditor (write-only secret). All save via applyNodeConfig→setModel then PUT /campaigns/:id (or attach-template for send), buttons RETURN the promise.",
+            "1. web/src/automations/node-config.ts (PURE) — the per-node read/write serialization helpers + the IF ast-builder bindings + sendNodeNeedsEmail; remove the 'placeholder' template_id from defaultNodeConfig('send') in model.ts. Unit-test first (node-config.test.ts, node-config.serialize.test.ts).",
+            "2. services/automation-runner: NO new node types (DSL already complete). Add the regression test send-node-default-no-placeholder.test.ts proving collectSendNodeEnvelopeGaps treats an empty template_id as 'needs sender'.",
+            "3. services/local-api/src/handlers.ts: wrap createAutomation/updateAutomation/activateAutomation so a validateAutomationDefinition throw maps to a TYPED 400/409 (not a 500); ensure the activate 409 body carries {error, node?, missing?} for the SPA inline reason. trigger_segment_id already settable via updateAutomation — confirm it stays workspace-scoped (cross-workspace 0-row). Integration tests automation-node-editors + automation-activate-gate first.",
+            "4. web/src/automations/editors/ — one editor component per node type, each rendered in the kit Drawer, each control with a data-testid: TriggerEditor, WaitEditor, WaitUntilEditor (workspace tz), HourWindowEditor, ConditionEditor (embeds the SegmentBuilder rule-rows component), SendEditor (email-instance picker + Design email reusing editorReturn/clone), UpdateProfileEditor (key + value-mode literal/expression + token hint), WebhookEditor (write-only secret). All save via applyNodeConfig→setModel then PUT /automations/:id (or attach-template for send), buttons RETURN the promise.",
             "5. EXTRACT the SegmentBuilder rule-rows UI (currently inline RuleRows/RuleGroup markup in SegmentBuilder.tsx) into a shared web/src/segments/RuleBuilder.tsx so BOTH SegmentBuilder and ConditionEditor mount the exact same component (DRY; preserves every existing data-testid). SegmentBuilder refactored to consume it (no behavior change — existing segment e2e must stay green).",
-            "6. web/src/screens/CampaignBuilder.tsx: wire a node→editor open path (card click / ActionMenu 'Edit step'), mount the editor Drawer, load the campaign's trigger_segment_id + workspace timezone (GET /workspace/settings) for the trigger/wait-until/hour editors; add the Publish button (campaign-publish) calling POST /campaigns/:id/activate and rendering the 409 reason inline (publish-reason + per-node node-publish-error), status badge reflecting draft/active; Save still persists the definition first so the gate sees the latest copy.",
-            "7. web/src/screens/TemplateEditor.tsx / BroadcastComposer reuse: the SEND editor sets editorReturn to /campaigns/:id (createAs:'copy' for a blank), so the editor's existing '← Back' + envelope card already work; confirm the return lands on the campaign builder and re-selects the copy (markReturnedTo/takeReturnedTo parity with the broadcast wizard).",
-            "8. web/e2e: campaign-node-editors.browser.e2e.spec.ts + campaign-publish-gate.browser.e2e.spec.ts; extend web/e2e/seed.ts only if needed (a verified domain + named sender already seeded; CAMP_A branching campaign already seeded — add a send node with NO sender for the gate test, or build it in-flow).",
+            "6. web/src/screens/AutomationBuilder.tsx: wire a node→editor open path (card click / ActionMenu 'Edit step'), mount the editor Drawer, load the automation's trigger_segment_id + workspace timezone (GET /workspace/settings) for the trigger/wait-until/hour editors; add the Publish button (automation-publish) calling POST /automations/:id/activate and rendering the 409 reason inline (publish-reason + per-node node-publish-error), status badge reflecting draft/active; Save still persists the definition first so the gate sees the latest copy.",
+            "7. web/src/screens/TemplateEditor.tsx / BroadcastComposer reuse: the SEND editor sets editorReturn to /automations/:id (createAs:'copy' for a blank), so the editor's existing '← Back' + envelope card already work; confirm the return lands on the automation builder and re-selects the copy (markReturnedTo/takeReturnedTo parity with the broadcast wizard).",
+            "8. web/e2e: automation-node-editors.browser.e2e.spec.ts + automation-publish-gate.browser.e2e.spec.ts; extend web/e2e/seed.ts only if needed (a verified domain + named sender already seeded; CAMP_A branching automation already seeded — add a send node with NO sender for the gate test, or build it in-flow).",
             "9. Process: bump root package.json (minor — feature); update CLAUDE.md (phase-6 node editors + publish flow + placeholder removal); run typecheck + vitest + e2e before claiming done; restart dev:api + rebuild changed packages."
           ],
           "mocks": [
@@ -176,19 +176,19 @@
             "Postgres: NOT mocked — integration uses real local cdp; e2e uses real cdp_e2e (re-seeded each run via web/e2e/seed.ts).",
             "Browser: real Chromium (Playwright, retries:1) — no DOM mocking."
           ],
-          "notes": "IF editor reuse: the segment rule builder is currently INLINE inside SegmentBuilder.tsx (RuleRows + RuleGroup markup, testids rule-row/rule-field/rule-operator/rule-value/add-rule/add-event-rule) and compiles via web/src/segments/ast-builder.ts (buildAstFromGroup/groupFromAst). Plan extracts that markup into a shared RuleBuilder.tsx so ConditionEditor mounts the EXACT same component and emits the SAME AstNode the §8 compiler whitelists — no second AST path. SEND editor reuse: the broadcast Content step already does the whole clone/return dance (pickTemplate→POST /templates/:id/clone, designEmail→setEditorReturn(...,{createAs:'copy'})→/editor, takeReturnedTemplate/takeReturnedTo on return); the campaign twin endpoint POST /campaigns/:id/send-nodes/:nodeId/attach-template ALREADY exists and clones a kind='copy' with envelope columns and repoints the node's template_id — so the SEND editor just reuses editorReturn (returnPath=/campaigns/:id) and that endpoint instead of the placeholder. Publish-gating: the activateCampaign handler ALREADY computes ordered per-send-node gaps (collectSendNodeEnvelopeGaps, sender→to→subject) + the verified-domain gate and returns 409 naming the node; this phase's BACKEND work is mostly mapping the validateCampaignDefinition throw to a TYPED 4xx (today createCampaign/updateCampaign throw → likely 500) and shaping the 409 body so the SPA can render the reason against the offending node card (publish-reason / node-publish-error). Two explicit phase-5 follow-ups closed here: (a) defaultNodeConfig('send') drops the literal 'placeholder' template_id so a fresh send node correctly reads as 'needs an email' and the SEND editor runs the REAL attach/clone; (b) invalid-definition saves return a typed 400 instead of a 500. Key gotcha: the segment_entry trigger's segment is a CAMPAIGN-ROW field (campaigns.trigger_segment_id), NOT a node field — the TriggerEditor's segment picker must PUT /campaigns/:id {trigger_segment_id}, and validateCampaignDefinition treats segment_entry as needing only kind+next. Invariants honored: workspace_id from ctx (service role bypasses RLS), cross-workspace template/segment refusal, all sends go through the same outbox→Dispatcher gate, workspace-tz governs all time math, no native dialogs, every server button spinner+locks, data-testid on every control. Tests are written FIRST (unit pure helpers → integration on real Postgres → e2e in real Chromium).",
+          "notes": "IF editor reuse: the segment rule builder is currently INLINE inside SegmentBuilder.tsx (RuleRows + RuleGroup markup, testids rule-row/rule-field/rule-operator/rule-value/add-rule/add-event-rule) and compiles via web/src/segments/ast-builder.ts (buildAstFromGroup/groupFromAst). Plan extracts that markup into a shared RuleBuilder.tsx so ConditionEditor mounts the EXACT same component and emits the SAME AstNode the §8 compiler whitelists — no second AST path. SEND editor reuse: the broadcast Content step already does the whole clone/return dance (pickTemplate→POST /templates/:id/clone, designEmail→setEditorReturn(...,{createAs:'copy'})→/editor, takeReturnedTemplate/takeReturnedTo on return); the automation twin endpoint POST /automations/:id/send-nodes/:nodeId/attach-template ALREADY exists and clones a kind='copy' with envelope columns and repoints the node's template_id — so the SEND editor just reuses editorReturn (returnPath=/automations/:id) and that endpoint instead of the placeholder. Publish-gating: the activateAutomation handler ALREADY computes ordered per-send-node gaps (collectSendNodeEnvelopeGaps, sender→to→subject) + the verified-domain gate and returns 409 naming the node; this phase's BACKEND work is mostly mapping the validateAutomationDefinition throw to a TYPED 4xx (today createAutomation/updateAutomation throw → likely 500) and shaping the 409 body so the SPA can render the reason against the offending node card (publish-reason / node-publish-error). Two explicit phase-5 follow-ups closed here: (a) defaultNodeConfig('send') drops the literal 'placeholder' template_id so a fresh send node correctly reads as 'needs an email' and the SEND editor runs the REAL attach/clone; (b) invalid-definition saves return a typed 400 instead of a 500. Key gotcha: the segment_entry trigger's segment is a AUTOMATION-ROW field (automations.trigger_segment_id), NOT a node field — the TriggerEditor's segment picker must PUT /automations/:id {trigger_segment_id}, and validateAutomationDefinition treats segment_entry as needing only kind+next. Invariants honored: workspace_id from ctx (service role bypasses RLS), cross-workspace template/segment refusal, all sends go through the same outbox→Dispatcher gate, workspace-tz governs all time math, no native dialogs, every server button spinner+locks, data-testid on every control. Tests are written FIRST (unit pure helpers → integration on real Postgres → e2e in real Chromium).",
           "pureFunctions": [
-            "web/src/campaigns/node-config.ts: applyNodeConfig(model, nodeId, patch) — immutably patch one node's NON-EDGE config in a CanvasModel (edges stay in the edge list, never touched).",
+            "web/src/automations/node-config.ts: applyNodeConfig(model, nodeId, patch) — immutably patch one node's NON-EDGE config in a CanvasModel (edges stay in the edge list, never touched).",
             "node-config.ts: writeTriggerConfig / writeWaitConfig (duration→{seconds}) / writeWaitUntilConfig (zoned input + tz → ISO via zonedInputToUtcIso) / writeHourWindowConfig (hours+daysOfWeek normalize) / writeSetAttributeConfig (literal|expression ValueSpec) / writeWebhookConfig — each returns a DslNode patch; all pure, unit-tested.",
             "node-config.ts: readWaitUntilInput(iso, tz)=utcIsoToZonedInput, readHourWindow(node), readSetAttributeValue(node)→{mode,literal|expression}, readWebhookConfig(node) WITHOUT the secret value (write-only reads as empty/placeholder) — the read side for hydrating each editor.",
             "node-config.ts: editorRowsToConditionAst(group)=buildAstFromGroup(group) and conditionAstToRows(ast)=groupFromAst(ast) — thin re-exports binding the IF editor to the SAME @cdp ast-builder used by SegmentBuilder (no second AST builder).",
             "node-config.ts: sendNodeNeedsEmail(node) — true when a send node has no/empty template_id (drives the SEND editor's picker vs instance view; replaces the 'placeholder' sentinel).",
-            "REUSE (no new copy): @cdp/segments validateAst + the runner's validateCampaignDefinition / collectSendNodeEnvelopeGaps; @cdp/shared zonedInputToUtcIso / utcIsoToZonedInput / tzOffsetMs / timeZoneList / isValidTimeZone; @cdp/shared isExpressionSpec / isLiteralSpec / ValueSpec; web/src/segments/ast-builder buildAstFromGroup / groupFromAst / emptyGroup."
+            "REUSE (no new copy): @cdp/segments validateAst + the runner's validateAutomationDefinition / collectSendNodeEnvelopeGaps; @cdp/shared zonedInputToUtcIso / utcIsoToZonedInput / tzOffsetMs / timeZoneList / isValidTimeZone; @cdp/shared isExpressionSpec / isLiteralSpec / ValueSpec; web/src/segments/ast-builder buildAstFromGroup / groupFromAst / emptyGroup."
           ],
           "reuse": [
             "Segment rule builder: EXTRACT + reuse the SegmentBuilder rule-rows/group markup as web/src/segments/RuleBuilder.tsx; the IF editor compiles via @cdp ast-builder buildAstFromGroup/groupFromAst → a valid AstNode (validateAst), the SAME AST the segment compiler whitelists (invariant 6 untouched — the builder emits the AST, the server compiles).",
-            "Broadcast email-instance/clone + return flow: POST /campaigns/:id/send-nodes/:nodeId/attach-template (the campaign twin of POST /templates/:id/clone) for the SEND editor; store/editorReturn.ts (setEditorReturn(returnPath,{createAs:'copy'}), markReturnedTo/takeReturnedTo, takeReturnedTemplate) so '← Back to campaign' + the envelope card work exactly as in BroadcastComposer; the From/To/Subject live on the kind='copy' template instance.",
-            "Publish gate: the runner's collectSendNodeEnvelopeGaps + the existing activateCampaign handler (already mirrors sendBroadcast's sender→to→subject ordering + verified-domain gate); the SPA only needs to surface the 409 reason inline.",
+            "Broadcast email-instance/clone + return flow: POST /automations/:id/send-nodes/:nodeId/attach-template (the automation twin of POST /templates/:id/clone) for the SEND editor; store/editorReturn.ts (setEditorReturn(returnPath,{createAs:'copy'}), markReturnedTo/takeReturnedTo, takeReturnedTemplate) so '← Back to automation' + the envelope card work exactly as in BroadcastComposer; the From/To/Subject live on the kind='copy' template instance.",
+            "Publish gate: the runner's collectSendNodeEnvelopeGaps + the existing activateAutomation handler (already mirrors sendBroadcast's sender→to→subject ordering + verified-domain gate); the SPA only needs to surface the 409 reason inline.",
             "Workspace timezone: @cdp/shared zonedInputToUtcIso / utcIsoToZonedInput / tzOffsetMs / timeZoneList / isValidTimeZone, fed by GET /workspace/settings.timezone (default UTC) — exactly the broadcast scheduler's zoned↔UTC approach for WAIT-UNTIL and the HOUR-OF-DAY window display.",
             "Value spec: @cdp/shared isExpressionSpec/isLiteralSpec/ValueSpec + resolveValueSpec semantics for the UPDATE-PROFILE editor's literal/expression toggle and the event.* hint; customer.ts/event.ts token namespaces for the token input.",
             "UI kit: Drawer (editor shell), Button (auto-locks when onClick returns a promise — wire every save/attach/publish that way), Field/Input/Select, ActionMenu (card 'Edit step'/'Delete step'), ui/dialog askConfirm, ui/toast showToast, EmptyState — NO native dialogs.",
@@ -200,26 +200,26 @@
                 "applyNodeConfig(model, nodeId, patch) returns a NEW CanvasModel with the patched node and PRESERVES every edge slot (next/onTrue/onFalse) — buildDefinition(after).nodes[id] keeps its targets unchanged.",
                 "WAIT: writeWaitConfig produces { type:'wait', delay:{seconds:N}, next } for a duration; rejects/normalizes non-positive seconds to a minimum; round-trips through buildDefinition/parseDefinition to identity.",
                 "WAIT-UNTIL: writeWaitUntilConfig stores an ISO instant computed from a zoned wall-clock input via zonedInputToUtcIso(local, workspaceTz) (DST-correct: same wall-clock in summer vs winter yields different UTC offsets); reload renders the input via utcIsoToZonedInput(iso, tz) to the SAME wall-clock string.",
-                "HOUR-OF-DAY WINDOW: writeHourWindowConfig stores integer startHour/endHour (0..23), accepts startHour>endHour (overnight) without error, stores daysOfWeek only when a non-empty unique subset is chosen (omitted = all days); validateCampaignDefinition accepts the emitted node.",
+                "HOUR-OF-DAY WINDOW: writeHourWindowConfig stores integer startHour/endHour (0..23), accepts startHour>endHour (overnight) without error, stores daysOfWeek only when a non-empty unique subset is chosen (omitted = all days); validateAutomationDefinition accepts the emitted node.",
                 "IF: editorRowsToConditionAst(group) === buildAstFromGroup(group) wired through the SAME ast-builder helpers (buildAstFromGroup / groupFromAst) used by SegmentBuilder; the emitted node is { type:'condition', ast, onTrue, onFalse } and validateAst(ast) does NOT throw; an empty group falls back to a never-empty AST (the editor blocks save when the group is empty, asserted in e2e).",
                 "IF round-trip: groupFromAst(node.ast) reconstructs the editable group, and re-compiling yields a structurally-equal AST (idempotent hydrate→serialize).",
-                "UPDATE-PROFILE: writeSetAttributeConfig with mode 'literal' emits value={kind:'literal',value} and with mode 'expression' emits value={kind:'expression',expression}; validateSetAttributeValue (via validateCampaignDefinition) accepts both; an empty key is rejected by the editor's local validity (asserted) and by validateCampaignDefinition.",
+                "UPDATE-PROFILE: writeSetAttributeConfig with mode 'literal' emits value={kind:'literal',value} and with mode 'expression' emits value={kind:'expression',expression}; validateSetAttributeValue (via validateAutomationDefinition) accepts both; an empty key is rejected by the editor's local validity (asserted) and by validateAutomationDefinition.",
                 "WEBHOOK: writeWebhookConfig emits { type:'action', kind:'webhook', url, method, headers, bodyTemplate?, timeoutMs?, maxRetries?, next }; the secret/auth-header VALUE is NOT round-tripped into the editable headers map on reload (write-only — see node-config; the persisted-secret placeholder is preserved, never echoed); validateWebhookFields accepts http(s) only and rejects a non-positive timeoutMs / negative maxRetries.",
-                "TRIGGER: writeTriggerConfig for kind='event' emits { type:'trigger', kind:'event', eventType, filter?, next } and validates; kind='manual' emits { kind:'manual', next }; kind='segment_entry' emits { kind:'segment_entry', next } and the segment id is NOT written into the node (it is a campaign-row field — asserted separately).",
+                "TRIGGER: writeTriggerConfig for kind='event' emits { type:'trigger', kind:'event', eventType, filter?, next } and validates; kind='manual' emits { kind:'manual', next }; kind='segment_entry' emits { kind:'segment_entry', next } and the segment id is NOT written into the node (it is a automation-row field — asserted separately).",
                 "defaultNodeConfig('send') NO LONGER uses the literal 'placeholder' template_id: a freshly inserted send node has template_id absent/empty so the publish gate reports it as needing an email (the phase-5 placeholder regression is removed)."
               ],
               "criterion": "Each node type opens a working editor that persists its config into the definition and round-trips; the IF editor reuses the segment rule builder and compiles to a valid AstNode.",
-              "path": "web/src/campaigns/node-config.test.ts",
+              "path": "web/src/automations/node-config.test.ts",
               "tier": "unit"
             },
             {
               "assertions": [
                 "For every PaletteType, a configured node serialized by buildDefinition then re-parsed by parseDefinition yields a structurally-equal node (deep-equal on non-edge fields, edges preserved).",
-                "A full multi-node definition (trigger→wait→condition→[send|set_attribute]→exit) configured node-by-node round-trips to identity and passes validateCampaignDefinition.",
+                "A full multi-node definition (trigger→wait→condition→[send|set_attribute]→exit) configured node-by-node round-trips to identity and passes validateAutomationDefinition.",
                 "Editing one node's config does not mutate sibling nodes or the start id (referential-immutability check)."
               ],
               "criterion": "Each node type persists its config into the definition and round-trips.",
-              "path": "web/src/campaigns/node-config.serialize.test.ts",
+              "path": "web/src/automations/node-config.serialize.test.ts",
               "tier": "unit"
             },
             {
@@ -228,33 +228,33 @@
                 "collectSendNodeEnvelopeGaps orders gaps sender→to→subject and reports per-node in BFS order (regression-fix guard for the publish gate)."
               ],
               "criterion": "The SEND editor clones+edits a per-node email copy (envelope) reusing the broadcast flow; publish blocked when a send node lacks From/To/Subject.",
-              "path": "services/campaign-runner/test/send-node-default-no-placeholder.test.ts",
+              "path": "services/automation-runner/test/send-node-default-no-placeholder.test.ts",
               "tier": "unit"
             },
             {
               "assertions": [
-                "REAL Postgres (cdp). PUT /campaigns/:id with a definition carrying configured wait/wait_until/hour_window/condition/set_attribute/webhook/event-trigger nodes returns 200 and GET /campaigns/:id round-trips the SAME definition (jsonb) byte-for-byte on the node fields.",
-                "PUT /campaigns/:id with a structurally INVALID definition (e.g. condition missing onFalse, webhook with a non-http url, set_attribute with an unknown value-spec kind) returns a TYPED 400 with a specific message (NOT a 500) — the handler catches the validateCampaignDefinition throw and maps it to 400 (phase-5 follow-up).",
-                "POST /campaigns/:id/send-nodes/:nodeId/attach-template clones the chosen LIBRARY template into a kind='copy' row (source_template_id set, design+envelope columns copied) and repoints the send node's template_id at the copy; GET /campaigns/:id shows the new template_id; the original library template row is unchanged.",
-                "Cross-workspace refusal (inv.2): attach-template with a template_id from ANOTHER workspace returns 404 and clones nothing; attach into a campaign id from another workspace returns 404; activate of another workspace's campaign returns 404.",
-                "The trigger segment for kind='segment_entry' is set via PUT /campaigns/:id { trigger_segment_id } (campaign-row field, never the node); a cross-workspace trigger_segment_id is rejected/ignored (workspace-scoped UPDATE affects 0 rows or 400).",
+                "REAL Postgres (cdp). PUT /automations/:id with a definition carrying configured wait/wait_until/hour_window/condition/set_attribute/webhook/event-trigger nodes returns 200 and GET /automations/:id round-trips the SAME definition (jsonb) byte-for-byte on the node fields.",
+                "PUT /automations/:id with a structurally INVALID definition (e.g. condition missing onFalse, webhook with a non-http url, set_attribute with an unknown value-spec kind) returns a TYPED 400 with a specific message (NOT a 500) — the handler catches the validateAutomationDefinition throw and maps it to 400 (phase-5 follow-up).",
+                "POST /automations/:id/send-nodes/:nodeId/attach-template clones the chosen LIBRARY template into a kind='copy' row (source_template_id set, design+envelope columns copied) and repoints the send node's template_id at the copy; GET /automations/:id shows the new template_id; the original library template row is unchanged.",
+                "Cross-workspace refusal (inv.2): attach-template with a template_id from ANOTHER workspace returns 404 and clones nothing; attach into a automation id from another workspace returns 404; activate of another workspace's automation returns 404.",
+                "The trigger segment for kind='segment_entry' is set via PUT /automations/:id { trigger_segment_id } (automation-row field, never the node); a cross-workspace trigger_segment_id is rejected/ignored (workspace-scoped UPDATE affects 0 rows or 400).",
                 "set_attribute with { kind:'expression', expression:'{{event.foo}}' } persists and round-trips; a legacy bare scalar value still persists (back-compat)."
               ],
               "criterion": "Each node type persists its config into the definition and round-trips; the SEND editor clones+edits a per-node email copy reusing the broadcast flow; workspace-scoped throughout.",
-              "path": "services/local-api/test/campaign-node-editors.integration.test.ts",
+              "path": "services/local-api/test/automation-node-editors.integration.test.ts",
               "tier": "integration"
             },
             {
               "assertions": [
-                "POST /campaigns/:id/activate on a campaign whose send-node copy has sender_id=null returns 409 naming THAT node and 'Choose who the email is from…'; with sender set but to_address blank → 409 'Set the To field…'; subject blank → 409 'Add a subject line…' (sendBroadcast-ordered).",
+                "POST /automations/:id/activate on a automation whose send-node copy has sender_id=null returns 409 naming THAT node and 'Choose who the email is from…'; with sender set but to_address blank → 409 'Set the To field…'; subject blank → 409 'Add a subject line…' (sendBroadcast-ordered).",
                 "activate with a complete send-node copy (sender+to+subject) BUT no verified sending_domains row → 409 'No verified sending domain…'; with a verified domain → 200 status:'active'.",
-                "activate of a campaign with NO send node and a complete trigger → 200 ungated.",
-                "activate when the stored definition is structurally invalid (or the trigger is incomplete — event trigger missing eventType) returns a typed 4xx with a specific reason (validateCampaignDefinition message), never 500, and status stays 'draft'.",
+                "activate of a automation with NO send node and a complete trigger → 200 ungated.",
+                "activate when the stored definition is structurally invalid (or the trigger is incomplete — event trigger missing eventType) returns a typed 4xx with a specific reason (validateAutomationDefinition message), never 500, and status stays 'draft'.",
                 "activate is workspace-scoped: the verified-domain check, the envelope reads, and the UPDATE all filter by ctx.workspaceId (service role bypasses RLS) — a verified domain in a DIFFERENT workspace does NOT satisfy the gate.",
                 "the activate response carries a machine-usable shape (e.g. {error, node?, missing?} on 409) so the SPA can render the inline reason against the right node."
               ],
               "criterion": "Publish is blocked (with specific, inline reasons) when the graph is invalid or a send node lacks From/To/Subject or the trigger is incomplete; it succeeds once everything is valid; workspace-scoped.",
-              "path": "services/local-api/test/campaign-activate-gate.integration.test.ts",
+              "path": "services/local-api/test/automation-activate-gate.integration.test.ts",
               "tier": "integration"
             },
             {
@@ -263,25 +263,25 @@
                 "TRIGGER editor: switching kind to 'segment_entry' shows a segment picker (testid trigger-segment) populated from GET /segments; choosing one and saving persists trigger_segment_id (reload round-trips). kind='event' shows trigger-event-type + an optional payload-filter reusing the rule rows; kind='manual' shows the no-config note.",
                 "WAIT editor: set 3 days, save, reload → card summary 'Wait 3 days'. WAIT-UNTIL editor: set a date/time, the helper text shows the WORKSPACE timezone; reload renders the same wall-clock. HOUR-WINDOW editor: set 9..17 and pick weekdays; reload round-trips.",
                 "IF editor: the embedded rule builder is the SAME component as SegmentBuilder (assert testids rule-row, rule-field, rule-operator, rule-value, add-rule present inside node-editor-condition); add a rule attributes.tier = vip, save, reload → the rule re-hydrates; saving an EMPTY group is blocked with an inline hint (testid condition-incomplete) and no native dialog.",
-                "SEND editor: with no email it offers 'Start from a template' (clones via POST .../attach-template — NOT the phase-5 placeholder) and 'Start from a blank design'; choosing a template attaches a kind='copy' (testid send-email-instance appears); 'Design email' navigates to /editor with editorReturn set to /campaigns/:id (createAs:'copy' when blank) and the editor's Back reads '← Back to campaign'; returning lands back on the SEND editor with the copy attached and envelope shown.",
+                "SEND editor: with no email it offers 'Start from a template' (clones via POST .../attach-template — NOT the phase-5 placeholder) and 'Start from a blank design'; choosing a template attaches a kind='copy' (testid send-email-instance appears); 'Design email' navigates to /editor with editorReturn set to /automations/:id (createAs:'copy' when blank) and the editor's Back reads '← Back to automation'; returning lands back on the SEND editor with the copy attached and envelope shown.",
                 "UPDATE-PROFILE editor: attribute key picker (testid update-key) + a value-mode toggle (testid value-mode: literal|expression); choosing expression reveals a token input (testid update-expression) with a hint 'event.* pulls from the trigger event'; save+reload round-trips both modes.",
                 "WEBHOOK editor: url/method/headers(rows)/body/timeout/retries controls each have a testid; the secret auth-header field (testid webhook-secret) is write-only — after save+reload it renders empty/placeholder, never the saved secret; an http(s)-invalid url shows an inline error and blocks save.",
                 "Every server-calling button in every editor (save/attach/activate) shows a spinner + disables while in-flight (kit Button onClick RETURNS the promise); NO window.confirm/alert/prompt anywhere (askConfirm/showToast/inline only); every interactive control has a data-testid."
               ],
               "criterion": "Each node type opens a working editor that persists its config into the definition and round-trips; the IF editor reuses the segment rule builder; the SEND editor clones+edits a per-node email copy reusing the broadcast clone/return flow; all server buttons spinner+lock; no native dialogs; data-testid on every control.",
-              "path": "web/e2e/campaign-node-editors.browser.e2e.spec.ts",
+              "path": "web/e2e/automation-node-editors.browser.e2e.spec.ts",
               "tier": "e2e"
             },
             {
               "assertions": [
-                "Build a journey trigger(segment_entry, segment chosen)→send→exit where the send copy has NO sender; click Publish (testid campaign-publish) → the button locks+spins, then an INLINE reason (testid publish-reason) names the send step and says 'Choose who the email is from…'; status badge stays 'draft'; no native dialog.",
+                "Build a journey trigger(segment_entry, segment chosen)→send→exit where the send copy has NO sender; click Publish (testid automation-publish) → the button locks+spins, then an INLINE reason (testid publish-reason) names the send step and says 'Choose who the email is from…'; status badge stays 'draft'; no native dialog.",
                 "Fix the From in the SEND email, leave To blank → Publish surfaces 'Set the To field…' inline against that node (testid node-publish-error on the send card or publish-reason); fill To+Subject → Publish surfaces the verified-domain reason if none, then SUCCEEDS (status badge → 'active') once the seeded verified domain is present.",
                 "Incomplete TRIGGER (switch to event kind, clear eventType) → Publish is blocked with a specific trigger reason inline; completing eventType clears it.",
-                "Structurally invalid graph (a deleted edge leaving an orphan, simulated via the builder) → Publish blocked with the validateCampaignDefinition reason surfaced inline (not a 500, not a native dialog).",
+                "Structurally invalid graph (a deleted edge leaving an orphan, simulated via the builder) → Publish blocked with the validateAutomationDefinition reason surfaced inline (not a 500, not a native dialog).",
                 "Publish succeeds end-to-end for a complete journey covering at least one of EACH node type, proving round-trip persistence + the gate together."
               ],
               "criterion": "Publish is blocked (with specific, inline reasons) when the graph is invalid or a send node lacks From/To/Subject or the trigger is incomplete; it succeeds once everything is valid. Verified in a real browser per node type.",
-              "path": "web/e2e/campaign-publish-gate.browser.e2e.spec.ts",
+              "path": "web/e2e/automation-publish-gate.browser.e2e.spec.ts",
               "tier": "e2e"
             }
           ]
@@ -290,7 +290,7 @@
       "instructions": [
         "Clear the turbo cache and RUN the tests yourself (DATABASE_URL set) twice from cold, plus pnpm typecheck and pnpm lint. For UI phases, RUN the Playwright e2e in a real browser. Record real pass/fail. Confirm the integration tier RUNS (real Postgres, not skipped/mocked) and no regression in earlier phases or the broadcast suite.",
         "Verify EACH acceptance criterion is covered by a passing, non-vacuous test: [\"Each node type opens a working editor that persists its config into the definition and round-trips; the IF editor reuses the segment rule builder and compiles to a valid AstNode; the SEND editor clones+edits a per-node email copy (envelope) reusing the broadcast flow.\",\"Publish is blocked (with specific, inline reasons) when the graph is invalid or a send node lacks From/To/Subject or the trigger is incomplete; it succeeds once everything is valid. Verified in a REAL browser per node type.\",\"All server-calling buttons spinner+lock; no native dialogs; data-testid on every control; workspace-scoped throughout.\"].",
-        "Highest-priority checks: (a) tenant isolation + workspace_id never client-supplied (server-side); (b) all campaign sends route through the Dispatcher gating with the mandatory From/To/Subject envelope (no no-reply); (c) runner idempotency/concurrency (no double-advance / double-send / double-webhook); (d) webhook SSRF + domain allowlist + injected HTTP (no real host) + bounded retries/timeout; (e) workspace-tz time math is DST-correct; (f) the DSL stays the single graph model (no loops/orphans/stored coords); (g) for UI, the flow works in a REAL browser, server buttons spinner+lock, NO native dialogs, data-testid preserved.",
+        "Highest-priority checks: (a) tenant isolation + workspace_id never client-supplied (server-side); (b) all automation sends route through the Dispatcher gating with the mandatory From/To/Subject envelope (no no-reply); (c) runner idempotency/concurrency (no double-advance / double-send / double-webhook); (d) webhook SSRF + domain allowlist + injected HTTP (no real host) + bounded retries/timeout; (e) workspace-tz time math is DST-correct; (f) the DSL stays the single graph model (no loops/orphans/stored coords); (g) for UI, the flow works in a REAL browser, server buttons spinner+lock, NO native dialogs, data-testid preserved.",
         "If any integration test mocks Postgres, that is a FAIL. If a UI criterion is only unit-tested (no real browser), that is a FAIL. If the webhook test hits a real host, that is a FAIL.",
         "Scope check: flag any feature beyond the agreed design. Confirm the root version was bumped + CLAUDE.md updated when behavior changed.",
         "Score 0-100. Set testsPass and criteriaAllMet honestly. Give concrete prioritized recommendations."
@@ -314,55 +314,55 @@
   "schemaVersion": "2026.01.tasks-v1",
   "effectId": "01KVGW7XGK8B3FGY4M3JB11TY3",
   "taskId": "quality-gate",
-  "invocationKey": "cdp/campaign-builder:S000023:quality-gate",
+  "invocationKey": "cdp/automation-builder:S000023:quality-gate",
   "stepId": "S000023",
   "inputs": {
     "impl": {
       "commandsRun": [
-        "pnpm --filter @cdp/web exec vitest run src/campaigns",
+        "pnpm --filter @cdp/web exec vitest run src/automations",
         "pnpm --filter @cdp/web exec vitest run",
         "pnpm typecheck",
         "pnpm --filter @cdp/web lint",
-        "pnpm exec playwright test campaign-node-editors.browser.e2e.spec.ts",
-        "pnpm exec playwright test campaign-publish-gate.browser.e2e.spec.ts",
-        "pnpm exec playwright test campaign-builder campaign-node-editors campaign-publish-gate",
-        "pnpm exec playwright test broadcast-and-campaign segment"
+        "pnpm exec playwright test automation-node-editors.browser.e2e.spec.ts",
+        "pnpm exec playwright test automation-publish-gate.browser.e2e.spec.ts",
+        "pnpm exec playwright test automation-builder automation-node-editors automation-publish-gate",
+        "pnpm exec playwright test broadcast-and-automation segment"
       ],
-      "e2eSummary": "All 17 campaign specs PASS in ONE invocation: campaign-builder 7 + campaign-node-editors 8 + campaign-publish-gate 2. Regression sweep also green: broadcast-and-campaign 13 + build-segment 9 = 22 passed. One-spec/suite-at-a-time discipline observed (killed playwright/chrome + freed :8788/:5174 between every run).",
+      "e2eSummary": "All 17 automation specs PASS in ONE invocation: automation-builder 7 + automation-node-editors 8 + automation-publish-gate 2. Regression sweep also green: broadcast-and-automation 13 + build-segment 9 = 22 passed. One-spec/suite-at-a-time discipline observed (killed playwright/chrome + freed :8788/:5174 between every run).",
       "filesCreated": [
-        "web/src/campaigns/editors/NodeEditor.tsx",
-        "web/src/campaigns/node-config.ts",
-        "web/src/campaigns/node-config.test.ts",
-        "web/src/campaigns/node-config.serialize.test.ts",
+        "web/src/automations/editors/NodeEditor.tsx",
+        "web/src/automations/node-config.ts",
+        "web/src/automations/node-config.test.ts",
+        "web/src/automations/node-config.serialize.test.ts",
         "web/src/segments/RuleBuilder.tsx",
-        "web/e2e/campaign-node-editors.browser.e2e.spec.ts",
-        "web/e2e/campaign-publish-gate.browser.e2e.spec.ts",
-        "services/local-api/test/campaign-activate-gate.integration.test.ts",
-        "services/local-api/test/campaign-node-editors.integration.test.ts",
-        "services/campaign-runner/test/send-node-default-no-placeholder.test.ts"
+        "web/e2e/automation-node-editors.browser.e2e.spec.ts",
+        "web/e2e/automation-publish-gate.browser.e2e.spec.ts",
+        "services/local-api/test/automation-activate-gate.integration.test.ts",
+        "services/local-api/test/automation-node-editors.integration.test.ts",
+        "services/automation-runner/test/send-node-default-no-placeholder.test.ts"
       ],
       "filesModified": [
-        "web/src/campaigns/orthogonal-path.ts",
-        "web/src/campaigns/orthogonal-path.test.ts",
-        "web/src/campaigns/CampaignCanvas.tsx",
-        "web/src/campaigns/model.ts",
-        "web/src/campaigns/model.test.ts",
+        "web/src/automations/orthogonal-path.ts",
+        "web/src/automations/orthogonal-path.test.ts",
+        "web/src/automations/AutomationCanvas.tsx",
+        "web/src/automations/model.ts",
+        "web/src/automations/model.test.ts",
         "web/src/AppShell.tsx",
         "web/src/api/client.ts",
-        "web/src/screens/CampaignBuilder.tsx",
+        "web/src/screens/AutomationBuilder.tsx",
         "web/src/screens/SegmentBuilder.tsx",
-        "services/campaign-runner/src/dsl.ts",
-        "services/campaign-runner/test/node-dsl-and-validation.test.ts",
+        "services/automation-runner/src/dsl.ts",
+        "services/automation-runner/test/node-dsl-and-validation.test.ts",
         "services/local-api/src/handlers.ts",
-        "services/local-api/test/get-campaign.integration.test.ts",
+        "services/local-api/test/get-automation.integration.test.ts",
         "package.json",
         "CLAUDE.md"
       ],
       "lintOk": true,
       "migrationsApplied": [],
-      "notes": "5 originally-failing specs were 4 APP bugs (multiple root causes) + 1 SPEC bug. APP BUG A (the (+) edge-insert stacked): for a condition's two arms, edgeMidpoint returned identical (from.x, midY), so the two '+' buttons fully overlapped and the lower intercepted the upper's clicks ('intercepts pointer events'); the '+' at z-20 also sat over a card's ActionMenu dropdown. Fixed in orthogonal-path.ts (edgeMidpoint x=(from.x+to.x)/2 -> arms fan to distinct anchors) + CampaignCanvas.tsx ('+' lowered to z-10 so the dropdown paints over it). This alone fixed builder:181(delete), node-editors:106(webhook), node-editors:134(update-profile), and node-editors:155's first hop. Updated the edgeMidpoint unit test (it asserted the buggy behavior) + added a straight-down case. APP BUG B (node-editors:155 SEND attach): openEditor only persisted for NEW campaigns, so a freshly-inserted send node on an EXISTING campaign 404'd on attach-template (drawer never closed) -> openEditor now ALWAYS persists first; and after attach the model wasn't refreshed, so reopening re-persisted the stale no-template model and wiped the attach -> added onReloadCampaign (GET /campaigns/:id) before onDone (this also fixed the cross-test pollution that made publish-gate:18 fail in the combined run). APP BUG C (publish-gate:30 node-publish-error missing): the typed API client threw only {status,error}, DROPPING the activate 409's node/missing -> ApiError now spreads the full error body. APP BUG D (publish-gate:30 / node-editors:155 return): AppShell.screenFor had NO /campaigns/:id sub-route, so the editor's Back fell through to Dashboards -> added /campaigns/:id -> CampaignBuilder (re-opens via takeReturnedTo). SPEC BUG: publish-gate:30 line 58 assumed the abandoned blank-design left an instance (send-start-over); but an immediate editor-back with no edits creates no copy (identical to the broadcast wizard flow), so the node correctly shows the PICKER -> removed the bogus send-start-over round-trip, pick the template directly. Final: 17/17 campaign specs green in a single invocation; no regression in broadcast/segment suites. lintOk=true = the KNOWN-7 pre-existing react-hooks/exhaustive-deps rule-definition errors only (config issue, all in files NOT touched here); changed files add no lint errors. NOT pushed.",
+      "notes": "5 originally-failing specs were 4 APP bugs (multiple root causes) + 1 SPEC bug. APP BUG A (the (+) edge-insert stacked): for a condition's two arms, edgeMidpoint returned identical (from.x, midY), so the two '+' buttons fully overlapped and the lower intercepted the upper's clicks ('intercepts pointer events'); the '+' at z-20 also sat over a card's ActionMenu dropdown. Fixed in orthogonal-path.ts (edgeMidpoint x=(from.x+to.x)/2 -> arms fan to distinct anchors) + AutomationCanvas.tsx ('+' lowered to z-10 so the dropdown paints over it). This alone fixed builder:181(delete), node-editors:106(webhook), node-editors:134(update-profile), and node-editors:155's first hop. Updated the edgeMidpoint unit test (it asserted the buggy behavior) + added a straight-down case. APP BUG B (node-editors:155 SEND attach): openEditor only persisted for NEW automations, so a freshly-inserted send node on an EXISTING automation 404'd on attach-template (drawer never closed) -> openEditor now ALWAYS persists first; and after attach the model wasn't refreshed, so reopening re-persisted the stale no-template model and wiped the attach -> added onReloadAutomation (GET /automations/:id) before onDone (this also fixed the cross-test pollution that made publish-gate:18 fail in the combined run). APP BUG C (publish-gate:30 node-publish-error missing): the typed API client threw only {status,error}, DROPPING the activate 409's node/missing -> ApiError now spreads the full error body. APP BUG D (publish-gate:30 / node-editors:155 return): AppShell.screenFor had NO /automations/:id sub-route, so the editor's Back fell through to Dashboards -> added /automations/:id -> AutomationBuilder (re-opens via takeReturnedTo). SPEC BUG: publish-gate:30 line 58 assumed the abandoned blank-design left an instance (send-start-over); but an immediate editor-back with no edits creates no copy (identical to the broadcast wizard flow), so the node correctly shows the PICKER -> removed the bogus send-start-over round-trip, pick the template directly. Final: 17/17 automation specs green in a single invocation; no regression in broadcast/segment suites. lintOk=true = the KNOWN-7 pre-existing react-hooks/exhaustive-deps rule-definition errors only (config issue, all in files NOT touched here); changed files add no lint errors. NOT pushed.",
       "testsPass": true,
-      "testSummary": "web unit: 115 passed / 4 skipped (campaigns 59 incl. node-config 17 + serialize 3 + model 15 + mutate 9 + layout 9 + orthogonal-path 6 — added 1 edgeMidpoint case). Full workspace typecheck: 43/43 packages clean. local-api integration tier (205) untouched: no local-api SOURCE changed in this finishing pass — the activate handler already returned {error,node,missing}; the bug was the SPA API client dropping those extra fields. SES/AWS mocks unchanged.",
+      "testSummary": "web unit: 115 passed / 4 skipped (automations 59 incl. node-config 17 + serialize 3 + model 15 + mutate 9 + layout 9 + orthogonal-path 6 — added 1 edgeMidpoint case). Full workspace typecheck: 43/43 packages clean. local-api integration tier (205) untouched: no local-api SOURCE changed in this finishing pass — the activate handler already returned {error,node,missing}; the bug was the SPA API client dropping those extra fields. SES/AWS mocks unchanged.",
       "typecheckOk": true,
       "versionBump": "0.34.0"
     },
@@ -378,31 +378,31 @@
       "refs": "CLAUDE.md (segment rule builder for if, broadcast email-instance flow for send, kit Drawer/Field) + the trigger design",
       "scope": [
         "Inline/drawer editors for every node: TRIGGER (segment_entry → segment picker; event → event-type + optional filter; manual), WAIT (duration), WAIT-UNTIL (date/time in workspace tz), HOUR-OF-DAY WINDOW (hour range + days), IF (REUSE the segment rule builder → AstNode), SEND (the email-instance picker + \"Design email\" → editor, reusing the broadcast clone/return flow + envelope), UPDATE-PROFILE (attribute key picker + a value that is either a LITERAL or an expression — customer.* / event.* token, with a hint that event.* pulls from the trigger event), WEBHOOK (url/method/headers/body/timeout/retries; secret header write-only).",
-        "PUBLISH flow: a Draft → Active transition that runs validateCampaignDefinition + the send-node envelope gating + trigger validity; surface inline what is missing and BLOCK publish until valid (buttons spinner+lock; no native dialogs).",
-        "Wire the editors to save into the definition (autosave or explicit save consistent with the broadcast wizard); preserve the editor return-context for the send-node email (← Back to campaign)."
+        "PUBLISH flow: a Draft → Active transition that runs validateAutomationDefinition + the send-node envelope gating + trigger validity; surface inline what is missing and BLOCK publish until valid (buttons spinner+lock; no native dialogs).",
+        "Wire the editors to save into the definition (autosave or explicit save consistent with the broadcast wizard); preserve the editor return-context for the send-node email (← Back to automation)."
       ],
       "title": "Builder: per-node editors + publish validation"
     },
     "plan": {
       "e2eFlows": [
-        "Open the seeded campaign (CAMP_A) → click each node card → its editor Drawer opens → edit config → Save (button spinner+lock) → reload via Open → assert the node summary/config round-tripped.",
+        "Open the seeded automation (CAMP_A) → click each node card → its editor Drawer opens → edit config → Save (button spinner+lock) → reload via Open → assert the node summary/config round-tripped.",
         "TRIGGER flow: card→editor→switch kind segment_entry/event/manual; for segment_entry pick a seeded segment (trigger-segment) and assert trigger_segment_id persisted; for event set eventType (+ optional payload filter rows); save+reload.",
         "WAIT / WAIT-UNTIL / HOUR-WINDOW flows: set duration / zoned date-time (assert workspace-tz helper text + DST-correct round-trip) / hour range + weekdays; save+reload.",
         "IF flow: open the condition editor, confirm the SegmentBuilder rule rows render (rule-row/rule-field/rule-operator/rule-value/add-rule), add attributes.tier = vip, save, reload re-hydrates; an empty rule group blocks save with an inline condition-incomplete hint (no native dialog).",
-        "SEND flow (reuses broadcast clone/return): card→editor with no email → 'Start from a template' clones a kind='copy' via attach-template (NOT placeholder) → instance shows → 'Design email' → editor opens with '← Back to campaign' (editorReturn=/campaigns/:id) → edit From/To/Subject (the email-instance envelope card) → autosave → Back → SEND editor shows the configured copy.",
+        "SEND flow (reuses broadcast clone/return): card→editor with no email → 'Start from a template' clones a kind='copy' via attach-template (NOT placeholder) → instance shows → 'Design email' → editor opens with '← Back to automation' (editorReturn=/automations/:id) → edit From/To/Subject (the email-instance envelope card) → autosave → Back → SEND editor shows the configured copy.",
         "UPDATE-PROFILE flow: pick attribute key, toggle value-mode literal↔expression, enter a {{customer.tier}}/{{event.x}} token with the trigger-event hint, save+reload round-trips.",
         "WEBHOOK flow: set url/method/headers/body/timeout/retries + a write-only secret header; save; reload renders the secret empty/placeholder (never echoed); an invalid (non-http) url blocks save inline.",
         "PUBLISH-GATE flow: assemble trigger→send→exit; Publish blocked inline for missing sender→to→subject in order, then for no verified domain, then SUCCEEDS (status→active) with the seeded verified domain; incomplete event-trigger and orphan-graph each block Publish with their specific inline reason; all Publish clicks spinner+lock; no native dialogs."
       ],
       "implUnits": [
-        "1. web/src/campaigns/node-config.ts (PURE) — the per-node read/write serialization helpers + the IF ast-builder bindings + sendNodeNeedsEmail; remove the 'placeholder' template_id from defaultNodeConfig('send') in model.ts. Unit-test first (node-config.test.ts, node-config.serialize.test.ts).",
-        "2. services/campaign-runner: NO new node types (DSL already complete). Add the regression test send-node-default-no-placeholder.test.ts proving collectSendNodeEnvelopeGaps treats an empty template_id as 'needs sender'.",
-        "3. services/local-api/src/handlers.ts: wrap createCampaign/updateCampaign/activateCampaign so a validateCampaignDefinition throw maps to a TYPED 400/409 (not a 500); ensure the activate 409 body carries {error, node?, missing?} for the SPA inline reason. trigger_segment_id already settable via updateCampaign — confirm it stays workspace-scoped (cross-workspace 0-row). Integration tests campaign-node-editors + campaign-activate-gate first.",
-        "4. web/src/campaigns/editors/ — one editor component per node type, each rendered in the kit Drawer, each control with a data-testid: TriggerEditor, WaitEditor, WaitUntilEditor (workspace tz), HourWindowEditor, ConditionEditor (embeds the SegmentBuilder rule-rows component), SendEditor (email-instance picker + Design email reusing editorReturn/clone), UpdateProfileEditor (key + value-mode literal/expression + token hint), WebhookEditor (write-only secret). All save via applyNodeConfig→setModel then PUT /campaigns/:id (or attach-template for send), buttons RETURN the promise.",
+        "1. web/src/automations/node-config.ts (PURE) — the per-node read/write serialization helpers + the IF ast-builder bindings + sendNodeNeedsEmail; remove the 'placeholder' template_id from defaultNodeConfig('send') in model.ts. Unit-test first (node-config.test.ts, node-config.serialize.test.ts).",
+        "2. services/automation-runner: NO new node types (DSL already complete). Add the regression test send-node-default-no-placeholder.test.ts proving collectSendNodeEnvelopeGaps treats an empty template_id as 'needs sender'.",
+        "3. services/local-api/src/handlers.ts: wrap createAutomation/updateAutomation/activateAutomation so a validateAutomationDefinition throw maps to a TYPED 400/409 (not a 500); ensure the activate 409 body carries {error, node?, missing?} for the SPA inline reason. trigger_segment_id already settable via updateAutomation — confirm it stays workspace-scoped (cross-workspace 0-row). Integration tests automation-node-editors + automation-activate-gate first.",
+        "4. web/src/automations/editors/ — one editor component per node type, each rendered in the kit Drawer, each control with a data-testid: TriggerEditor, WaitEditor, WaitUntilEditor (workspace tz), HourWindowEditor, ConditionEditor (embeds the SegmentBuilder rule-rows component), SendEditor (email-instance picker + Design email reusing editorReturn/clone), UpdateProfileEditor (key + value-mode literal/expression + token hint), WebhookEditor (write-only secret). All save via applyNodeConfig→setModel then PUT /automations/:id (or attach-template for send), buttons RETURN the promise.",
         "5. EXTRACT the SegmentBuilder rule-rows UI (currently inline RuleRows/RuleGroup markup in SegmentBuilder.tsx) into a shared web/src/segments/RuleBuilder.tsx so BOTH SegmentBuilder and ConditionEditor mount the exact same component (DRY; preserves every existing data-testid). SegmentBuilder refactored to consume it (no behavior change — existing segment e2e must stay green).",
-        "6. web/src/screens/CampaignBuilder.tsx: wire a node→editor open path (card click / ActionMenu 'Edit step'), mount the editor Drawer, load the campaign's trigger_segment_id + workspace timezone (GET /workspace/settings) for the trigger/wait-until/hour editors; add the Publish button (campaign-publish) calling POST /campaigns/:id/activate and rendering the 409 reason inline (publish-reason + per-node node-publish-error), status badge reflecting draft/active; Save still persists the definition first so the gate sees the latest copy.",
-        "7. web/src/screens/TemplateEditor.tsx / BroadcastComposer reuse: the SEND editor sets editorReturn to /campaigns/:id (createAs:'copy' for a blank), so the editor's existing '← Back' + envelope card already work; confirm the return lands on the campaign builder and re-selects the copy (markReturnedTo/takeReturnedTo parity with the broadcast wizard).",
-        "8. web/e2e: campaign-node-editors.browser.e2e.spec.ts + campaign-publish-gate.browser.e2e.spec.ts; extend web/e2e/seed.ts only if needed (a verified domain + named sender already seeded; CAMP_A branching campaign already seeded — add a send node with NO sender for the gate test, or build it in-flow).",
+        "6. web/src/screens/AutomationBuilder.tsx: wire a node→editor open path (card click / ActionMenu 'Edit step'), mount the editor Drawer, load the automation's trigger_segment_id + workspace timezone (GET /workspace/settings) for the trigger/wait-until/hour editors; add the Publish button (automation-publish) calling POST /automations/:id/activate and rendering the 409 reason inline (publish-reason + per-node node-publish-error), status badge reflecting draft/active; Save still persists the definition first so the gate sees the latest copy.",
+        "7. web/src/screens/TemplateEditor.tsx / BroadcastComposer reuse: the SEND editor sets editorReturn to /automations/:id (createAs:'copy' for a blank), so the editor's existing '← Back' + envelope card already work; confirm the return lands on the automation builder and re-selects the copy (markReturnedTo/takeReturnedTo parity with the broadcast wizard).",
+        "8. web/e2e: automation-node-editors.browser.e2e.spec.ts + automation-publish-gate.browser.e2e.spec.ts; extend web/e2e/seed.ts only if needed (a verified domain + named sender already seeded; CAMP_A branching automation already seeded — add a send node with NO sender for the gate test, or build it in-flow).",
         "9. Process: bump root package.json (minor — feature); update CLAUDE.md (phase-6 node editors + publish flow + placeholder removal); run typecheck + vitest + e2e before claiming done; restart dev:api + rebuild changed packages."
       ],
       "mocks": [
@@ -411,19 +411,19 @@
         "Postgres: NOT mocked — integration uses real local cdp; e2e uses real cdp_e2e (re-seeded each run via web/e2e/seed.ts).",
         "Browser: real Chromium (Playwright, retries:1) — no DOM mocking."
       ],
-      "notes": "IF editor reuse: the segment rule builder is currently INLINE inside SegmentBuilder.tsx (RuleRows + RuleGroup markup, testids rule-row/rule-field/rule-operator/rule-value/add-rule/add-event-rule) and compiles via web/src/segments/ast-builder.ts (buildAstFromGroup/groupFromAst). Plan extracts that markup into a shared RuleBuilder.tsx so ConditionEditor mounts the EXACT same component and emits the SAME AstNode the §8 compiler whitelists — no second AST path. SEND editor reuse: the broadcast Content step already does the whole clone/return dance (pickTemplate→POST /templates/:id/clone, designEmail→setEditorReturn(...,{createAs:'copy'})→/editor, takeReturnedTemplate/takeReturnedTo on return); the campaign twin endpoint POST /campaigns/:id/send-nodes/:nodeId/attach-template ALREADY exists and clones a kind='copy' with envelope columns and repoints the node's template_id — so the SEND editor just reuses editorReturn (returnPath=/campaigns/:id) and that endpoint instead of the placeholder. Publish-gating: the activateCampaign handler ALREADY computes ordered per-send-node gaps (collectSendNodeEnvelopeGaps, sender→to→subject) + the verified-domain gate and returns 409 naming the node; this phase's BACKEND work is mostly mapping the validateCampaignDefinition throw to a TYPED 4xx (today createCampaign/updateCampaign throw → likely 500) and shaping the 409 body so the SPA can render the reason against the offending node card (publish-reason / node-publish-error). Two explicit phase-5 follow-ups closed here: (a) defaultNodeConfig('send') drops the literal 'placeholder' template_id so a fresh send node correctly reads as 'needs an email' and the SEND editor runs the REAL attach/clone; (b) invalid-definition saves return a typed 400 instead of a 500. Key gotcha: the segment_entry trigger's segment is a CAMPAIGN-ROW field (campaigns.trigger_segment_id), NOT a node field — the TriggerEditor's segment picker must PUT /campaigns/:id {trigger_segment_id}, and validateCampaignDefinition treats segment_entry as needing only kind+next. Invariants honored: workspace_id from ctx (service role bypasses RLS), cross-workspace template/segment refusal, all sends go through the same outbox→Dispatcher gate, workspace-tz governs all time math, no native dialogs, every server button spinner+locks, data-testid on every control. Tests are written FIRST (unit pure helpers → integration on real Postgres → e2e in real Chromium).",
+      "notes": "IF editor reuse: the segment rule builder is currently INLINE inside SegmentBuilder.tsx (RuleRows + RuleGroup markup, testids rule-row/rule-field/rule-operator/rule-value/add-rule/add-event-rule) and compiles via web/src/segments/ast-builder.ts (buildAstFromGroup/groupFromAst). Plan extracts that markup into a shared RuleBuilder.tsx so ConditionEditor mounts the EXACT same component and emits the SAME AstNode the §8 compiler whitelists — no second AST path. SEND editor reuse: the broadcast Content step already does the whole clone/return dance (pickTemplate→POST /templates/:id/clone, designEmail→setEditorReturn(...,{createAs:'copy'})→/editor, takeReturnedTemplate/takeReturnedTo on return); the automation twin endpoint POST /automations/:id/send-nodes/:nodeId/attach-template ALREADY exists and clones a kind='copy' with envelope columns and repoints the node's template_id — so the SEND editor just reuses editorReturn (returnPath=/automations/:id) and that endpoint instead of the placeholder. Publish-gating: the activateAutomation handler ALREADY computes ordered per-send-node gaps (collectSendNodeEnvelopeGaps, sender→to→subject) + the verified-domain gate and returns 409 naming the node; this phase's BACKEND work is mostly mapping the validateAutomationDefinition throw to a TYPED 4xx (today createAutomation/updateAutomation throw → likely 500) and shaping the 409 body so the SPA can render the reason against the offending node card (publish-reason / node-publish-error). Two explicit phase-5 follow-ups closed here: (a) defaultNodeConfig('send') drops the literal 'placeholder' template_id so a fresh send node correctly reads as 'needs an email' and the SEND editor runs the REAL attach/clone; (b) invalid-definition saves return a typed 400 instead of a 500. Key gotcha: the segment_entry trigger's segment is a AUTOMATION-ROW field (automations.trigger_segment_id), NOT a node field — the TriggerEditor's segment picker must PUT /automations/:id {trigger_segment_id}, and validateAutomationDefinition treats segment_entry as needing only kind+next. Invariants honored: workspace_id from ctx (service role bypasses RLS), cross-workspace template/segment refusal, all sends go through the same outbox→Dispatcher gate, workspace-tz governs all time math, no native dialogs, every server button spinner+locks, data-testid on every control. Tests are written FIRST (unit pure helpers → integration on real Postgres → e2e in real Chromium).",
       "pureFunctions": [
-        "web/src/campaigns/node-config.ts: applyNodeConfig(model, nodeId, patch) — immutably patch one node's NON-EDGE config in a CanvasModel (edges stay in the edge list, never touched).",
+        "web/src/automations/node-config.ts: applyNodeConfig(model, nodeId, patch) — immutably patch one node's NON-EDGE config in a CanvasModel (edges stay in the edge list, never touched).",
         "node-config.ts: writeTriggerConfig / writeWaitConfig (duration→{seconds}) / writeWaitUntilConfig (zoned input + tz → ISO via zonedInputToUtcIso) / writeHourWindowConfig (hours+daysOfWeek normalize) / writeSetAttributeConfig (literal|expression ValueSpec) / writeWebhookConfig — each returns a DslNode patch; all pure, unit-tested.",
         "node-config.ts: readWaitUntilInput(iso, tz)=utcIsoToZonedInput, readHourWindow(node), readSetAttributeValue(node)→{mode,literal|expression}, readWebhookConfig(node) WITHOUT the secret value (write-only reads as empty/placeholder) — the read side for hydrating each editor.",
         "node-config.ts: editorRowsToConditionAst(group)=buildAstFromGroup(group) and conditionAstToRows(ast)=groupFromAst(ast) — thin re-exports binding the IF editor to the SAME @cdp ast-builder used by SegmentBuilder (no second AST builder).",
         "node-config.ts: sendNodeNeedsEmail(node) — true when a send node has no/empty template_id (drives the SEND editor's picker vs instance view; replaces the 'placeholder' sentinel).",
-        "REUSE (no new copy): @cdp/segments validateAst + the runner's validateCampaignDefinition / collectSendNodeEnvelopeGaps; @cdp/shared zonedInputToUtcIso / utcIsoToZonedInput / tzOffsetMs / timeZoneList / isValidTimeZone; @cdp/shared isExpressionSpec / isLiteralSpec / ValueSpec; web/src/segments/ast-builder buildAstFromGroup / groupFromAst / emptyGroup."
+        "REUSE (no new copy): @cdp/segments validateAst + the runner's validateAutomationDefinition / collectSendNodeEnvelopeGaps; @cdp/shared zonedInputToUtcIso / utcIsoToZonedInput / tzOffsetMs / timeZoneList / isValidTimeZone; @cdp/shared isExpressionSpec / isLiteralSpec / ValueSpec; web/src/segments/ast-builder buildAstFromGroup / groupFromAst / emptyGroup."
       ],
       "reuse": [
         "Segment rule builder: EXTRACT + reuse the SegmentBuilder rule-rows/group markup as web/src/segments/RuleBuilder.tsx; the IF editor compiles via @cdp ast-builder buildAstFromGroup/groupFromAst → a valid AstNode (validateAst), the SAME AST the segment compiler whitelists (invariant 6 untouched — the builder emits the AST, the server compiles).",
-        "Broadcast email-instance/clone + return flow: POST /campaigns/:id/send-nodes/:nodeId/attach-template (the campaign twin of POST /templates/:id/clone) for the SEND editor; store/editorReturn.ts (setEditorReturn(returnPath,{createAs:'copy'}), markReturnedTo/takeReturnedTo, takeReturnedTemplate) so '← Back to campaign' + the envelope card work exactly as in BroadcastComposer; the From/To/Subject live on the kind='copy' template instance.",
-        "Publish gate: the runner's collectSendNodeEnvelopeGaps + the existing activateCampaign handler (already mirrors sendBroadcast's sender→to→subject ordering + verified-domain gate); the SPA only needs to surface the 409 reason inline.",
+        "Broadcast email-instance/clone + return flow: POST /automations/:id/send-nodes/:nodeId/attach-template (the automation twin of POST /templates/:id/clone) for the SEND editor; store/editorReturn.ts (setEditorReturn(returnPath,{createAs:'copy'}), markReturnedTo/takeReturnedTo, takeReturnedTemplate) so '← Back to automation' + the envelope card work exactly as in BroadcastComposer; the From/To/Subject live on the kind='copy' template instance.",
+        "Publish gate: the runner's collectSendNodeEnvelopeGaps + the existing activateAutomation handler (already mirrors sendBroadcast's sender→to→subject ordering + verified-domain gate); the SPA only needs to surface the 409 reason inline.",
         "Workspace timezone: @cdp/shared zonedInputToUtcIso / utcIsoToZonedInput / tzOffsetMs / timeZoneList / isValidTimeZone, fed by GET /workspace/settings.timezone (default UTC) — exactly the broadcast scheduler's zoned↔UTC approach for WAIT-UNTIL and the HOUR-OF-DAY window display.",
         "Value spec: @cdp/shared isExpressionSpec/isLiteralSpec/ValueSpec + resolveValueSpec semantics for the UPDATE-PROFILE editor's literal/expression toggle and the event.* hint; customer.ts/event.ts token namespaces for the token input.",
         "UI kit: Drawer (editor shell), Button (auto-locks when onClick returns a promise — wire every save/attach/publish that way), Field/Input/Select, ActionMenu (card 'Edit step'/'Delete step'), ui/dialog askConfirm, ui/toast showToast, EmptyState — NO native dialogs.",
@@ -435,26 +435,26 @@
             "applyNodeConfig(model, nodeId, patch) returns a NEW CanvasModel with the patched node and PRESERVES every edge slot (next/onTrue/onFalse) — buildDefinition(after).nodes[id] keeps its targets unchanged.",
             "WAIT: writeWaitConfig produces { type:'wait', delay:{seconds:N}, next } for a duration; rejects/normalizes non-positive seconds to a minimum; round-trips through buildDefinition/parseDefinition to identity.",
             "WAIT-UNTIL: writeWaitUntilConfig stores an ISO instant computed from a zoned wall-clock input via zonedInputToUtcIso(local, workspaceTz) (DST-correct: same wall-clock in summer vs winter yields different UTC offsets); reload renders the input via utcIsoToZonedInput(iso, tz) to the SAME wall-clock string.",
-            "HOUR-OF-DAY WINDOW: writeHourWindowConfig stores integer startHour/endHour (0..23), accepts startHour>endHour (overnight) without error, stores daysOfWeek only when a non-empty unique subset is chosen (omitted = all days); validateCampaignDefinition accepts the emitted node.",
+            "HOUR-OF-DAY WINDOW: writeHourWindowConfig stores integer startHour/endHour (0..23), accepts startHour>endHour (overnight) without error, stores daysOfWeek only when a non-empty unique subset is chosen (omitted = all days); validateAutomationDefinition accepts the emitted node.",
             "IF: editorRowsToConditionAst(group) === buildAstFromGroup(group) wired through the SAME ast-builder helpers (buildAstFromGroup / groupFromAst) used by SegmentBuilder; the emitted node is { type:'condition', ast, onTrue, onFalse } and validateAst(ast) does NOT throw; an empty group falls back to a never-empty AST (the editor blocks save when the group is empty, asserted in e2e).",
             "IF round-trip: groupFromAst(node.ast) reconstructs the editable group, and re-compiling yields a structurally-equal AST (idempotent hydrate→serialize).",
-            "UPDATE-PROFILE: writeSetAttributeConfig with mode 'literal' emits value={kind:'literal',value} and with mode 'expression' emits value={kind:'expression',expression}; validateSetAttributeValue (via validateCampaignDefinition) accepts both; an empty key is rejected by the editor's local validity (asserted) and by validateCampaignDefinition.",
+            "UPDATE-PROFILE: writeSetAttributeConfig with mode 'literal' emits value={kind:'literal',value} and with mode 'expression' emits value={kind:'expression',expression}; validateSetAttributeValue (via validateAutomationDefinition) accepts both; an empty key is rejected by the editor's local validity (asserted) and by validateAutomationDefinition.",
             "WEBHOOK: writeWebhookConfig emits { type:'action', kind:'webhook', url, method, headers, bodyTemplate?, timeoutMs?, maxRetries?, next }; the secret/auth-header VALUE is NOT round-tripped into the editable headers map on reload (write-only — see node-config; the persisted-secret placeholder is preserved, never echoed); validateWebhookFields accepts http(s) only and rejects a non-positive timeoutMs / negative maxRetries.",
-            "TRIGGER: writeTriggerConfig for kind='event' emits { type:'trigger', kind:'event', eventType, filter?, next } and validates; kind='manual' emits { kind:'manual', next }; kind='segment_entry' emits { kind:'segment_entry', next } and the segment id is NOT written into the node (it is a campaign-row field — asserted separately).",
+            "TRIGGER: writeTriggerConfig for kind='event' emits { type:'trigger', kind:'event', eventType, filter?, next } and validates; kind='manual' emits { kind:'manual', next }; kind='segment_entry' emits { kind:'segment_entry', next } and the segment id is NOT written into the node (it is a automation-row field — asserted separately).",
             "defaultNodeConfig('send') NO LONGER uses the literal 'placeholder' template_id: a freshly inserted send node has template_id absent/empty so the publish gate reports it as needing an email (the phase-5 placeholder regression is removed)."
           ],
           "criterion": "Each node type opens a working editor that persists its config into the definition and round-trips; the IF editor reuses the segment rule builder and compiles to a valid AstNode.",
-          "path": "web/src/campaigns/node-config.test.ts",
+          "path": "web/src/automations/node-config.test.ts",
           "tier": "unit"
         },
         {
           "assertions": [
             "For every PaletteType, a configured node serialized by buildDefinition then re-parsed by parseDefinition yields a structurally-equal node (deep-equal on non-edge fields, edges preserved).",
-            "A full multi-node definition (trigger→wait→condition→[send|set_attribute]→exit) configured node-by-node round-trips to identity and passes validateCampaignDefinition.",
+            "A full multi-node definition (trigger→wait→condition→[send|set_attribute]→exit) configured node-by-node round-trips to identity and passes validateAutomationDefinition.",
             "Editing one node's config does not mutate sibling nodes or the start id (referential-immutability check)."
           ],
           "criterion": "Each node type persists its config into the definition and round-trips.",
-          "path": "web/src/campaigns/node-config.serialize.test.ts",
+          "path": "web/src/automations/node-config.serialize.test.ts",
           "tier": "unit"
         },
         {
@@ -463,33 +463,33 @@
             "collectSendNodeEnvelopeGaps orders gaps sender→to→subject and reports per-node in BFS order (regression-fix guard for the publish gate)."
           ],
           "criterion": "The SEND editor clones+edits a per-node email copy (envelope) reusing the broadcast flow; publish blocked when a send node lacks From/To/Subject.",
-          "path": "services/campaign-runner/test/send-node-default-no-placeholder.test.ts",
+          "path": "services/automation-runner/test/send-node-default-no-placeholder.test.ts",
           "tier": "unit"
         },
         {
           "assertions": [
-            "REAL Postgres (cdp). PUT /campaigns/:id with a definition carrying configured wait/wait_until/hour_window/condition/set_attribute/webhook/event-trigger nodes returns 200 and GET /campaigns/:id round-trips the SAME definition (jsonb) byte-for-byte on the node fields.",
-            "PUT /campaigns/:id with a structurally INVALID definition (e.g. condition missing onFalse, webhook with a non-http url, set_attribute with an unknown value-spec kind) returns a TYPED 400 with a specific message (NOT a 500) — the handler catches the validateCampaignDefinition throw and maps it to 400 (phase-5 follow-up).",
-            "POST /campaigns/:id/send-nodes/:nodeId/attach-template clones the chosen LIBRARY template into a kind='copy' row (source_template_id set, design+envelope columns copied) and repoints the send node's template_id at the copy; GET /campaigns/:id shows the new template_id; the original library template row is unchanged.",
-            "Cross-workspace refusal (inv.2): attach-template with a template_id from ANOTHER workspace returns 404 and clones nothing; attach into a campaign id from another workspace returns 404; activate of another workspace's campaign returns 404.",
-            "The trigger segment for kind='segment_entry' is set via PUT /campaigns/:id { trigger_segment_id } (campaign-row field, never the node); a cross-workspace trigger_segment_id is rejected/ignored (workspace-scoped UPDATE affects 0 rows or 400).",
+            "REAL Postgres (cdp). PUT /automations/:id with a definition carrying configured wait/wait_until/hour_window/condition/set_attribute/webhook/event-trigger nodes returns 200 and GET /automations/:id round-trips the SAME definition (jsonb) byte-for-byte on the node fields.",
+            "PUT /automations/:id with a structurally INVALID definition (e.g. condition missing onFalse, webhook with a non-http url, set_attribute with an unknown value-spec kind) returns a TYPED 400 with a specific message (NOT a 500) — the handler catches the validateAutomationDefinition throw and maps it to 400 (phase-5 follow-up).",
+            "POST /automations/:id/send-nodes/:nodeId/attach-template clones the chosen LIBRARY template into a kind='copy' row (source_template_id set, design+envelope columns copied) and repoints the send node's template_id at the copy; GET /automations/:id shows the new template_id; the original library template row is unchanged.",
+            "Cross-workspace refusal (inv.2): attach-template with a template_id from ANOTHER workspace returns 404 and clones nothing; attach into a automation id from another workspace returns 404; activate of another workspace's automation returns 404.",
+            "The trigger segment for kind='segment_entry' is set via PUT /automations/:id { trigger_segment_id } (automation-row field, never the node); a cross-workspace trigger_segment_id is rejected/ignored (workspace-scoped UPDATE affects 0 rows or 400).",
             "set_attribute with { kind:'expression', expression:'{{event.foo}}' } persists and round-trips; a legacy bare scalar value still persists (back-compat)."
           ],
           "criterion": "Each node type persists its config into the definition and round-trips; the SEND editor clones+edits a per-node email copy reusing the broadcast flow; workspace-scoped throughout.",
-          "path": "services/local-api/test/campaign-node-editors.integration.test.ts",
+          "path": "services/local-api/test/automation-node-editors.integration.test.ts",
           "tier": "integration"
         },
         {
           "assertions": [
-            "POST /campaigns/:id/activate on a campaign whose send-node copy has sender_id=null returns 409 naming THAT node and 'Choose who the email is from…'; with sender set but to_address blank → 409 'Set the To field…'; subject blank → 409 'Add a subject line…' (sendBroadcast-ordered).",
+            "POST /automations/:id/activate on a automation whose send-node copy has sender_id=null returns 409 naming THAT node and 'Choose who the email is from…'; with sender set but to_address blank → 409 'Set the To field…'; subject blank → 409 'Add a subject line…' (sendBroadcast-ordered).",
             "activate with a complete send-node copy (sender+to+subject) BUT no verified sending_domains row → 409 'No verified sending domain…'; with a verified domain → 200 status:'active'.",
-            "activate of a campaign with NO send node and a complete trigger → 200 ungated.",
-            "activate when the stored definition is structurally invalid (or the trigger is incomplete — event trigger missing eventType) returns a typed 4xx with a specific reason (validateCampaignDefinition message), never 500, and status stays 'draft'.",
+            "activate of a automation with NO send node and a complete trigger → 200 ungated.",
+            "activate when the stored definition is structurally invalid (or the trigger is incomplete — event trigger missing eventType) returns a typed 4xx with a specific reason (validateAutomationDefinition message), never 500, and status stays 'draft'.",
             "activate is workspace-scoped: the verified-domain check, the envelope reads, and the UPDATE all filter by ctx.workspaceId (service role bypasses RLS) — a verified domain in a DIFFERENT workspace does NOT satisfy the gate.",
             "the activate response carries a machine-usable shape (e.g. {error, node?, missing?} on 409) so the SPA can render the inline reason against the right node."
           ],
           "criterion": "Publish is blocked (with specific, inline reasons) when the graph is invalid or a send node lacks From/To/Subject or the trigger is incomplete; it succeeds once everything is valid; workspace-scoped.",
-          "path": "services/local-api/test/campaign-activate-gate.integration.test.ts",
+          "path": "services/local-api/test/automation-activate-gate.integration.test.ts",
           "tier": "integration"
         },
         {
@@ -498,25 +498,25 @@
             "TRIGGER editor: switching kind to 'segment_entry' shows a segment picker (testid trigger-segment) populated from GET /segments; choosing one and saving persists trigger_segment_id (reload round-trips). kind='event' shows trigger-event-type + an optional payload-filter reusing the rule rows; kind='manual' shows the no-config note.",
             "WAIT editor: set 3 days, save, reload → card summary 'Wait 3 days'. WAIT-UNTIL editor: set a date/time, the helper text shows the WORKSPACE timezone; reload renders the same wall-clock. HOUR-WINDOW editor: set 9..17 and pick weekdays; reload round-trips.",
             "IF editor: the embedded rule builder is the SAME component as SegmentBuilder (assert testids rule-row, rule-field, rule-operator, rule-value, add-rule present inside node-editor-condition); add a rule attributes.tier = vip, save, reload → the rule re-hydrates; saving an EMPTY group is blocked with an inline hint (testid condition-incomplete) and no native dialog.",
-            "SEND editor: with no email it offers 'Start from a template' (clones via POST .../attach-template — NOT the phase-5 placeholder) and 'Start from a blank design'; choosing a template attaches a kind='copy' (testid send-email-instance appears); 'Design email' navigates to /editor with editorReturn set to /campaigns/:id (createAs:'copy' when blank) and the editor's Back reads '← Back to campaign'; returning lands back on the SEND editor with the copy attached and envelope shown.",
+            "SEND editor: with no email it offers 'Start from a template' (clones via POST .../attach-template — NOT the phase-5 placeholder) and 'Start from a blank design'; choosing a template attaches a kind='copy' (testid send-email-instance appears); 'Design email' navigates to /editor with editorReturn set to /automations/:id (createAs:'copy' when blank) and the editor's Back reads '← Back to automation'; returning lands back on the SEND editor with the copy attached and envelope shown.",
             "UPDATE-PROFILE editor: attribute key picker (testid update-key) + a value-mode toggle (testid value-mode: literal|expression); choosing expression reveals a token input (testid update-expression) with a hint 'event.* pulls from the trigger event'; save+reload round-trips both modes.",
             "WEBHOOK editor: url/method/headers(rows)/body/timeout/retries controls each have a testid; the secret auth-header field (testid webhook-secret) is write-only — after save+reload it renders empty/placeholder, never the saved secret; an http(s)-invalid url shows an inline error and blocks save.",
             "Every server-calling button in every editor (save/attach/activate) shows a spinner + disables while in-flight (kit Button onClick RETURNS the promise); NO window.confirm/alert/prompt anywhere (askConfirm/showToast/inline only); every interactive control has a data-testid."
           ],
           "criterion": "Each node type opens a working editor that persists its config into the definition and round-trips; the IF editor reuses the segment rule builder; the SEND editor clones+edits a per-node email copy reusing the broadcast clone/return flow; all server buttons spinner+lock; no native dialogs; data-testid on every control.",
-          "path": "web/e2e/campaign-node-editors.browser.e2e.spec.ts",
+          "path": "web/e2e/automation-node-editors.browser.e2e.spec.ts",
           "tier": "e2e"
         },
         {
           "assertions": [
-            "Build a journey trigger(segment_entry, segment chosen)→send→exit where the send copy has NO sender; click Publish (testid campaign-publish) → the button locks+spins, then an INLINE reason (testid publish-reason) names the send step and says 'Choose who the email is from…'; status badge stays 'draft'; no native dialog.",
+            "Build a journey trigger(segment_entry, segment chosen)→send→exit where the send copy has NO sender; click Publish (testid automation-publish) → the button locks+spins, then an INLINE reason (testid publish-reason) names the send step and says 'Choose who the email is from…'; status badge stays 'draft'; no native dialog.",
             "Fix the From in the SEND email, leave To blank → Publish surfaces 'Set the To field…' inline against that node (testid node-publish-error on the send card or publish-reason); fill To+Subject → Publish surfaces the verified-domain reason if none, then SUCCEEDS (status badge → 'active') once the seeded verified domain is present.",
             "Incomplete TRIGGER (switch to event kind, clear eventType) → Publish is blocked with a specific trigger reason inline; completing eventType clears it.",
-            "Structurally invalid graph (a deleted edge leaving an orphan, simulated via the builder) → Publish blocked with the validateCampaignDefinition reason surfaced inline (not a 500, not a native dialog).",
+            "Structurally invalid graph (a deleted edge leaving an orphan, simulated via the builder) → Publish blocked with the validateAutomationDefinition reason surfaced inline (not a 500, not a native dialog).",
             "Publish succeeds end-to-end for a complete journey covering at least one of EACH node type, proving round-trip persistence + the gate together."
           ],
           "criterion": "Publish is blocked (with specific, inline reasons) when the graph is invalid or a send node lacks From/To/Subject or the trigger is incomplete; it succeeds once everything is valid. Verified in a real browser per node type.",
-          "path": "web/e2e/campaign-publish-gate.browser.e2e.spec.ts",
+          "path": "web/e2e/automation-publish-gate.browser.e2e.spec.ts",
           "tier": "e2e"
         }
       ]

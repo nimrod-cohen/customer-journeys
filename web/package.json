@@ -24,7 +24,7 @@
   "devDependencies": {
     "@cdp/db": "workspace:*",
     "@cdp/segments": "workspace:*",
-    "@cdp/service-campaign-runner": "workspace:*",
+    "@cdp/service-automation-runner": "workspace:*",
     "@cdp/service-local-api": "workspace:*",
     "@playwright/test": "^1.45.0",
     "@preact/preset-vite": "^2.9.0",

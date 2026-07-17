@@ -1,12 +1,12 @@
 {
   "runId": "01KVG1Z1PRXXB2X8EBCEHCT7F5",
-  "request": "cdp/campaign-builder",
-  "processId": "cdp/campaign-builder",
+  "request": "cdp/automation-builder",
+  "processId": "cdp/automation-builder",
   "entrypoint": {
-    "importPath": "../../processes/cdp-campaign-builder.js",
+    "importPath": "../../processes/cdp-automation-builder.js",
     "exportName": "process"
   },
-  "processPath": "../../processes/cdp-campaign-builder.js",
+  "processPath": "../../processes/cdp-automation-builder.js",
   "layoutVersion": "2026.01-storage-preview",
   "createdAt": "2026-06-19T13:43:43.077Z",
   "completionProof": "279d91e3b399674e2ca61e89a8d467ac"

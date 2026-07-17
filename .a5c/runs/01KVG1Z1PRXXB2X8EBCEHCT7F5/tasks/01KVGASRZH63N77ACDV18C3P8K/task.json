@@ -24,19 +24,19 @@
         "phase": {
           "criteria": [
             "A send node clones its template into an independently-editable copy (kind=copy); editing the copy does not touch the library original; the envelope persists on the copy. Cross-workspace template/sender ids are refused (inv.2).",
-            "Activating a campaign with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.",
-            "A campaign send flows through outbox → Dispatcher → messages_log(campaign_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.",
+            "Activating a automation with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.",
+            "A automation send flows through outbox → Dispatcher → messages_log(automation_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.",
             "An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value (e.g. attributes.last_purchase_amount = {{event.amount}} taken from the trigger event persisted on enrollment.state); the write is workspace-scoped + idempotent on retry; an undefined path resolves safely. Verified against REAL Postgres with unit tests for the value resolver."
           ],
           "frontend": false,
           "id": "phase4-action-nodes",
-          "refs": "CLAUDE.md (broadcast email-INSTANCE/clone model, sendBroadcast gating, dispatcher campaign path, customer.* merge) + §9B action(send|set_attribute)",
+          "refs": "CLAUDE.md (broadcast email-INSTANCE/clone model, sendBroadcast gating, dispatcher automation path, customer.* merge) + §9B action(send|set_attribute)",
           "scope": [
             "Give each SEND node its OWN editable email instance, reusing the broadcast flow: attaching a template CLONES it (kind=copy, source_template_id) into the node's working copy; the envelope (real named From sender + To token + Subject) lives on that copy and is edited in the email editor (autosaved). The send node references the copy template_id.",
-            "PUBLISH-time gating: a campaign cannot be activated if any send node lacks a sendable email (From sender + To + Subject all set) — mirror sendBroadcast's ordered 409s + the verified-domain gate. Surface which node/what is missing.",
-            "Verify the Dispatcher campaign path end-to-end: campaign outbox row → Dispatcher resolves sender_id → renders subject/To/body merge tags (the v0.27.2 subject fix) → messages_log with campaign_id. No change to the send pipeline beyond what the instance model needs.",
-            "UPDATE-PROFILE action (the set_attribute action kind already exists + the runner already applies a STATIC value via buildSetAttribute): extend it so the value can be a LITERAL **or** an EXPRESSION sourced from the trigger event or the profile — e.g. customer.* and a new event.* namespace ({{event.<payload path>}}). To enable event.*, PERSIST the trigger event payload onto campaign_enrollments.state at enrollment time (event-trigger enrollment from phase 3) so a later update-profile step can read it; resolve the expression at execution against the profile + enrollment.state.event (reuse the @cdp/shared customer.* resolver; add an analogous event.* resolver). A missing/again-undefined path resolves safely (no crash; documented — skip or empty).",
-            "Extend validateCampaignDefinition for the set_attribute value spec (literal vs expression) and keep it pure + unit-tested. The runner write stays workspace-scoped + idempotent (re-applying the same set_attribute on a retried tick is naturally idempotent for a literal; for an event-sourced value it resolves from the persisted enrollment.state, so a retry yields the same write)."
+            "PUBLISH-time gating: a automation cannot be activated if any send node lacks a sendable email (From sender + To + Subject all set) — mirror sendBroadcast's ordered 409s + the verified-domain gate. Surface which node/what is missing.",
+            "Verify the Dispatcher automation path end-to-end: automation outbox row → Dispatcher resolves sender_id → renders subject/To/body merge tags (the v0.27.2 subject fix) → messages_log with automation_id. No change to the send pipeline beyond what the instance model needs.",
+            "UPDATE-PROFILE action (the set_attribute action kind already exists + the runner already applies a STATIC value via buildSetAttribute): extend it so the value can be a LITERAL **or** an EXPRESSION sourced from the trigger event or the profile — e.g. customer.* and a new event.* namespace ({{event.<payload path>}}). To enable event.*, PERSIST the trigger event payload onto automation_enrollments.state at enrollment time (event-trigger enrollment from phase 3) so a later update-profile step can read it; resolve the expression at execution against the profile + enrollment.state.event (reuse the @cdp/shared customer.* resolver; add an analogous event.* resolver). A missing/again-undefined path resolves safely (no crash; documented — skip or empty).",
+            "Extend validateAutomationDefinition for the set_attribute value spec (literal vs expression) and keep it pure + unit-tested. The runner write stays workspace-scoped + idempotent (re-applying the same set_attribute on a retried tick is naturally idempotent for a literal; for an event-sourced value it resolves from the persisted enrollment.state, so a retry yields the same write)."
           ],
           "title": "Action nodes: send-email instance + update-profile (event-sourced)"
         },
@@ -66,26 +66,26 @@
   "schemaVersion": "2026.01.tasks-v1",
   "effectId": "01KVGASRZH63N77ACDV18C3P8K",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000016:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000016:commit-phase",
   "stepId": "S000016",
   "inputs": {
     "converged": true,
     "phase": {
       "criteria": [
         "A send node clones its template into an independently-editable copy (kind=copy); editing the copy does not touch the library original; the envelope persists on the copy. Cross-workspace template/sender ids are refused (inv.2).",
-        "Activating a campaign with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.",
-        "A campaign send flows through outbox → Dispatcher → messages_log(campaign_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.",
+        "Activating a automation with a send node missing From/To/Subject is refused with a clear, node-specific message; once all are set (real named sender, no no-reply fallback) + a verified domain exists, it activates. Verified against REAL Postgres.",
+        "A automation send flows through outbox → Dispatcher → messages_log(automation_id) with subject/To/body merge tags rendered; passes suppression/cap/quiet-hours. AWS/SES mocked.",
         "An update-profile (set_attribute) step writes the profile attribute with a LITERAL value AND with an event-sourced value (e.g. attributes.last_purchase_amount = {{event.amount}} taken from the trigger event persisted on enrollment.state); the write is workspace-scoped + idempotent on retry; an undefined path resolves safely. Verified against REAL Postgres with unit tests for the value resolver."
       ],
       "frontend": false,
       "id": "phase4-action-nodes",
-      "refs": "CLAUDE.md (broadcast email-INSTANCE/clone model, sendBroadcast gating, dispatcher campaign path, customer.* merge) + §9B action(send|set_attribute)",
+      "refs": "CLAUDE.md (broadcast email-INSTANCE/clone model, sendBroadcast gating, dispatcher automation path, customer.* merge) + §9B action(send|set_attribute)",
       "scope": [
         "Give each SEND node its OWN editable email instance, reusing the broadcast flow: attaching a template CLONES it (kind=copy, source_template_id) into the node's working copy; the envelope (real named From sender + To token + Subject) lives on that copy and is edited in the email editor (autosaved). The send node references the copy template_id.",
-        "PUBLISH-time gating: a campaign cannot be activated if any send node lacks a sendable email (From sender + To + Subject all set) — mirror sendBroadcast's ordered 409s + the verified-domain gate. Surface which node/what is missing.",
-        "Verify the Dispatcher campaign path end-to-end: campaign outbox row → Dispatcher resolves sender_id → renders subject/To/body merge tags (the v0.27.2 subject fix) → messages_log with campaign_id. No change to the send pipeline beyond what the instance model needs.",
-        "UPDATE-PROFILE action (the set_attribute action kind already exists + the runner already applies a STATIC value via buildSetAttribute): extend it so the value can be a LITERAL **or** an EXPRESSION sourced from the trigger event or the profile — e.g. customer.* and a new event.* namespace ({{event.<payload path>}}). To enable event.*, PERSIST the trigger event payload onto campaign_enrollments.state at enrollment time (event-trigger enrollment from phase 3) so a later update-profile step can read it; resolve the expression at execution against the profile + enrollment.state.event (reuse the @cdp/shared customer.* resolver; add an analogous event.* resolver). A missing/again-undefined path resolves safely (no crash; documented — skip or empty).",
-        "Extend validateCampaignDefinition for the set_attribute value spec (literal vs expression) and keep it pure + unit-tested. The runner write stays workspace-scoped + idempotent (re-applying the same set_attribute on a retried tick is naturally idempotent for a literal; for an event-sourced value it resolves from the persisted enrollment.state, so a retry yields the same write)."
+        "PUBLISH-time gating: a automation cannot be activated if any send node lacks a sendable email (From sender + To + Subject all set) — mirror sendBroadcast's ordered 409s + the verified-domain gate. Surface which node/what is missing.",
+        "Verify the Dispatcher automation path end-to-end: automation outbox row → Dispatcher resolves sender_id → renders subject/To/body merge tags (the v0.27.2 subject fix) → messages_log with automation_id. No change to the send pipeline beyond what the instance model needs.",
+        "UPDATE-PROFILE action (the set_attribute action kind already exists + the runner already applies a STATIC value via buildSetAttribute): extend it so the value can be a LITERAL **or** an EXPRESSION sourced from the trigger event or the profile — e.g. customer.* and a new event.* namespace ({{event.<payload path>}}). To enable event.*, PERSIST the trigger event payload onto automation_enrollments.state at enrollment time (event-trigger enrollment from phase 3) so a later update-profile step can read it; resolve the expression at execution against the profile + enrollment.state.event (reuse the @cdp/shared customer.* resolver; add an analogous event.* resolver). A missing/again-undefined path resolves safely (no crash; documented — skip or empty).",
+        "Extend validateAutomationDefinition for the set_attribute value spec (literal vs expression) and keep it pure + unit-tested. The runner write stays workspace-scoped + idempotent (re-applying the same set_attribute on a retried tick is naturally idempotent for a literal; for an event-sourced value it resolves from the persisted enrollment.state, so a retry yields the same write)."
       ],
       "title": "Action nodes: send-email instance + update-profile (event-sourced)"
     },

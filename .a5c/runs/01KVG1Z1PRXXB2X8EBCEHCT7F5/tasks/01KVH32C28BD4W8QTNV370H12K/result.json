@@ -2,18 +2,18 @@
   "schemaVersion": "2026.01.results-v1",
   "effectId": "01KVH32C28BD4W8QTNV370H12K",
   "taskId": "commit-phase",
-  "invocationKey": "cdp/campaign-builder:S000035:commit-phase",
+  "invocationKey": "cdp/automation-builder:S000035:commit-phase",
   "status": "ok",
   "result": {
     "commitHash": "3a0c802f74d5c7bf81d398cd5bf1983fc7561e88",
     "committed": true,
-    "message": "test(campaigns): final journey acceptance — full end-to-end verified (gate 97)"
+    "message": "test(automations): final journey acceptance — full end-to-end verified (gate 97)"
   },
   "startedAt": "2026-06-19T23:23:07.215Z",
   "finishedAt": "2026-06-19T23:23:07.215Z",
   "value": {
     "commitHash": "3a0c802f74d5c7bf81d398cd5bf1983fc7561e88",
     "committed": true,
-    "message": "test(campaigns): final journey acceptance — full end-to-end verified (gate 97)"
+    "message": "test(automations): final journey acceptance — full end-to-end verified (gate 97)"
   }
 }

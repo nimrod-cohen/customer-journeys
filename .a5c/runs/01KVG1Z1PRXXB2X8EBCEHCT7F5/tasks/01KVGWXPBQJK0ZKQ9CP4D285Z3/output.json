@@ -1,35 +1,35 @@
 {
   "filesCreated": [],
   "filesModified": [
-    "web/src/campaigns/mutate.ts",
-    "web/src/campaigns/layout.ts",
-    "web/src/campaigns/mutate.test.ts",
-    "web/src/campaigns/layout.test.ts",
-    "web/src/campaigns/orthogonal-path.test.ts",
-    "web/src/campaigns/model.test.ts",
-    "services/campaign-runner/test/node-dsl-and-validation.test.ts",
+    "web/src/automations/mutate.ts",
+    "web/src/automations/layout.ts",
+    "web/src/automations/mutate.test.ts",
+    "web/src/automations/layout.test.ts",
+    "web/src/automations/orthogonal-path.test.ts",
+    "web/src/automations/model.test.ts",
+    "services/automation-runner/test/node-dsl-and-validation.test.ts",
     "web/e2e/seed.ts",
-    "web/e2e/campaign-builder.browser.e2e.spec.ts",
+    "web/e2e/automation-builder.browser.e2e.spec.ts",
     "package.json",
     "CLAUDE.md"
   ],
   "migrationsApplied": [],
   "versionBump": "0.34.0 -> 0.35.0 (minor)",
   "testsPass": true,
-  "testSummary": "Test-first, all GREEN. Web unit campaigns (mutate 16 / layout 13 / orthogonal-path 8 / model 19 / node-config 20) pass. campaign-runner dsl validation (node-dsl-and-validation 34, +3 new convergence accepts: empty-arm rejoin, populated+empty arm, one-arm-terminates) pass. Full cold suite: 43/43 task packages, e.g. web 136, campaign-runner 171, local-api 205, dispatcher 71 — all pass. Integration coverage of save+reload of the converging diamond is exercised by the e2e round-trip (POST/PUT + GET /campaigns/:id) and the real-validator unit tier.",
-  "e2eSummary": "Playwright SOLO (one invocation at a time; ports 8788/5174 freed + playwright/chrome killed before each run). campaign-builder.browser.e2e.spec.ts: 11/11 pass — converging-diamond insert (1 exit, >=2 connectors land on one join (x,y), axis-aligned + down-only), per-arm + with empty passthrough (send on one arm, other empty, still 1 exit, convergence), Exit on an arm terminates only that arm (2 exits), populated-arm diamond round-trip reopens with same node set + convergence, delete-condition collapses to a valid converging graph, plus the existing assemble/palette/delete/last-exit-refusal. Regression SOLO (one invocation): campaign-node-editors (8) + campaign-publish-gate (2) + broadcast-and-campaign (13) + build-segment (10) = 32/32 pass; divergence assertions in the seeded-journey + if-branch tests replaced with convergence assertions.",
+  "testSummary": "Test-first, all GREEN. Web unit automations (mutate 16 / layout 13 / orthogonal-path 8 / model 19 / node-config 20) pass. automation-runner dsl validation (node-dsl-and-validation 34, +3 new convergence accepts: empty-arm rejoin, populated+empty arm, one-arm-terminates) pass. Full cold suite: 43/43 task packages, e.g. web 136, automation-runner 171, local-api 205, dispatcher 71 — all pass. Integration coverage of save+reload of the converging diamond is exercised by the e2e round-trip (POST/PUT + GET /automations/:id) and the real-validator unit tier.",
+  "e2eSummary": "Playwright SOLO (one invocation at a time; ports 8788/5174 freed + playwright/chrome killed before each run). automation-builder.browser.e2e.spec.ts: 11/11 pass — converging-diamond insert (1 exit, >=2 connectors land on one join (x,y), axis-aligned + down-only), per-arm + with empty passthrough (send on one arm, other empty, still 1 exit, convergence), Exit on an arm terminates only that arm (2 exits), populated-arm diamond round-trip reopens with same node set + convergence, delete-condition collapses to a valid converging graph, plus the existing assemble/palette/delete/last-exit-refusal. Regression SOLO (one invocation): automation-node-editors (8) + automation-publish-gate (2) + broadcast-and-automation (13) + build-segment (10) = 32/32 pass; divergence assertions in the seeded-journey + if-branch tests replaced with convergence assertions.",
   "typecheckOk": true,
   "lintOk": true,
   "commandsRun": [
-    "pnpm --filter @cdp/web exec vitest run src/campaigns/{mutate,layout,orthogonal-path,model}.test.ts",
-    "pnpm --filter @cdp/service-campaign-runner exec vitest run test/node-dsl-and-validation.test.ts",
+    "pnpm --filter @cdp/web exec vitest run src/automations/{mutate,layout,orthogonal-path,model}.test.ts",
+    "pnpm --filter @cdp/service-automation-runner exec vitest run test/node-dsl-and-validation.test.ts",
     "pnpm typecheck",
     "pnpm lint",
-    "npx eslint src/campaigns/mutate.ts src/campaigns/layout.ts (exit 0 — no new lint errors)",
+    "npx eslint src/automations/mutate.ts src/automations/layout.ts (exit 0 — no new lint errors)",
     "DATABASE_URL=postgres://postgres:postgres@localhost:5433/cdp pnpm test (43/43 task pkgs pass)",
     "pkill -f playwright; pkill -f chrome-headless; free ports 8788/5174 (before each e2e)",
-    "pnpm --filter @cdp/web test:e2e campaign-builder (11/11 pass)",
-    "pnpm --filter @cdp/web test:e2e campaign-node-editors campaign-publish-gate broadcast-and-campaign build-segment (32/32 pass)"
+    "pnpm --filter @cdp/web test:e2e automation-builder (11/11 pass)",
+    "pnpm --filter @cdp/web test:e2e automation-node-editors automation-publish-gate broadcast-and-automation build-segment (32/32 pass)"
   ],
-  "notes": "Core change is small + localized as the plan predicted. (1) mutate.ts insertOnEdge condition branch now sets onTrue=onFalse=edge.to (REJOIN into a converging diamond; B is the join purely structurally — node with 2+ incoming edges, NO stored join flag). (2) The exit branch no longer special-cases 'target is an exit' (that allowed orphaning a trailing exit — caught by the property test); it now gates SOLELY on reachableWithoutEdge(def, edge): safe on a converging arm (join reachable via the other arm), refused on a non-converging single-out edge (would orphan B). Added insertExitOnArm helper + reachableWithoutEdge. (3) deleteNode's existing condition-collapse already preserves a shared rejoin join (reachable via onTrue) and removes onFalse-exclusive descendants — verified by new tests, no change needed. (4) layout.ts computeEdges gained ONE addition: when 2+ edges from the SAME source converge on the SAME target (empty-arm diamond), lane-offset only their SOURCE x (ARM_LANE) so the two arm connectors + their + controls don't stack/intercept clicks — they still END at the identical join top-center so the arms visibly converge on one node; this was the only real e2e blocker (overlapping + buttons). layout/orthogonal-path otherwise unchanged (already diamond-aware). (5) seed Welcome journey -> converging diamond (cond.onTrue->sendY->join, cond.onFalse->join, join=set_attribute->exit1) — join is set_attribute to avoid duplicate node-wait testids in the regression test. (6) e2e divergence assertions replaced with convergence (path-endpoint tokenizer); arm + controls selected by vertical position below the condition card (3 controls exist: trunk + 2 arms). No migration, runner untouched, workspace-scoping unchanged (pure client-side graph math; persistence via existing workspace-scoped POST/PUT/GET /campaigns). Lint: only the 7 KNOWN pre-existing react-hooks/exhaustive-deps 'rule not found' errors in untouched files remain; my files lint clean (eslint exit 0). NOT pushed."
+  "notes": "Core change is small + localized as the plan predicted. (1) mutate.ts insertOnEdge condition branch now sets onTrue=onFalse=edge.to (REJOIN into a converging diamond; B is the join purely structurally — node with 2+ incoming edges, NO stored join flag). (2) The exit branch no longer special-cases 'target is an exit' (that allowed orphaning a trailing exit — caught by the property test); it now gates SOLELY on reachableWithoutEdge(def, edge): safe on a converging arm (join reachable via the other arm), refused on a non-converging single-out edge (would orphan B). Added insertExitOnArm helper + reachableWithoutEdge. (3) deleteNode's existing condition-collapse already preserves a shared rejoin join (reachable via onTrue) and removes onFalse-exclusive descendants — verified by new tests, no change needed. (4) layout.ts computeEdges gained ONE addition: when 2+ edges from the SAME source converge on the SAME target (empty-arm diamond), lane-offset only their SOURCE x (ARM_LANE) so the two arm connectors + their + controls don't stack/intercept clicks — they still END at the identical join top-center so the arms visibly converge on one node; this was the only real e2e blocker (overlapping + buttons). layout/orthogonal-path otherwise unchanged (already diamond-aware). (5) seed Welcome journey -> converging diamond (cond.onTrue->sendY->join, cond.onFalse->join, join=set_attribute->exit1) — join is set_attribute to avoid duplicate node-wait testids in the regression test. (6) e2e divergence assertions replaced with convergence (path-endpoint tokenizer); arm + controls selected by vertical position below the condition card (3 controls exist: trunk + 2 arms). No migration, runner untouched, workspace-scoping unchanged (pure client-side graph math; persistence via existing workspace-scoped POST/PUT/GET /automations). Lint: only the 7 KNOWN pre-existing react-hooks/exhaustive-deps 'rule not found' errors in untouched files remain; my files lint clean (eslint exit 0). NOT pushed."
 }

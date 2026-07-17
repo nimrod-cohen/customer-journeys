@@ -1,7 +1,7 @@
 // Deterministic e2e seed (real Postgres). Run by Playwright globalSetup before
 // the browser specs. Seeds two workspaces, a multi-workspace user, a marketer, a
 // platform admin, plus profiles/templates so the SPA flows (segment preview,
-// broadcast, campaign, switching, role visibility, admin console) have data.
+// broadcast, automation, switching, role visibility, admin console) have data.
 // Uses the admin (service-role) pool to seed across workspaces. Idempotent:
 // deletes its own rows first.
 import { adminPool, applyMigrations } from '@cdp/db';
@@ -28,7 +28,7 @@ export const SEG_A = '0e2efe00-0000-4000-8000-0000000000c2';
 export const SEG_B = '0e2efe00-0000-4000-8000-0000000000c3';
 export const SEG_DYN_A = '0e2efe00-0000-4000-8000-0000000000c4'; // dynamic: attributes.tier = vip
 export const SEG_A2 = '0e2efe00-0000-4000-8000-0000000000c5'; // segment in the 2nd Acme workspace
-export const CAMP_A = '0e2efe00-0000-4000-8000-0000000000c6'; // a started branching campaign in WS_A
+export const CAMP_A = '0e2efe00-0000-4000-8000-0000000000c6'; // a started branching automation in WS_A
 export const TOPIC_A = '0e2efe00-0000-4000-8000-0000000000c7'; // a subscription topic in WS_A (admin screen)
 export const TOPIC_A_NAME = 'Product news';
 // The public preference-center fixture lives in WS_B so its mutations (a partial
@@ -124,6 +124,17 @@ export async function seed(): Promise<void> {
       [WS_A],
     );
     await pool.query('UPDATE email_templates SET sender_id = $2 WHERE id = $1', [TPL_A, seededSender.rows[0]!.id]);
+    // Connectors so the SMS + WhatsApp channels are ENABLED in the composer/builder
+    // (channelsForWorkspace only needs an enabled row per channel). A NULL secret means
+    // channelConfigForWorkspace falls through to the local MOCK provider, so text sends
+    // deliver deterministically with no real credentials (email keeps its SES/verified-
+    // domain path unchanged). Connectors are company-scoped → CO_ACME.
+    await pool.query(
+      `INSERT INTO company_connectors (company_id, channel, provider, config, secret, enabled) VALUES
+         ($1,'sms','019',$2::jsonb,NULL,true),
+         ($1,'whatsapp','meta_whatsapp',$3::jsonb,NULL,true)`,
+      [CO_ACME, JSON.stringify({ source: 'Acme', default_country: 'IL' }), JSON.stringify({ phone_number_id: '000' })],
+    );
     await pool.query(
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',
       [SEG_A, WS_A, SEG_A_NAME, 'manual'],
@@ -151,14 +162,14 @@ export async function seed(): Promise<void> {
        VALUES ($1,$2,$3,'dynamic_realtime','{"field":"attributes.tier","operator":"=","value":"vip"}'::jsonb)`,
       [SEG_DYN_A, WS_A, SEG_DYN_A_NAME],
     );
-    // A started BRANCHING campaign in WS_A so the builder's "render an existing
+    // A started BRANCHING automation in WS_A so the builder's "render an existing
     // definition" e2e has a CONVERGING DIAMOND to draw: the condition's arms OPEN
     // and REJOIN a single trunk that continues to one exit (NOT two separate
     // exits). Shape: trigger → wait → if(tier=vip) ? send→join : join → exit.
     // The join (a node with 2 incoming edges) is identified purely structurally —
     // there is NO stored "join" flag.
     await pool.query(
-      `INSERT INTO campaigns (id, workspace_id, name, status, definition)
+      `INSERT INTO automations (id, workspace_id, name, status, definition)
        VALUES ($1,$2,'Welcome journey','draft',$3::jsonb)`,
       [
         CAMP_A,
@@ -177,7 +188,7 @@ export async function seed(): Promise<void> {
       ],
     );
 
-    // A couple of seeded enrollments on CAMP_A (varied status) so the campaigns
+    // A couple of seeded enrollments on CAMP_A (varied status) so the automations
     // LIST shows NON-ZERO enrollment counts in the e2e (active + completed).
     {
       const e1 = await pool.query<{ id: string }>(
@@ -189,11 +200,11 @@ export async function seed(): Promise<void> {
         [WS_A, 'enr-completed@acme.com'],
       );
       await pool.query(
-        "INSERT INTO campaign_enrollments (workspace_id, campaign_id, profile_id, current_node, status, next_run_at) VALUES ($1,$2,$3,'trigger','active', now())",
+        "INSERT INTO automation_enrollments (workspace_id, automation_id, profile_id, current_node, status, next_run_at) VALUES ($1,$2,$3,'trigger','active', now())",
         [WS_A, CAMP_A, e1.rows[0]!.id],
       );
       await pool.query(
-        "INSERT INTO campaign_enrollments (workspace_id, campaign_id, profile_id, current_node, status) VALUES ($1,$2,$3,'exit1','completed')",
+        "INSERT INTO automation_enrollments (workspace_id, automation_id, profile_id, current_node, status) VALUES ($1,$2,$3,'exit1','completed')",
         [WS_A, CAMP_A, e2.rows[0]!.id],
       );
     }
@@ -313,8 +324,8 @@ export async function cleanup(pool: ReturnType<typeof adminPool>): Promise<void>
     await pool.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM outbox WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM broadcasts WHERE workspace_id = $1', [ws]);
-    await pool.query('DELETE FROM campaign_enrollments WHERE workspace_id = $1', [ws]);
-    await pool.query('DELETE FROM campaigns WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM automation_enrollments WHERE workspace_id = $1', [ws]);
+    await pool.query('DELETE FROM automations WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM segments WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM email_templates WHERE workspace_id = $1', [ws]);
     await pool.query('DELETE FROM text_templates WHERE workspace_id = $1', [ws]);

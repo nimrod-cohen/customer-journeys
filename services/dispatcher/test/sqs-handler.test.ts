@@ -26,14 +26,14 @@ function makeDeps(scn: Scenario): HandlerDeps {
   const reader: Reader = {
     async query<T>(text: string): Promise<{ rows: T[] }> {
       const t = text.replace(/\s+/g, ' ').trim();
-      if (t.startsWith('SELECT id, workspace_id, profile_id, campaign_id')) {
+      if (t.startsWith('SELECT id, workspace_id, profile_id, automation_id')) {
         return {
           rows: [
             {
               id: 'ob-1',
               workspace_id: WS,
               profile_id: PROFILE,
-              campaign_id: null,
+              automation_id: null,
               template_id: 'tpl',
               dedupe_key: 'dk',
               attempts: scn.attempts,
