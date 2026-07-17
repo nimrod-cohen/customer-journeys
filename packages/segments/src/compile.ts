@@ -160,6 +160,7 @@ export const SCALAR_FEATURE_FIELDS: Readonly<Record<string, string>> = {
 export const SCALAR_PROFILE_FIELDS: Readonly<Record<string, string>> = {
   email_status: 'p.email_status',
   email: 'p.email',
+  phone: 'p.phone',
   external_id: 'p.external_id',
   created_at: 'p.created_at',
 };

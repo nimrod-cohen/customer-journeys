@@ -56,7 +56,7 @@ async function cleanup(admin: Pool): Promise<void> {
 
 async function seedProfile(admin: Pool, ext: string, total: number): Promise<string> {
   const { rows } = await admin.query(
-    'INSERT INTO profiles (workspace_id, external_id) VALUES ($1,$2) RETURNING id',
+    "INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,$2,$2||'@test.local') RETURNING id",
     [ws, ext],
   );
   const id = rows[0].id as string;

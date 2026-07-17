@@ -27,6 +27,8 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   const [linkTracking, setLinkTracking] = useState(false);
   const [timezone, setTimezone] = useState('UTC');
   const [language, setLanguage] = useState<FrontFacingLanguage>('auto');
+  const [phoneCountry, setPhoneCountry] = useState('');
+  const [phoneCountrySaving, setPhoneCountrySaving] = useState(false);
   // Lock the toggles while a settings PUT is in flight (no racing re-toggles).
   const [savingSettings, setSavingSettings] = useState(false);
   // Sending guardrails (CLAUDE.md inv.7). Frequency cap: at most `freqMax` messages
@@ -46,6 +48,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           link_tracking?: boolean;
           timezone?: string;
           front_facing_language?: FrontFacingLanguage;
+          default_phone_country?: string | null;
           frequency_cap?: { max?: number; days?: number } | null;
           quiet_hours?: Array<{ startDay?: number; startMinute?: number; endDay?: number; endMinute?: number }> | null;
         };
@@ -55,6 +58,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
         setLinkTracking(r.settings.link_tracking === true);
         setTimezone(r.settings.timezone || 'UTC');
         setLanguage(r.settings.front_facing_language ?? 'auto');
+        setPhoneCountry(r.settings.default_phone_country ?? '');
         const fc = r.settings.frequency_cap;
         if (fc && typeof fc === 'object') {
           setFreqEnabled(true);
@@ -323,6 +327,47 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
             </Select>
           </Field>
           <Button data-testid="workspace-language-save" onClick={() => saveLanguage(language)}>
+            Save
+          </Button>
+        </div>
+      </Card>
+
+      <Card class="mt-6 flex flex-wrap items-end justify-between gap-3 p-5">
+        <div class="min-w-[16rem] flex-1">
+          <h2 class="text-base font-bold text-ink-900">Default phone country</h2>
+          <p class="mt-1 text-sm text-stone-500">
+            Used to normalize national phone numbers into international E.164 format when identifying or creating
+            profiles by phone (e.g. with <b>IL</b>, <span class="font-mono">054-1111111</span> becomes{' '}
+            <span class="font-mono">+972541111111</span>). A 2-letter ISO country code; leave blank to require full
+            international numbers.
+          </p>
+        </div>
+        <div class="flex items-end gap-2">
+          <Field label="Country (ISO-2)">
+            <Input
+              data-testid="workspace-phone-country"
+              class="w-28 uppercase"
+              maxLength={2}
+              placeholder="IL"
+              value={phoneCountry}
+              onInput={(e: Event) => setPhoneCountry((e.target as HTMLInputElement).value.toUpperCase())}
+            />
+          </Field>
+          <Button
+            data-testid="workspace-phone-country-save"
+            loading={phoneCountrySaving}
+            onClick={async () => {
+              setPhoneCountrySaving(true);
+              try {
+                await api.put('/workspace/settings', { body: { default_phone_country: phoneCountry.trim() || null } });
+                showToast('Default phone country saved.', { tone: 'success' });
+              } catch (e) {
+                showToast((e as { error?: string })?.error ?? 'Could not save the default phone country.', { tone: 'error' });
+              } finally {
+                setPhoneCountrySaving(false);
+              }
+            }}
+          >
             Save
           </Button>
         </div>

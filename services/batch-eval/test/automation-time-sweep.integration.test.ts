@@ -43,7 +43,7 @@ describe.skipIf(!RUN)('automation time-sensitive segment sweep (real Postgres)',
     await admin.query("INSERT INTO workspaces (id, name, status) VALUES ($1,'W','active')", [ws]);
     const mk = async (ext: string, tier: string, loginDaysAgo: number) => {
       const r = await admin.query(
-        `INSERT INTO profiles (workspace_id, external_id, attributes) VALUES ($1,$2, jsonb_build_object('tier',$3::text)) RETURNING id`,
+        `INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,$2,$2::text, jsonb_build_object('tier',$3::text)) RETURNING id`,
         [ws, ext, tier],
       );
       const pid = r.rows[0].id;

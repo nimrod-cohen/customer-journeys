@@ -21,8 +21,8 @@ describe.skipIf(!RUN)('service-role in-code scoping (AC1)', () => {
     await admin.query('DELETE FROM profiles WHERE workspace_id IN ($1,$2)', [wsA, wsB]);
     await admin.query('DELETE FROM workspaces WHERE id IN ($1,$2)', [wsA, wsB]);
     await admin.query("INSERT INTO workspaces (id, name) VALUES ($1,'A'),($2,'B')", [wsA, wsB]);
-    await admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'a1'),($1,'a2')", [wsA]);
-    await admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'b1')", [wsB]);
+    await admin.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'a1','a1'),($1,'a2','a2')", [wsA]);
+    await admin.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'b1','b1')", [wsB]);
   });
 
   afterAll(async () => {

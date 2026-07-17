@@ -30,8 +30,8 @@ describe.skipIf(!RUN)('workspace switch re-scoping (AC5)', () => {
       "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$3,'owner'),($2,$3,'marketer')",
       [wsA, wsB, user],
     );
-    await admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'a-only')", [wsA]);
-    await admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'b-only')", [wsB]);
+    await admin.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'a-only','a-only')", [wsA]);
+    await admin.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'b-only','b-only')", [wsB]);
   });
 
   afterAll(async () => {

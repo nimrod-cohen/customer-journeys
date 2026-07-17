@@ -33,7 +33,7 @@ describe.skipIf(!RUN)('wait deferral via the real sweep (real Postgres)', () => 
     await cleanup();
     await admin.query("INSERT INTO workspaces (id, name, status) VALUES ($1,'W','active')", [WS]);
     await admin.query(
-      'INSERT INTO profiles (id, workspace_id, external_id) VALUES ($1,$2,$3)',
+      'INSERT INTO profiles (id, workspace_id, external_id, email) VALUES ($1,$2,$3,$3::text)',
       [PROF, WS, 'ext'],
     );
     await admin.query(

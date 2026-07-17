@@ -14,8 +14,14 @@
 import { stringifyMergeValue } from './merge-util.js';
 
 /** Top-level `profiles` columns addressable as `customer.<field>` (NOT attributes). */
-export const RESERVED_CUSTOMER_FIELDS = ['id', 'email', 'external_id', 'email_status', 'created_at'] as const;
+export const RESERVED_CUSTOMER_FIELDS = ['id', 'email', 'phone', 'external_id', 'email_status', 'created_at'] as const;
 export type ReservedCustomerField = (typeof RESERVED_CUSTOMER_FIELDS)[number];
+
+// Core IDENTITY columns that are ALSO addressable as `attributes.<field>` — they are
+// core fields (reserved), not dynamic attributes, but `attributes.email`/`attributes.phone`
+// must still resolve to the column (they were dynamic attributes before phone/email became
+// core). Anyone referencing them either way hits the same column.
+export const CORE_ATTRIBUTE_ALIASES = ['email', 'phone'] as const;
 
 /** The namespace prefix and the explicit attributes sub-path. */
 export const CUSTOMER_PREFIX = 'customer.';
@@ -27,15 +33,20 @@ function isReserved(field: string): field is ReservedCustomerField {
 
 /**
  * Expand the shorthand on the path AFTER `customer.`. Returns the canonical path:
- *   'attributes.tier' → 'attributes.tier'  (already explicit)
- *   'email'           → 'email'            (reserved column)
- *   'tier'            → 'attributes.tier'  (shorthand → attribute)
+ *   'attributes.tier'  → 'attributes.tier'  (already explicit, dynamic attribute)
+ *   'attributes.phone' → 'phone'            (core alias → column)
+ *   'email'            → 'email'            (reserved column)
+ *   'tier'             → 'attributes.tier'  (shorthand → attribute)
  * A non-reserved path that isn't already `attributes.*` becomes an attribute —
  * including dotted keys ('a.b' → 'attributes.a.b').
  */
 export function expandCustomerPath(pathAfterCustomer: string): string {
   const p = pathAfterCustomer.trim();
-  if (p.startsWith(ATTRIBUTES_PREFIX)) return p;
+  if (p.startsWith(ATTRIBUTES_PREFIX)) {
+    const sub = p.slice(ATTRIBUTES_PREFIX.length);
+    if ((CORE_ATTRIBUTE_ALIASES as readonly string[]).includes(sub)) return sub; // attributes.phone → phone
+    return p;
+  }
   if (isReserved(p)) return p;
   return ATTRIBUTES_PREFIX + p;
 }
@@ -69,6 +80,7 @@ export function resolveCustomerField(field: string): string {
 export interface CustomerProfile {
   readonly id?: string | null;
   readonly email?: string | null;
+  readonly phone?: string | null;
   readonly external_id?: string | null;
   readonly email_status?: string | null;
   readonly created_at?: string | Date | null;
@@ -85,14 +97,22 @@ export interface CustomerProfile {
 export function customerMerge(profile: CustomerProfile): Record<string, string> {
   const out: Record<string, string> = {};
   const rec = profile as Record<string, unknown>;
+  const attrs = profile.attributes ?? {};
+  const attrRec = attrs as Record<string, unknown>;
   for (const f of RESERVED_CUSTOMER_FIELDS) {
-    const v = rec[f];
+    let v = rec[f];
+    // A core identity alias (email/phone) falls back to attributes.<f> when the column is
+    // empty — so `{{customer.phone}}` still resolves for profiles whose phone lives in
+    // attributes (pre-backfill / callers that still send it as an attribute).
+    if ((v === undefined || v === null) && (CORE_ATTRIBUTE_ALIASES as readonly string[]).includes(f)) {
+      v = attrRec[f];
+    }
     if (v !== undefined && v !== null) out[`${CUSTOMER_PREFIX}${f}`] = stringifyMergeValue(v);
   }
-  const attrs = profile.attributes ?? {};
   for (const [k, v] of Object.entries(attrs)) {
     if (v === undefined || v === null) continue;
     if (typeof v === 'object') continue; // arrays/objects aren't single-tag substitutable
+    if ((RESERVED_CUSTOMER_FIELDS as readonly string[]).includes(k)) continue; // core fields handled above
     out[`${CUSTOMER_PREFIX}${ATTRIBUTES_PREFIX}${k}`] = stringifyMergeValue(v);
   }
   return out;

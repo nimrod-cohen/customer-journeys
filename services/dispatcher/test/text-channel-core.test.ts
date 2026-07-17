@@ -13,7 +13,9 @@ const base = (over: Partial<DispatchContext> = {}): DispatchContext => ({
   profile: { id: 'p', email: 'p@example.com' },
   template: { compiledHtml: '' },
   subject: '',
-  merge: { 'customer.attributes.phone': '+15550001111', 'customer.attributes.first_name': 'Jo' },
+  // phone is now a CORE reserved field → the canonical merge key is customer.phone
+  // (customerMerge produces it from the column, falling back to attributes.phone).
+  merge: { 'customer.phone': '+15550001111', 'customer.attributes.first_name': 'Jo' },
   frequencyCap: null,
   quietHours: null,
   timeZone: 'UTC',

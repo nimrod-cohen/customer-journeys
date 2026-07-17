@@ -21,6 +21,7 @@ interface Profile {
   id: string;
   external_id: string | null;
   email: string | null;
+  phone: string | null;
   email_status: string;
   created_at?: string;
   created_at_unix?: number;
@@ -241,7 +242,7 @@ export function ProfileDetail({ id }: { id: string }) {
         </span>
         <div class="min-w-0 flex-1">
           <h1 data-testid="profile-email" class="truncate text-xl font-bold text-ink-950">
-            {profile?.email ?? '(no email)'}
+            {profile?.email ?? profile?.phone ?? '(no email or phone)'}
           </h1>
           <p class="mt-0.5 font-mono text-xs text-stone-500">
             {profile?.external_id ? `ext: ${profile.external_id}` : 'no external id'}
@@ -314,6 +315,7 @@ export function ProfileDetail({ id }: { id: string }) {
 
 function DetailsTab({ profile, onSaved }: { profile: Profile; onSaved: () => Promise<void> }) {
   const [email, setEmail] = useState(profile.email ?? '');
+  const [phone, setPhone] = useState(profile.phone ?? '');
   const [externalId, setExternalId] = useState(profile.external_id ?? '');
   const [status, setStatus] = useState(profile.email_status);
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -324,16 +326,17 @@ function DetailsTab({ profile, onSaved }: { profile: Profile; onSaved: () => Pro
   // user's own save, so this can't clobber in-progress typing.
   useEffect(() => {
     setEmail(profile.email ?? '');
+    setPhone(profile.phone ?? '');
     setExternalId(profile.external_id ?? '');
     setStatus(profile.email_status);
-  }, [profile.email, profile.external_id, profile.email_status]);
+  }, [profile.email, profile.phone, profile.external_id, profile.email_status]);
 
   const save = async () => {
     setState('saving');
     setErr('');
     try {
       await api.patch(`/profiles/${profile.id}`, {
-        body: { email, external_id: externalId, email_status: status },
+        body: { email, phone, external_id: externalId, email_status: status },
       });
       await onSaved();
       setState('saved');
@@ -346,12 +349,21 @@ function DetailsTab({ profile, onSaved }: { profile: Profile; onSaved: () => Pro
   return (
     <Card class="max-w-xl p-5">
       <div class="grid gap-4">
-        <Field label="Email">
+        <Field label="Email" hint="An identity key. Email or phone is required (at least one).">
           <Input
             data-testid="profile-email-input"
             type="email"
             value={email}
             onInput={(e: Event) => setEmail((e.target as HTMLInputElement).value)}
+          />
+        </Field>
+        <Field label="Phone" hint="An identity key — normalized to E.164 (national numbers use the workspace default country).">
+          <Input
+            data-testid="profile-phone-input"
+            type="tel"
+            placeholder="+972 54 123 4567"
+            value={phone}
+            onInput={(e: Event) => setPhone((e.target as HTMLInputElement).value)}
           />
         </Field>
         <Field label="External ID" hint="Your system's identifier for this customer.">

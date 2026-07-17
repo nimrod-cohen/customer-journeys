@@ -35,7 +35,7 @@ describe.skipIf(!RUN)('idempotent concurrent sweep (real Postgres)', () => {
       "INSERT INTO email_templates (id, workspace_id, name, mjml, compiled_html) VALUES ($1,$2,'t','<m/>','<h/>')",
       [TPL, WS],
     );
-    await admin.query('INSERT INTO profiles (id, workspace_id, external_id) VALUES ($1,$2,$3)', [
+    await admin.query('INSERT INTO profiles (id, workspace_id, external_id, email) VALUES ($1,$2,$3,$3::text)', [
       PROF,
       WS,
       'ext',

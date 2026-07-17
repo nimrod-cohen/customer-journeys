@@ -34,6 +34,7 @@ import {
   listWhatsAppTemplates,
   createWhatsAppTemplate,
   deleteWhatsAppTemplate,
+  normalizePhone,
   type WhatsAppTemplatesConfig,
 } from '@cdp/channels';
 import { parsePageParams, pageClause, pageMeta } from './pagination.js';
@@ -107,6 +108,14 @@ import {
 import type { LocalApiDeps } from './deps.js';
 import { assetObjectKey, type ObjectStorage, type R2StorageFactory } from './storage.js';
 import { gatherReadiness } from './readiness.js';
+import {
+  resolveIdentity,
+  defaultPhoneCountry,
+  phoneOwner,
+  emailOwner,
+  stripReservedAttributes,
+  type IdentityResult,
+} from './identity.js';
 
 /** A handler's request shape (already parsed by the server). */
 export interface HandlerRequest {
@@ -699,6 +708,12 @@ export const getWorkspaceSettings: Handler = async (ctx, pool) => {
       front_facing_language: isFrontFacingLanguage(settings.front_facing_language)
         ? settings.front_facing_language
         : 'auto',
+      // Default phone country (ISO-2) for normalizing national phone numbers into E.164
+      // when identifying/creating profiles. null = none (national numbers can't normalize).
+      default_phone_country:
+        typeof settings.default_phone_country === 'string' && /^[A-Za-z]{2}$/.test(settings.default_phone_country)
+          ? settings.default_phone_country.toUpperCase()
+          : null,
       // Sending guardrails (CLAUDE.md inv.7), read by the dispatcher.
       // frequency_cap: { max, days } | null (null = off) — at most `max` messages
       // per recipient in a rolling `days`-day window. quiet_hours: a per-weekday
@@ -735,6 +750,16 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
       return ok({ error: "invalid front_facing_language (must be 'auto', 'en', or 'he')" }, 400);
     }
     patch.front_facing_language = b.front_facing_language;
+  }
+  if (b.default_phone_country !== undefined) {
+    // ISO 3166-1 alpha-2, or '' / null to clear. workspace_id is from ctx only (inv.2).
+    if (b.default_phone_country === null || b.default_phone_country === '') {
+      patch.default_phone_country = null;
+    } else if (typeof b.default_phone_country === 'string' && /^[A-Za-z]{2}$/.test(b.default_phone_country)) {
+      patch.default_phone_country = b.default_phone_country.toUpperCase();
+    } else {
+      return ok({ error: 'default_phone_country must be a 2-letter ISO country code (or null)' }, 400);
+    }
   }
   if (b.frequency_cap !== undefined) {
     // { max, days } | null (null disables). Both positive integers, bounded.
@@ -4493,7 +4518,7 @@ export const listAutomationEnrollments: Handler = async (ctx, pool, req) => {
 // ---------------------------------------------------------------------------
 
 /** The profile row shape returned by every profiles list/query path (alias `p`). */
-const PROFILE_COLS = `p.id, p.external_id, p.email, p.email_status, p.created_at,
+const PROFILE_COLS = `p.id, p.external_id, p.email, p.phone, p.email_status, p.created_at,
                 floor(extract(epoch from p.created_at) * 1000)::double precision AS created_at_unix, p.attributes,
                 (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed`;
 
@@ -4502,7 +4527,7 @@ const PROFILE_COLS = `p.id, p.external_id, p.email, p.email_status, p.created_at
 function appendProfileSearch(q: string, whereText: string, values: unknown[]): string {
   if (!q) return whereText;
   values.push(`%${q}%`);
-  return `${whereText} AND (p.email ILIKE $${values.length} OR p.external_id ILIKE $${values.length})`;
+  return `${whereText} AND (p.email ILIKE $${values.length} OR p.phone ILIKE $${values.length} OR p.external_id ILIKE $${values.length})`;
 }
 
 /** Run one PAGE of a profile query (count + page) over `FROM <fromJoin> WHERE <whereText>`.
@@ -4599,50 +4624,62 @@ export const queryProfiles: Handler = async (ctx, pool, req) => {
  */
 export const createProfile: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
-  // EMAIL is the identity key (§7) — required; external_id is optional metadata.
-  // Casing follows the workspace's lowercase_emails policy.
-  const emailTrimmed = typeof b.email === 'string' ? b.email.trim() : '';
-  const email = applyEmailPolicy(emailTrimmed, await lowercaseEmailsEnabled(pool, ctx.workspaceId));
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return ok({ error: 'a valid email is required' }, 400);
+  // IDENTITY (§7, extended): email AND/OR phone — each optional, at least one required.
+  // Email casing follows the workspace lowercase policy; phone is normalized to E.164 with
+  // the workspace default country. A bad phone with a valid email is dropped; a phone-only
+  // bad number is rejected.
+  const lower = await lowercaseEmailsEnabled(pool, ctx.workspaceId);
+  const country = await defaultPhoneCountry(pool, ctx.workspaceId);
+  const idres = resolveIdentity(
+    { email: b.email, phone: b.phone },
+    { defaultCountry: country, emailPolicy: (e) => applyEmailPolicy(e, lower) },
+  );
+  if (!idres.ok) return ok({ error: idres.error }, idres.status);
+  const { email, phone } = idres.identity;
   const externalId = typeof b.external_id === 'string' && b.external_id.trim() ? b.external_id.trim() : null;
-  const attrs =
+  // email/phone are RESERVED core fields, never dynamic attributes — strip them if a caller
+  // put them in attributes.
+  const attrs = stripReservedAttributes(
     b.attributes && typeof b.attributes === 'object' && !Array.isArray(b.attributes)
       ? (b.attributes as Record<string, unknown>)
-      : {};
-  // Manual creation is a CREATE, not a silent merge: email is the identity key,
-  // so an existing email is a conflict the user must know about. INSERT ... ON
-  // CONFLICT DO NOTHING returns no row when the email already exists (race-safe
-  // against the unique index); we then surface a 409 with the existing id so the
-  // UI can offer to open it instead of silently overwriting.
+      : {},
+  );
+
+  // Manual creation is a CREATE, not a silent merge: a taken email OR a taken phone is a
+  // conflict the user must know about (never steal another profile's phone). Surface a 409
+  // with the existing id so the UI can offer to open it instead.
+  if (email) {
+    const owner = await emailOwner(pool, ctx.workspaceId, email);
+    if (owner) return ok({ error: `A profile with email ${email} already exists.`, profile_id: owner }, 409);
+  }
+  if (phone) {
+    const owner = await phoneOwner(pool, ctx.workspaceId, phone);
+    if (owner) return ok({ error: `A profile with phone ${phone} already exists.`, profile_id: owner }, 409);
+  }
+
   // ONE transaction: the profile row + its features row + the activity entry +
-  // profile-trigger enrollment, so a mid-sequence failure never leaves a profile
-  // without features / an activity row without enrollment. The INSERT ... ON
-  // CONFLICT DO NOTHING returns no row on an email conflict → nothing is written
-  // and we surface a 409 (with the existing id) below.
+  // profile-trigger enrollment. ON CONFLICT DO NOTHING (any unique key) makes the insert
+  // race-safe; a lost race rolls forward to the 409 below.
   const created = await withTx(pool, async (client) => {
     const { rows } = await client.query(
-      `INSERT INTO profiles (workspace_id, email, external_id, attributes)
-       VALUES ($1, $2, $3, '{"unsubscribed": false}'::jsonb || $4::jsonb)
-       ON CONFLICT (workspace_id, email) DO NOTHING
-       RETURNING id, external_id, email, email_status`,
-      [ctx.workspaceId, email, externalId, JSON.stringify(attrs)],
+      `INSERT INTO profiles (workspace_id, email, phone, external_id, attributes)
+       VALUES ($1, $2, $3, $4, '{"unsubscribed": false}'::jsonb || $5::jsonb)
+       ON CONFLICT DO NOTHING
+       RETURNING id, external_id, email, phone, email_status`,
+      [ctx.workspaceId, email, phone, externalId, JSON.stringify(attrs)],
     );
-    if (!rows[0]) return null; // conflict — nothing written, roll forward to the 409
+    if (!rows[0]) return null; // race lost — a concurrent insert took the email/phone
     const profileId = (rows[0] as { id: string }).id;
     await client.query(
       `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2)
        ON CONFLICT (profile_id) DO NOTHING`,
       [profileId, ctx.workspaceId],
     );
-    // Surface the creation in the workspace Activity log.
     await client.query(
       `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
        VALUES ($1, $2, 'profile', 'profile_created', 'info', 'created manually')`,
       [ctx.workspaceId, profileId],
     );
-    // PROFILE-TRIGGER ENROLLMENT (§9B): enroll this new profile into active
-    // profile-trigger automations whose profileChange is created/any. Idempotent (ON
-    // CONFLICT 'once'). Composed into the SAME tx; never trusts a body workspace_id.
     await enrollFromProfileChange(enrollDepsOnClient(client), {
       workspace_id: ctx.workspaceId,
       profile_id: profileId,
@@ -4651,14 +4688,13 @@ export const createProfile: Handler = async (ctx, pool, req) => {
     return rows[0];
   });
   if (!created) {
-    const existing = await pool.query('SELECT id FROM profiles WHERE workspace_id = $1 AND email = $2', [
+    const col = email ? 'email' : 'phone';
+    const val = email ?? phone;
+    const existing = await pool.query(`SELECT id FROM profiles WHERE workspace_id = $1 AND ${col} = $2`, [
       ctx.workspaceId,
-      email,
+      val,
     ]);
-    return ok(
-      { error: `A profile with email ${email} already exists.`, profile_id: existing.rows[0]?.id ?? null },
-      409,
-    );
+    return ok({ error: `A profile with that ${col} already exists.`, profile_id: existing.rows[0]?.id ?? null }, 409);
   }
   return ok({ profile: created }, 201);
 };
@@ -4840,7 +4876,7 @@ export const getProfile: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    `SELECT id, external_id, email, email_status, attributes, created_at, updated_at,
+    `SELECT id, external_id, email, phone, email_status, attributes, created_at, updated_at,
             floor(extract(epoch from created_at) * 1000)::double precision AS created_at_unix,
             floor(extract(epoch from updated_at) * 1000)::double precision AS updated_at_unix
        FROM profiles WHERE id = $1`,
@@ -4873,10 +4909,36 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
   // Email edits follow the workspace's lowercase_emails policy.
-  const email =
-    b.email !== undefined
-      ? applyEmailPolicy(String(b.email).trim(), await lowercaseEmailsEnabled(pool, ctx.workspaceId))
-      : null;
+  // EMAIL edit: undefined = no change; '' (blank) = clear it; else validate + apply the
+  // lowercase policy. Clearing is symmetric with phone so clearing BOTH trips the DB CHECK.
+  let email: string | null = null;
+  let clearEmail = false;
+  if (b.email !== undefined) {
+    const raw = String(b.email).trim();
+    if (!raw) {
+      clearEmail = true;
+    } else {
+      email = applyEmailPolicy(raw, await lowercaseEmailsEnabled(pool, ctx.workspaceId));
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return ok({ error: 'a valid email address is required' }, 400);
+    }
+  }
+  // PHONE edit: undefined = no change; '' (blank) = clear it; else normalize to E.164 with
+  // the workspace default country (a non-blank, un-normalizable phone → 400). The
+  // "at least one identifier" invariant is enforced by the DB CHECK (surfaced as a 400).
+  let phone: string | null = null;
+  let phoneProvided = false;
+  let clearPhone = false;
+  if (b.phone !== undefined) {
+    phoneProvided = true;
+    const raw = String(b.phone).trim();
+    if (!raw) {
+      clearPhone = true;
+    } else {
+      const norm = normalizePhone(raw, await defaultPhoneCountry(pool, ctx.workspaceId));
+      if (!norm) return ok({ error: 'a valid phone number is required' }, 400);
+      phone = norm;
+    }
+  }
   const externalId = b.external_id !== undefined ? String(b.external_id) : null;
   const emailStatus = b.email_status !== undefined ? String(b.email_status) : null;
   if (emailStatus !== null && !EDITABLE_EMAIL_STATUS.has(emailStatus))
@@ -4888,7 +4950,8 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
     const a = b.attributes;
     if (a === null || typeof a !== 'object' || Array.isArray(a))
       return ok({ error: 'attributes must be an object' }, 400);
-    attributes = JSON.stringify(a);
+    // email/phone are core fields, never dynamic attributes.
+    attributes = JSON.stringify(stripReservedAttributes(a as Record<string, unknown>));
   }
   // ONE transaction: the UPDATE + suppression reconcile + activity entry +
   // profile-trigger enrollment, so a failure never leaves the suppression list or
@@ -4897,6 +4960,7 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
   // surfaces a friendly 409. A cross-workspace id matches nothing → 404.
   const changed: string[] = [];
   if (b.email !== undefined) changed.push('email');
+  if (phoneProvided) changed.push('phone');
   if (b.external_id !== undefined) changed.push('external_id');
   if (emailStatus !== null) changed.push('email_status');
   if (hasAttrs) changed.push('attributes');
@@ -4905,14 +4969,15 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
     outcome = await withTx(pool, async (client) => {
       const { rows } = await client.query(
         `UPDATE profiles SET
-           email = COALESCE($1, email),
+           email = CASE WHEN $10::boolean THEN NULL WHEN $1::text IS NOT NULL THEN $1::text ELSE email END,
            external_id = COALESCE($2, external_id),
            email_status = COALESCE($3, email_status),
            attributes = CASE WHEN $5::boolean THEN $4::jsonb ELSE attributes END,
+           phone = CASE WHEN $8::boolean THEN NULL WHEN $9::text IS NOT NULL THEN $9::text ELSE phone END,
            updated_at = now()
          WHERE id = $6 AND workspace_id = $7
-         RETURNING id, external_id, email, email_status, attributes`,
-        [email, externalId, emailStatus, attributes, hasAttrs, id, ctx.workspaceId],
+         RETURNING id, external_id, email, phone, email_status, attributes`,
+        [email, externalId, emailStatus, attributes, hasAttrs, id, ctx.workspaceId, clearPhone, phone, clearEmail],
       );
       if (!rows[0]) return { notFound: true };
       // Reconcile the suppression list to the profile's new state (like the real
@@ -4959,8 +5024,17 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
       return { profile: rows[0] };
     });
   } catch (e) {
-    if ((e as { code?: string }).code === '23505') {
-      return ok({ error: `A profile with email ${email} already exists.` }, 409);
+    const code = (e as { code?: string; constraint?: string }).code;
+    if (code === '23505') {
+      const onPhone = (e as { constraint?: string }).constraint === 'profiles_workspace_phone_key';
+      return ok(
+        { error: onPhone ? `A profile with phone ${phone} already exists.` : `A profile with email ${email} already exists.` },
+        409,
+      );
+    }
+    if (code === '23514') {
+      // the profiles_identity_present CHECK — clearing the last identifier.
+      return ok({ error: 'A profile must keep at least an email or a phone.' }, 400);
     }
     throw e;
   }
@@ -6107,30 +6181,6 @@ async function resolveIngestWorkspace(pool: Pool, rawKey: string): Promise<strin
   return rows[0]?.workspace_id ?? null;
 }
 
-/** Upsert a profile by (workspace, email), merging traits; returns id + created-vs-updated. */
-async function upsertProfileByEmail(
-  client: PoolClient,
-  ws: string,
-  email: string,
-  traits: Record<string, unknown>,
-): Promise<{ id: string; created: boolean }> {
-  const { rows } = await client.query<{ id: string; created: boolean }>(
-    `INSERT INTO profiles (workspace_id, email, attributes)
-       VALUES ($1, $2, '{"unsubscribed": false}'::jsonb || $3::jsonb)
-     ON CONFLICT (workspace_id, email)
-       DO UPDATE SET attributes = profiles.attributes || $3::jsonb
-     RETURNING id, (xmax = 0) AS created`,
-    [ws, email, JSON.stringify(traits)],
-  );
-  const row = rows[0]!;
-  await client.query(
-    `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2)
-       ON CONFLICT (profile_id) DO NOTHING`,
-    [row.id, ws],
-  );
-  return { id: row.id, created: row.created };
-}
-
 /**
  * Record a `profile_created` row in the workspace Activity log — parity with the
  * manual `createProfile` path so a profile created via the ingest API (/v1/track,
@@ -6146,11 +6196,72 @@ async function logProfileCreated(client: PoolClient, ws: string, profileId: stri
   );
 }
 
-/** Validate + normalize an ingest email (per the workspace's lowercase policy). */
-async function ingestEmail(pool: Pool, ws: string, raw: unknown): Promise<string | null> {
-  const trimmed = typeof raw === 'string' ? raw.trim() : '';
-  const email = applyEmailPolicy(trimmed, await lowercaseEmailsEnabled(pool, ws));
-  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : null;
+/**
+ * Upsert a profile by IDENTITY (email and/or phone), merging traits. "Prefer email, don't
+ * steal the phone": when an email is present it is the primary key; a phone is attached
+ * only if the profile has none yet AND the phone isn't already owned by another profile.
+ * A phone-only identity upserts on (workspace, phone). Reserved keys are stripped from
+ * traits (email/phone are core, never dynamic attributes).
+ */
+async function upsertProfileByIdentity(
+  client: PoolClient,
+  ws: string,
+  identity: { email: string | null; phone: string | null },
+  traits: Record<string, unknown>,
+): Promise<{ id: string; created: boolean }> {
+  const { email, phone } = identity;
+  const merged = JSON.stringify(stripReservedAttributes(traits));
+  let id: string;
+  let created: boolean;
+  if (email) {
+    const { rows } = await client.query<{ id: string; created: boolean; phone: string | null }>(
+      `INSERT INTO profiles (workspace_id, email, attributes)
+         VALUES ($1, $2, '{"unsubscribed": false}'::jsonb || $3::jsonb)
+       ON CONFLICT (workspace_id, email)
+         DO UPDATE SET attributes = profiles.attributes || $3::jsonb
+       RETURNING id, (xmax = 0) AS created, phone`,
+      [ws, email, merged],
+    );
+    const row = rows[0]!;
+    id = row.id;
+    created = row.created;
+    // Attach the phone only if free (don't steal it from another profile). A unique race
+    // → the UPDATE affects 0 rows / throws on the partial index → leave as-is.
+    if (phone && !row.phone) {
+      const owner = await phoneOwner(client, ws, phone);
+      if (!owner || owner === id) {
+        await client
+          .query('UPDATE profiles SET phone = $3 WHERE workspace_id = $1 AND id = $2 AND phone IS NULL', [ws, id, phone])
+          .catch(() => undefined);
+      }
+    }
+  } else {
+    const { rows } = await client.query<{ id: string; created: boolean }>(
+      `INSERT INTO profiles (workspace_id, phone, attributes)
+         VALUES ($1, $2, '{"unsubscribed": false}'::jsonb || $3::jsonb)
+       ON CONFLICT (workspace_id, phone) WHERE phone IS NOT NULL
+         DO UPDATE SET attributes = profiles.attributes || $3::jsonb
+       RETURNING id, (xmax = 0) AS created`,
+      [ws, phone, merged],
+    );
+    id = rows[0]!.id;
+    created = rows[0]!.created;
+  }
+  await client.query(
+    `INSERT INTO profile_features (profile_id, workspace_id) VALUES ($1, $2) ON CONFLICT (profile_id) DO NOTHING`,
+    [id, ws],
+  );
+  return { id, created };
+}
+
+/** Resolve + normalize an ingest identity (email and/or phone) per the workspace policy. */
+async function ingestIdentityFrom(pool: Pool, ws: string, b: Record<string, unknown>): Promise<IdentityResult> {
+  const lower = await lowercaseEmailsEnabled(pool, ws);
+  const country = await defaultPhoneCountry(pool, ws);
+  return resolveIdentity(
+    { email: b.email, phone: b.phone },
+    { defaultCountry: country, emailPolicy: (e) => applyEmailPolicy(e, lower) },
+  );
 }
 
 function objOrEmpty(v: unknown): Record<string, unknown> {
@@ -6166,8 +6277,8 @@ export async function ingestTrack(pool: Pool, rawKey: string, body: unknown): Pr
   const ws = await resolveIngestWorkspace(pool, rawKey);
   if (!ws) return ok({ error: 'invalid or revoked API key' }, 401);
   const b = asObject(body);
-  const email = await ingestEmail(pool, ws, b.email);
-  if (!email) return ok({ error: 'a valid email is required' }, 400);
+  const idres = await ingestIdentityFrom(pool, ws, b);
+  if (!idres.ok) return ok({ error: idres.error }, idres.status);
   const type = typeof b.event === 'string' ? b.event.trim() : '';
   if (!type) return ok({ error: 'an event name is required' }, 400);
   const properties = objOrEmpty(b.properties);
@@ -6175,7 +6286,7 @@ export async function ingestTrack(pool: Pool, rawKey: string, body: unknown): Pr
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { id, created } = await upsertProfileByEmail(client, ws, email, traits);
+    const { id, created } = await upsertProfileByIdentity(client, ws, idres.identity, traits);
     const ins = await client.query<{ event_id: string }>(
       `INSERT INTO events (event_id, workspace_id, profile_id, type, occurred_at, payload)
          VALUES (gen_random_uuid(), $1, $2, $3, now(), $4::jsonb) RETURNING event_id`,
@@ -6212,13 +6323,13 @@ export async function ingestIdentify(pool: Pool, rawKey: string, body: unknown):
   const ws = await resolveIngestWorkspace(pool, rawKey);
   if (!ws) return ok({ error: 'invalid or revoked API key' }, 401);
   const b = asObject(body);
-  const email = await ingestEmail(pool, ws, b.email);
-  if (!email) return ok({ error: 'a valid email is required' }, 400);
+  const idres = await ingestIdentityFrom(pool, ws, b);
+  if (!idres.ok) return ok({ error: idres.error }, idres.status);
   const traits = objOrEmpty(b.traits);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { id, created } = await upsertProfileByEmail(client, ws, email, traits);
+    const { id, created } = await upsertProfileByIdentity(client, ws, idres.identity, traits);
     await recomputeFeaturesAndSegments(client, ws, id);
     if (created) await logProfileCreated(client, ws, id, 'created via API (identify)');
     await enrollFromProfileChange(enrollDepsOnClient(client), {

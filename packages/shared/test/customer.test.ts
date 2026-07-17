@@ -23,6 +23,26 @@ describe('expandCustomerPath (path after "customer.")', () => {
   it('dotted non-reserved keys become attribute keys', () => {
     expect(expandCustomerPath('address.city')).toBe('attributes.address.city');
   });
+  it('phone is a reserved core column', () => {
+    expect(RESERVED_CUSTOMER_FIELDS).toContain('phone');
+    expect(expandCustomerPath('phone')).toBe('phone');
+  });
+  it('attributes.email / attributes.phone alias to the core column', () => {
+    expect(expandCustomerPath('attributes.email')).toBe('email');
+    expect(expandCustomerPath('attributes.phone')).toBe('phone');
+  });
+  it('a genuine dynamic attribute (attributes.tier) still resolves to the attribute', () => {
+    expect(expandCustomerPath('attributes.tier')).toBe('attributes.tier');
+  });
+});
+
+describe('phone in the merge map', () => {
+  it('customer.phone (and attributes.phone via expandCustomerToken) resolve to the column', () => {
+    const merge = customerMerge({ email: 'a@b.com', phone: '+972541111111' });
+    expect(merge['customer.phone']).toBe('+972541111111');
+    // the renderer expands customer.attributes.phone → customer.phone before lookup
+    expect(expandCustomerToken('customer.attributes.phone')).toBe('customer.phone');
+  });
 });
 
 describe('expandCustomerToken (full token, for email merge lookup)', () => {

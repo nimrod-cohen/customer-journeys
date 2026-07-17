@@ -30,7 +30,7 @@ describe.skipIf(!RUN)('automation IF: segment-membership + trigger-event (real P
     }
     await admin.query("INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,'S','manual')", [SEG, WS]);
     for (const [pid, ext] of [[PROF_IN, 'in'], [PROF_OUT, 'out']] as const) {
-      await admin.query('INSERT INTO profiles (id, workspace_id, external_id) VALUES ($1,$2,$3)', [pid, WS, ext]);
+      await admin.query('INSERT INTO profiles (id, workspace_id, external_id, email) VALUES ($1,$2,$3,$3::text)', [pid, WS, ext]);
     }
     // PROF_IN is a member of SEG; PROF_OUT is not.
     await admin.query(

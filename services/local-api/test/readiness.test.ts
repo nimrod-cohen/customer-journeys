@@ -96,3 +96,36 @@ describe('computeReadiness — storage (warning) + counts', () => {
     expect(r.warningCount).toBe(0);
   });
 });
+
+describe('computeReadiness — company vs workspace error split (settings-nav badges)', () => {
+  it('nothing configured → all 3 gaps are COMPANY (connectors); workspace 0', () => {
+    const r = computeReadiness(BASE);
+    expect(r.companyErrorCount).toBe(3); // email provider + sms + whatsapp
+    expect(r.workspaceErrorCount).toBe(0); // no SES → no domain/sender to chase
+  });
+
+  it('SES connected but no domain/sender → company 0 for email, workspace counts the 2 gaps', () => {
+    const r = computeReadiness({ ...BASE, hasSesConnector: true, hasSmsConnector: true, hasWhatsappConnector: true });
+    expect(r.companyErrorCount).toBe(0); // all providers connected
+    expect(r.workspaceErrorCount).toBe(2); // needs a verified domain + a sender
+  });
+
+  it('SES + domain + sender → both scopes clear', () => {
+    const r = computeReadiness({
+      ...BASE,
+      hasSesConnector: true,
+      verifiedDomainCount: 1,
+      senderCount: 1,
+      hasSmsConnector: true,
+      hasWhatsappConnector: true,
+    });
+    expect(r.companyErrorCount).toBe(0);
+    expect(r.workspaceErrorCount).toBe(0);
+  });
+
+  it('Resend (ready) → email needs no sending domain; workspace 0 even without SES', () => {
+    const r = computeReadiness({ ...BASE, hasResendConnector: true, resendFromSet: true });
+    expect(r.workspaceErrorCount).toBe(0);
+    expect(r.companyErrorCount).toBe(2); // sms + whatsapp still missing; email ok
+  });
+});

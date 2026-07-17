@@ -45,7 +45,7 @@ describe.skipIf(!RUN)('event enrollment from a processor-style tx (real Postgres
   }
 
   async function newProfile(ext: string): Promise<string> {
-    const r = await admin.query('INSERT INTO profiles (workspace_id, external_id) VALUES ($1,$2) RETURNING id', [WS, ext]);
+    const r = await admin.query('INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,$2,$2::text) RETURNING id', [WS, ext]);
     return r.rows[0].id as string;
   }
   async function newAutomation(def: AutomationDefinition): Promise<string> {

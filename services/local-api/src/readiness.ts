@@ -35,6 +35,11 @@ export interface WorkspaceReadiness {
   channels: { email: boolean; sms: boolean; whatsapp: boolean };
   errorCount: number;
   warningCount: number;
+  // Split of the error count by WHERE it's fixed, for the settings-nav indicators:
+  // COMPANY = connector/provider gaps (email provider, SMS, WhatsApp); WORKSPACE =
+  // sending-domain gaps (a verified domain + a sender), only when email uses SES.
+  companyErrorCount: number;
+  workspaceErrorCount: number;
 }
 
 /** The DB-derived facts the pure computation needs. */
@@ -80,11 +85,26 @@ export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
   const checks = [email, sms, whatsapp, storage];
   const errorCount = checks.filter((c) => c.severity === 'error' && c.status !== 'ready').length;
   const warningCount = checks.filter((c) => c.severity === 'warning' && c.status !== 'ready').length;
+
+  // Scope split for the settings-nav indicators.
+  const resendReady = i.hasResendConnector && i.resendFromSet;
+  const emailProviderOk = resendReady || i.hasSesConnector; // a provider is CONNECTED (company-level)
+  const companyErrorCount =
+    (emailProviderOk ? 0 : 1) + (i.hasSmsConnector ? 0 : 1) + (i.hasWhatsappConnector ? 0 : 1);
+  // Sending-domain gaps only matter when email goes through SES and isn't already covered
+  // by a ready Resend connector — otherwise there's nothing for the workspace owner to do.
+  const workspaceErrorCount =
+    i.hasSesConnector && !resendReady
+      ? (i.verifiedDomainCount > 0 ? 0 : 1) + (i.senderCount > 0 ? 0 : 1)
+      : 0;
+
   return {
     checks,
     channels: { email: email.status === 'ready', sms: sms.status === 'ready', whatsapp: whatsapp.status === 'ready' },
     errorCount,
     warningCount,
+    companyErrorCount,
+    workspaceErrorCount,
   };
 }
 

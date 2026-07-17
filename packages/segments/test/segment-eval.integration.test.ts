@@ -59,8 +59,8 @@ async function seedProfile(
   attributes: Record<string, unknown> = {},
 ): Promise<string> {
   const { rows } = await admin.query(
-    `INSERT INTO profiles (workspace_id, external_id, attributes)
-     VALUES ($1, $2, $3::jsonb) RETURNING id`,
+    `INSERT INTO profiles (workspace_id, external_id, email, attributes)
+     VALUES ($1, $2, $2 || '@test.local', $3::jsonb) RETURNING id`,
     [ws, externalId, JSON.stringify(attributes)],
   );
   const id = rows[0].id as string;

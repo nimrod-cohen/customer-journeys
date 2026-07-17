@@ -134,27 +134,32 @@ export function AppShell(): JSX.Element {
     };
   }, [navOpen]);
 
-  // Configuration readiness — drives the nav badge + the global "not set up" banner.
-  // Fetched per active workspace (re-fetched on switch AND whenever the route changes
-  // back, so fixing something and returning clears the alert). Only for roles that can
-  // see the Setup screen and that have an active workspace.
-  const canSetup = nav.some((n) => n.id === 'setup') && !!session.workspaceId;
-  const [readinessErrors, setReadinessErrors] = useState<number | null>(null);
-  const [bannerDismissed, setBannerDismissed] = useState(false);
+  // Configuration readiness — small COUNT badges on the Company / Workspace settings nav
+  // items (company = connector/provider gaps; workspace = sending-domain gaps). Clicking a
+  // badge opens the Setup summary page (there's no dedicated Setup nav item or global
+  // banner). Fetched per active workspace + re-fetched on route change so fixes clear it.
+  const canSeeSettings = nav.some((n) => n.id === 'company' || n.id === 'settings') && !!session.workspaceId;
+  const [companyErrors, setCompanyErrors] = useState(0);
+  const [workspaceErrors, setWorkspaceErrors] = useState(0);
   useEffect(() => {
-    setBannerDismissed(false);
-  }, [session.workspaceId]);
-  useEffect(() => {
-    if (!canSetup) {
-      setReadinessErrors(null);
+    if (!canSeeSettings) {
+      setCompanyErrors(0);
+      setWorkspaceErrors(0);
       return;
     }
     void api
-      .get<{ errorCount: number }>('/company/readiness')
-      .then((r) => setReadinessErrors(r.errorCount))
-      .catch(() => setReadinessErrors(null));
-  }, [canSetup, session.workspaceId, route]);
-  const showBanner = (readinessErrors ?? 0) > 0 && !bannerDismissed && !underNav(route, '/setup');
+      .get<{ companyErrorCount: number; workspaceErrorCount: number }>('/company/readiness')
+      .then((r) => {
+        setCompanyErrors(r.companyErrorCount);
+        setWorkspaceErrors(r.workspaceErrorCount);
+      })
+      .catch(() => {
+        setCompanyErrors(0);
+        setWorkspaceErrors(0);
+      });
+  }, [canSeeSettings, session.workspaceId, route]);
+  const setupBadgeFor = (id: string): number =>
+    id === 'company' ? companyErrors : id === 'settings' ? workspaceErrors : 0;
 
   // Land on a permitted screen: if the current route isn't in the role's nav
   // (e.g. a system-admin with no active workspace can't open /dashboards),
@@ -164,7 +169,10 @@ export function AppShell(): JSX.Element {
   const canEditor = (route === '/editor' || route.startsWith('/editor/')) && nav.some((n) => n.id === 'broadcasts');
   // The account screen has no nav item — any signed-in user may edit their own details.
   const canAccount = route === '/account';
-  const permitted = canEditor || canAccount || nav.some((n) => underNav(route, n.path));
+  // The Setup summary page has no nav item — it's reached from the settings-nav badges;
+  // permitted for anyone who can see a settings screen.
+  const canViewSetup = route === '/setup' && canSeeSettings;
+  const permitted = canEditor || canAccount || canViewSetup || nav.some((n) => underNav(route, n.path));
   const effectiveRoute = permitted ? route : (nav[0]?.path ?? route);
   useEffect(() => {
     if (!permitted && nav[0] && route !== nav[0].path) navigate(nav[0].path);
@@ -248,12 +256,20 @@ export function AppShell(): JSX.Element {
               >
                 <span class={active ? 'text-brand-300' : 'text-stone-400'}>{ICONS[item.id]}</span>
                 {item.label}
-                {item.id === 'setup' && (readinessErrors ?? 0) > 0 ? (
+                {setupBadgeFor(item.id) > 0 ? (
                   <span
-                    data-testid="nav-setup-badge"
-                    class="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white"
+                    role="button"
+                    tabIndex={0}
+                    title="Some channels aren’t fully set up — view setup"
+                    data-testid={`nav-setup-badge-${item.id}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      navigate('/setup');
+                    }}
+                    class="ml-auto grid h-5 min-w-5 cursor-pointer place-items-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white hover:bg-rose-600"
                   >
-                    {readinessErrors}
+                    {setupBadgeFor(item.id)}
                   </span>
                 ) : null}
               </a>
@@ -322,40 +338,6 @@ export function AppShell(): JSX.Element {
           </button>
           <span class="font-display text-sm font-bold text-ink-950">Customer Journeys</span>
         </div>
-        {/* Global readiness alert: something required to send isn't configured, so a
-            channel is disabled. Links to the Setup screen; dismissible per session. */}
-        {showBanner ? (
-          <div
-            data-testid="setup-banner"
-            class="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 sm:px-6 md:px-8"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-5 w-5 shrink-0 text-amber-600">
-              <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke-linejoin="round" />
-            </svg>
-            <span class="flex-1">
-              {readinessErrors} channel{readinessErrors === 1 ? '' : 's'} {readinessErrors === 1 ? 'is' : 'are'} not fully set up and can’t send.
-            </span>
-            <button
-              data-testid="setup-banner-review"
-              type="button"
-              onClick={() => navigate('/setup')}
-              class="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-700"
-            >
-              Review setup
-            </button>
-            <button
-              data-testid="setup-banner-dismiss"
-              type="button"
-              aria-label="Dismiss"
-              onClick={() => setBannerDismissed(true)}
-              class="grid h-7 w-7 place-items-center rounded-lg text-amber-700 transition hover:bg-amber-100"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
-                <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
-              </svg>
-            </button>
-          </div>
-        ) : null}
         {/* Key by route AND active workspace so switching company/workspace
             remounts the screen and re-fetches its (now re-scoped) data, even when
             the route is unchanged (e.g. switching while already on Dashboards). */}

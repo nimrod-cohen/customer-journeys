@@ -34,7 +34,9 @@ describeMaybe('GET /profiles/:id/subscription-link (real Postgres)', () => {
     await world.pool.query("INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,'owner')", [WS_A, USER]);
     await world.pool.query("INSERT INTO profiles (id, workspace_id, email, attributes) VALUES ($1,$2,$3,'{}'::jsonb)", [P_A, WS_A, EMAIL_A]);
     await world.pool.query("INSERT INTO profiles (id, workspace_id, email, attributes) VALUES ($1,$2,'link-b@beta.com','{}'::jsonb)", [P_B, WS_B]);
-    await world.pool.query("INSERT INTO profiles (id, workspace_id, external_id, attributes) VALUES ($1,$2,'noemail','{}'::jsonb)", [P_NOEMAIL, WS_A]);
+    // A profile with NO email (phone-only) — a subscription link is email-keyed, so it
+    // has none. Phone satisfies the identity CHECK.
+    await world.pool.query("INSERT INTO profiles (id, workspace_id, external_id, phone, attributes) VALUES ($1,$2,'noemail','+972540000003','{}'::jsonb)", [P_NOEMAIL, WS_A]);
   });
 
   afterAll(async () => {

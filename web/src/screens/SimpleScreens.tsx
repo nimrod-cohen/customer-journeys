@@ -185,6 +185,7 @@ interface Profile {
   id: string;
   external_id: string;
   email: string;
+  phone?: string | null;
   email_status: string;
   unsubscribed?: boolean;
   created_at?: string;
@@ -321,6 +322,7 @@ export function ProfileExplorer() {
   // any other id (e.g. external_id) is just another attribute.
   const [adding, setAdding] = useState(false);
   const [newEmail, setNewEmail] = useState('');
+  const [newPhone, setNewPhone] = useState('');
   const [newAttrs, setNewAttrs] = useState<AttrPair[]>([]);
   const [addError, setAddError] = useState('');
   const [creating, setCreating] = useState(false);
@@ -488,10 +490,12 @@ export function ProfileExplorer() {
       if (k) attributes[k] = parseAttrValue(p.value);
     }
     try {
-      await api.post('/profiles', { body: { email: newEmail.trim(), attributes } });
+      await api.post('/profiles', { body: { email: newEmail.trim(), phone: newPhone.trim(), attributes } });
       // Stay on the list: close the drawer and refresh so the new row appears,
       // and refresh the attribute-key picker (a new attribute may have been added).
       setAdding(false);
+      setNewEmail('');
+      setNewPhone('');
       await reloadProfiles(1);
       setPage(1);
       void reloadAttrKeys();
@@ -554,7 +558,7 @@ export function ProfileExplorer() {
             <Button
               data-testid="create-profile"
               onClick={createProfile}
-              disabled={!newEmail.trim() || creating}
+              disabled={!(newEmail.trim() || newPhone.trim()) || creating}
             >
               {creating ? 'Creating…' : 'Create profile'}
             </Button>
@@ -564,7 +568,7 @@ export function ProfileExplorer() {
         <div class="space-y-4">
           <Field
             label="Email"
-            hint="The identity key — events from any source are stitched to this person by email (required)."
+            hint="An identity key — events are stitched to this person by email. Email or phone is required (at least one)."
           >
             <Input
               data-testid="new-profile-email"
@@ -572,6 +576,19 @@ export function ProfileExplorer() {
               placeholder="person@company.com"
               value={newEmail}
               onInput={(e: Event) => setNewEmail((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+
+          <Field
+            label="Phone"
+            hint="An identity key — normalized to E.164. National numbers use the workspace default country (Workspace settings)."
+          >
+            <Input
+              data-testid="new-profile-phone"
+              type="tel"
+              placeholder="+972 54 123 4567"
+              value={newPhone}
+              onInput={(e: Event) => setNewPhone((e.target as HTMLInputElement).value)}
             />
           </Field>
 
@@ -826,7 +843,9 @@ export function ProfileExplorer() {
                 class="cursor-pointer hover:bg-stone-50/70"
               >
                 <td class="px-2 py-2.5 text-center align-middle">{p.unsubscribed ? <UnsubscribedIcon /> : null}</td>
-                <td class="px-4 py-2.5 text-ink-900">{p.email}</td>
+                <td class="px-4 py-2.5 text-ink-900">
+                  {p.email || (p.phone ? <span class="font-mono">{p.phone}</span> : <span class="text-stone-400">—</span>)}
+                </td>
                 {cols.order.map((id) =>
                   id === STATUS_COL ? (
                     <td key={id} class="px-4 py-2.5">

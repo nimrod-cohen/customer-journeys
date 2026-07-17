@@ -35,7 +35,7 @@ describe.skipIf(!RUN)('enrollment from segment entry (real Postgres)', () => {
       "INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,'seg','dynamic_realtime')",
       [SEG, WS],
     );
-    await admin.query('INSERT INTO profiles (id, workspace_id, external_id) VALUES ($1,$2,$3)', [
+    await admin.query('INSERT INTO profiles (id, workspace_id, external_id, email) VALUES ($1,$2,$3,$3::text)', [
       PROF,
       WS,
       'ext',
@@ -103,7 +103,7 @@ describe.skipIf(!RUN)('enrollment from segment entry (real Postgres)', () => {
   it("'exited' enrolls nobody", async () => {
     // Use a fresh profile so the 'once' guard doesn't mask the result.
     const p2 = await admin.query(
-      "INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'ext2') RETURNING id",
+      "INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'ext2','ext2') RETURNING id",
       [WS],
     );
     const row: SegmentChangeLogRow = {
@@ -129,7 +129,7 @@ describe.skipIf(!RUN)('enrollment from segment entry (real Postgres)', () => {
       )
     ).rows[0].id;
     const p3 = (
-      await admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'ext3') RETURNING id", [WS])
+      await admin.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'ext3','ext3') RETURNING id", [WS])
     ).rows[0].id;
 
     const res = await enrollFromSegmentChange(deps(), {
@@ -156,7 +156,7 @@ describe.skipIf(!RUN)('enrollment from segment entry (real Postgres)', () => {
       )
     ).rows[0].id;
     const p4 = (
-      await admin.query("INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'ext4') RETURNING id", [WS])
+      await admin.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'ext4','ext4') RETURNING id", [WS])
     ).rows[0].id;
     await admin.query(
       "INSERT INTO automation_enrollments (workspace_id, automation_id, profile_id, current_node, status) VALUES ($1,$2,$3,'trig','active')",

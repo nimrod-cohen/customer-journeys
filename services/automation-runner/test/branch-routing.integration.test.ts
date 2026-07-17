@@ -46,7 +46,7 @@ describe.skipIf(!RUN)('branch routing against real profile_features (real Postgr
       [PROF_MATCH, 'm', { purchase: 3 }],
       [PROF_NO, 'n', { purchase: 0 }],
     ] as const) {
-      await admin.query('INSERT INTO profiles (id, workspace_id, external_id) VALUES ($1,$2,$3)', [
+      await admin.query('INSERT INTO profiles (id, workspace_id, external_id, email) VALUES ($1,$2,$3,$3::text)', [
         pid,
         WS,
         ext,

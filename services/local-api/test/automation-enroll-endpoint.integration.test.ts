@@ -70,7 +70,7 @@ describeMaybe('POST /automations/:id/enroll (real Postgres)', () => {
   }
 
   async function newProfile(ws: string, ext: string): Promise<string> {
-    return (await world.pool.query('INSERT INTO profiles (workspace_id, external_id) VALUES ($1,$2) RETURNING id', [ws, ext])).rows[0].id;
+    return (await world.pool.query("INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,$2,$2||'@test.local') RETURNING id", [ws, ext])).rows[0].id;
   }
   async function addMember(ws: string, seg: string, profileId: string): Promise<void> {
     await world.pool.query(

@@ -35,7 +35,7 @@ describe.skipIf(!RUN)('expanded segment operators against real Postgres', () => 
     await cleanup();
     await admin.query("INSERT INTO workspaces (id, name, status) VALUES ($1,'W','active')", [WS]);
     for (const [id, ext, tier] of [[P_GOLD, 'g', 'Gold'], [P_SILVER, 's', 'Silver'], [P_BRONZE, 'b', 'Bronze']] as const) {
-      await admin.query('INSERT INTO profiles (id, workspace_id, external_id, attributes) VALUES ($1,$2,$3,$4::jsonb)', [id, WS, ext, JSON.stringify({ tier })]);
+      await admin.query('INSERT INTO profiles (id, workspace_id, external_id, email, attributes) VALUES ($1,$2,$3,$3||\'@test.local\',$4::jsonb)', [id, WS, ext, JSON.stringify({ tier })]);
     }
     // features: monetary_total + last_event_at (Bronze has NO event row → null).
     await admin.query("INSERT INTO profile_features (profile_id, workspace_id, monetary_total, last_event_at) VALUES ($1,$2,50, now() - interval '2 days')", [P_GOLD, WS]);

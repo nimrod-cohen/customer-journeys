@@ -70,7 +70,7 @@ describe.skipIf(!RUN)('enrollFromProfileChange (real Postgres)', () => {
   }
 
   async function newProfile(ws: string, ext: string): Promise<string> {
-    const r = await admin.query('INSERT INTO profiles (workspace_id, external_id) VALUES ($1,$2) RETURNING id', [ws, ext]);
+    const r = await admin.query('INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,$2,$2::text) RETURNING id', [ws, ext]);
     return r.rows[0].id as string;
   }
   async function newAutomation(ws: string, def: AutomationDefinition, status = 'active'): Promise<string> {

@@ -99,7 +99,7 @@ describe.skipIf(!RUN)('RLS tenant isolation (AC1)', () => {
     await expect(
       asWorkspace(wsA, async (c) => {
         await c.query(
-          "INSERT INTO profiles (workspace_id, external_id) VALUES ($1,'evil')",
+          "INSERT INTO profiles (workspace_id, external_id, email) VALUES ($1,'evil','evil')",
           [wsB],
         );
       }),

@@ -45,7 +45,7 @@ describe.skipIf(!RUN)('automation workspace scoping (real Postgres)', () => {
         [camp, ws, JSON.stringify(DEF), seg],
       );
     }
-    await admin.query('INSERT INTO profiles (id, workspace_id, external_id) VALUES ($1,$2,$3)', [
+    await admin.query('INSERT INTO profiles (id, workspace_id, external_id, email) VALUES ($1,$2,$3,$3::text)', [
       PROF_A,
       WS_A,
       'ext',
