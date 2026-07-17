@@ -106,6 +106,7 @@ import {
 } from '@cdp/service-metering';
 import type { LocalApiDeps } from './deps.js';
 import { assetObjectKey, type ObjectStorage, type R2StorageFactory } from './storage.js';
+import { gatherReadiness } from './readiness.js';
 
 /** A handler's request shape (already parsed by the server). */
 export interface HandlerRequest {
@@ -811,28 +812,22 @@ export interface ChannelAvailability {
 }
 
 /**
- * Which messaging channels the workspace can actually SEND on, derived from the
- * company's connectors — the single source of truth for broadcast/automation gating
- * and the Connectors UI. A channel is enabled when an enabled connector for it
- * exists AND that provider can really send: EMAIL needs a `resend` connector
- * (trusted From) OR a `ses` connector WITH a verified sending_domain in THIS
- * workspace; SMS needs `019`; WhatsApp needs `meta_whatsapp`.
+ * Which messaging channels the workspace can actually SEND on — the single source of
+ * truth for broadcast/automation gating and the Connectors UI. Derived from the shared
+ * configuration-readiness computation (see readiness.ts): a channel is enabled ONLY when
+ * it is fully READY — EMAIL needs a `resend` connector (with a From) OR a `ses` connector
+ * WITH a verified sending domain AND a named sender in THIS workspace; SMS needs `019`;
+ * WhatsApp needs `meta_whatsapp`. An incomplete channel is hard-disabled everywhere.
  */
 export async function channelsForWorkspace(pool: Pool, workspaceId: string): Promise<ChannelAvailability> {
-  const companyId = await companyIdForWorkspace(pool, workspaceId);
-  if (!companyId) return { email: false, sms: false, whatsapp: false };
-  const { rows } = await pool.query<{ channel: string; provider: string }>(
-    'SELECT channel, provider FROM company_connectors WHERE company_id = $1 AND enabled',
-    [companyId],
-  );
-  const has = (ch: string, pr?: string): boolean => rows.some((r) => r.channel === ch && (!pr || r.provider === pr));
-  let email = has('email', 'resend');
-  if (!email && has('email', 'ses')) {
-    const vd = await pool.query('SELECT 1 FROM sending_domains WHERE workspace_id = $1 AND verified LIMIT 1', [workspaceId]);
-    email = (vd.rowCount ?? 0) > 0;
-  }
-  return { email, sms: has('sms', '019'), whatsapp: has('whatsapp', 'meta_whatsapp') };
+  const { channels } = await gatherReadiness(pool, workspaceId);
+  return channels;
 }
+
+/** GET /company/readiness — the full per-workspace configuration readiness report. */
+export const getWorkspaceReadiness: Handler = async (ctx, pool) => {
+  return ok(await gatherReadiness(pool, ctx.workspaceId));
+};
 
 /**
  * Resolve the R2 object storage for a workspace's COMPANY (per-company buckets),
@@ -6312,6 +6307,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /company/connectors': putCompanyConnector,
   'DELETE /company/connectors/:id': deleteCompanyConnector,
   'GET /company/channels': getCompanyChannels,
+  'GET /company/readiness': getWorkspaceReadiness,
   'GET /company/channel-config': getCompanyChannelConfig,
   'PUT /company/channel-config': putCompanyChannelConfig,
   'DELETE /company/channel-config': deleteCompanyChannelConfig,

@@ -24,6 +24,7 @@ import { TemplatesList } from './screens/TemplatesList.js';
 import { Help } from './screens/Help.js';
 import { Activity } from './screens/Activity.js';
 import { TemplateEditor } from './screens/TemplateEditor.tsx';
+import { SetupScreen } from './screens/Setup.tsx';
 import { DialogHost } from './ui/dialog.tsx';
 import { ToastHost } from './ui/toast.tsx';
 import { EmailDesignerDrawer } from './components/EmailDesignerDrawer.tsx';
@@ -67,6 +68,7 @@ function screenFor(path: string): JSX.Element {
   // Workspace settings tabs: /settings (workspace), /settings/domains (sending
   // domains, per-workspace), and /settings/topics (subscription topics admin). The
   // per-domain setup screen is /settings/domains/new and /settings/domains/:id.
+  if (path === '/setup') return <SetupScreen />;
   if (path === '/settings') return <WorkspaceSettings tab="workspace" />;
   if (path === '/settings/domains') return <WorkspaceSettings tab="domains" />;
   if (path === '/settings/topics') return <WorkspaceSettings tab="topics" />;
@@ -131,6 +133,28 @@ export function AppShell(): JSX.Element {
       document.body.style.overflow = prev;
     };
   }, [navOpen]);
+
+  // Configuration readiness — drives the nav badge + the global "not set up" banner.
+  // Fetched per active workspace (re-fetched on switch AND whenever the route changes
+  // back, so fixing something and returning clears the alert). Only for roles that can
+  // see the Setup screen and that have an active workspace.
+  const canSetup = nav.some((n) => n.id === 'setup') && !!session.workspaceId;
+  const [readinessErrors, setReadinessErrors] = useState<number | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  useEffect(() => {
+    setBannerDismissed(false);
+  }, [session.workspaceId]);
+  useEffect(() => {
+    if (!canSetup) {
+      setReadinessErrors(null);
+      return;
+    }
+    void api
+      .get<{ errorCount: number }>('/company/readiness')
+      .then((r) => setReadinessErrors(r.errorCount))
+      .catch(() => setReadinessErrors(null));
+  }, [canSetup, session.workspaceId, route]);
+  const showBanner = (readinessErrors ?? 0) > 0 && !bannerDismissed && !underNav(route, '/setup');
 
   // Land on a permitted screen: if the current route isn't in the role's nav
   // (e.g. a system-admin with no active workspace can't open /dashboards),
@@ -224,6 +248,14 @@ export function AppShell(): JSX.Element {
               >
                 <span class={active ? 'text-brand-300' : 'text-stone-400'}>{ICONS[item.id]}</span>
                 {item.label}
+                {item.id === 'setup' && (readinessErrors ?? 0) > 0 ? (
+                  <span
+                    data-testid="nav-setup-badge"
+                    class="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white"
+                  >
+                    {readinessErrors}
+                  </span>
+                ) : null}
               </a>
             );
           })}
@@ -290,6 +322,40 @@ export function AppShell(): JSX.Element {
           </button>
           <span class="font-display text-sm font-bold text-ink-950">Customer Journeys</span>
         </div>
+        {/* Global readiness alert: something required to send isn't configured, so a
+            channel is disabled. Links to the Setup screen; dismissible per session. */}
+        {showBanner ? (
+          <div
+            data-testid="setup-banner"
+            class="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 sm:px-6 md:px-8"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-5 w-5 shrink-0 text-amber-600">
+              <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke-linejoin="round" />
+            </svg>
+            <span class="flex-1">
+              {readinessErrors} channel{readinessErrors === 1 ? '' : 's'} {readinessErrors === 1 ? 'is' : 'are'} not fully set up and can’t send.
+            </span>
+            <button
+              data-testid="setup-banner-review"
+              type="button"
+              onClick={() => navigate('/setup')}
+              class="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-700"
+            >
+              Review setup
+            </button>
+            <button
+              data-testid="setup-banner-dismiss"
+              type="button"
+              aria-label="Dismiss"
+              onClick={() => setBannerDismissed(true)}
+              class="grid h-7 w-7 place-items-center rounded-lg text-amber-700 transition hover:bg-amber-100"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+              </svg>
+            </button>
+          </div>
+        ) : null}
         {/* Key by route AND active workspace so switching company/workspace
             remounts the screen and re-fetches its (now re-scoped) data, even when
             the route is unchanged (e.g. switching while already on Dashboards). */}

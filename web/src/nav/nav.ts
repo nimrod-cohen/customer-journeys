@@ -19,6 +19,7 @@ export interface NavItem {
 /** The full nav catalogue (§12 screens). Order is the sidebar order. */
 export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'dashboards', label: 'Dashboards', path: '/dashboards', capability: 'manage_content' },
+  { id: 'setup', label: 'Setup', path: '/setup', capability: 'manage_content' },
   { id: 'activity', label: 'Activity log', path: '/activity', capability: 'manage_content' },
   { id: 'segments', label: 'Segments', path: '/segments', capability: 'manage_content' },
   { id: 'broadcasts', label: 'Broadcasts', path: '/broadcasts', capability: 'manage_content' },

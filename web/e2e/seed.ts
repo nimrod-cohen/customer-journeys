@@ -131,9 +131,18 @@ export async function seed(): Promise<void> {
     // domain path unchanged). Connectors are company-scoped → CO_ACME.
     await pool.query(
       `INSERT INTO company_connectors (company_id, channel, provider, config, secret, enabled) VALUES
-         ($1,'sms','019',$2::jsonb,NULL,true),
-         ($1,'whatsapp','meta_whatsapp',$3::jsonb,NULL,true)`,
-      [CO_ACME, JSON.stringify({ source: 'Acme', default_country: 'IL' }), JSON.stringify({ phone_number_id: '000' })],
+         ($1,'email','ses',$2::jsonb,NULL,true),
+         ($1,'sms','019',$3::jsonb,NULL,true),
+         ($1,'whatsapp','meta_whatsapp',$4::jsonb,NULL,true)`,
+      [
+        CO_ACME,
+        // email/ses connector → email channel READY (the workspace already has a verified
+        // sending domain + a named sender). sesForWorkspace reads company_ses_config (not
+        // connectors) + honors LOCAL_SES_FORCE_MOCK, so this does NOT flip sends to real SES.
+        JSON.stringify({ region: 'il-central-1' }),
+        JSON.stringify({ source: 'Acme', default_country: 'IL' }),
+        JSON.stringify({ phone_number_id: '000' }),
+      ],
     );
     await pool.query(
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',

@@ -38,6 +38,7 @@ describeMaybe('company connectors + channel availability (real Postgres)', () =>
   });
   async function cleanup(): Promise<void> {
     await pool.query('DELETE FROM company_connectors WHERE company_id = $1', [CO]);
+    await pool.query('DELETE FROM domain_senders WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM sending_domains WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM company_users WHERE company_id = $1', [CO]);
     await pool.query('DELETE FROM workspaces WHERE id = $1', [WS]);
@@ -64,12 +65,16 @@ describeMaybe('company connectors + channel availability (real Postgres)', () =>
     expect(await channels()).toMatchObject({ email: true });
   });
 
-  it('a SES connector needs a verified sending_domain to enable email', async () => {
+  it('a SES connector needs a verified sending_domain AND a sender to enable email', async () => {
     await pool.query('DELETE FROM company_connectors WHERE company_id = $1', [CO]); // drop resend
+    await pool.query('DELETE FROM domain_senders WHERE workspace_id = $1', [WS]);
+    await pool.query('DELETE FROM sending_domains WHERE workspace_id = $1', [WS]);
     await dispatch({ method: 'PUT', path: '/company/connectors', authorization: owner(), query: {}, body: { provider: 'ses', config: { region: 'il-central-1', access_key_id: 'AKIA' }, secret: 'sk' } }, env());
     expect((await channels()).email).toBe(false); // SES but no verified domain
     await pool.query("INSERT INTO sending_domains (workspace_id, domain, verified) VALUES ($1,'acme.com',true)", [WS]);
-    expect((await channels()).email).toBe(true); // now verified
+    expect((await channels()).email).toBe(false); // verified domain but no sender yet
+    await pool.query("INSERT INTO domain_senders (workspace_id, domain, name, email) VALUES ($1,'acme.com','Acme','team@acme.com')", [WS]);
+    expect((await channels()).email).toBe(true); // provider + verified domain + sender
   });
 
   it('019 → sms, meta → whatsapp; delete disables the channel', async () => {
