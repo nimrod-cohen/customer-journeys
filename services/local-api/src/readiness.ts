@@ -14,10 +14,14 @@ export interface ReadinessFix {
   label: string;
   route: string;
 }
+/** Where a requirement is fixed — used to filter the Setup page by the badge clicked. */
+export type ReadinessScope = 'company' | 'workspace';
+
 /** One sub-requirement of a check (e.g. "A verified sending domain"). */
 export interface ReadinessItem {
   label: string;
   ok: boolean;
+  scope: ReadinessScope;
   fix?: ReadinessFix;
 }
 export interface ReadinessCheck {
@@ -112,12 +116,12 @@ export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
 function computeEmail(i: ReadinessInputs): ReadinessCheck {
   const hasProvider = i.hasResendConnector || i.hasSesConnector;
   const items: ReadinessItem[] = [
-    { label: 'Email provider connected (Amazon SES or Resend)', ok: hasProvider, fix: FIX_CONNECTORS },
+    { label: 'Email provider connected (Amazon SES or Resend)', ok: hasProvider, scope: 'company', fix: FIX_CONNECTORS },
   ];
 
   // Resend is trusted (domain verified in Resend's dashboard); it only needs a From.
   if (i.hasResendConnector) {
-    items.push({ label: 'Resend “From” address set', ok: i.resendFromSet, fix: FIX_CONNECTORS });
+    items.push({ label: 'Resend “From” address set', ok: i.resendFromSet, scope: 'company', fix: FIX_CONNECTORS });
     const ready = i.resendFromSet;
     return {
       id: 'email',
@@ -132,8 +136,8 @@ function computeEmail(i: ReadinessInputs): ReadinessCheck {
   // SES path: needs a verified sending domain AND a named sender.
   const domainOk = i.verifiedDomainCount > 0;
   const senderOk = i.senderCount > 0;
-  items.push({ label: 'A verified sending domain', ok: i.hasSesConnector && domainOk, fix: FIX_DOMAINS });
-  items.push({ label: 'A sender address (From)', ok: i.hasSesConnector && senderOk, fix: FIX_DOMAINS });
+  items.push({ label: 'A verified sending domain', ok: i.hasSesConnector && domainOk, scope: 'workspace', fix: FIX_DOMAINS });
+  items.push({ label: 'A sender address (From)', ok: i.hasSesConnector && senderOk, scope: 'workspace', fix: FIX_DOMAINS });
 
   const ready = i.hasSesConnector && domainOk && senderOk;
   let summary: string;
@@ -165,7 +169,7 @@ function computeSimpleChannel(
     label,
     severity: 'error',
     status: connected ? 'ready' : 'not_configured',
-    items: [{ label: itemLabel, ok: connected, fix: FIX_CONNECTORS }],
+    items: [{ label: itemLabel, ok: connected, scope: 'company', fix: FIX_CONNECTORS }],
     summary: connected ? readySummary : missingSummary,
   };
 }
@@ -176,7 +180,7 @@ function computeStorage(r2Configured: boolean): ReadinessCheck {
     label: 'Image storage',
     severity: 'warning',
     status: r2Configured ? 'ready' : 'not_configured',
-    items: [{ label: 'Cloudflare R2 connected', ok: r2Configured, fix: FIX_STORAGE }],
+    items: [{ label: 'Cloudflare R2 connected', ok: r2Configured, scope: 'company', fix: FIX_STORAGE }],
     summary: r2Configured
       ? 'Images are stored in Cloudflare R2.'
       : 'Images are stored in the database. Connect Cloudflare R2 for CDN-backed storage.',

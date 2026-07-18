@@ -69,6 +69,8 @@ function screenFor(path: string): JSX.Element {
   // domains, per-workspace), and /settings/topics (subscription topics admin). The
   // per-domain setup screen is /settings/domains/new and /settings/domains/:id.
   if (path === '/setup') return <SetupScreen />;
+  if (path === '/setup/company') return <SetupScreen scope="company" />;
+  if (path === '/setup/workspace') return <SetupScreen scope="workspace" />;
   if (path === '/settings') return <WorkspaceSettings tab="workspace" />;
   if (path === '/settings/domains') return <WorkspaceSettings tab="domains" />;
   if (path === '/settings/topics') return <WorkspaceSettings tab="topics" />;
@@ -171,7 +173,7 @@ export function AppShell(): JSX.Element {
   const canAccount = route === '/account';
   // The Setup summary page has no nav item — it's reached from the settings-nav badges;
   // permitted for anyone who can see a settings screen.
-  const canViewSetup = route === '/setup' && canSeeSettings;
+  const canViewSetup = (route === '/setup' || route.startsWith('/setup/')) && canSeeSettings;
   const permitted = canEditor || canAccount || canViewSetup || nav.some((n) => underNav(route, n.path));
   const effectiveRoute = permitted ? route : (nav[0]?.path ?? route);
   useEffect(() => {
@@ -265,7 +267,8 @@ export function AppShell(): JSX.Element {
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      navigate('/setup');
+                      // Deep-link the Setup page to the scope this badge represents.
+                      navigate(item.id === 'company' ? '/setup/company' : '/setup/workspace');
                     }}
                     class="ml-auto grid h-5 min-w-5 cursor-pointer place-items-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white hover:bg-rose-600"
                   >

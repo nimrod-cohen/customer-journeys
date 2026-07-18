@@ -31,9 +31,17 @@ test('a workspace missing a verified domain shows a WORKSPACE-settings badge →
   await expect(wsBadge).toBeVisible();
   await expect(page.getByTestId('nav-setup-badge-company')).toHaveCount(0);
 
-  // Clicking the badge opens the Setup summary page; email is incomplete there.
+  // Clicking the WORKSPACE badge opens the Setup page FILTERED to sending domains: the
+  // email card shows its domain/sender gap (Incomplete); the company-only channels (SMS)
+  // are hidden.
   await wsBadge.click();
   await page.getByTestId('setup-screen').waitFor();
+  await expect(page.getByTestId('setup-filter-workspace')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('readiness-status-email')).toContainText('Incomplete');
+  await expect(page.getByTestId('readiness-sms')).toHaveCount(0); // SMS is a company-scoped check
+
+  // Switching to the Company filter shows the connector checks (SMS reappears, all ready).
+  await page.getByTestId('setup-filter-company').click();
+  await expect(page.getByTestId('readiness-sms')).toBeVisible();
   await expect(page.getByTestId('readiness-status-sms')).toContainText('Ready');
 });

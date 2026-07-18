@@ -1,12 +1,17 @@
 // Setup / readiness (§10). A single place that answers "am I set up to send?" — it
 // fetches GET /company/readiness and renders one card per channel (Email / SMS /
-// WhatsApp) plus an image-storage note. An `error`-severity check that isn't ready
-// means the channel is HARD-DISABLED for broadcasts + automations (see the banner in
-// AppShell); each failing sub-item links to the screen that fixes it.
+// WhatsApp) plus an image-storage note. An `error`-severity check that isn't ready means
+// the channel is HARD-DISABLED for broadcasts + automations; each failing sub-item links
+// to the screen that fixes it. The page can be SCOPED (via the route / tabs) to just the
+// COMPANY-level (connectors/providers) or WORKSPACE-level (sending domains) requirements —
+// this is what the Company/Workspace settings nav badges deep-link into.
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Badge, Button, Card, PageHeader } from '../ui/kit.js';
+
+type ReadinessScope = 'company' | 'workspace';
+type ScopeFilter = 'all' | ReadinessScope;
 
 interface ReadinessFix {
   label: string;
@@ -15,6 +20,7 @@ interface ReadinessFix {
 interface ReadinessItem {
   label: string;
   ok: boolean;
+  scope: ReadinessScope;
   fix?: ReadinessFix;
 }
 interface ReadinessCheck {
@@ -30,12 +36,14 @@ export interface WorkspaceReadiness {
   channels: { email: boolean; sms: boolean; whatsapp: boolean };
   errorCount: number;
   warningCount: number;
+  companyErrorCount: number;
+  workspaceErrorCount: number;
 }
 
-function statusBadge(c: ReadinessCheck) {
-  if (c.status === 'ready') return <Badge tone="success">Ready</Badge>;
-  if (c.severity === 'warning') return <Badge tone="warn">Optional</Badge>;
-  return <Badge tone="danger">{c.status === 'incomplete' ? 'Incomplete' : 'Not set up'}</Badge>;
+function statusBadge(status: ReadinessCheck['status'], severity: ReadinessCheck['severity']) {
+  if (status === 'ready') return <Badge tone="success">Ready</Badge>;
+  if (severity === 'warning') return <Badge tone="warn">Optional</Badge>;
+  return <Badge tone="danger">{status === 'incomplete' ? 'Incomplete' : 'Not set up'}</Badge>;
 }
 
 function CheckIcon({ ok }: { ok: boolean }) {
@@ -50,22 +58,23 @@ function CheckIcon({ ok }: { ok: boolean }) {
   );
 }
 
-function CheckCard({ c }: { c: ReadinessCheck }) {
+/** A check card, showing only the items in the active scope filter, with a status pill
+ *  recomputed from THOSE items (so an email card under "Workspace" reflects only its
+ *  domain/sender requirements). */
+function CheckCard({ c, filter }: { c: ReadinessCheck; filter: ScopeFilter }) {
+  const items = filter === 'all' ? c.items : c.items.filter((it) => it.scope === filter);
+  const status: ReadinessCheck['status'] =
+    items.every((it) => it.ok) ? 'ready' : c.severity === 'warning' ? 'not_configured' : 'incomplete';
   const ring =
-    c.status === 'ready'
-      ? 'border-emerald-200'
-      : c.severity === 'warning'
-        ? 'border-amber-200'
-        : 'border-rose-200';
+    status === 'ready' ? 'border-emerald-200' : c.severity === 'warning' ? 'border-amber-200' : 'border-rose-200';
   return (
-    <Card data-testid={`readiness-${c.id}`} data-status={c.status} class={`p-5 ${ring}`}>
+    <Card data-testid={`readiness-${c.id}`} data-status={status} class={`p-5 ${ring}`}>
       <div class="flex items-center justify-between gap-3">
         <h2 class="text-base font-bold text-ink-900">{c.label}</h2>
-        <span data-testid={`readiness-status-${c.id}`}>{statusBadge(c)}</span>
+        <span data-testid={`readiness-status-${c.id}`}>{statusBadge(status, c.severity)}</span>
       </div>
-      <p class="mt-1 text-sm text-stone-600">{c.summary}</p>
       <ul class="mt-4 space-y-2">
-        {c.items.map((it, idx) => (
+        {items.map((it, idx) => (
           <li key={idx} class="flex items-center justify-between gap-3">
             <span class="flex items-center gap-2 text-sm text-ink-800">
               <CheckIcon ok={it.ok} />
@@ -83,9 +92,20 @@ function CheckCard({ c }: { c: ReadinessCheck }) {
   );
 }
 
-export function SetupScreen() {
+const FILTER_TABS: { id: ScopeFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'company', label: 'Company connectors' },
+  { id: 'workspace', label: 'Sending domains' },
+];
+
+export function SetupScreen({ scope = 'all' }: { scope?: ScopeFilter }) {
   const [data, setData] = useState<WorkspaceReadiness | null>(null);
   const [err, setErr] = useState('');
+  const [filter, setFilter] = useState<ScopeFilter>(scope);
+  // Follow the route scope when it changes (a different badge deep-links a different scope).
+  useEffect(() => {
+    setFilter(scope);
+  }, [scope]);
 
   useEffect(() => {
     void api
@@ -94,26 +114,53 @@ export function SetupScreen() {
       .catch(() => setErr('Could not load your setup status.'));
   }, []);
 
+  // Only the checks that have a requirement in the active scope.
+  const visibleChecks =
+    data == null
+      ? []
+      : data.checks.filter((c) => filter === 'all' || c.items.some((it) => it.scope === filter));
+  const scopeErrors =
+    filter === 'company' ? data?.companyErrorCount ?? 0 : filter === 'workspace' ? data?.workspaceErrorCount ?? 0 : data?.errorCount ?? 0;
+
   const subtitle =
     data == null
       ? 'Checking what still needs configuring…'
-      : data.errorCount > 0
-        ? `${data.errorCount} thing${data.errorCount === 1 ? '' : 's'} to fix before you can send on every channel.`
-        : 'Everything required to send is configured.';
+      : scopeErrors > 0
+        ? `${scopeErrors} thing${scopeErrors === 1 ? '' : 's'} to fix.`
+        : 'Everything required here is configured.';
 
   return (
     <section data-testid="setup-screen">
       <PageHeader title="Setup" subtitle={subtitle} />
+
+      {/* Scope filter — All / Company connectors / Sending domains. */}
+      <div class="mb-5 inline-flex rounded-lg border border-stone-200 bg-white p-0.5">
+        {FILTER_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            data-testid={`setup-filter-${t.id}`}
+            aria-pressed={filter === t.id}
+            onClick={() => setFilter(t.id)}
+            class={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+              filter === t.id ? 'bg-brand-500 text-ink-950' : 'text-stone-600 hover:bg-stone-100'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {err ? <Card class="p-5 text-sm text-rose-600">{err}</Card> : null}
       {data == null ? null : (
         <div class="space-y-4">
-          {data.errorCount === 0 && data.warningCount === 0 ? (
+          {scopeErrors === 0 ? (
             <Card data-testid="readiness-all-good" class="border-emerald-200 bg-emerald-50/50 p-5 text-sm text-emerald-800">
-              ✓ You're fully set up — every channel is ready to send.
+              ✓ {filter === 'all' ? 'Everything required to send is configured.' : 'Nothing to fix here.'}
             </Card>
           ) : null}
-          {data.checks.map((c) => (
-            <CheckCard key={c.id} c={c} />
+          {visibleChecks.map((c) => (
+            <CheckCard key={c.id} c={c} filter={filter} />
           ))}
         </div>
       )}
