@@ -91,12 +91,13 @@ export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
   const emailProviderOk = resendReady || i.hasSesConnector; // a provider is CONNECTED (company-level)
   const companyErrorCount =
     (emailProviderOk ? 0 : 1) + (i.hasSmsConnector ? 0 : 1) + (i.hasWhatsappConnector ? 0 : 1);
-  // Sending-domain gaps only matter when email goes through SES and isn't already covered
-  // by a ready Resend connector — otherwise there's nothing for the workspace owner to do.
-  const workspaceErrorCount =
-    i.hasSesConnector && !resendReady
-      ? (i.verifiedDomainCount > 0 ? 0 : 1) + (i.senderCount > 0 ? 0 : 1)
-      : 0;
+  // Sending-domain gaps (a verified domain + a sender) are shown UNLESS email is already
+  // covered by a ready Resend connector (Resend verifies its own domain, so no in-app
+  // sending domain is needed). Otherwise — including when NO email provider is connected
+  // yet — a missing sending domain / sender is a real workspace-level gap to surface.
+  const workspaceErrorCount = resendReady
+    ? 0
+    : (i.verifiedDomainCount > 0 ? 0 : 1) + (i.senderCount > 0 ? 0 : 1);
 
   return {
     checks,

@@ -98,10 +98,10 @@ describe('computeReadiness — storage (warning) + counts', () => {
 });
 
 describe('computeReadiness — company vs workspace error split (settings-nav badges)', () => {
-  it('nothing configured → all 3 gaps are COMPANY (connectors); workspace 0', () => {
+  it('nothing configured → 3 COMPANY gaps (providers) AND 2 WORKSPACE gaps (domain + sender)', () => {
     const r = computeReadiness(BASE);
     expect(r.companyErrorCount).toBe(3); // email provider + sms + whatsapp
-    expect(r.workspaceErrorCount).toBe(0); // no SES → no domain/sender to chase
+    expect(r.workspaceErrorCount).toBe(2); // no verified sending domain + no sender (email not on Resend)
   });
 
   it('SES connected but no domain/sender → company 0 for email, workspace counts the 2 gaps', () => {
