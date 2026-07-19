@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useStore } from './store/store.js';
 import { sessionStore, switchWorkspace, logout, api } from './store/session.js';
+import { readinessStore } from './store/readiness.js';
 import { routeStore, navigate } from './router.js';
 import { buildNav } from './nav/nav.js';
 import { ICONS } from './ui/icons.js';
@@ -119,6 +120,7 @@ function screenFor(path: string): JSX.Element {
 export function AppShell(): JSX.Element {
   const session = useStore(sessionStore);
   const route = useStore(routeStore);
+  const readinessTick = useStore(readinessStore);
   const nav = buildNav(session.role);
   // Mobile nav drawer: the sidebar slides in over an overlay below md; it stays a
   // fixed in-flow sidebar at md+ (desktop unchanged). Closes on route change.
@@ -159,7 +161,7 @@ export function AppShell(): JSX.Element {
         setCompanyErrors(0);
         setWorkspaceErrors(0);
       });
-  }, [canSeeSettings, session.workspaceId, route]);
+  }, [canSeeSettings, session.workspaceId, route, readinessTick]);
   const setupBadgeFor = (id: string): number =>
     id === 'company' ? companyErrors : id === 'settings' ? workspaceErrors : 0;
 

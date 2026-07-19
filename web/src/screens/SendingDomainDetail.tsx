@@ -8,6 +8,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { askConfirm } from '../ui/dialog.tsx';
+import { refreshReadiness } from '../store/readiness.js';
 import { Badge, Button, Card, Input, PageHeader } from '../ui/kit.js';
 
 interface DnsRecord {
@@ -166,6 +167,7 @@ function DomainEditor({ id }: { id: string }) {
         );
       }
       await load();
+      refreshReadiness(); // a newly-verified domain clears the Workspace settings badge
     } catch (e) {
       setCheckMsg((e as { error?: string })?.error ?? 'Could not check with SES.');
     } finally {
@@ -199,6 +201,7 @@ function DomainEditor({ id }: { id: string }) {
       setSName('');
       setSLocal('');
       await load();
+      refreshReadiness(); // adding a sender can clear the Workspace settings badge
     } catch (e) {
       setSError((e as { error?: string })?.error ?? 'Could not add the sender.');
     } finally {
@@ -218,6 +221,7 @@ function DomainEditor({ id }: { id: string }) {
     try {
       await api.del(`/domain-senders/${s.id}`);
       await load();
+      refreshReadiness(); // removing the last sender can raise the Workspace settings badge
     } catch (e) {
       setSError((e as { error?: string })?.error ?? 'Could not remove the sender.');
     }

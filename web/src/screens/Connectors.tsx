@@ -8,6 +8,7 @@ import type { JSX } from 'preact';
 import { api } from '../store/session.js';
 import { Button, Card, Field, Input } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
+import { refreshReadiness } from '../store/readiness.js';
 
 interface ProviderField {
   key: string;
@@ -258,6 +259,7 @@ function ConnectorCard({ spec, existing, onChanged }: { spec: ProviderSpec; exis
       setSecret('');
       showToast(`${meta.label} connected.`, { tone: 'success' });
       await onChanged();
+      refreshReadiness(); // update the Company/Workspace settings nav badges immediately
     } catch (e) {
       showToast((e as { error?: string })?.error ?? `Could not save ${meta.label}.`, { tone: 'error' });
     } finally {
@@ -272,6 +274,7 @@ function ConnectorCard({ spec, existing, onChanged }: { spec: ProviderSpec; exis
       await api.del(`/company/connectors/${existing.id}`);
       showToast(`${meta.label} disconnected.`, { tone: 'success' });
       await onChanged();
+      refreshReadiness(); // update the Company/Workspace settings nav badges immediately
     } catch (e) {
       showToast((e as { error?: string })?.error ?? 'Could not disconnect.', { tone: 'error' });
     } finally {
