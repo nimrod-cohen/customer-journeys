@@ -9,6 +9,17 @@ import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { askConfirm } from '../ui/dialog.tsx';
 import { refreshReadiness } from '../store/readiness.js';
+import { showToast } from '../ui/toast.tsx';
+
+/** Copy `text` to the clipboard and toast a confirmation (labelled by the column). */
+async function copyValue(text: string, label: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(`${label} copied to clipboard`, { tone: 'success' });
+  } catch {
+    showToast('Could not copy — copy it manually', { tone: 'error' });
+  }
+}
 import { Badge, Button, Card, Input, PageHeader } from '../ui/kit.js';
 
 interface DnsRecord {
@@ -312,10 +323,30 @@ function DomainEditor({ id }: { id: string }) {
                           </span>
                         </td>
                         <td class="px-3 py-2 font-mono text-stone-500">{rec.type}</td>
-                        <td class="max-w-[16rem] truncate px-3 py-2 font-mono text-ink-900">{rec.name}</td>
-                        <td class="px-3 py-2 font-mono text-stone-600">
-                          <span class="block max-w-[18rem] truncate">{rec.value}</span>
-                          {rec.note ? <span class="mt-0.5 block font-sans text-[11px] text-stone-400">{rec.note}</span> : null}
+                        <td class="px-0 py-0 font-mono text-ink-900">
+                          <button
+                            type="button"
+                            data-testid="dns-record-name"
+                            title="Click to copy the full name"
+                            onClick={() => void copyValue(rec.name, 'Name')}
+                            class="block w-full max-w-[16rem] cursor-pointer truncate px-3 py-2 text-left hover:bg-brand-50 focus:bg-brand-50 focus:outline-none"
+                          >
+                            {rec.name}
+                          </button>
+                        </td>
+                        <td class="px-0 py-0 font-mono text-stone-600">
+                          <button
+                            type="button"
+                            data-testid="dns-record-value"
+                            title="Click to copy the full value"
+                            onClick={() => void copyValue(rec.value, 'Value')}
+                            class="block w-full cursor-pointer px-3 py-2 text-left hover:bg-brand-50 focus:bg-brand-50 focus:outline-none"
+                          >
+                            <span class="block max-w-[18rem] truncate">{rec.value}</span>
+                            {rec.note ? (
+                              <span class="mt-0.5 block font-sans text-[11px] text-stone-400">{rec.note}</span>
+                            ) : null}
+                          </button>
                         </td>
                         <td class="px-3 py-2">
                           <Badge tone={rec.required ? 'warn' : 'neutral'}>
