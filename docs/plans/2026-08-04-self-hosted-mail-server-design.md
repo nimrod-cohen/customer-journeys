@@ -91,6 +91,42 @@ logic. Everything we own is TypeScript.
 **Message-ID is ours.** Unlike SES, we generate the `Message-ID` before sending and store it
 where `ses_message_id` lives today. Bounce correlation becomes exact rather than best-effort.
 
+### Interim relay (while Hetzner's port 25 is blocked)
+
+Hetzner will not consider unblocking outbound 25 until an account is roughly a month old. Until
+then the Hetzner box runs the **entire** pipeline and hands finished messages to an existing VPS
+for final delivery:
+
+```
+Fly app --> Hetzner (accepts, signs DKIM, queues, logs) --587--> relay1 --25--> internet
+                ^                                                              |
+                +---------------- 25 inbound: bounces --------------------------+
+```
+
+**Hetzner's block covers ALL outbound port 25, including to your own relay.** Verified empirically:
+`gmail-smtp-in:25` and `smtp.gmail.com:465` both time out, while `smtp.gmail.com:587` connects. So
+the relay hop must use **port 587**, not 25 — a `relayhost` on port 25 silently times out.
+
+**Inbound 25 is unaffected**, so bounces reach the Hetzner box today and the whole bounce pipeline
+can be built and tested during the wait.
+
+Relay side, kept deliberately lean (that box has another job):
+
+- Postfix `submission` service on 587, `smtpd_client_restrictions = permit_mynetworks, reject`.
+- The Hetzner IP added to `mynetworks` — no SASL backend, no certificate management. Acceptable for
+  a single `/32` over a one-month bridge; spoofing a full TCP SMTP session is impractical.
+- A narrow ufw rule allowing 587 **from the Hetzner IP only** (that host runs default-DROP ufw, so
+  587 is otherwise unreachable — this was the failure that made the relay appear broken).
+- No DKIM on the relay: Hetzner signs before relaying and the signature travels with the message.
+- No bounce handling on the relay: bounces follow the MX to Hetzner regardless of who delivered.
+
+**Cutover when 25 opens:** delete `relayhost`, remove the relay IP from `bounce` SPF once warmed,
+drop the ufw rule and the `mynetworks` entry. Nothing else changes.
+
+**Reputation note:** during the interim, the delivering IP is the relay's, so warmup accrues there,
+not to Hetzner. Hetzner's own warmup starts when its port 25 opens.
+
+
 ## Sending pool — the scale-readiness design
 
 Everything here exists so that going from one IP to twenty is **rows in a table, not a
