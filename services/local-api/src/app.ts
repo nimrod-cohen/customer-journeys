@@ -30,6 +30,7 @@ import {
   buildSuppressionUpsert,
   buildGlobalHardBounceUpsert,
   buildProfileEmailStatusUpdate,
+  runFeedbackStatementsInTx,
 } from '@cdp/service-feedback';
 import { unsubscribeLinkSecret } from '@cdp/email';
 import {
@@ -308,7 +309,11 @@ export function createApp(opts: CreateAppOptions): Hono {
       if (cls.category === 'hard_bounce') statements.push(buildGlobalHardBounceUpsert(email));
     }
 
-    await runUnsubscribeInWorkspaceTx(opts.pool, ws, statements);
+    // The FEEDBACK runner, not the unsubscribe one: the global hard-bounce list is
+    // the deliberate cross-workspace exception and binds `email` at $1, which the
+    // strict workspace guard rejects. runFeedbackStatementsInTx carries exactly
+    // that narrow exemption and enforces workspace scoping on everything else.
+    await runFeedbackStatementsInTx(opts.pool, ws, statements);
     return c.json({ ok: true, action: decision.action, reason: decision.reason }, 200);
   });
 
