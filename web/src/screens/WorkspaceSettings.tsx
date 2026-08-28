@@ -28,6 +28,10 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   const [timezone, setTimezone] = useState('UTC');
   const [language, setLanguage] = useState<FrontFacingLanguage>('auto');
   const [phoneCountry, setPhoneCountry] = useState('');
+  // The GET below OVERWRITES these fields when it resolves, so anything typed
+  // before it lands is silently wiped. Inputs stay disabled until it arrives —
+  // a real user typing quickly on a slow connection hit the same clobber.
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [phoneCountrySaving, setPhoneCountrySaving] = useState(false);
   // Lock the toggles while a settings PUT is in flight (no racing re-toggles).
   const [savingSettings, setSavingSettings] = useState(false);
@@ -77,7 +81,8 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
             })),
           );
         }
-      });
+      })
+      .finally(() => setSettingsLoaded(true));
   }, []);
 
   // The workspace clock for all automation time math (§9B). The kit Button below
@@ -349,6 +354,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
               class="w-28 uppercase"
               maxLength={2}
               placeholder="IL"
+              disabled={!settingsLoaded}
               value={phoneCountry}
               onInput={(e: Event) => setPhoneCountry((e.target as HTMLInputElement).value.toUpperCase())}
             />
