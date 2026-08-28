@@ -85,3 +85,19 @@ describe('parseVerpRecipient', () => {
     expect(unpackVerpToken(SECRET, parseVerpRecipient(addr))).toBe(MSG);
   });
 });
+
+describe('key separation from the subscription token', () => {
+  // Both tokens are signed with UNSUBSCRIBE_LINK_SECRET. Binding each MAC to its
+  // own label means a signature minted for one purpose can never validate for the
+  // other, independently of how their payloads happen to be shaped.
+  it('does not accept a subscription token as a bounce token', async () => {
+    const { packSubscriptionToken } = await import('../src/unsubscribe.js');
+    const sub = packSubscriptionToken(SECRET, MSG, 'person@example.com');
+    expect(unpackVerpToken(SECRET, sub)).toBeNull();
+  });
+
+  it('does not accept a bounce token as a subscription token', async () => {
+    const { unpackSubscriptionToken } = await import('../src/unsubscribe.js');
+    expect(unpackSubscriptionToken(SECRET, packVerpToken(SECRET, MSG))).toBeNull();
+  });
+});

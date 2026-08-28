@@ -26,6 +26,12 @@
 // (invariant 2), and a bounce for an unknown message is simply ignored.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
+// Domain separation. The VERP token shares UNSUBSCRIBE_LINK_SECRET with the
+// subscription token, so the two MACs are bound to distinct labels: a signature
+// minted for one purpose can never validate for the other. They happen to differ
+// in length today, but relying on a length check for key separation is the kind
+// of accident that stops being true after one refactor.
+const VERP_MAC_LABEL = 'cdp-verp-bounce-v1';
 const VERP_TOKEN_VERSION = 1;
 const VERP_MAC_BYTES = 12;
 const UUID_BYTES = 16;
@@ -47,7 +53,11 @@ function bytesToUuid(buf: Buffer): string {
 }
 
 function verpMac(secret: string, payload: Buffer): Buffer {
-  return createHmac('sha256', secret).update(payload).digest().subarray(0, VERP_MAC_BYTES);
+  return createHmac('sha256', secret)
+    .update(VERP_MAC_LABEL)
+    .update(payload)
+    .digest()
+    .subarray(0, VERP_MAC_BYTES);
 }
 
 /**
