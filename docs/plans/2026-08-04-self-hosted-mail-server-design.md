@@ -157,37 +157,61 @@ unlikely). The compensating controls are therefore mandatory:
 
 ## DNS
 
-**Our domain, once:**
+**Infrastructure domain: `journeys.on-grow.com`.** Nothing is ever sent *from* it — every message
+carries a customer's own From: domain. It exists to host the mail hosts, the bounce endpoint, and
+the DKIM key targets.
 
-| Record | Value | Purpose |
-|---|---|---|
-| `smtp-out.<ours>` A | mail node IP | Submission endpoint; abstracts node count |
-| `mail.<ours>` A | mail node IP | Server identity; must match Postfix HELO |
-| PTR | `mail.<ours>` | Required by Gmail; must forward-resolve back |
-| `bounce.<ours>` MX | `mail.<ours>` | Receives bounces |
-| `_spf.<ours>` TXT | `v=spf1 ip4:<IP> -all` | Indirection, so IP changes never touch customer DNS |
-| `_dmarc.<ours>` TXT | `v=DMARC1; p=none; rua=...` | Our own alignment and reporting |
+| Name | Type | Value | Purpose |
+|---|---|---|---|
+| `mail.journeys` | A | Hetzner IP | MTA host; HELO name and PTR target |
+| `relay1.journeys` | A | relay IP | Interim relay host; HELO name and PTR target |
+| `bounce.journeys` | MX 10 | `mail.journeys.on-grow.com` | Bounces route here |
+| `bounce.journeys` | TXT | `v=spf1 ip4:<relay> ip4:<hetzner> -all` | SPF inherited by customer CNAMEs |
+| `journeys` | TXT | `v=spf1 -all` | Nothing sends from the bare domain |
+| `_dmarc.on-grow.com` | TXT | `v=DMARC1; p=none; rua=...` | Org-level monitoring; tighten to quarantine then reject once reports are clean |
 
-**Stream subdomains.** Marketing and transactional sign with different subdomains so their
-reputations are scored independently.
+Every mail record must be **DNS-only**, never proxied — a proxy would hand out the CDN's address
+instead of the sending IP and break both SMTP and reverse-DNS matching.
 
-**Per sending domain — replaces the SES Easy-DKIM flow, and is simpler.**
+## Per-company sending domains — CNAME delegation
 
-We generate an RSA-2048 keypair per domain, store the private key encrypted with the existing
-`@cdp/db` secret-crypto, and publish **one TXT record**: `<selector>._domainkey.<domain>`.
-Verification is a live DNS TXT lookup comparing the published key to ours — no third party, no
-polling a provider's status.
+**Each company sends as itself.** `From: hello@customer.com`, signed with `d=customer.com`, with a
+Return-Path inside their own domain. Receivers see a message indistinguishable from one their own
+server sent.
 
-This maps onto the existing interface: `createDomainIdentity` generates and returns the record,
-`getIdentityVerificationAttributes` performs the lookup. The sending-domain setup screen already
-renders DNS records and has a check button, so the UI barely changes.
+The company publishes **three CNAMEs** and never touches DNS again:
 
-**SPF is not published by the sending domain, deliberately.** SPF is evaluated against the
-envelope sender, which lives in our bounce domain. DMARC passes via **DKIM alignment**
-(`d=` is the sending domain) — standard ESP practice.
+```
+bounce.customer.com          CNAME  bounce.journeys.on-grow.com
+s1._domainkey.customer.com   CNAME  s1.<company-id>.dkim.journeys.on-grow.com
+s2._domainkey.customer.com   CNAME  s2.<company-id>.dkim.journeys.on-grow.com
+```
 
-**DMARC is required.** Since 2024 Gmail and Yahoo require bulk senders to publish SPF, DKIM and
-DMARC. The domain check reads `_dmarc` and refuses to verify without it.
+**Why CNAMEs rather than a DKIM TXT record** (this reverses the earlier revision of this document):
+
+1. **Both SPF and DKIM align.** A CNAME applies to every record type at that name, so
+   `bounce.customer.com` inherits our SPF *and* our MX from one record. The envelope sender sits in
+   the customer's own organisational domain, so SPF aligns under DMARC's relaxed rule — and bounces
+   still route back to us automatically.
+2. **Key rotation stops being a customer problem.** With a TXT record, rotating a DKIM key means
+   asking every customer to edit DNS, which in practice means never rotating. With CNAMEs we change
+   the target value and every customer rotates without being involved.
+3. **IP changes never touch customer DNS**, because their SPF resolves through to ours.
+
+**Per-company key targets, never a shared one.** A single shared DKIM key would mean one compromise
+affects every tenant and no customer could be rotated alone. Each company gets its own
+`<company-id>` targets, which keeps the operational benefit without the shared-secret exposure.
+
+The second selector (`s2`) exists purely for gap-free rotation: publish the new key on the unused
+selector, switch signing over, retire the old one.
+
+**Cost of this model:** two DNS records must be created on our zone per company at onboarding, so
+the provider needs API automation (Cloudflare) rather than manual entry. Verification follows the
+CNAME and compares the resolved key rather than reading a TXT value directly.
+
+**DMARC is required of the customer.** Since 2024 Gmail and Yahoo require bulk senders to publish
+SPF, DKIM and DMARC. The domain check reads `_dmarc.<customer-domain>` and refuses to verify
+without it.
 
 ## Bounces
 
@@ -369,7 +393,7 @@ the pilot proves the model, and note that the pool design above already accommod
 | **0** | Port 25 unblocked, PTR set, IP checked against blocklists | All three pass, or stop |
 | **1** | Postfix + OpenDKIM + our DNS; relay only for authenticated senders | Box sends to a seed account |
 | **2** | `createSmtpEmailClient`, `sending_ips` pool, connector, authorization flag, dispatcher wiring | Send path works end to end |
-| **3** | DKIM per domain: keypair generation, encrypted storage, TXT verification, DMARC check | A domain verifies |
+| **3** | DKIM per domain: per-company keypair generation, encrypted storage, Cloudflare API to publish `s1`/`s2` targets, CNAME-following verification, DMARC check | A domain verifies via its three CNAMEs |
 | **4** | Bounces: VERP tokens, mail-agent parser, ingestion endpoint, suppression wiring | Hard bounce suppresses; soft bounce does not |
 | **4b** | Reactivation on email change; consent carried forward; unsubscribe also writes `channel_optouts` | Editing a bounced address reactivates; editing an unsubscribed one does not |
 | **5** | Monitoring: blocklists, Postmaster Tools, SNDS, JMRP, Yahoo CFL, log parsing, alarms | Every signal reporting |
