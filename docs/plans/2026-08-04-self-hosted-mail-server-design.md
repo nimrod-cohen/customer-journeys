@@ -1,78 +1,159 @@
-# Self-hosted mail server (2026-08-04)
+# Self-hosted mail server (2026-08-04, rev. 2026-08-08)
 
 ## Goal
 
-Run our own outbound mail server on Hetzner, so **explicitly authorized companies** can send
-without a third-party email provider. Every other company continues to connect Resend (or SES,
-if they have it). Adds a third email provider behind the existing `sendEmail` interface —
-the dispatcher, gating pipeline, outbox, and suppression model are unchanged.
+Run our own outbound mail server on Hetzner, carrying **our own sending only** to begin with,
+across two independent streams:
 
-Pilot on small activities first, evaluate maintainability, then decide about the largest
-activity. The design is sized for that: one box, one IP, no redundancy until the model proves out.
+1. **Marketing** — broadcasts and automations for activities we control end to end.
+2. **Transactional** — OTPs, password resets, invites, verification, exposed as an API our
+   other sites can call.
 
-## Why (honest version)
+The main activity stays on **customer.io** for now. This is a controlled pilot: low volume,
+our own lists, our own content, so send quality is never in question while we learn the
+operational surface.
 
-- **AWS has refused SES production access repeatedly.** SES is not available to us at any price,
-  so it is not the cost baseline.
-- **Remaining providers are expensive at volume.** Resend-class pricing scales with send count;
-  at ~1M/month it runs to hundreds of euros monthly. Hetzner hardware is ~€5/month.
+**Designed from the start to scale to large bursts** (tens of thousands of messages in
+minutes) without rework. We are not building that capacity now; we are refusing to preclude it.
+
+Plugs in behind the existing `sendEmail` interface for marketing and the existing
+`TransactionalMailer` interface for transactional — the dispatcher, gating pipeline, outbox,
+and suppression model are unchanged.
+
+## Why
+
+- **AWS has refused SES production access repeatedly.** SES is not available to us at any
+  price, so it is not the cost baseline.
+- **Remaining providers are expensive at volume**, and cost scales with send count while
+  self-hosted cost is flat.
 - **Independence.** No provider can suspend, rate-limit, or reprice us.
 
 **What this does not buy:** reliability. A provider absorbs blocklist and reputation incidents
 on our behalf; self-hosted, we absorb them ourselves with no support channel. The real cost of
 this project is operational attention, not hardware.
 
-**Non-goals:** inbound mail for humans (no mailboxes, no replies-to-inbox), per-company dedicated
-IPs, and moving the application off Fly.
+**Non-goals for now:** inbound mail for humans (no mailboxes, no replies-to-inbox), moving the
+main activity off customer.io, and moving the application off Fly.
 
 ## Prerequisites — verify BEFORE writing code
 
 Any of these failing invalidates the plan. Confirm in this order:
 
-1. **Outbound port 25 unblocked.** Hetzner blocks it by default; it is granted on request for
-   legitimate use. Without it, nothing can be delivered.
+1. **Outbound port 25 unblocked.** Hetzner blocks it by default; granted on request for
+   legitimate use. Open the ticket immediately after creating the server, before installing
+   anything. If refused, the plan stops.
 2. **Reverse DNS (PTR) control.** Set from the Hetzner panel. Non-negotiable — Gmail rejects
    senders whose IP does not reverse-resolve, and the PTR name must forward-resolve back to the
    same IP.
-3. **The assigned IP is clean.** Check against Spamhaus, Barracuda, SORBS before committing.
-   Hetzner *cloud* ranges carry mixed sending reputation and Microsoft is aggressive about
-   blocking bulk cloud space; Hetzner *dedicated* IPs are generally cleaner. If listed, request
-   a different address.
+3. **The assigned IP is clean.** Check against Spamhaus, Barracuda and SpamCop before
+   committing. Hetzner *cloud* ranges carry mixed sending reputation; *dedicated* IPs are
+   generally cleaner. If listed, request a different address.
 
 Fly.io blocks outbound port 25 with no exception, which is why the mail server cannot live
 beside `local-api`.
 
+**Server:** Hetzner Cloud, smallest available tier. 1 vCPU is sufficient — CPU is never the
+constraint for mail; RAM (≥2 GB) and receiver acceptance rates are. Do not oversize.
+
 ## Architecture
 
 ```
-Fly.io (app + dispatcher)  --587 SMTP+TLS, SASL-->  Hetzner box  --25-->  the internet
-        ^                                                |
-        |<---- HTTPS: bounces, complaints ---------------|
+Fly.io (app + dispatcher)  --587 SMTP+TLS, SASL-->  smtp-out.<ours>  --25-->  the internet
+        ^                                                 |
+        |<---- HTTPS: bounces, complaints ----------------|
 ```
 
-Two machines, one job each. The app keeps its Fly deploy pipeline — including the property we
-rely on, that a failed migration fails boot and Fly keeps the prior version.
+`smtp-out.<ours>` is a **hostname, not a machine**. Today it resolves to one box; later it can
+resolve to several, or to a router in front of several. The app never learns how many nodes
+exist — this is the single most important decision for future scale.
 
-**On the Hetzner box:**
+**On each mail node:**
 
 | Component | Role |
 |---|---|
 | **Postfix** | Outbound queue and delivery: retries, per-destination TLS, connection reuse |
-| **OpenDKIM** | Signs each message with the sending company's key |
-| **mail-agent** (Node/TS) | Parses bounces + ARF complaints from local mailboxes, posts them to the app |
+| **OpenDKIM** | Signs each message with the sending domain's key |
+| **mail-agent** (Node/TS) | Parses bounces + ARF complaints, posts them to the app over HTTPS |
 
-Postfix over an all-JavaScript MTA (Haraka): the queue and retry behaviour is the part we cannot
-afford to get wrong, and Postfix's is decades-hardened. We write configuration, not logic.
-Everything we actually own is TypeScript.
+Postfix over an all-JavaScript MTA (Haraka): the queue and retry behaviour is the part we
+cannot afford to get wrong, and Postfix's is decades-hardened. We write configuration, not
+logic. Everything we own is TypeScript.
 
-**App side:** a new `createSmtpEmailClient` in `@cdp/email`, satisfying the same `sendEmail(input)`
-half of `SesEmailClient` that `createResendEmailClient` already satisfies. It opens an
-authenticated TLS connection to the Hetzner box (nodemailer) and hands over the message.
-Selected per company by `emailSenderForWorkspace`.
+**App side:**
 
-**Message-ID is ours.** Unlike SES, we generate the `Message-ID` before sending and store it in
-the column currently holding `ses_message_id`. Bounce correlation becomes exact rather than
-best-effort.
+- `createSmtpEmailClient` in `@cdp/email` satisfies the same `sendEmail(input)` half of
+  `SesEmailClient` that `createResendEmailClient` already satisfies. Selected per company by
+  `emailSenderForWorkspace`.
+- A second implementation satisfies `TransactionalMailer.send(TxEmail)` for the OTP stream.
+  `packages/email/src/transactional.ts` already exists and already states the governing
+  principle in its header: *transactional and marketing must not share a domain or reputation.*
+
+**Message-ID is ours.** Unlike SES, we generate the `Message-ID` before sending and store it
+where `ses_message_id` lives today. Bounce correlation becomes exact rather than best-effort.
+
+## Sending pool — the scale-readiness design
+
+Everything here exists so that going from one IP to twenty is **rows in a table, not a
+rewrite**. With a single IP today the pool has one entry and the logic is a no-op.
+
+**`sending_ips` table:**
+
+| Column | Purpose |
+|---|---|
+| `ip`, `ptr_hostname` | The address and its reverse-DNS name |
+| `provider`, `region` | Hetzner, and whoever comes later — see below |
+| `stream` | `transactional` \| `marketing` — never mixed |
+| `warmup_stage`, `daily_cap` | Per-IP ramp state |
+| `enabled` | Kill switch per address |
+
+**Five rules that keep scale cheap:**
+
+1. **The app submits to one hostname.** Node count is invisible to the dispatcher.
+2. **Warmup state is per-IP and persistent**, so a new address ramps independently without
+   disturbing established ones.
+3. **VERP tokens and Message-IDs encode no node identity.** Any node can send anything;
+   bounces route back to the app over HTTPS regardless of which node sent.
+4. **Throttling partitions by recipient domain, not by round-robin.** This is the subtle trap:
+   five nodes each independently rate-limiting Gmail will send five times the intended rate.
+   Assigning each receiving domain to one node keeps each node's local limit equal to the
+   global limit, with no shared counter state. Round-robin would require distributed rate
+   limiting — avoid it.
+5. **Future IPs must span providers.** Twenty addresses in one Hetzner /24 reads as snowshoe
+   spam to Spamhaus and would likely be refused by Hetzner regardless. A burst-capable pool
+   grows across two or three hosts, gradually, justified by real volume history. Hence the
+   `provider` column from day one.
+
+**Realistic burst capacity**, for planning:
+
+| Pool | Sustained rate | 40k takes |
+|---|---|---|
+| 1 warmed IP | 10–50/sec | 15–45 min |
+| 4 warmed IPs | 50–200/sec | 4–12 min |
+| 10–30 warmed IPs, multi-provider | 200–600/sec | ~2 min |
+
+Sub-2-minute delivery of 40k is genuinely an ESP-scale capability. It is reachable, but by
+sustained growth over quarters, not by provisioning. Until then, bursts drain over tens of
+minutes and the app is unaffected — Postfix accepts everything in seconds and queues it.
+
+## Transactional / OTP
+
+**A separate stream in every sense:** its own subdomain, its own DKIM key, its own IP once
+volume justifies a second, and its own warmup. Transactional mail is high-engagement and
+protects reputation; marketing risks it. They must never share an address.
+
+**API surface:** an authenticated endpoint our other sites call, behind the existing
+`TransactionalMailer` interface. Needs per-caller API keys, rate limiting, and the same
+`Message-ID` generation as the marketing path.
+
+**OTPs are the last thing to migrate, not the first.** A marketing mail in spam is annoying; an
+OTP in spam locks a user out of the product. They move only after the IP has a month of clean
+history.
+
+**No automatic provider fallback** (deliberate decision — list quality makes the failure mode
+unlikely). The compensating controls are therefore mandatory:
+
+- Alerting on transactional delivery latency and failure rate, in minutes not hours.
+- A manual switch back to the previous provider, tested before OTPs migrate.
 
 ## DNS
 
@@ -80,35 +161,38 @@ best-effort.
 
 | Record | Value | Purpose |
 |---|---|---|
-| `mail.<ours>` A | Hetzner IP | Server identity; must match Postfix HELO |
+| `smtp-out.<ours>` A | mail node IP | Submission endpoint; abstracts node count |
+| `mail.<ours>` A | mail node IP | Server identity; must match Postfix HELO |
 | PTR | `mail.<ours>` | Required by Gmail; must forward-resolve back |
 | `bounce.<ours>` MX | `mail.<ours>` | Receives bounces |
-| `_spf.<ours>` TXT | `v=spf1 ip4:<IP> -all` | Indirection, so IP changes don't touch customer DNS |
-| `_dmarc.<ours>` TXT | `v=DMARC1; p=none; rua=...` | Our own alignment |
+| `_spf.<ours>` TXT | `v=spf1 ip4:<IP> -all` | Indirection, so IP changes never touch customer DNS |
+| `_dmarc.<ours>` TXT | `v=DMARC1; p=none; rua=...` | Our own alignment and reporting |
 
-**Per customer domain — replaces the SES Easy-DKIM flow, and is simpler.**
+**Stream subdomains.** Marketing and transactional sign with different subdomains so their
+reputations are scored independently.
 
-We generate an RSA-2048 keypair per sending domain, store the private key encrypted with the
-existing `@cdp/db` secret-crypto, and the customer publishes **one TXT record**:
-`<selector>._domainkey.<their-domain>`.
+**Per sending domain — replaces the SES Easy-DKIM flow, and is simpler.**
 
-Verification is a live DNS TXT lookup comparing the published public key to ours — no third
-party, no polling a provider's status. This maps onto the existing interface:
-`createDomainIdentity` generates and returns the record, `getIdentityVerificationAttributes`
-performs the lookup. The sending-domain setup screen already renders DNS records and has a check
-button, so the UI barely changes.
+We generate an RSA-2048 keypair per domain, store the private key encrypted with the existing
+`@cdp/db` secret-crypto, and publish **one TXT record**: `<selector>._domainkey.<domain>`.
+Verification is a live DNS TXT lookup comparing the published key to ours — no third party, no
+polling a provider's status.
 
-**The customer does not publish SPF, deliberately.** SPF is evaluated against the envelope
-sender, which lives in *our* bounce domain. DMARC passes via **DKIM alignment** (`d=` is their
-domain) — standard ESP practice, and one record for the customer instead of four.
+This maps onto the existing interface: `createDomainIdentity` generates and returns the record,
+`getIdentityVerificationAttributes` performs the lookup. The sending-domain setup screen already
+renders DNS records and has a check button, so the UI barely changes.
 
-**We do require their DMARC.** Since 2024 Gmail and Yahoo require bulk senders to publish SPF,
-DKIM and DMARC. The domain check reads `_dmarc.<their-domain>` and refuses to verify without it.
+**SPF is not published by the sending domain, deliberately.** SPF is evaluated against the
+envelope sender, which lives in our bounce domain. DMARC passes via **DKIM alignment**
+(`d=` is the sending domain) — standard ESP practice.
+
+**DMARC is required.** Since 2024 Gmail and Yahoo require bulk senders to publish SPF, DKIM and
+DMARC. The domain check reads `_dmarc` and refuses to verify without it.
 
 ## Bounces
 
-**VERP.** Each message goes out with `Return-Path: bounce+<token>@bounce.<ours>`, where `<token>`
-packs workspace id and message id.
+**VERP.** Each message goes out with `Return-Path: bounce+<token>@bounce.<ours>`, where
+`<token>` packs workspace id and message id.
 
 **The token is HMAC-signed**, reusing the approach in `packSubscriptionToken`. An unsigned,
 guessable bounce address would let an attacker mail a forged bounce and suppress any recipient
@@ -126,44 +210,98 @@ they choose; a signed token means they can only "bounce" a message they actually
 classic way to destroy a list.
 
 **Ingestion.** mail-agent watches the bounce mailbox, parses the delivery-status report, unpacks
-the token to recover workspace and message, classifies, and posts to a new authenticated endpoint
+the token to recover workspace and message, classifies, and posts to an authenticated endpoint
 on the app. That endpoint writes `email_events` and, for hard bounces, `suppressions` — the same
 work the SES→SNS→Feedback path does today, so the logic is reused. **Workspace comes from the
-token, never the request body** (inv. 2). Duplicate reports are normal and are absorbed by the
-existing `(workspace_id, message_id, type)` uniqueness with `ON CONFLICT DO NOTHING`.
+token, never the request body** (inv. 2). Duplicate reports are absorbed by the existing
+`(workspace_id, message_id, type)` uniqueness with `ON CONFLICT DO NOTHING`.
 
 **Bonus.** Parsing Postfix's log for successful deliveries produces real `delivery` events, so
 the "Delivered" column on the broadcast funnel — permanently zero today without SES feedback —
 starts working.
 
-## Spam reports
+## Reactivation on email change
 
-The most important signal we get. A complaint is worth far more attention than a bounce.
+**A bounce is a property of the address; a refusal is a property of the person.** Every rule
+here follows from that one line.
 
-| Provider | Feedback loop | Action |
+`suppressions` is keyed `(workspace_id, email)` with `reason` in
+`hard_bounce | permanent_soft_bounce | complaint | unsubscribe | manual`. Because the key is the
+address, editing a profile's email already makes it sendable again — the new address simply
+is not in the list. That is the desired behaviour for a bounce, and it needs no code.
+
+Two things do need building:
+
+**1. Reset the deliverability state.** `profiles.email_status` (`active | bounced | complained`)
+is keyed by *profile*, not address, so it stays `bounced` after an email change and wrongly
+marks the person in the UI and in any segment using `customer.email_status`. On an email change
+in `updateProfile`, reset it to `active`.
+
+**2. Do not resurrect people who refused.** The same key-by-address behaviour silently
+un-suppresses unsubscribes and complaints, which is a compliance problem. On email change, read
+the old address's suppression reason and branch:
+
+| Old reason | On email change | Why |
 |---|---|---|
-| Yahoo / AOL | ARF reports | Register (free) |
-| Microsoft (Outlook/Hotmail) | ARF via JMRP + SNDS | Register both |
-| **Google** | **none** | Postmaster Tools only — aggregate rate, no per-message reports |
-| Apple, Comcast, La Poste | ARF | Register |
+| `hard_bounce` | reactivate | The address was bad, not the person |
+| `permanent_soft_bounce` | reactivate | Address-derived |
+| `complaint` | stay suppressed | They reported it as spam |
+| `unsubscribe` | stay suppressed | Consent survives an address change |
+| `manual` | stay suppressed | Chosen deliberately |
+| none | reactivate | Nothing to carry |
 
-**Gmail never tells us who complained**, only the aggregate spam rate, and only above roughly
-100 recipients/day. Gmail complainers cannot be suppressed individually — we watch the rate and
-react.
+Bounce-derived or absent → set `email_status = 'active'`. Refusal-derived → copy the suppression
+onto the new address and leave the status unchanged.
 
-Registered loops mail ARF reports to a mailbox on the Hetzner box; mail-agent parses them exactly
-as it parses bounces, recovers the original recipient, and posts to the app.
+**Root-cause fix, worth doing alongside.** The full unsubscribe writes only the email-keyed
+`suppressions` row, not a profile-keyed `channel_optouts` row. If it wrote both, consent would
+survive an address change *structurally* rather than by copying rows, and `channel_optouts` is
+already enforced in the dispatcher pipeline. This is a pre-existing gap, independent of the mail
+server.
 
-**A complaint is a hard stop:** immediate, permanent suppression of that address. No retry.
 
-Registration requires a live sending IP and a DKIM domain we control, so it happens after the box
-is up and before real volume. Also verify our DKIM domain in **Google Postmaster Tools** — our
-only visibility into Gmail.
+## Deliverability monitoring
+
+**This goes live before the first real recipient, not after.** Otherwise the first signal that
+something is wrong is a customer complaint.
+
+| Signal | Source | Mechanism | Cadence |
+|---|---|---|---|
+| Blocklist status | Spamhaus, Barracuda, SpamCop | DNSBL lookup | daily |
+| Gmail spam rate, domain + IP reputation | **Google Postmaster Tools API** | API | daily |
+| Microsoft complaint + spam-trap data | **SNDS** automated access | authenticated CSV fetch | daily |
+| Microsoft complaints (per message) | **JMRP** feedback loop | ARF email → mail-agent | live |
+| Yahoo complaints (per message) | **Yahoo CFL** | ARF email → mail-agent | live |
+| Deferrals / rejections by receiving domain | Postfix logs | log parse | live |
+| Inbox vs spam placement | Seed accounts on each major provider | send every campaign to seeds | per send |
+
+**Gmail never reports who complained** — only aggregate rates, and only above roughly 100
+recipients/day. Postmaster Tools is our sole Gmail visibility, so Gmail complainers cannot be
+suppressed individually. We watch the rate and react.
+
+**A complaint is a hard stop:** immediate, permanent suppression of that address, no retry.
+Complaints damage reputation far more than bounces.
+
+Feedback-loop registration requires a live sending IP and a DKIM domain we control, so it
+happens after the box is up and before real volume. Spamhaus's free DNS queries are for
+low-volume use; sustained automated querying needs their Data Query Service key.
+
+**Alarm thresholds:**
+
+| Metric | Alarm at |
+|---|---|
+| Hard bounce rate | >2% |
+| Complaint rate | >0.1% |
+| Queue depth | sustained growth |
+| Blocklist | any listing |
+| Transactional delivery latency | above baseline |
+
+Queue growth is the earliest warning that a receiver is deferring us.
 
 ## Warmup and throttling
 
-A new IP has no reputation. Sending volume before earning trust gets us filtered in a way that is
-hard to undo.
+A new IP has no reputation. Sending volume before earning trust gets us filtered in a way that
+is hard to undo.
 
 | Day | Volume |
 |---|---|
@@ -172,88 +310,80 @@ hard to undo.
 | 8–14 | 5,000 → 20,000 |
 | 15–30 | 50,000 → full |
 
-Send to the **best recipients first** — recent, engaged, previously opened. Never skip a step. If
-bounces or complaints rise, hold at the current level until they settle. Expect 4–6 weeks to full
-volume. The pilot-on-small-activities plan *is* the warmup.
+Send to the **best recipients first** — recent, engaged, previously opened. Never skip a step.
+If bounces or complaints rise, hold at the current level until they settle. Expect 4–6 weeks to
+full volume. The low-volume pilot *is* the warmup.
 
-**Per-destination throttling.** Postfix must not open many simultaneous connections to one
-provider; that reads as an attack. Limit concurrent connections and hourly volume per receiving
-domain, raising as reputation builds. Sustained 4xx deferrals from Gmail or Microsoft mean back
-off.
+**Concentrate volume on one IP during warmup.** Warmup is driven by volume per address, so
+splitting early traffic across two IPs makes both ramp at half speed. Add the second address
+for *stream separation* once transactional volume justifies it, not for throughput.
+
+**Per-destination throttling.** Limit concurrent connections and hourly volume per receiving
+domain, raising as reputation builds. Sustained 4xx deferrals mean back off — pushing harder
+makes delivery slower, not faster.
 
 **Consistency matters.** 10k/day every day looks better than 70k every Sunday.
 
-**One IP, one purpose.** Never mix system mail (password resets, invites) with tenant marketing
-on the same IP. Transactional mail is high-engagement and protects reputation; marketing risks
-it. A second IP is ~€0.50/month.
-
-**Warmup is per-IP, not per-customer** — authorizing a new company does not restart it.
-
 ## Authorization
 
-Only companies we explicitly authorize may send through the mail server.
+Only explicitly authorized companies may send through the mail server. During the pilot that
+set is exactly one — ours — but the gate is built now so opening it later is a flag, not a
+project.
 
 - **Storage:** `companies.self_hosted_mail_enabled` boolean, default false. No new table.
-- **Granting is platform-admin only**, through the existing `system-admin` cross-tenant path, so
-  every grant and revoke lands in `admin_audit_log` for free.
-- **Enforced twice:** (1) creating an `smtp` connector is rejected unless the company is
-  authorized — no self-service onto our IPs; (2) the dispatcher re-checks at send time, so
-  revocation also stops in-flight and scheduled sends.
+- **Granting is platform-admin only**, through the existing `system-admin` cross-tenant path,
+  so every grant and revoke lands in `admin_audit_log` for free.
+- **Enforced twice:** creating an `smtp` connector is rejected unless authorized; and the
+  dispatcher re-checks at send time, so revocation stops in-flight and scheduled sends too.
 - **Revocation is the kill switch.** Setting the flag false fails the gate at the next send and
-  leaves the message in the outbox rather than losing it. This will be needed when a tenant starts
-  generating complaints.
+  leaves the message in the outbox rather than losing it.
 - **Postfix enforces it too.** The app authenticates with SASL and Postfix relays only for
   authenticated senders, so an application bug cannot turn the box into an open relay.
 - **The verified-domain gate still applies.** Authorization grants infrastructure access, not a
-  DKIM waiver. Unlike Resend, this provider is **not** `emailTrusted` — we are the ones vouching
-  for the domain, so we verify it.
+  DKIM waiver. Unlike Resend, this provider is **not** `emailTrusted`.
 
 ## Operations
 
-| Metric | Alarm at | Source |
-|---|---|---|
-| Hard bounce rate | >2% | `email_events` |
-| Complaint rate | >0.1% | feedback loops + Postmaster Tools |
-| Queue depth | sustained growth | Postfix |
-| Blocklist status | any listing | scheduled daily check |
-
-Queue growth is the earliest warning that someone is deferring us. Blocklist checks run daily
-against Spamhaus, Barracuda and SORBS — listings happen, and catching one same-day is the
-difference between an afternoon and a fortnight.
-
-**Backups.** The DKIM private keys are the only irreplaceable state; lose them and every customer
+**Backups.** The DKIM private keys are the only irreplaceable state; lose them and every domain
 must republish DNS. They live encrypted in Postgres, so existing database backups cover them.
-Postfix's queue is transient.
+Postfix's queue is transient and the box is close to disposable.
 
-**Single point of failure.** One box, no redundancy. Postfix will hold mail for days if the app
-is down, but if the box dies we are not sending. A second server roughly doubles cost to ~€9/month;
-defer until the pilot proves the model.
+**Single point of failure.** One node, no redundancy. Postfix holds mail for days if the app is
+down, but if the box dies we are not sending. A second node roughly doubles cost; defer until
+the pilot proves the model, and note that the pool design above already accommodates it.
 
 ## Testing
 
-- **Unit** — SMTP client, VERP token pack/unpack, bounce and ARF parsing, status classification.
-  All pure, no network.
-- **Integration** — a throwaway in-process SMTP server; assert exactly what Postfix would receive.
-- **Pre-launch** — mail-tester.com (target 10/10); Gmail "show original" to confirm SPF, DKIM and
-  DMARC all pass.
+- **Unit** — SMTP client, VERP token pack/unpack, bounce and ARF parsing, status
+  classification, pool selection, throttle partitioning. All pure, no network.
+- **Integration** — a throwaway in-process SMTP server; assert exactly what Postfix would
+  receive.
+- **Pre-launch** — mail-tester.com (target 10/10); Gmail "show original" to confirm SPF, DKIM
+  and DMARC all pass.
 - **Never point tests at the live box.** Extend the existing `LOCAL_SES_FORCE_MOCK` pattern.
 
-## Implementation phases
+## Phases and gates
 
-1. **Prerequisites** — port 25, PTR, IP reputation check. Go/no-go.
-2. **Box** — Postfix + OpenDKIM, our own DNS, relay-for-authenticated-only.
-3. **Send path** — `createSmtpEmailClient`, the `smtp` connector, `self_hosted_mail_enabled` +
-   platform-admin grant, dispatcher wiring.
-4. **DKIM per domain** — keypair generation, encrypted storage, TXT verification, DMARC check.
-5. **Bounces** — VERP tokens, mail-agent parser, ingestion endpoint, suppression wiring.
-6. **Complaints** — feedback-loop registration, ARF parsing, Postmaster Tools.
-7. **Warmup** — throttling config, monitoring, blocklist checks. Begin the ramp.
+| Phase | Do | Gate before proceeding |
+|---|---|---|
+| **0** | Port 25 unblocked, PTR set, IP checked against blocklists | All three pass, or stop |
+| **1** | Postfix + OpenDKIM + our DNS; relay only for authenticated senders | Box sends to a seed account |
+| **2** | `createSmtpEmailClient`, `sending_ips` pool, connector, authorization flag, dispatcher wiring | Send path works end to end |
+| **3** | DKIM per domain: keypair generation, encrypted storage, TXT verification, DMARC check | A domain verifies |
+| **4** | Bounces: VERP tokens, mail-agent parser, ingestion endpoint, suppression wiring | Hard bounce suppresses; soft bounce does not |
+| **4b** | Reactivation on email change; consent carried forward; unsubscribe also writes `channel_optouts` | Editing a bounced address reactivates; editing an unsubscribed one does not |
+| **5** | Monitoring: blocklists, Postmaster Tools, SNDS, JMRP, Yahoo CFL, log parsing, alarms | Every signal reporting |
+| **6** | Seed-only sending across Gmail/Yahoo/Outlook | mail-tester 10/10; SPF+DKIM+DMARC pass; inbox not spam |
+| **7** | Warmup ramp with our own low-stakes marketing | 4–6 weeks; complaints <0.1%, hard bounces <2%, no listings |
+| **8** | Transactional stream: subdomain, API, keys, rate limiting | Stable for a month |
+| **9** | OTPs migrate | Alerting proven; manual switch-back tested |
+| **10** | Reassess volume, second IP, second node | — |
 
-Phases 1–3 make mail flow. Phases 4–6 make it legitimate and safe. Phase 7 makes it deliverable.
-Do not send meaningful volume before 7.
+Phases 1–4 make mail flow correctly. Phase 5 makes it observable. Phases 6–7 make it
+deliverable. **Do not send meaningful volume before phase 7 completes.**
 
 ## Open questions
 
-- Which company is the pilot, and on what activity?
-- Separate IP for system mail at launch, or after the pilot?
-- Does the ingestion endpoint live on `local-api`, or a dedicated internal route?
+- Which activity is the phase-7 warmup traffic?
+- Does the bounce/complaint ingestion endpoint live on `local-api` or a dedicated internal route?
+- Transactional subdomain naming, and whether it shares the pilot IP or waits for a second.
