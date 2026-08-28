@@ -429,6 +429,9 @@ importers:
       '@cdp/service-dispatcher':
         specifier: workspace:*
         version: link:../dispatcher
+      '@cdp/service-feedback':
+        specifier: workspace:*
+        version: link:../feedback
       '@cdp/service-metering':
         specifier: workspace:*
         version: link:../metering

@@ -10,6 +10,7 @@ import { verifyUnsubscribeToken, unpackSubscriptionToken, unsubscribeLinkSecret 
 import {
   parseUnsubscribeRequest,
   buildUnsubscribeSuppression,
+  buildUnsubscribeChannelOptOuts,
   buildUnsubscribedAttribute,
   buildUnsubscribeActivity,
   buildUnsubscribeEvent,
@@ -185,6 +186,8 @@ export function simpleUnsubscribeStatements(
   const attribution = buildUnsubscribeEvent(workspaceId, email, broadcastId, automationId);
   return [
     buildUnsubscribeSuppression(workspaceId, email, source),
+    // Consent is recorded against the PROFILE too, so it survives an address change.
+    buildUnsubscribeChannelOptOuts(workspaceId, email),
     buildUnsubscribedAttribute(workspaceId, email),
     buildUnsubscribeActivity(workspaceId, email),
     ...(attribution ? [attribution] : []),

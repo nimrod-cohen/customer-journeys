@@ -184,6 +184,37 @@ export function buildUnsubscribedAttribute(workspaceId: string, email: string): 
 }
 
 /**
+ * Record the full opt-out against the PROFILE as well as the address, by writing
+ * `channel_optouts` rows for both medium groups.
+ *
+ * Why this exists: `suppressions` is keyed `(workspace_id, email)`, so consent
+ * lives on the ADDRESS. Editing a profile's email therefore silently un-suppresses
+ * someone who asked to be left alone. `channel_optouts` is keyed by `profile_id`,
+ * so writing it too makes the refusal survive an address change — structurally,
+ * rather than by remembering to copy rows around.
+ *
+ * A bounce deliberately does NOT get this treatment: a bounce is a property of the
+ * address, and a new address should start clean.
+ *
+ * Idempotent, workspace-scoped, and a no-op when no profile owns the address
+ * (the suppression row still stands on its own).
+ */
+export function buildUnsubscribeChannelOptOuts(workspaceId: string, email: string): SqlStatement {
+  if (!workspaceId) {
+    throw new Error('buildUnsubscribeChannelOptOuts: workspaceId is required (tenant-isolation guard)');
+  }
+  return {
+    text: `INSERT INTO channel_optouts (workspace_id, profile_id, medium_group, updated_at)
+           SELECT $1, p.id, g.medium_group, now()
+             FROM profiles p
+             CROSS JOIN (VALUES ('email'), ('sms_whatsapp')) AS g(medium_group)
+            WHERE p.workspace_id = $1 AND p.email = $2
+           ON CONFLICT (workspace_id, profile_id, medium_group) DO NOTHING`,
+    values: [workspaceId, email],
+  };
+}
+
+/**
  * Whether this recipient is GLOBALLY unsubscribed (the master kill switch): a
  * `reason='unsubscribe'` suppression row OR `profiles.attributes.unsubscribed=true`
  * for this email. The preference center reads this so the page reflects the real

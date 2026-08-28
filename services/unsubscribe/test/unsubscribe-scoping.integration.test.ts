@@ -44,6 +44,8 @@ async function cleanup(admin: Pool): Promise<void> {
     await admin.query('DELETE FROM email_events WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM suppressions WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM broadcasts WHERE workspace_id = $1', [ws]);
+    // a full opt-out now records consent against the PROFILE too
+    await admin.query('DELETE FROM channel_optouts WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);
   }

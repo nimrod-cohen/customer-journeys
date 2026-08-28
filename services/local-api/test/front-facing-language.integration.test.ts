@@ -52,6 +52,8 @@ describeMaybe('front-facing language on public pages (real Postgres)', () => {
     await pool.query('DELETE FROM topic_subscriptions WHERE workspace_id=$1', [WS]);
     await pool.query('DELETE FROM topics WHERE workspace_id=$1', [WS]);
     await pool.query('DELETE FROM suppressions WHERE workspace_id=$1', [WS]);
+    // a full opt-out now records consent against the PROFILE too
+    await pool.query('DELETE FROM channel_optouts WHERE workspace_id=$1', [WS]);
     await pool.query('DELETE FROM profiles WHERE workspace_id=$1', [WS]);
     await pool.query('DELETE FROM workspaces WHERE id=$1', [WS]);
   }

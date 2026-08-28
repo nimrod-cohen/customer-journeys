@@ -442,6 +442,74 @@ the pilot proves the model, and note that the pool design above already accommod
 Phases 1–4 make mail flow correctly. Phase 5 makes it observable. Phases 6–7 make it
 deliverable. **Do not send meaningful volume before phase 7 completes.**
 
+## Implementation status (2026-08-29)
+
+Built and tested on branch `feat/self-hosted-mail`. Nothing below needs Hetzner's
+port 25, which is why the waiting month is not idle time.
+
+**Application code**
+
+| Piece | Where | Tests |
+|---|---|---|
+| VERP bounce tokens | `packages/email/src/verp.ts` | 12 |
+| SMTP transport | `packages/email/src/smtp-client.ts` | 9 |
+| DSN + ARF parsing | `services/feedback/src/dsn.ts` | 15 |
+| Bounce ingestion decisioning | `services/local-api/src/mail-events.ts` | 11 |
+| DKIM keys + Cloudflare DNS + verification | `services/local-api/src/dkim.ts` | 15 |
+| Reactivation on email change | `services/local-api/src/handlers.ts` | 4 (real Postgres) |
+| Ingestion endpoint | `POST /internal/mail-events` | — |
+| Pool + DKIM key tables | migration `0063` | applies clean |
+
+**Design decisions taken while building**
+
+- **mail-agent is a thin forwarder.** It reads the Maildir, posts raw messages, and
+  deletes on 2xx. It parses nothing: all decisioning lives in the repo where it is
+  tested, so a parser fix is an app deploy rather than an ssh session on a mail
+  server. Repeated failures move a message to `failed/` so one poison report cannot
+  wedge the queue.
+- **VERP tokens carry only the message id**, not the workspace. The workspace is
+  resolved by looking the message up in `messages_log`, so tenancy comes from our
+  own database rather than from anything that travelled over the wire. It also keeps
+  the local part at 47 characters, inside RFC 5321's 64-octet limit.
+- **Inbound reports reuse the SES path's SQL builders.** `classifyInboundReport`
+  folds a DSN or ARF into the same `ClassifiedEvent` the SES feedback path produces,
+  so suppression, `email_events`, `email_status` and soft-bounce counting have ONE
+  implementation.
+- **A leaked ingestion bearer cannot suppress anyone.** The shared secret only gets a
+  caller through the door; the workspace and recipient still come from a verified
+  VERP token and the message row.
+
+**Two bugs found by writing the tests**
+
+1. **RSA-2048 DKIM values do not fit one DNS TXT string.** They are ~410 characters
+   against a 255-byte cap, so the value must be published as several strings which
+   resolvers rejoin (`dkimTxtChunks`). Dropping to 1024 bits was not an option.
+2. **Editing a bounced profile's email made things worse, not better.** The existing
+   suppression reconcile read the stale `email_status='bounced'` and suppressed the
+   NEW address too. Covered now by `email-change-reactivation.integration.test.ts`.
+
+**Server state**
+
+- Postfix + OpenDKIM installed on the Hetzner box; signing tables created and empty,
+  ready for the first onboarded domain.
+- `mail-agent` installed at `/opt/mail-agent` with a systemd timer, deliberately NOT
+  started until the app exposes the endpoint. Its bearer lives in
+  `/etc/mail-agent.env` (mode 600) and must be set as `MAIL_AGENT_SECRET` on Fly.
+- Blocklist and queue-depth monitoring under `/opt/mail-monitor`, on cron.
+  The blocklist check parses DNSBL return CODES: `127.0.0.2-11` is a listing,
+  `127.255.255.x` means the query was refused (Spamhaus rejects public resolvers).
+  Treating a refusal as a listing would cry wolf daily until the alert was ignored.
+  Set `SPAMHAUS_DQS` with a free Data Query Service key for reliable Spamhaus results.
+
+**Not done, and why**
+
+- **Feedback-loop registration** (JMRP, SNDS, Yahoo CFL) and **Google Postmaster
+  Tools** — each needs a human signing in with your accounts.
+- **Cloudflare DKIM publishing** — coded behind `CLOUDFLARE_API_TOKEN` with tests
+  against a fake; no token was provided, so no records were created.
+- **The relay was left untouched** beyond the earlier three-line change, as instructed.
+
+
 ## Open questions
 
 - Which activity is the phase-7 warmup traffic?

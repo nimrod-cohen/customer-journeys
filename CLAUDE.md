@@ -184,6 +184,60 @@ A single source of truth for "is this workspace set up to send?", with a **stric
 - **`channelsForWorkspace` DERIVES from `gatherReadiness().channels`**, so broadcast medium gating, the runner's send-node skip, and the builder's inactive-node visual all follow the strict definition automatically. Exposed at `GET /company/channels` and `GET /company/readiness` (both `manage_content`).
 - **Surfacing:** no nav item and no global banner (they nagged about deliberately-unconfigured channels). A small red count **badge** sits on the Company-settings nav item (`companyErrorCount`: provider gaps) and the Workspace-settings nav item (`workspaceErrorCount`: sending-domain gaps); clicking one opens the Setup page (`web/src/screens/Setup.tsx`) deep-linked to that scope (`/setup/company`, `/setup/workspace`, `/setup` = all). Every readiness item carries a `scope`, and a shown check's status pill is recomputed from just the in-scope items. Config screens that stay on their route while mutating readiness inputs must call `refreshReadiness()` (`web/src/store/readiness.ts`) so badges update without a navigation.
 
+## Self-hosted SMTP (third email provider)
+
+Beside SES and Resend, a company may send through **our own mail server**. Same
+`sendEmail` interface, so the dispatcher, gating pipeline and outbox are unchanged.
+Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-design.md`.
+
+- **`createSmtpEmailClient`** (`@cdp/email`) submits over SMTP. Unlike the hosted
+  providers, **we generate the `Message-ID` before sending** (from the outbox message
+  id), which makes bounce correlation exact rather than best-effort.
+- **VERP bounce addresses.** Every send carries `Return-Path: bounce+<token>@bounce.<mail-domain>`,
+  the token an HMAC-signed message id (`packVerpToken`/`unpackVerpToken`). It is
+  **signed, not merely encoded** — a guessable bounce address would let anyone forge a
+  bounce and suppress an arbitrary recipient. The token holds only the message id; the
+  **workspace is resolved from `messages_log`**, so tenancy comes from our own DB, never
+  from the wire (inv. 2). That also keeps the local part inside RFC 5321's 64 octets.
+- **Per-company sending domains use CNAME delegation**, not a customer-hosted TXT:
+  `bounce.<customer>` plus `s1`/`s2._domainkey.<customer>` CNAME to per-company targets
+  on our zone. One CNAME covers every record type, so the bounce name inherits our SPF
+  **and** MX — giving SPF alignment alongside DKIM, and routing bounces back to us. The
+  point is rotation: with a customer-hosted TXT, rotating a key means asking every
+  customer to edit DNS, which in practice means never rotating. **Never a shared key** —
+  per-company targets, so one compromise cannot affect every tenant.
+- **An RSA-2048 DKIM value does not fit one DNS TXT string** (~410 chars against a
+  255-byte cap). It must be published as several strings that resolvers rejoin
+  (`dkimTxtChunks`); verification joins them before comparing.
+- **Inbound bounces and spam reports reuse the SES feedback path's SQL builders.**
+  `classifyInboundReport` (`@cdp/service-feedback` `dsn.ts`) folds a DSN or ARF into the
+  same `ClassifiedEvent` `classifySesEvent` produces, so suppression, `email_events`,
+  `email_status` and soft-bounce counting have ONE implementation.
+- **Only permanent failures suppress.** `5.x.x` -> hard bounce -> suppress; `4.x.x` ->
+  transient, still being retried by the MTA -> recorded, **never** suppressed. A
+  complaint always suppresses. Suppressing on transient failures destroys a list.
+- **`POST /internal/mail-events`** ingests raw reports from the MTA agent, authenticated
+  by `MAIL_AGENT_SECRET`. That bearer only gets a caller through the door — workspace and
+  recipient still come from the verified VERP token, so a leaked bearer cannot suppress
+  an arbitrary address. Unattributable reports return 200 so the agent stops retrying.
+- **The MTA agent is a thin forwarder** (`services/mail-agent/mail-agent.mjs`): read
+  Maildir, post raw, delete on 2xx. It parses nothing, so a parser fix is an app deploy
+  rather than an ssh session on a mail server.
+
+## Email change resets bounce state, never consent
+
+**A bounce is a property of the ADDRESS; a refusal is a property of the PERSON.**
+
+Editing a profile's email resets `email_status` from `bounced` to `active`, so the new
+address is sendable — but `complained` persists, and a full unsubscribe additionally
+writes profile-keyed `channel_optouts` so consent survives an address change. Without
+that second write, `suppressions` being keyed `(workspace_id, email)` means editing an
+address silently resurrects someone who asked to be left alone.
+
+Note for test fixtures: a full opt-out now creates `channel_optouts` rows, so any
+teardown deleting `profiles` must clear `channel_optouts` first (`profile_id` is
+`ON DELETE NO ACTION`, per `PROFILE_CHILD_TABLES`).
+
 ## Sending domains (extends §10)
 
 A workspace can have several sending domains (`sending_domains`, workspace-scoped + RLS, each with a `verified` flag). **Sending domains is a TAB in Workspace settings** (`/settings/domains`) — it needs the owner role (`manage_workspace_users`) and the domain's own workspace selected. The list opens a per-domain setup screen where you save the domain (pending), see its DKIM records, and verify.

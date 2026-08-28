@@ -53,3 +53,17 @@ export async function handler(event: SnsEvent) {
   if (!cached) cached = makeFeedbackHandler(makeProdDeps());
   return cached(event);
 }
+
+// Inbound SMTP bounce (DSN) and spam-report (ARF) parsing — the self-hosted twin
+// of classifySesEvent. Both converge on ClassifiedEvent so the suppression and
+// email_events builders above are shared, not duplicated.
+export {
+  parseBounceMessage,
+  parseDeliveryStatus,
+  classifyDeliveryStatus,
+  classifyInboundReport,
+  parseHeaders,
+  splitMessage,
+  type DsnReport,
+  type ParsedBounceMessage,
+} from './dsn.js';

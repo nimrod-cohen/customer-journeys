@@ -4971,7 +4971,17 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
         `UPDATE profiles SET
            email = CASE WHEN $10::boolean THEN NULL WHEN $1::text IS NOT NULL THEN $1::text ELSE email END,
            external_id = COALESCE($2, external_id),
-           email_status = COALESCE($3, email_status),
+           -- Changing the ADDRESS clears deliverability state earned by the OLD one.
+           -- A bounce is a property of the address; a refusal is a property of the
+           -- person. So 'bounced' resets to 'active' (the new address is unproven,
+           -- not bad), while 'complained' deliberately persists — someone who
+           -- reported spam has not consented just because their address changed.
+           -- An explicit email_status in the request still wins.
+           email_status = CASE
+             WHEN $3::text IS NOT NULL THEN $3::text
+             WHEN $1::text IS NOT NULL AND $1::text IS DISTINCT FROM email AND email_status = 'bounced' THEN 'active'
+             ELSE email_status
+           END,
            attributes = CASE WHEN $5::boolean THEN $4::jsonb ELSE attributes END,
            phone = CASE WHEN $8::boolean THEN NULL WHEN $9::text IS NOT NULL THEN $9::text ELSE phone END,
            updated_at = now()

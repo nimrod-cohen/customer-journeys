@@ -17,6 +17,7 @@
     { "path": "../authorizer" },
     { "path": "../broadcast" },
     { "path": "../automation-runner" },
+    { "path": "../feedback" },
     { "path": "../metering" },
     { "path": "../onboarding" }
   ]

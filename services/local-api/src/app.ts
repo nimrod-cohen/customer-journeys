@@ -24,6 +24,14 @@ import { makeLocalDeps, type LocalApiDeps } from './deps.js';
 import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
 import { ingestTrack, ingestIdentify, r2StorageForWorkspace } from './handlers.js';
+import { decideMailEvent, buildMessageLookup, type MessageRef } from './mail-events.js';
+import {
+  buildEmailEventInsert,
+  buildSuppressionUpsert,
+  buildGlobalHardBounceUpsert,
+  buildProfileEmailStatusUpdate,
+} from '@cdp/service-feedback';
+import { unsubscribeLinkSecret } from '@cdp/email';
 import {
   makeUnsubscribeHandler,
   makePreferenceCenterHandler,
@@ -228,6 +236,82 @@ export function createApp(opts: CreateAppOptions): Hono {
     const v = b.writeKey ?? b.write_key ?? b.api_key;
     return typeof v === 'string' ? v.trim() : '';
   };
+
+  // ── Inbound bounce / spam-report ingestion from our own mail server ─────────
+  // The mail-agent on the MTA reads raw messages out of the bounce mailbox and
+  // posts them here; all parsing and decisioning lives in this repo, tested.
+  //
+  // Auth is a shared bearer secret (MAIL_AGENT_SECRET) — machine-to-machine, no
+  // user context. That secret only gets a caller *through the door*: the
+  // workspace is still resolved from `messages_log` via a VERIFIED VERP token,
+  // never from the request body, so even a leaked bearer cannot be used to
+  // suppress an arbitrary address in an arbitrary workspace (invariant 2).
+  app.post('/internal/mail-events', async (c) => {
+    const expected = process.env.MAIL_AGENT_SECRET;
+    if (!expected) return c.json({ error: 'ingestion not configured' }, 503);
+    const auth = c.req.header('authorization') ?? '';
+    if (auth !== `Bearer ${expected}`) return c.json({ error: 'unauthorized' }, 401);
+
+    let body: { raw?: string; originalTo?: string | null };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: 'invalid json' }, 400);
+    }
+    if (typeof body?.raw !== 'string' || body.raw.length === 0) {
+      return c.json({ error: 'raw message is required' }, 400);
+    }
+
+    const lookup = async (messageId: string): Promise<MessageRef | null> => {
+      const q = buildMessageLookup(messageId);
+      const { rows } = await opts.pool.query<{ workspace_id: string; recipient_email: string | null }>(
+        q.text,
+        q.values as unknown[],
+      );
+      const r = rows[0];
+      return r ? { workspaceId: r.workspace_id, recipient: r.recipient_email } : null;
+    };
+
+    const decision = await decideMailEvent(
+      { raw: body.raw, originalTo: body.originalTo ?? null },
+      unsubscribeLinkSecret(),
+      lookup,
+    );
+
+    // Unattributable reports are acknowledged with 200 so the agent deletes them
+    // rather than retrying forever — they are noise, not failures.
+    if (decision.action === 'ignored' || !decision.workspaceId || !decision.classified) {
+      return c.json({ ok: true, action: 'ignored', reason: decision.reason }, 200);
+    }
+
+    const ws = decision.workspaceId;
+    const email = decision.recipient;
+    const cls = decision.classified;
+    const statements = [
+      buildEmailEventInsert(ws, {
+        sesMessageId: cls.sesMessageId,
+        profileId: null,
+        type: cls.type,
+        subType: cls.subType,
+        raw: { reason: decision.reason, source: 'self-hosted-mta' },
+      }),
+    ];
+
+    if (email && decision.action === 'suppress') {
+      const reason = cls.category === 'complaint' ? 'complaint' : 'hard_bounce';
+      statements.push(buildSuppressionUpsert(ws, email, reason, 'mta'));
+      statements.push(
+        buildProfileEmailStatusUpdate(ws, email, cls.category === 'complaint' ? 'complained' : 'bounced'),
+      );
+      // An invalid mailbox is invalid for everyone, so a hard bounce also joins
+      // the cross-workspace list — the one deliberate cross-tenant exception.
+      if (cls.category === 'hard_bounce') statements.push(buildGlobalHardBounceUpsert(email));
+    }
+
+    await runUnsubscribeInWorkspaceTx(opts.pool, ws, statements);
+    return c.json({ ok: true, action: decision.action, reason: decision.reason }, 200);
+  });
+
   app.post('/v1/track', async (c) => {
     const body = await safeJson(c);
     const r = await ingestTrack(opts.pool, ingestKeyFrom(c, body), body);

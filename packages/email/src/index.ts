@@ -68,3 +68,20 @@ export {
   type ResendHttpClient,
   type ResendHttpResponse,
 } from './resend-client.js';
+
+// Self-hosted SMTP transport (drop-in for the dispatcher's sendEmail), plus the
+// VERP bounce-token helpers that tie an inbound bounce back to the exact message.
+export {
+  createSmtpEmailClient,
+  buildMimeMessage,
+  type SmtpEmailConfig,
+  type SmtpTransport,
+  type SmtpEnvelope,
+} from './smtp-client.js';
+export {
+  packVerpToken,
+  unpackVerpToken,
+  verpReturnPath,
+  parseVerpRecipient,
+  VERP_LOCAL_PART,
+} from './verp.js';
