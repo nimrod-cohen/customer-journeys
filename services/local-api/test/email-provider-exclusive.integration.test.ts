@@ -61,38 +61,30 @@ describeMaybe('one email provider per company (real Postgres)', () => {
     expect(res.status).toBe(200);
   });
 
-  it('refuses a SECOND email provider, naming the one in use', async () => {
-    const res = await putConnector('resend', { from: 'hi@acme.com' });
-    expect(res.status).toBe(409);
-    const body = res.body as { error: string; currentProvider: string };
-    expect(body.currentProvider).toBe('ses');
-    expect(body.error).toMatch(/Amazon SES/);
-    expect(body.error).toMatch(/one email provider at a time/);
-  });
-
-  it('allows re-configuring the SAME provider', async () => {
-    const res = await putConnector('ses', { region: 'eu-west-1', access_key_id: 'AKIA2' });
-    expect(res.status).toBe(200);
-  });
-
-  // Switching provider must not silently discard the old credentials.
-  it('allows switching once the previous provider is disabled', async () => {
-    await world.pool.query(
-      "UPDATE company_connectors SET enabled = false WHERE company_id=$1 AND provider='ses'",
-      [CO],
-    );
+  // Picking a provider is a CHOICE, so it switches rather than erroring — but
+  // exactly one stays enabled.
+  it('SWITCHES to a second provider instead of erroring', async () => {
     const res = await putConnector('resend', { from: 'hi@acme.com' });
     expect(res.status).toBe(200);
+    const body = res.body as { switchedFrom?: string; notice?: string };
+    expect(body.switchedFrom).toBe('ses');
+    expect(body.notice).toMatch(/Switched from Amazon SES/);
 
     const { rows } = await world.pool.query<{ provider: string; enabled: boolean }>(
-      'SELECT provider, enabled FROM company_connectors WHERE company_id=$1 ORDER BY provider',
-      [CO],
+      'SELECT provider, enabled FROM company_connectors WHERE company_id=$1 AND channel=$2 ORDER BY provider',
+      [CO, 'email'],
     );
-    // The SES row is still there, just disabled — credentials survive the switch.
+    // The old credentials survive, disabled — switching back is one click.
     expect(rows).toEqual([
       { provider: 'resend', enabled: true },
       { provider: 'ses', enabled: false },
     ]);
+  });
+
+  it('re-configuring the SAME provider is not a switch', async () => {
+    const res = await putConnector('resend', { from: 'other@acme.com' });
+    expect(res.status).toBe(200);
+    expect((res.body as { switchedFrom?: string }).switchedFrom).toBeUndefined();
   });
 
   it('does not constrain the sms and whatsapp channels', async () => {
@@ -104,10 +96,6 @@ describeMaybe('one email provider per company (real Postgres)', () => {
 
   // Self-hosted mail spends OUR IP reputation, so it is a platform-admin grant.
   it('refuses the self-hosted provider for an unauthorized company', async () => {
-    await world.pool.query(
-      "UPDATE company_connectors SET enabled = false WHERE company_id=$1 AND channel='email'",
-      [CO],
-    );
     const res = await putConnector('smtp', { from: 'hi@acme.com' }, '');
     expect(res.status).toBe(403);
     expect((res.body as { error: string }).error).toMatch(/not authorized/i);

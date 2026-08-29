@@ -1344,28 +1344,22 @@ export const putCompanyConnector: Handler = async (ctx, pool, req) => {
     }
   }
 
-  // ONE email provider per company. Two enabled email connectors would mean the
-  // provider that actually sends depends on resolution order rather than on what
-  // was configured — and the domain-verification flow differs per provider, so a
-  // company could verify a domain for one while sending through another.
+  // ONE email provider per company. Connecting a different one SWITCHES: the
+  // previous connector is disabled rather than deleted, so its credentials survive
+  // and switching back is one click. Two enabled at once would mean the provider
+  // that actually sends depends on resolution order rather than on what was
+  // chosen — and the domain-verification flow differs per provider, so a company
+  // could verify a domain for one while sending through the other.
   const enabledWanted = b.enabled === undefined ? true : Boolean(b.enabled);
+  let switchedFrom: string | null = null;
   if (channel === 'email' && enabledWanted) {
     const other = await pool.query<{ provider: string }>(
-      `SELECT provider FROM company_connectors
+      `UPDATE company_connectors SET enabled = false, updated_at = now()
         WHERE company_id = $1 AND channel = 'email' AND enabled AND provider <> $2
-        LIMIT 1`,
+        RETURNING provider`,
       [companyId, provider],
     );
-    const inUse = other.rows[0]?.provider;
-    if (inUse) {
-      return ok(
-        {
-          error: `This company already sends email through ${EMAIL_PROVIDER_LABELS[inUse] ?? inUse}. Disconnect it first — a company uses one email provider at a time.`,
-          currentProvider: inUse,
-        },
-        409,
-      );
-    }
+    switchedFrom = other.rows[0]?.provider ?? null;
   }
 
   const secret = typeof b.secret === 'string' ? b.secret.trim() : '';
@@ -1383,7 +1377,14 @@ export const putCompanyConnector: Handler = async (ctx, pool, req) => {
      DO UPDATE SET config = $4::jsonb, secret = $5, enabled = $6, updated_at = now()`,
     [companyId, channel, provider, JSON.stringify(config), effectiveSecret, enabled],
   );
-  return ok({ configured: true, channel, provider });
+  return ok({
+    configured: true,
+    channel,
+    provider,
+    ...(switchedFrom
+      ? { switchedFrom, notice: `Switched from ${EMAIL_PROVIDER_LABELS[switchedFrom] ?? switchedFrom}. Its settings are kept in case you switch back.` }
+      : {}),
+  });
 };
 
 /** DELETE /company/connectors/:id — remove a connector (scoped to the company). */

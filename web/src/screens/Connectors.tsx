@@ -19,7 +19,8 @@ interface ProviderField {
 interface ProviderSpec {
   provider: string;
   fields: ProviderField[];
-  secretLabel: string;
+  /** Omitted when the provider needs no per-company credential (self-hosted). */
+  secretLabel?: string;
   hint?: string;
 }
 interface ChannelSpec {
@@ -51,14 +52,20 @@ function WhatsAppGlyph(): JSX.Element {
     </svg>
   );
 }
+// NOTE: this map must keep an entry for every provider that could EVER appear on a
+// connector row, including ones no longer offered — `ses` is no longer selectable
+// (AWS never approved production access) but companies still hold connectors for it,
+// and the lookup below is non-optional, so removing it would crash their settings page.
 const PROVIDER_META: Record<string, { label: string; color: string; glyph: () => JSX.Element }> = {
+  smtp: { label: 'Our mail server', color: '#0F766E', glyph: EnvelopeGlyph },
   ses: { label: 'Amazon SES', color: '#FF9900', glyph: EnvelopeGlyph },
   resend: { label: 'Resend', color: '#0B0B0B', glyph: EnvelopeGlyph },
   '019': { label: '019 SMS', color: '#0EA5E9', glyph: ChatGlyph },
   meta_whatsapp: { label: 'Meta WhatsApp', color: '#25D366', glyph: WhatsAppGlyph },
 };
 function ProviderLogo({ provider, size = 'md' }: { provider: string; size?: 'sm' | 'md' }): JSX.Element {
-  const m = PROVIDER_META[provider]!;
+  // Defensive: an unknown provider must not blank the whole settings screen.
+  const m = PROVIDER_META[provider] ?? { label: provider, color: '#64748B', glyph: EnvelopeGlyph };
   const Glyph = m.glyph;
   return (
     <span
@@ -76,13 +83,11 @@ const CHANNELS: ChannelSpec[] = [
     label: 'Email',
     providers: [
       {
-        provider: 'ses',
-        fields: [
-          { key: 'region', label: 'AWS region', placeholder: 'il-central-1' },
-          { key: 'access_key_id', label: 'Access key ID', placeholder: 'AKIA…' },
-        ],
-        secretLabel: 'Secret access key',
-        hint: 'Needs a verified sending domain (Workspace settings → Sending domains). The region must match where you verify domains in SES.',
+        // No credential field: the SMTP login is platform-level, shared by every
+        // authorized company, so there is nothing per-company to enter.
+        provider: 'smtp',
+        fields: [{ key: 'from', label: 'Default From', placeholder: 'Acme <news@acme.com>' }],
+        hint: 'Sends through our own mail server. Add your domain under Workspace settings → Sending domains and publish the DKIM record it shows you.',
       },
       {
         provider: 'resend',
@@ -248,7 +253,10 @@ function ConnectorCard({ spec, existing, onChanged }: { spec: ProviderSpec; exis
   }, [existing, spec.provider]);
 
   const requiredFilled = spec.fields.every((f) => f.optional || String(values[f.key] ?? '').trim());
-  const canSave = requiredFilled && (configured || secret.trim().length > 0);
+  // A provider with no secretLabel needs no credential, so Connect must not wait
+  // for one that will never be typed.
+  const needsSecret = Boolean(spec.secretLabel);
+  const canSave = requiredFilled && (!needsSecret || configured || secret.trim().length > 0);
 
   const save = async (): Promise<void> => {
     setBusy(true);
@@ -310,16 +318,20 @@ function ConnectorCard({ spec, existing, onChanged }: { spec: ProviderSpec; exis
             />
           </Field>
         ))}
-        <Field label={spec.secretLabel}>
-          <Input
-            data-testid={`connector-${spec.provider}-secret`}
-            type="password"
-            class="font-mono text-sm"
-            placeholder={configured ? '•••••••• (leave blank to keep current)' : `enter the ${spec.secretLabel.toLowerCase()}`}
-            value={secret}
-            onInput={(e: Event) => setSecret((e.target as HTMLInputElement).value)}
-          />
-        </Field>
+        {/* Self-hosted has no per-company credential — the SMTP login is
+            platform-level — so the field is omitted rather than shown empty. */}
+        {spec.secretLabel ? (
+          <Field label={spec.secretLabel}>
+            <Input
+              data-testid={`connector-${spec.provider}-secret`}
+              type="password"
+              class="font-mono text-sm"
+              placeholder={configured ? '•••••••• (leave blank to keep current)' : `enter the ${spec.secretLabel.toLowerCase()}`}
+              value={secret}
+              onInput={(e: Event) => setSecret((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+        ) : null}
         <div class="flex items-center gap-3">
           <Button data-testid={`connector-${spec.provider}-save`} size="sm" onClick={() => save()} disabled={busy || !canSave}>
             {busy ? 'Saving…' : configured ? 'Update' : 'Connect'}
