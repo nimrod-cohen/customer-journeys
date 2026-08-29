@@ -220,6 +220,26 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   by `MAIL_AGENT_SECRET`. That bearer only gets a caller through the door — workspace and
   recipient still come from the verified VERP token, so a leaked bearer cannot suppress
   an arbitrary address. Unattributable reports return 200 so the agent stops retrying.
+- **Submission is authenticated.** The app submits on **587 with TLS + Cyrus SASL**
+  (`SELF_HOSTED_SMTP_*` secrets); the service is `permit_sasl_authenticated, reject`, so
+  an authenticated app may relay anywhere and anyone else nowhere. Port 25 stays
+  inbound-only (bounces). `makeSmtpTransport` (`@cdp/email`) is nodemailer-backed and
+  **pooled** — a TCP+TLS+AUTH handshake per message would dominate the cost of sending.
+- **`SendEmailInput.messageId` is its own field, never `configurationSetName`.** In the
+  dispatcher that field carries the workspace's real SES config-set name; signing VERP
+  tokens with it yields Return-Paths that resolve to no message while every send still
+  looks successful, so bounces silently stop being attributable.
+- **Every message is signed TWICE**: `d=<customer-domain>` for DMARC alignment, and
+  `d=journeys.on-grow.com` from the `platform` selector. The second signature is what
+  lets ONE Yahoo CFL registration and ONE reputation view cover every tenant — feedback
+  loops bind to an IP or a DKIM domain, never to a company. OpenDKIM's `SigningTable` is
+  a `refile:`, so a `*` entry adds the platform signature to all mail.
+- **Google Postmaster Tools (API v2)** registers each customer domain under OUR account,
+  so the customer publishes one more DNS record instead of creating a Google account.
+  Two traps, both found against the live API: `domainStats:query` needs `parent` in the
+  request BODY as well as the path, and `complianceStatus` returns
+  `complianceData.rowData[]` requirement/status pairs, not flat `spfStatus`/`dkimStatus`
+  fields. Verification is a readiness **warning** and never gates sending.
 - **The MTA agent is a thin forwarder** (`services/mail-agent/mail-agent.mjs`): read
   Maildir, post raw, delete on 2xx. It parses nothing, so a parser fix is an app deploy
   rather than an ssh session on a mail server.
