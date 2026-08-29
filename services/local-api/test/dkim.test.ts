@@ -210,3 +210,70 @@ describe('verifyCustomerDomain', () => {
     expect(r.checks).toHaveLength(5);
   });
 });
+
+describe('Google Postmaster Tools verification', () => {
+  const KEY = 'PUBKEY';
+  const GPT = 'google-site-verification=abc123xyz';
+  const base = {
+    cnames: {
+      'bounce.acme.com': [`bounce.${MAIL_DOMAIN}`],
+      's1._domainkey.acme.com': [`s1.${COMPANY}.dkim.${MAIL_DOMAIN}`],
+      's2._domainkey.acme.com': [`s2.${COMPANY}.dkim.${MAIL_DOMAIN}`],
+    },
+    txt: {
+      's1._domainkey.acme.com': [[`v=DKIM1; k=rsa; p=${KEY}`]],
+      '_dmarc.acme.com': [['v=DMARC1; p=none']],
+      'acme.com': [[GPT]],
+    },
+  };
+  const args = {
+    customerDomain: 'acme.com',
+    companyId: COMPANY,
+    mailDomain: MAIL_DOMAIN,
+    expectedPublicKey: KEY,
+  };
+
+  it('adds a fourth record when a token has been issued', () => {
+    const recs = customerDnsRecords('acme.com', COMPANY, MAIL_DOMAIN, GPT);
+    expect(recs).toHaveLength(4);
+    const gpt = recs[3]!;
+    expect(gpt.type).toBe('TXT');
+    expect(gpt.name).toBe('acme.com'); // apex
+    expect(gpt.value).toBe(GPT);
+    expect(gpt.required).toBe(false);
+  });
+
+  it('omits it when no token exists yet', () => {
+    expect(customerDnsRecords('acme.com', COMPANY, MAIL_DOMAIN)).toHaveLength(3);
+    expect(customerDnsRecords('acme.com', COMPANY, MAIL_DOMAIN, '  ')).toHaveLength(3);
+  });
+
+  it('reports it verified when the TXT resolves', async () => {
+    const r = await verifyCustomerDomain(resolverFor(base), { ...args, gptToken: GPT });
+    expect(r.gptVerified).toBe(true);
+    expect(r.verified).toBe(true);
+  });
+
+  // Reputation VISIBILITY must never be a prerequisite for sending — that would
+  // block onboarding on a Google-side step unrelated to authorisation.
+  it('does NOT block sending when Postmaster verification is missing', async () => {
+    const txt = { ...base.txt };
+    delete (txt as Record<string, unknown>)['acme.com'];
+    const r = await verifyCustomerDomain(resolverFor({ ...base, txt }), { ...args, gptToken: GPT });
+    expect(r.gptVerified).toBe(false);
+    expect(r.verified).toBe(true); // still sendable
+    expect(r.checks.find((c) => c.label === 'Google Postmaster verification')!.ok).toBe(false);
+  });
+
+  it('reports null and adds no check when no token was issued', async () => {
+    const r = await verifyCustomerDomain(resolverFor(base), args);
+    expect(r.gptVerified).toBeNull();
+    expect(r.checks.some((c) => c.label === 'Google Postmaster verification')).toBe(false);
+  });
+
+  it('still fails a domain whose DKIM is wrong, token present or not', async () => {
+    const txt = { ...base.txt, 's1._domainkey.acme.com': [['v=DKIM1; k=rsa; p=WRONG']] };
+    const r = await verifyCustomerDomain(resolverFor({ ...base, txt }), { ...args, gptToken: GPT });
+    expect(r.verified).toBe(false);
+  });
+});

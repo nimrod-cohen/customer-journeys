@@ -76,39 +76,68 @@ export function dkimTargetHost(selector: 's1' | 's2', companyId: string, mailDom
   return `${selector}.${companyId}.dkim.${mailDomain}`;
 }
 
-/** The three records a customer publishes to authorise us for their domain. */
+/** One record a customer publishes to authorise us for their domain. */
 export interface CustomerDnsRecord {
   readonly name: string;
-  readonly type: 'CNAME';
+  readonly type: 'CNAME' | 'TXT';
   readonly value: string;
   readonly purpose: string;
+  /** False for records that improve visibility but do not gate sending. */
+  readonly required: boolean;
 }
 
+/**
+ * Everything a customer publishes, in one list — the whole of their onboarding.
+ *
+ * Three CNAMEs authorise us to send as them; the optional TXT lets us read their
+ * Gmail reputation. Passing `gptToken` adds that fourth record.
+ */
 export function customerDnsRecords(
   customerDomain: string,
   companyId: string,
   mailDomain: string,
+  gptToken?: string | null,
 ): CustomerDnsRecord[] {
-  return [
+  const records: CustomerDnsRecord[] = [
     {
       name: `bounce.${customerDomain}`,
       type: 'CNAME',
       value: `bounce.${mailDomain}`,
       purpose: 'Return path — inherits our SPF and MX, so bounces come back to us and SPF aligns with your domain',
+      required: true,
     },
     {
       name: `s1._domainkey.${customerDomain}`,
       type: 'CNAME',
       value: dkimTargetHost('s1', companyId, mailDomain),
       purpose: 'DKIM signing key',
+      required: true,
     },
     {
       name: `s2._domainkey.${customerDomain}`,
       type: 'CNAME',
       value: dkimTargetHost('s2', companyId, mailDomain),
       purpose: 'DKIM rotation key — lets us rotate without you touching DNS again',
+      required: true,
     },
   ];
+
+  // Reputation visibility, not authorisation: Gmail reports domain reputation only
+  // to an account that has proven ownership, and there is no API key to hand over.
+  // Verifying the customer's domain under OUR Postmaster account turns that into
+  // one more DNS record instead of a Google account, a verification and an OAuth
+  // consent screen for every customer.
+  if (gptToken && gptToken.trim()) {
+    records.push({
+      name: customerDomain,
+      type: 'TXT',
+      value: gptToken.trim(),
+      purpose: 'Google Postmaster Tools — lets us show you your Gmail reputation and spam rate',
+      required: false,
+    });
+  }
+
+  return records;
 }
 
 // ── DNS provider seam ────────────────────────────────────────────────────────
@@ -223,8 +252,11 @@ export interface DomainCheck {
 
 /** What a domain still needs before it may send. */
 export interface DomainVerification {
+  /** Whether the domain may SEND. Postmaster Tools is excluded from this. */
   readonly verified: boolean;
   readonly checks: DomainCheck[];
+  /** Postmaster verification state: true/false when a token exists, null when none. */
+  readonly gptVerified?: boolean | null;
 }
 
 /**
@@ -238,7 +270,14 @@ export interface DomainVerification {
  */
 export async function verifyCustomerDomain(
   resolver: DnsResolver,
-  opts: { customerDomain: string; companyId: string; mailDomain: string; expectedPublicKey: string },
+  opts: {
+    customerDomain: string;
+    companyId: string;
+    mailDomain: string;
+    expectedPublicKey: string;
+    /** Google Postmaster verification value, when the domain has one issued. */
+    gptToken?: string | null;
+  },
 ): Promise<DomainVerification> {
   const checks: DomainCheck[] = [];
 
@@ -295,5 +334,31 @@ export async function verifyCustomerDomain(
     checks.push({ label: 'DMARC published', ok: false, detail: 'no _dmarc record found' });
   }
 
-  return { verified: checks.every((c) => c.ok), checks };
+  // Postmaster Tools is checked but deliberately does NOT gate `verified`: a domain
+  // sends perfectly well without it. Treating reputation VISIBILITY as a
+  // prerequisite for sending would block onboarding on a Google-side step that has
+  // nothing to do with whether the mail is authorised.
+  let gptOk: boolean | null = null;
+  if (opts.gptToken && opts.gptToken.trim()) {
+    const want = opts.gptToken.trim();
+    try {
+      const txt = await resolver.resolveTxt(opts.customerDomain);
+      gptOk = txt.map((p) => p.join('')).some((v) => v.trim() === want);
+      checks.push({
+        label: 'Google Postmaster verification',
+        ok: gptOk,
+        detail: gptOk ? undefined : 'optional — needed only to show Gmail reputation',
+      });
+    } catch {
+      gptOk = false;
+      checks.push({
+        label: 'Google Postmaster verification',
+        ok: false,
+        detail: 'optional — no TXT record found at the domain apex',
+      });
+    }
+  }
+
+  const required = checks.filter((c) => c.label !== 'Google Postmaster verification');
+  return { verified: required.every((c) => c.ok), checks, gptVerified: gptOk };
 }
