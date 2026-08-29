@@ -118,6 +118,10 @@ import {
 } from './identity.js';
 import { postmasterFromEnv, syncDomainWithPostmaster } from './postmaster.js';
 import { createSmtpEmailClient, smtpTransportFromEnv } from '@cdp/email';
+import { verifySelfHostedDomain, nodeDnsResolver } from './dkim.js';
+
+/** The OpenDKIM selector our mail server signs with for customer domains. */
+const SELF_HOSTED_DKIM_SELECTOR = 'cdp';
 
 /** A handler's request shape (already parsed by the server). */
 export interface HandlerRequest {
@@ -2037,10 +2041,47 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
   // without reputation monitoring. Null client = Postmaster not configured, which
   // is a normal state rather than an error.
   const postmaster = await syncPostmasterForDomain(pool, ctx.workspaceId, req.params.id!, row.domain);
+  // A self-hosted company has no SES at all, so it verifies against the DKIM key
+  // the domain published for OUR mail server instead of asking SES.
+  const selfHosted = await pool.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
+      WHERE w.id = $1 AND c.channel = 'email' AND c.provider = 'smtp' AND c.enabled`,
+    [ctx.workspaceId],
+  );
+  if ((selfHosted.rows[0]?.n ?? 0) > 0) {
+    const v = await verifySelfHostedDomain(nodeDnsResolver(), {
+      customerDomain: row.domain,
+      selector: SELF_HOSTED_DKIM_SELECTOR,
+      expectedPublicKey: row.dkim_tokens?.[0] ?? '',
+    });
+    if (v.verified && !row.verified) {
+      const upd = scopedQuery(
+        ctx.workspaceId,
+        'UPDATE sending_domains SET verified = true, verified_at = now() WHERE id = $1',
+        [req.params.id!],
+      );
+      await pool.query(upd.text, upd.values);
+    }
+    return ok({
+      verified: v.verified || row.verified,
+      selfHosted: true,
+      checks: v.checks,
+      postmaster,
+      records: [
+        {
+          type: 'TXT',
+          name: `${SELF_HOSTED_DKIM_SELECTOR}._domainkey.${row.domain}`,
+          value: row.dkim_tokens?.[0] ?? '',
+          purpose: 'DKIM — lets our mail server sign as your domain',
+        },
+      ],
+    });
+  }
+
   const { ses, mode, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   // No SES credentials → don't simulate a verification; require SES first.
   if (mode === 'none') {
-    return ok({ verified: row.verified, sesConfigured: false, error: SES_NOT_CONFIGURED });
+    return ok({ verified: row.verified, sesConfigured: false, postmaster, error: SES_NOT_CONFIGURED });
   }
   try {
     const { identity, tokens, signingHostedZone } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);

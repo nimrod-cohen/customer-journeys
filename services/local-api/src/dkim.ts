@@ -362,3 +362,76 @@ export async function verifyCustomerDomain(
   const required = checks.filter((c) => c.label !== 'Google Postmaster verification');
   return { verified: required.every((c) => c.ok), checks, gptVerified: gptOk };
 }
+
+
+// ── self-hosted domain verification (direct DKIM TXT) ────────────────────────
+
+/**
+ * Verify a self-hosted sending domain by resolving the DKIM key it published.
+ *
+ * This is the DIRECT model: the domain publishes our public key at
+ * `<selector>._domainkey.<domain>` itself. It needs no DNS credentials on our side
+ * and no records on our zone, which is why it is the model that works on day one.
+ * CNAME delegation (see the design doc) is the later refinement that buys key
+ * rotation without customer involvement.
+ *
+ * SPF is deliberately not required of the customer: the envelope sender lives in our
+ * bounce domain, so where that shares an organisational domain with the From — as it
+ * does for our own domains — SPF already aligns under DMARC's relaxed rule, and DKIM
+ * aligns regardless.
+ */
+export async function verifySelfHostedDomain(
+  resolver: DnsResolver,
+  opts: { customerDomain: string; selector: string; expectedPublicKey: string },
+): Promise<DomainVerification> {
+  const checks: DomainCheck[] = [];
+
+  try {
+    const txt = await resolver.resolveTxt(`${opts.selector}._domainkey.${opts.customerDomain}`);
+    // A 2048-bit key is published as several strings the resolver rejoins, so each
+    // record's parts are concatenated before comparing.
+    const joined = txt.map((parts) => parts.join(''));
+    const ok = joined.some((v) => v.replace(/\s+/g, '').includes(opts.expectedPublicKey.replace(/\s+/g, '')));
+    checks.push({
+      label: 'DKIM key published',
+      ok,
+      detail: ok ? undefined : `publish the TXT record at ${opts.selector}._domainkey.${opts.customerDomain}`,
+    });
+  } catch {
+    checks.push({
+      label: 'DKIM key published',
+      ok: false,
+      detail: `no TXT record found at ${opts.selector}._domainkey.${opts.customerDomain}`,
+    });
+  }
+
+  // DMARC is required of bulk senders by Gmail and Yahoo, so a domain without it
+  // would verify here and then be refused by the receivers that matter.
+  try {
+    const txt = await resolver.resolveTxt(`_dmarc.${opts.customerDomain}`);
+    const ok = txt.map((p) => p.join('')).some((v) => /^v=DMARC1/i.test(v.trim()));
+    checks.push({
+      label: 'DMARC published',
+      ok,
+      detail: ok ? undefined : 'Gmail and Yahoo require DMARC for bulk senders',
+    });
+  } catch {
+    checks.push({ label: 'DMARC published', ok: false, detail: 'no _dmarc record found' });
+  }
+
+  return { verified: checks.every((c) => c.ok), checks };
+}
+
+/** Node's resolver, wired to the DnsResolver seam. */
+export function nodeDnsResolver(): DnsResolver {
+  return {
+    async resolveCname(name) {
+      const { resolveCname } = await import('node:dns/promises');
+      return resolveCname(name);
+    },
+    async resolveTxt(name) {
+      const { resolveTxt } = await import('node:dns/promises');
+      return resolveTxt(name);
+    },
+  };
+}

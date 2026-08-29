@@ -6,6 +6,7 @@ import {
   makeCloudflareDns,
   dkimTxtChunks,
   verifyCustomerDomain,
+  verifySelfHostedDomain,
   type CloudflareHttp,
   type DnsResolver,
 } from '../src/dkim.js';
@@ -275,5 +276,56 @@ describe('Google Postmaster Tools verification', () => {
     const txt = { ...base.txt, 's1._domainkey.acme.com': [['v=DKIM1; k=rsa; p=WRONG']] };
     const r = await verifyCustomerDomain(resolverFor({ ...base, txt }), { ...args, gptToken: GPT });
     expect(r.verified).toBe(false);
+  });
+});
+
+describe('verifySelfHostedDomain (the day-one model)', () => {
+  const KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8ABBBB';
+  const args = { customerDomain: 'acme.com', selector: 'cdp', expectedPublicKey: KEY };
+  const good = {
+    txt: {
+      'cdp._domainkey.acme.com': [[`v=DKIM1; h=sha256; k=rsa; p=${KEY}`]],
+      '_dmarc.acme.com': [['v=DMARC1; p=none']],
+    },
+  };
+
+  it('verifies a domain that published our key', async () => {
+    const r = await verifySelfHostedDomain(resolverFor(good), args);
+    expect(r.verified).toBe(true);
+  });
+
+  // A 2048-bit key is published as several strings the resolver rejoins.
+  it('rejoins a multi-string TXT record before comparing', async () => {
+    const half = Math.floor(KEY.length / 2);
+    const txt = {
+      ...good.txt,
+      'cdp._domainkey.acme.com': [['v=DKIM1; k=rsa; p=' + KEY.slice(0, half), KEY.slice(half)]],
+    };
+    expect((await verifySelfHostedDomain(resolverFor({ txt }), args)).verified).toBe(true);
+  });
+
+  it('fails when the record is missing', async () => {
+    const r = await verifySelfHostedDomain(resolverFor({ txt: good.txt ? { '_dmarc.acme.com': good.txt['_dmarc.acme.com']! } : {} }), args);
+    expect(r.verified).toBe(false);
+    expect(r.checks.find((c) => c.label === 'DKIM key published')!.detail).toMatch(/cdp\._domainkey\.acme\.com/);
+  });
+
+  it('fails when a DIFFERENT key is published', async () => {
+    const txt = { ...good.txt, 'cdp._domainkey.acme.com': [['v=DKIM1; k=rsa; p=SOMEONEELSESKEY']] };
+    expect((await verifySelfHostedDomain(resolverFor({ txt }), args)).verified).toBe(false);
+  });
+
+  // Verifying a domain Gmail will refuse is worse than refusing it ourselves.
+  it('requires DMARC', async () => {
+    const txt = { 'cdp._domainkey.acme.com': good.txt['cdp._domainkey.acme.com']! };
+    const r = await verifySelfHostedDomain(resolverFor({ txt }), args);
+    expect(r.verified).toBe(false);
+    expect(r.checks.find((c) => c.label === 'DMARC published')!.ok).toBe(false);
+  });
+
+  it('never throws when DNS is unavailable', async () => {
+    const r = await verifySelfHostedDomain(resolverFor({}), args);
+    expect(r.verified).toBe(false);
+    expect(r.checks).toHaveLength(2);
   });
 });
