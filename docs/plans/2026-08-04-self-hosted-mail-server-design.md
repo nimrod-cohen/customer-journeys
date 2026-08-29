@@ -510,6 +510,81 @@ port 25, which is why the waiting month is not idle time.
 - **The relay was left untouched** beyond the earlier three-line change, as instructed.
 
 
+## Reputation and feedback loops across tenants
+
+Two separate problems, with two different answers.
+
+**Feedback loops are bound to an IP or to a DKIM domain**, not to a company:
+
+| Loop | Bound to | Registered |
+|---|---|---|
+| Microsoft SNDS / JMRP | our **IP** | once, covers every tenant |
+| Yahoo / AOL CFL | the **DKIM `d=` domain** | per domain |
+| Google Postmaster Tools | the **authenticating domain** | per domain |
+
+Since we sign `d=<customer-domain>` for DMARC alignment, the domain-bound loops
+would otherwise be per-customer work forever.
+
+**The fix is a second DKIM signature.** Every message is signed twice: once with the
+customer's domain (giving DMARC alignment) and once with `journeys.on-grow.com`
+(letting us claim the mail for feedback loops and reputation). OpenDKIM's
+`SigningTable` is a `refile:`, so several entries may match one sender and each adds
+a signature; a `*` entry pointing at the platform key does this for all mail.
+
+Requires `platform._domainkey.journeys.on-grow.com` on our own zone. **Until that is
+published, every message carries a signature that cannot verify**, which is worse
+than no second signature — publish it before the first real send.
+
+## Google Postmaster Tools
+
+Gmail reports domain reputation and spam rate ONLY to an account that has proven
+ownership, and there is no API key. The naive design makes every customer create a
+Google account, verify a domain and complete an OAuth consent screen.
+
+**Instead we register the customer's domain under OUR Postmaster account.** A domain
+may be verified by several accounts independently, so the customer publishes one more
+DNS record and never touches Google. One platform-level OAuth credential covers every
+tenant.
+
+**API v2 is what makes this fully automatic.** v1 is read-only and would have left
+"add the domain in the Postmaster UI" as a manual step per domain. v2 adds
+`domains.create`, `getVerificationToken`, `verify` and `getComplianceStatus`.
+
+**Two things the reference docs do not make obvious, both found by calling the live
+API and both fatal in production:**
+
+1. **`domainStats:query` requires `parent` in the request BODY**, not only in the URL
+   path. Omitting it returns a bare `INVALID_ARGUMENT` naming no field.
+2. **`complianceStatus` is not a flat `{spfStatus, dkimStatus, dmarcStatus}`.** It
+   returns `complianceData.rowData[]` as requirement/status pairs — `SPF_AND_DKIM`,
+   `DMARC_ALIGNMENT`, `DMARC_POLICY`, `ENCRYPTION`, `USER_REPORTED_SPAM_RATE`,
+   `DNS_RECORDS` — plus one-click-unsubscribe, honor-unsubscribe and deliverability
+   verdicts. That is Gmail's entire bulk-sender checklist, and better data than the
+   three fields the name suggests.
+
+Also note v2 **replaced v1's reputation buckets** (BAD/LOW/MEDIUM/HIGH) with concrete
+rates: `SPAM_RATE`, `AUTH_SUCCESS_RATE`, `DELIVERY_ERROR_RATE`, `TLS_ENCRYPTION_RATE`.
+Gmail publishes on a lag, so a stats window must end about two days back — asking for
+today reliably returns nothing and reads as a broken integration.
+
+**Postmaster verification never gates sending.** A domain sends perfectly well without
+it; treating reputation visibility as a prerequisite would block onboarding on a
+Google-side step unrelated to authorisation. It surfaces as a readiness **warning**
+instead, and stays silent for a workspace with no sending domains.
+
+**Onboarding is therefore four records**, all shown at once:
+
+| Record | Gates sending? |
+|---|---|
+| `bounce.<domain>` CNAME | yes |
+| `s1._domainkey.<domain>` CNAME | yes |
+| `s2._domainkey.<domain>` CNAME | yes |
+| `<domain>` TXT (Postmaster) | no — reputation visibility only |
+
+Everything else — key generation, publishing our half, registering with Google,
+verification, and reputation polling — happens on our side.
+
+
 ## Open questions
 
 - Which activity is the phase-7 warmup traffic?
