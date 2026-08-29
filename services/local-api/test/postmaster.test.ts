@@ -78,48 +78,100 @@ describe('verifyDomain', () => {
 });
 
 describe('getComplianceStatus', () => {
-  it("reads SPF/DKIM/DMARC as Google sees them", async () => {
-    const f = fake({
-      'GET /domains/acme.com/complianceStatus': {
-        status: 200,
-        body: '{"spfStatus":"COMPLIANT","dkimStatus":"COMPLIANT","dmarcStatus":"NON_COMPLIANT"}',
-      },
-    });
-    expect(await f.client.getComplianceStatus(DOMAIN)).toEqual({
-      spf: 'COMPLIANT',
-      dkim: 'COMPLIANT',
-      dmarc: 'NON_COMPLIANT',
-    });
+  // The real v2 payload, captured from the live API: a rowData array of
+  // requirement/status pairs plus three separate verdicts — NOT the flat
+  // {spfStatus, dkimStatus, dmarcStatus} the shape reads like at first glance.
+  const REAL = JSON.stringify({
+    name: 'domains/acme.com/complianceStatus',
+    complianceData: {
+      domainId: 'acme.com',
+      rowData: [
+        { requirement: 'SPF_AND_DKIM', status: { status: 'COMPLIANT' } },
+        { requirement: 'DMARC_ALIGNMENT', status: { status: 'COMPLIANT' } },
+        { requirement: 'DMARC_POLICY', status: { status: 'NON_COMPLIANT' } },
+        { requirement: 'ENCRYPTION', status: { status: 'COMPLIANT' } },
+        { requirement: 'USER_REPORTED_SPAM_RATE', status: { status: 'COMPLIANT' } },
+        { requirement: 'DNS_RECORDS', status: { status: 'COMPLIANT' } },
+      ],
+      oneClickUnsubscribeVerdict: { status: { status: 'COMPLIANT' } },
+      honorUnsubscribeVerdict: { status: { status: 'COMPLIANT' } },
+      deliverabilityStatusVerdict: { state: { status: 'COMPLIANT' }, reason: 'USER_FEEDBACK_POSITIVE' },
+    },
   });
 
-  it('degrades to nulls on an unexpected shape rather than throwing', async () => {
+  it("reads Gmail's whole bulk-sender checklist", async () => {
+    const f = fake({ 'GET /domains/acme.com/complianceStatus': { status: 200, body: REAL } });
+    const c = await f.client.getComplianceStatus(DOMAIN);
+    expect(c.requirements.SPF_AND_DKIM).toBe('COMPLIANT');
+    expect(c.requirements.DMARC_POLICY).toBe('NON_COMPLIANT');
+    expect(Object.keys(c.requirements)).toHaveLength(6);
+    expect(c.oneClickUnsubscribe).toBe('COMPLIANT');
+    expect(c.honorUnsubscribe).toBe('COMPLIANT');
+    expect(c.deliverability).toBe('COMPLIANT');
+    expect(c.deliverabilityReason).toBe('USER_FEEDBACK_POSITIVE');
+  });
+
+  it('degrades to empty rather than throwing on an unexpected body', async () => {
     const f = fake({ 'GET /domains/acme.com/complianceStatus': { status: 200, body: 'not json' } });
-    expect(await f.client.getComplianceStatus(DOMAIN)).toEqual({ spf: null, dkim: null, dmarc: null });
+    const c = await f.client.getComplianceStatus(DOMAIN);
+    expect(c.requirements).toEqual({});
+    expect(c.deliverability).toBeNull();
   });
 });
 
-describe('getReputation', () => {
-  it('maps Gmail stats including the spam ratio', async () => {
+describe('getMetrics', () => {
+  // Also the real shape: value is a wrapper, and `metric` echoes the NAME we chose.
+  const REAL = JSON.stringify({
+    domainStats: [
+      { name: 'domains/acme.com/domainStats/spamrate.nofilter.20260813', metric: 'spam_rate', value: { floatValue: 0.0025 }, date: { year: 2026, month: 8, day: 13 } },
+      { name: 'domains/acme.com/domainStats/spamrate.nofilter.20260814', metric: 'spam_rate', value: { floatValue: 0 }, date: { year: 2026, month: 8, day: 14 } },
+    ],
+  });
+
+  it('maps daily values and formats the date', async () => {
+    const f = fake({ 'POST /domains/acme.com/domainStats:query': { status: 200, body: REAL } });
+    const m = await f.client.getMetrics(DOMAIN, 14);
+    expect(m).toHaveLength(2);
+    expect(m[0]).toEqual({ metric: 'spam_rate', value: 0.0025, date: '2026-08-13' });
+    expect(m[1]!.value).toBe(0); // zero is a real value, not "missing"
+  });
+
+  // Omitting `parent` from the BODY (it is already in the path) yields a bare
+  // INVALID_ARGUMENT naming no field — an easy afternoon to lose.
+  it('sends parent in the body as well as the path', async () => {
+    const f = fake({ 'POST /domains/acme.com/domainStats:query': { status: 200, body: '{}' } });
+    await f.client.getMetrics(DOMAIN, 7);
+    const body = JSON.parse(f.calls[0]!.body!);
+    expect(body.parent).toBe('domains/acme.com');
+    expect(body.metricDefinitions[0].baseMetric.standardMetric).toBe('SPAM_RATE');
+    expect(body.timeQuery.dateRanges.dateRanges[0].start).toHaveProperty('year');
+  });
+
+  // Gmail publishes on a lag; asking for today reliably returns nothing and looks
+  // like a broken integration.
+  it('ends the window two days back to allow for Gmail publishing lag', async () => {
+    const f = fake({ 'POST /domains/acme.com/domainStats:query': { status: 200, body: '{}' } });
+    await f.client.getMetrics(DOMAIN, 7);
+    const end = JSON.parse(f.calls[0]!.body!).timeQuery.dateRanges.dateRanges[0].end;
+    const asDate = Date.UTC(end.year, end.month - 1, end.day);
+    const daysAgo = Math.round((Date.now() - asDate) / 86_400_000);
+    expect(daysAgo).toBeGreaterThanOrEqual(2);
+  });
+
+  it('handles an OVERALL aggregate with no date', async () => {
     const f = fake({
       'POST /domains/acme.com/domainStats:query': {
         status: 200,
-        body: JSON.stringify({
-          domainStats: [
-            { date: '2026-08-28', domainReputation: 'HIGH', ipReputations: [{ reputation: 'HIGH' }], userReportedSpamRatio: 0.0004 },
-            { date: '2026-08-27', domainReputation: 'MEDIUM', userReportedSpamRatio: 0.002 },
-          ],
-        }),
+        body: JSON.stringify({ domainStats: [{ metric: 'spam_rate', value: { floatValue: 0.00254 } }] }),
       },
     });
-    const r = await f.client.getReputation(DOMAIN, 7);
-    expect(r).toHaveLength(2);
-    expect(r[0]).toMatchObject({ domainReputation: 'HIGH', ipReputation: 'HIGH', userReportedSpamRatio: 0.0004 });
-    expect(r[1]!.ipReputation).toBeNull();
+    const m = await f.client.getMetrics(DOMAIN, 30, ['SPAM_RATE'], 'OVERALL');
+    expect(m[0]).toEqual({ metric: 'spam_rate', value: 0.00254, date: null });
   });
 
-  it('returns an empty list when Gmail has no data yet (low volume)', async () => {
+  it('returns empty when Gmail has no data for a low-volume domain', async () => {
     const f = fake({ 'POST /domains/acme.com/domainStats:query': { status: 200, body: '{}' } });
-    expect(await f.client.getReputation(DOMAIN, 7)).toEqual([]);
+    expect(await f.client.getMetrics(DOMAIN, 7)).toEqual([]);
   });
 });
 

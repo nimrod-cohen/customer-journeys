@@ -47,22 +47,45 @@ export interface TokenSource {
   accessToken(): Promise<string>;
 }
 
-/** Gmail's reputation buckets, plus the spam rate that actually decides placement. */
-export interface DomainReputation {
-  readonly domain: string;
-  /** BAD | LOW | MEDIUM | HIGH, or null when Gmail has too little volume to report. */
-  readonly domainReputation: string | null;
-  readonly ipReputation: string | null;
-  /** Fraction of delivered mail marked as spam by users. Gmail's threshold is 0.003. */
-  readonly userReportedSpamRatio: number | null;
+/**
+ * One metric value for one day (or one OVERALL aggregate).
+ *
+ * v2 dropped v1's coarse reputation buckets (BAD/LOW/MEDIUM/HIGH) in favour of
+ * concrete rates, which is strictly better: SPAM_RATE is the number Gmail actually
+ * enforces against, not a bucket you have to interpret.
+ */
+export interface DomainMetric {
+  /** The name WE gave the metric in the request, e.g. 'spam'. */
+  readonly metric: string;
+  readonly value: number | null;
+  /** ISO date, or null for an OVERALL aggregate. */
   readonly date: string | null;
 }
 
-/** SPF/DKIM/DMARC as Google evaluates them — more authoritative than our own lookups. */
+/** The metrics Gmail exposes. SPAM_RATE is the one that decides inbox placement. */
+export type StandardMetric =
+  | 'SPAM_RATE'
+  | 'AUTH_SUCCESS_RATE'
+  | 'DELIVERY_ERROR_RATE'
+  | 'DELIVERY_ERROR_COUNT'
+  | 'TLS_ENCRYPTION_RATE'
+  | 'TLS_ENCRYPTION_MESSAGE_COUNT'
+  | 'FEEDBACK_LOOP_SPAM_RATE'
+  | 'FEEDBACK_LOOP_ID';
+
+/**
+ * Gmail's bulk-sender compliance checklist, as GOOGLE evaluates it — more
+ * authoritative than our own DNS lookups, because it reflects what actually
+ * happens to the mail rather than what the records say.
+ */
 export interface ComplianceStatus {
-  readonly spf: string | null;
-  readonly dkim: string | null;
-  readonly dmarc: string | null;
+  /** requirement -> status, e.g. SPF_AND_DKIM -> COMPLIANT. */
+  readonly requirements: Record<string, string>;
+  readonly oneClickUnsubscribe: string | null;
+  readonly honorUnsubscribe: string | null;
+  readonly deliverability: string | null;
+  /** Why Gmail reached that deliverability verdict, when it says. */
+  readonly deliverabilityReason: string | null;
 }
 
 export interface PostmasterClient {
@@ -70,7 +93,18 @@ export interface PostmasterClient {
   getVerificationToken(domain: string): Promise<string>;
   verifyDomain(domain: string): Promise<{ verified: boolean; detail: string | null }>;
   getComplianceStatus(domain: string): Promise<ComplianceStatus>;
-  getReputation(domain: string, days: number): Promise<DomainReputation[]>;
+  /** Daily values for the last `days`, or a single OVERALL aggregate. */
+  getMetrics(
+    domain: string,
+    days: number,
+    metrics?: readonly StandardMetric[],
+    granularity?: 'DAILY' | 'OVERALL',
+  ): Promise<DomainMetric[]>;
+}
+
+/** Google's Date wire type. */
+function googleDate(d: Date): { year: number; month: number; day: number } {
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
 }
 
 function resourceName(domain: string): string {
@@ -148,32 +182,72 @@ export function makePostmasterClient(
     async getComplianceStatus(domain) {
       const res = await call('GET', `/${resourceName(domain)}/complianceStatus`);
       if (!ok(res.status)) throw new Error(`postmaster: compliance for ${domain} failed (${res.status})`);
-      const p = parse<{ spfStatus?: string; dkimStatus?: string; dmarcStatus?: string }>(res.body);
-      return { spf: p?.spfStatus ?? null, dkim: p?.dkimStatus ?? null, dmarc: p?.dmarcStatus ?? null };
+      const p = parse<{
+        complianceData?: {
+          rowData?: { requirement?: string; status?: { status?: string } }[];
+          oneClickUnsubscribeVerdict?: { status?: { status?: string } };
+          honorUnsubscribeVerdict?: { status?: { status?: string } };
+          deliverabilityStatusVerdict?: { state?: { status?: string }; reason?: string };
+        };
+      }>(res.body);
+      const data = p?.complianceData;
+      const requirements: Record<string, string> = {};
+      for (const row of data?.rowData ?? []) {
+        if (row.requirement && row.status?.status) requirements[row.requirement] = row.status.status;
+      }
+      return {
+        requirements,
+        oneClickUnsubscribe: data?.oneClickUnsubscribeVerdict?.status?.status ?? null,
+        honorUnsubscribe: data?.honorUnsubscribeVerdict?.status?.status ?? null,
+        deliverability: data?.deliverabilityStatusVerdict?.state?.status ?? null,
+        deliverabilityReason: data?.deliverabilityStatusVerdict?.reason ?? null,
+      };
     },
 
-    async getReputation(domain, days) {
-      const res = await call('POST', `/${resourceName(domain)}/domainStats:query`, {
-        // Gmail publishes stats on a lag, so a window is always requested rather
-        // than a single day — asking for "today" reliably returns nothing.
-        pageSize: Math.max(1, Math.min(days, 30)),
+    async getMetrics(domain, days, metrics = ['SPAM_RATE', 'AUTH_SUCCESS_RATE'], granularity = 'DAILY') {
+      // Gmail publishes on a lag, so the window ends two days back — asking for
+      // today reliably returns nothing and looks like a broken integration.
+      const end = new Date(Date.now() - 2 * 86_400_000);
+      const start = new Date(Date.now() - (Math.max(1, days) + 2) * 86_400_000);
+      const parent = resourceName(domain);
+
+      // `parent` is required in the BODY as well as the URL path. Omitting it is a
+      // bare INVALID_ARGUMENT with no field named, which is a long afternoon.
+      const res = await call('POST', `/${parent}/domainStats:query`, {
+        parent,
+        metricDefinitions: metrics.map((m) => ({ name: m.toLowerCase(), baseMetric: { standardMetric: m } })),
+        timeQuery: { dateRanges: { dateRanges: [{ start: googleDate(start), end: googleDate(end) }] } },
+        aggregationGranularity: granularity,
+        pageSize: 200,
       });
-      if (!ok(res.status)) throw new Error(`postmaster: stats for ${domain} failed (${res.status})`);
+      if (!ok(res.status)) throw new Error(`postmaster: metrics for ${domain} failed (${res.status})`);
+
       const p = parse<{
         domainStats?: {
-          date?: string;
-          domainReputation?: string;
-          ipReputations?: { reputation?: string }[];
-          userReportedSpamRatio?: number;
+          metric?: string;
+          value?: { floatValue?: number; int64Value?: string };
+          date?: { year?: number; month?: number; day?: number };
         }[];
       }>(res.body);
-      return (p?.domainStats ?? []).map((s) => ({
-        domain,
-        domainReputation: s.domainReputation ?? null,
-        ipReputation: s.ipReputations?.[0]?.reputation ?? null,
-        userReportedSpamRatio: typeof s.userReportedSpamRatio === 'number' ? s.userReportedSpamRatio : null,
-        date: s.date ?? null,
-      }));
+
+      return (p?.domainStats ?? []).map((row) => {
+        const v = row.value;
+        const num =
+          typeof v?.floatValue === 'number'
+            ? v.floatValue
+            : v?.int64Value !== undefined
+              ? Number(v.int64Value)
+              : null;
+        const d = row.date;
+        return {
+          metric: row.metric ?? 'unknown',
+          value: num !== null && Number.isFinite(num) ? num : null,
+          date:
+            d?.year && d.month && d.day
+              ? `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`
+              : null,
+        };
+      });
     },
   };
 }

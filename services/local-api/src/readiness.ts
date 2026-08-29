@@ -7,7 +7,7 @@
 // `gatherReadiness(pool, workspaceId)` that reads the DB state and calls it.
 import type { Pool } from 'pg';
 
-export type ReadinessChannelId = 'email' | 'sms' | 'whatsapp' | 'storage';
+export type ReadinessChannelId = 'email' | 'sms' | 'whatsapp' | 'storage' | 'postmaster';
 
 /** A route the SPA can navigate to in order to fix a failing item. */
 export interface ReadinessFix {
@@ -56,6 +56,10 @@ export interface ReadinessInputs {
   hasSmsConnector: boolean;
   hasWhatsappConnector: boolean;
   r2Configured: boolean;
+  /** Sending domains that exist at all — the denominator for Postmaster coverage. */
+  sendingDomainCount?: number;
+  /** How many of those have their Google Postmaster TXT observed in DNS. */
+  gptVerifiedCount?: number;
 }
 
 const ROUTE_CONNECTORS = '/company/connectors';
@@ -64,6 +68,7 @@ const ROUTE_STORAGE = '/company/storage';
 const FIX_CONNECTORS: ReadinessFix = { label: 'Open Connectors', route: ROUTE_CONNECTORS };
 const FIX_DOMAINS: ReadinessFix = { label: 'Open Sending domains', route: ROUTE_DOMAINS };
 const FIX_STORAGE: ReadinessFix = { label: 'Open Storage', route: ROUTE_STORAGE };
+const FIX_POSTMASTER: ReadinessFix = { label: 'Open Sending domains', route: ROUTE_DOMAINS };
 
 /** Pure: turn the DB facts into the readiness report. No I/O. */
 export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
@@ -85,8 +90,9 @@ export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
     'Ready to send WhatsApp.',
   );
   const storage = computeStorage(i.r2Configured);
+  const postmaster = computePostmaster(i.sendingDomainCount ?? 0, i.gptVerifiedCount ?? 0);
 
-  const checks = [email, sms, whatsapp, storage];
+  const checks = [email, sms, whatsapp, storage, ...(postmaster ? [postmaster] : [])];
   const errorCount = checks.filter((c) => c.severity === 'error' && c.status !== 'ready').length;
   const warningCount = checks.filter((c) => c.severity === 'warning' && c.status !== 'ready').length;
 
@@ -187,6 +193,42 @@ function computeStorage(r2Configured: boolean): ReadinessCheck {
   };
 }
 
+/**
+ * Gmail reputation visibility. A WARNING, never an error: a domain sends perfectly
+ * well without Postmaster Tools, so treating it as a prerequisite would block
+ * onboarding on a Google-side step unrelated to whether the mail is authorised.
+ * But sending without it means flying blind on the one number — user-reported spam
+ * rate — that actually decides inbox placement, so it is worth surfacing.
+ *
+ * Returns null when the workspace has no sending domains at all: nagging about
+ * reputation for a workspace that cannot send yet is noise.
+ */
+function computePostmaster(domainCount: number, verifiedCount: number): ReadinessCheck | null {
+  if (domainCount === 0) return null;
+  const missing = domainCount - verifiedCount;
+  const ok = missing === 0;
+  return {
+    id: 'postmaster',
+    label: 'Gmail reputation monitoring',
+    severity: 'warning',
+    status: ok ? 'ready' : verifiedCount > 0 ? 'incomplete' : 'not_configured',
+    items: [
+      {
+        label:
+          domainCount === 1
+            ? 'Google Postmaster verification published'
+            : `Google Postmaster verified on ${verifiedCount}/${domainCount} domains`,
+        ok,
+        scope: 'workspace',
+        fix: FIX_POSTMASTER,
+      },
+    ],
+    summary: ok
+      ? 'Gmail reputation and spam rate are being monitored.'
+      : `${missing} sending domain${missing === 1 ? '' : 's'} without Gmail reputation monitoring — publish the Postmaster TXT record to see spam rate before it becomes a problem.`,
+  };
+}
+
 /** Read the workspace's (and its company's) config state and compute readiness. */
 export async function gatherReadiness(pool: Pool, workspaceId: string): Promise<WorkspaceReadiness> {
   const { rows: wsRows } = await pool.query<{ company_id: string | null }>(
@@ -218,11 +260,21 @@ export async function gatherReadiness(pool: Pool, workspaceId: string): Promise<
   const hasSmsConnector = conns.some((c) => c.channel === 'sms' && c.provider === '019');
   const hasWhatsappConnector = conns.some((c) => c.channel === 'whatsapp' && c.provider === 'meta_whatsapp');
 
-  const [dom, snd, r2] = await Promise.all([
+  const [dom, snd, r2, gpt] = await Promise.all([
     pool.query('SELECT count(*)::int AS n FROM sending_domains WHERE workspace_id = $1 AND verified', [workspaceId]),
     pool.query('SELECT count(*)::int AS n FROM domain_senders WHERE workspace_id = $1', [workspaceId]),
     pool.query('SELECT 1 FROM company_r2_config WHERE company_id = $1 LIMIT 1', [companyId]),
+    // Postmaster coverage is counted over ALL sending domains, not just verified
+    // ones: a domain still being set up is exactly when you want to be told that
+    // reputation monitoring is missing, not after it starts sending.
+    pool.query(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE gpt_verified_at IS NOT NULL)::int AS verified
+         FROM sending_domains WHERE workspace_id = $1`,
+      [workspaceId],
+    ),
   ]);
+  const gptRow = gpt.rows[0] as { total: number; verified: number };
 
   return computeReadiness({
     hasResendConnector,
@@ -233,5 +285,7 @@ export async function gatherReadiness(pool: Pool, workspaceId: string): Promise<
     hasSmsConnector,
     hasWhatsappConnector,
     r2Configured: (r2.rowCount ?? 0) > 0,
+    sendingDomainCount: gptRow.total,
+    gptVerifiedCount: gptRow.verified,
   });
 }

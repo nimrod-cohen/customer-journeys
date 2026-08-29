@@ -104,7 +104,10 @@ describeMaybe('GET /company/readiness (real Postgres)', () => {
     expect(r.channels.sms).toBe(true);
     expect(r.channels.whatsapp).toBe(true);
     expect(r.errorCount).toBe(0); // email (from prior test) + sms + whatsapp all ready
-    expect(r.warningCount).toBe(1); // still no R2
+    // Two warnings: no R2, and the seeded sending domain has no Google Postmaster
+    // verification. Neither disables anything — that is the point of `warning`.
+    expect(r.warningCount).toBe(2);
+    expect(check(r, 'postmaster').severity).toBe('warning');
 
     await pool.query(
       "INSERT INTO company_r2_config (company_id, endpoint, bucket, access_key_id, secret_access_key) VALUES ($1,'https://r2','b','k','s')",
@@ -112,6 +115,14 @@ describeMaybe('GET /company/readiness (real Postgres)', () => {
     );
     r = await readiness();
     expect(check(r, 'storage').status).toBe('ready');
+    expect(r.warningCount).toBe(1); // R2 cleared; Postmaster still unverified
+
+    // Publishing the Postmaster TXT clears the last warning — and never affected
+    // whether the workspace could send.
+    await pool.query('UPDATE sending_domains SET gpt_verified_at = now() WHERE workspace_id = $1', [WS]);
+    r = await readiness();
+    expect(check(r, 'postmaster').status).toBe('ready');
     expect(r.warningCount).toBe(0);
+    expect(r.channels.email).toBe(true);
   });
 });

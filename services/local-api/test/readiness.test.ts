@@ -129,3 +129,50 @@ describe('computeReadiness — company vs workspace error split (settings-nav ba
     expect(r.companyErrorCount).toBe(2); // sms + whatsapp still missing; email ok
   });
 });
+
+describe('Gmail reputation monitoring (Postmaster)', () => {
+  const base = {
+    hasResendConnector: false,
+    resendFromSet: false,
+    hasSesConnector: true,
+    verifiedDomainCount: 1,
+    senderCount: 1,
+    hasSmsConnector: false,
+    hasWhatsappConnector: false,
+    r2Configured: true,
+  };
+  const find = (r: ReturnType<typeof computeReadiness>) => r.checks.find((c) => c.id === 'postmaster');
+
+  // Nagging about reputation for a workspace that cannot send yet is noise.
+  it('says nothing when there are no sending domains', () => {
+    expect(find(computeReadiness({ ...base, sendingDomainCount: 0, gptVerifiedCount: 0 }))).toBeUndefined();
+  });
+
+  it('warns when a domain has no Postmaster verification', () => {
+    const c = find(computeReadiness({ ...base, sendingDomainCount: 1, gptVerifiedCount: 0 }))!;
+    expect(c.severity).toBe('warning');
+    expect(c.status).toBe('not_configured');
+    expect(c.summary).toMatch(/without Gmail reputation monitoring/);
+  });
+
+  it('reports partial coverage across several domains', () => {
+    const c = find(computeReadiness({ ...base, sendingDomainCount: 3, gptVerifiedCount: 2 }))!;
+    expect(c.status).toBe('incomplete');
+    expect(c.items[0]!.label).toMatch(/2\/3/);
+    expect(c.summary).toMatch(/^1 sending domain /);
+  });
+
+  it('is ready when every domain is verified', () => {
+    const c = find(computeReadiness({ ...base, sendingDomainCount: 2, gptVerifiedCount: 2 }))!;
+    expect(c.status).toBe('ready');
+    expect(c.items[0]!.ok).toBe(true);
+  });
+
+  // The whole point of the non-blocking decision: it must never disable a channel.
+  it('never contributes to errorCount and never disables email', () => {
+    const r = computeReadiness({ ...base, sendingDomainCount: 2, gptVerifiedCount: 0 });
+    expect(r.channels.email).toBe(true);
+    expect(find(r)!.severity).toBe('warning');
+    expect(r.warningCount).toBeGreaterThan(0);
+  });
+});
