@@ -29,7 +29,7 @@ const input = (over: Partial<SendEmailInput> = {}): SendEmailInput =>
     to: 'person@example.com',
     subject: 'Hello',
     html: '<p>hi</p>',
-    configurationSetName: MSG,
+    messageId: MSG,
     ...over,
   }) as SendEmailInput;
 
@@ -56,8 +56,8 @@ describe('createSmtpEmailClient', () => {
   it('refuses to send without a message id, since the bounce could not be attributed', async () => {
     const { transport } = fakeTransport();
     await expect(
-      createSmtpEmailClient(CFG, transport).sendEmail(input({ configurationSetName: undefined })),
-    ).rejects.toThrow(/message id/i);
+      createSmtpEmailClient(CFG, transport).sendEmail(input({ messageId: undefined })),
+    ).rejects.toThrow(/messageId/i);
   });
 
   it('throws for SES-only identity operations', () => {

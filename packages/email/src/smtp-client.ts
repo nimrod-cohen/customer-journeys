@@ -85,11 +85,14 @@ export function buildMimeMessage(
 /**
  * Build a self-hosted SMTP email client.
  *
- * `messageId` must be the outbox/message uuid: it is both the Message-ID and the
- * VERP token payload, which is what lets an inbound bounce be tied back to this
- * exact send. It is passed per-call through `SendEmailInput.configurationSetName`
- * — reusing that field rather than widening the shared interface, since it is
- * meaningless for a non-SES transport.
+ * `input.messageId` must be the outbox/message uuid: it is both the Message-ID and
+ * the VERP token payload, which is what lets an inbound bounce be tied back to this
+ * exact send.
+ *
+ * It has its own field rather than borrowing `configurationSetName`, which in the
+ * dispatcher carries the workspace's real SES configuration-set name — signing VERP
+ * tokens with that would produce bounce addresses that resolve to nothing while
+ * appearing to work.
  */
 export function createSmtpEmailClient(cfg: SmtpEmailConfig, transport: SmtpTransport): SesEmailClient {
   const notSupported = (): never => {
@@ -98,9 +101,9 @@ export function createSmtpEmailClient(cfg: SmtpEmailConfig, transport: SmtpTrans
 
   return {
     async sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
-      const messageId = input.configurationSetName;
+      const messageId = input.messageId;
       if (!messageId) {
-        throw new Error('createSmtpEmailClient: a message id is required for VERP bounce attribution');
+        throw new Error('createSmtpEmailClient: input.messageId is required for VERP bounce attribution');
       }
       const fromDomain = cfg.messageIdDomain ?? (input.from.split('@')[1] ?? '').replace(/>$/, '') ?? cfg.host;
       const raw = buildMimeMessage(input, messageId, fromDomain || cfg.host);

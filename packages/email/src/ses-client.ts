@@ -68,6 +68,13 @@ export interface SendEmailInput {
   readonly configurationSetName?: string;
   /** Extra message headers — the RFC 8058 List-Unsubscribe pair (§9 step 5). */
   readonly headers?: Readonly<Record<string, string>>;
+  /**
+   * Our own message id (the outbox row id). Only the self-hosted SMTP transport
+   * uses it: it becomes both the RFC 5322 Message-ID and the VERP bounce token,
+   * which is what makes an asynchronous bounce attributable to one exact send.
+   * SES and Resend assign their own id and ignore this.
+   */
+  readonly messageId?: string;
 }
 
 /** Result of a successful SES send — the message id for messages_log (§9). */
