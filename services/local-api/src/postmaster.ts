@@ -33,11 +33,28 @@ export interface PostmasterHttp {
   ): Promise<{ status: number; body: string }>;
 }
 
-export function fetchPostmasterHttp(): PostmasterHttp {
+/** Google is called from a user-facing request path, so a hang is not acceptable. */
+export const POSTMASTER_TIMEOUT_MS = 8000;
+
+export function fetchPostmasterHttp(timeoutMs = POSTMASTER_TIMEOUT_MS): PostmasterHttp {
   return {
     async request(method, url, headers, body) {
-      const res = await fetch(url, { method, headers, ...(body === undefined ? {} : { body }) });
-      return { status: res.status, body: await res.text() };
+      // Without this, a slow or unresponsive Google would hold the domain-check
+      // request open indefinitely — reputation monitoring blocking domain setup is
+      // exactly the coupling this module is meant to avoid.
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, {
+          method,
+          headers,
+          signal: ctrl.signal,
+          ...(body === undefined ? {} : { body }),
+        });
+        return { status: res.status, body: await res.text() };
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
 }
@@ -267,4 +284,102 @@ export function judgeSpamRate(ratio: number | null | undefined): SpamRateVerdict
   if (ratio >= SPAM_RATE_CRITICAL) return 'critical';
   if (ratio >= SPAM_RATE_WARN) return 'warn';
   return 'ok';
+}
+
+// ── wiring ───────────────────────────────────────────────────────────────────
+
+/**
+ * Refresh-token-backed access tokens, cached until shortly before expiry.
+ *
+ * Google's access tokens last an hour; minting a fresh one per API call would
+ * burn quota and add a round trip to every request. The 60s safety margin avoids
+ * handing out a token that expires mid-flight.
+ */
+export function makeRefreshTokenSource(
+  cfg: { clientId: string; clientSecret: string; refreshToken: string },
+  http: PostmasterHttp = fetchPostmasterHttp(),
+): TokenSource {
+  let cached: { token: string; expiresAt: number } | null = null;
+  return {
+    async accessToken() {
+      if (cached && Date.now() < cached.expiresAt) return cached.token;
+      const res = await http.request(
+        'POST',
+        'https://oauth2.googleapis.com/token',
+        { 'content-type': 'application/x-www-form-urlencoded' },
+        new URLSearchParams({
+          client_id: cfg.clientId,
+          client_secret: cfg.clientSecret,
+          refresh_token: cfg.refreshToken,
+          grant_type: 'refresh_token',
+        }).toString(),
+      );
+      const body = parse<{ access_token?: string; expires_in?: number }>(res.body);
+      if (res.status < 200 || res.status >= 300 || !body?.access_token) {
+        throw new Error(`postmaster: token refresh failed (${res.status})`);
+      }
+      cached = {
+        token: body.access_token,
+        expiresAt: Date.now() + Math.max(0, (body.expires_in ?? 3600) - 60) * 1000,
+      };
+      return cached.token;
+    },
+  };
+}
+
+/**
+ * The platform client, or null when Postmaster is not configured.
+ *
+ * Null is a normal state, not an error: reputation monitoring is optional, so
+ * every caller must work without it rather than treating absence as a failure.
+ */
+export function postmasterFromEnv(env: NodeJS.ProcessEnv = process.env): PostmasterClient | null {
+  const clientId = env.GOOGLE_POSTMASTER_CLIENT_ID;
+  const clientSecret = env.GOOGLE_POSTMASTER_CLIENT_SECRET;
+  const refreshToken = env.GOOGLE_POSTMASTER_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) return null;
+  return makePostmasterClient(makeRefreshTokenSource({ clientId, clientSecret, refreshToken }));
+}
+
+/** What a domain sync produced, for the setup screen to render. */
+export interface PostmasterSync {
+  /** The TXT value the customer publishes, when Google has issued one. */
+  readonly token: string | null;
+  readonly verified: boolean;
+  /** Set when the sync could not complete — shown as a hint, never an error. */
+  readonly error: string | null;
+}
+
+/**
+ * Register a domain under our Postmaster account and check its verification.
+ *
+ * Wholly best-effort: reputation visibility must never break domain setup, so
+ * every failure is captured and returned rather than thrown. Idempotent, so it
+ * can run on every check.
+ */
+export async function syncDomainWithPostmaster(
+  client: PostmasterClient,
+  domain: string,
+): Promise<PostmasterSync> {
+  try {
+    await client.createDomain(domain);
+  } catch (e) {
+    // A registration failure is not fatal — the domain may already exist under a
+    // different account, or Google may simply be unavailable.
+    return { token: null, verified: false, error: e instanceof Error ? e.message : 'registration failed' };
+  }
+
+  let token: string | null = null;
+  try {
+    token = await client.getVerificationToken(domain);
+  } catch {
+    token = null;
+  }
+
+  try {
+    const v = await client.verifyDomain(domain);
+    return { token, verified: v.verified, error: null };
+  } catch (e) {
+    return { token, verified: false, error: e instanceof Error ? e.message : 'verification failed' };
+  }
 }

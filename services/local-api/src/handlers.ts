@@ -116,6 +116,7 @@ import {
   stripReservedAttributes,
   type IdentityResult,
 } from './identity.js';
+import { postmasterFromEnv, syncDomainWithPostmaster } from './postmaster.js';
 
 /** A handler's request shape (already parsed by the server). */
 export interface HandlerRequest {
@@ -1949,6 +1950,12 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
 export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const row = await loadSendingDomain(pool, ctx.workspaceId, req.params.id!);
   if (!row) return ok({ error: 'not found' }, 404);
+
+  // Gmail reputation, alongside the SES check. Entirely best-effort and entirely
+  // separate: it never affects `verified`, because a domain sends perfectly well
+  // without reputation monitoring. Null client = Postmaster not configured, which
+  // is a normal state rather than an error.
+  const postmaster = await syncPostmasterForDomain(pool, ctx.workspaceId, req.params.id!, row.domain);
   const { ses, mode, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   // No SES credentials → don't simulate a verification; require SES first.
   if (mode === 'none') {
@@ -1969,6 +1976,7 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
     return ok({
       verified: verified || row.verified,
       dkimStatus: attrs.dkimStatus,
+      postmaster,
       records: await withDnsStatus(
         dnsRecordsFor(row.domain, tokens, attrs.signingHostedZone ?? signingHostedZone, region),
         mode === 'real',
@@ -1977,9 +1985,47 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
       sesConfigured: mode === 'real',
     });
   } catch (e) {
-    return ok({ verified: row.verified, sesConfigured: mode === 'real', error: e instanceof Error ? e.message : 'SES check failed' });
+    return ok({
+      verified: row.verified,
+      sesConfigured: mode === 'real',
+      postmaster,
+      error: e instanceof Error ? e.message : 'SES check failed',
+    });
   }
 };
+
+/**
+ * Register the domain with Google Postmaster and record whether its verification
+ * TXT is published. Returns what the setup screen should show.
+ *
+ * Never throws: reputation visibility is optional, so a Google outage must not be
+ * able to break domain setup. `gpt_verified_at` is the flag the readiness warning
+ * reads, and it is only ever set from Google's own answer.
+ */
+async function syncPostmasterForDomain(
+  pool: Pool,
+  workspaceId: string,
+  domainId: string,
+  domain: string,
+): Promise<{ configured: boolean; token: string | null; verified: boolean; error: string | null }> {
+  const client = postmasterFromEnv();
+  if (!client) return { configured: false, token: null, verified: false, error: null };
+  try {
+    const sync = await syncDomainWithPostmaster(client, domain);
+    const upd = scopedQuery(
+      workspaceId,
+      `UPDATE sending_domains
+          SET gpt_verification_token = COALESCE($2, gpt_verification_token),
+              gpt_verified_at = CASE WHEN $3::boolean THEN COALESCE(gpt_verified_at, now()) ELSE NULL END
+        WHERE id = $1`,
+      [domainId, sync.token, sync.verified],
+    );
+    await pool.query(upd.text, upd.values);
+    return { configured: true, token: sync.token, verified: sync.verified, error: sync.error };
+  } catch (e) {
+    return { configured: true, token: null, verified: false, error: e instanceof Error ? e.message : 'postmaster sync failed' };
+  }
+}
 
 /** DELETE /sending-domains/:id — remove a domain; blocked if it still has senders. */
 export const deleteSendingDomain: Handler = async (ctx, pool, req) => {
