@@ -21,9 +21,11 @@
     "@aws-sdk/client-sesv2": "^3.620.0",
     "@cdp/db": "workspace:*",
     "@cdp/shared": "workspace:*",
-    "mjml": "^4.15.3"
+    "mjml": "^4.15.3",
+    "nodemailer": "^9.0.6"
   },
   "devDependencies": {
+    "@types/nodemailer": "^8.0.1",
     "aws-sdk-client-mock": "^4.0.1"
   }
 }

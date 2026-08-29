@@ -85,3 +85,8 @@ export {
   parseVerpRecipient,
   VERP_LOCAL_PART,
 } from './verp.js';
+export {
+  makeSmtpTransport,
+  smtpTransportFromEnv,
+  type SmtpTransportConfig,
+} from './smtp-transport.js';
