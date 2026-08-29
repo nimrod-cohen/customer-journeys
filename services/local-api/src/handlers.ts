@@ -117,6 +117,7 @@ import {
   type IdentityResult,
 } from './identity.js';
 import { postmasterFromEnv, syncDomainWithPostmaster } from './postmaster.js';
+import { createSmtpEmailClient, smtpTransportFromEnv } from '@cdp/email';
 
 /** A handler's request shape (already parsed by the server). */
 export interface HandlerRequest {
@@ -947,30 +948,61 @@ async function sesForWorkspace(
 }
 
 /**
- * Resolve the EMAIL transport for a workspace's company: a TRUSTED Resend client
- * when a `resend` email connector is configured, else the SES client. `trusted`
- * feeds the dispatcher's verified gate — Resend needs no in-app verified domain
- * (the company verified it in Resend's dashboard); its From is the connector's.
+ * Resolve the EMAIL transport for a workspace's company.
+ *
+ * A company uses EXACTLY ONE email provider (enforced by a partial unique index and
+ * by the connector API), so this reads THE enabled email connector and dispatches on
+ * it rather than trying providers in a preference order. Order-based resolution was
+ * the old behaviour and it hid a real hazard: with both an SES and a Resend connector
+ * present, the one that actually sent depended on resolution order, not on what the
+ * company had configured.
+ *
+ * `trusted` feeds the dispatcher's verified-domain gate:
+ *   - Resend is trusted — the company verified the domain in Resend's own dashboard.
+ *   - SES and self-hosted are NOT — we are the ones vouching for the domain, so the
+ *     in-app verification must have happened.
  */
 async function emailSenderForWorkspace(
   pool: Pool,
   workspaceId: string,
   deps: LocalApiDeps,
 ): Promise<{ ses: SesEmailClient; mode: SesMode; region: string | null; trusted: boolean }> {
-  const r = await pool.query<{ config: Record<string, unknown>; secret: string | null }>(
-    `SELECT c.config, c.secret FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
-      WHERE w.id = $1 AND c.channel = 'email' AND c.provider = 'resend' AND c.enabled
+  const r = await pool.query<{ provider: string; config: Record<string, unknown>; secret: string | null }>(
+    `SELECT c.provider, c.config, c.secret
+       FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
+      WHERE w.id = $1 AND c.channel = 'email' AND c.enabled
       ORDER BY c.updated_at DESC LIMIT 1`,
     [workspaceId],
   );
-  const rc = r.rows[0];
-  if (rc && rc.secret) {
-    const apiKey = isEncryptedSecret(rc.secret) ? decryptSecret(rc.secret) : rc.secret;
-    const from = String(rc.config.from ?? '');
+  const conn = r.rows[0];
+
+  if (conn?.provider === 'resend' && conn.secret) {
+    const apiKey = isEncryptedSecret(conn.secret) ? decryptSecret(conn.secret) : conn.secret;
+    const from = String(conn.config.from ?? '');
     return { ses: createResendEmailClient({ apiKey, from }, deps.resendHttp), mode: 'real', region: null, trusted: true };
   }
-  const s = await sesForWorkspace(pool, workspaceId, deps);
-  return { ...s, trusted: false };
+
+  if (conn?.provider === 'smtp') {
+    // The transport is platform-level: one mail server shared by every authorized
+    // company. Absent config means the deployment has no mail server of its own, so
+    // fall through rather than pretending it can send.
+    const transport = smtpTransportFromEnv();
+    if (transport) {
+      const client = createSmtpEmailClient(
+        {
+          host: process.env.SELF_HOSTED_SMTP_HOST ?? '',
+          port: Number(process.env.SELF_HOSTED_SMTP_PORT ?? 587),
+          bounceDomain: process.env.SELF_HOSTED_BOUNCE_DOMAIN ?? '',
+          verpSecret: unsubscribeLinkSecret(),
+        },
+        transport,
+      );
+      return { ses: client, mode: 'real', region: null, trusted: false };
+    }
+  }
+
+  const ses = await sesForWorkspace(pool, workspaceId, deps);
+  return { ...ses, trusted: false };
 }
 
 const SES_NOT_CONFIGURED =
@@ -1239,9 +1271,19 @@ export const deleteCompanySesConfig: Handler = async (ctx, pool) => {
 // gates broadcasts + automations. Config is validated per provider.
 
 /** Allowed (channel, provider) pairs + which config keys each carries (non-secret). */
+/** Human names for the mutual-exclusion message. */
+const EMAIL_PROVIDER_LABELS: Record<string, string> = {
+  ses: 'Amazon SES',
+  resend: 'Resend',
+  smtp: 'the self-hosted mail server',
+};
+
 const CONNECTOR_SPECS: Record<string, { channel: string; configKeys: string[]; secretRequired: boolean }> = {
   ses: { channel: 'email', configKeys: ['region', 'access_key_id'], secretRequired: true },
   resend: { channel: 'email', configKeys: ['from'], secretRequired: true },
+  // Self-hosted: the SMTP credential is PLATFORM-level (Fly env), not per company —
+  // every authorized company shares one mail server — so no per-company secret.
+  smtp: { channel: 'email', configKeys: ['from'], secretRequired: false },
   '019': { channel: 'sms', configKeys: ['api_url', 'username', 'source', 'default_country'], secretRequired: true },
   meta_whatsapp: { channel: 'whatsapp', configKeys: ['phone_number_id', 'waba_id', 'api_version', 'default_country'], secretRequired: true },
 };
@@ -1283,6 +1325,45 @@ export const putCompanyConnector: Handler = async (ctx, pool, req) => {
   for (const k of requiredCfg[provider] ?? []) {
     if (!config[k]) return ok({ error: `${k} is required for ${provider}` }, 400);
   }
+  // Self-hosted sending spends OUR IP reputation, so it is a deliberate
+  // platform-admin grant rather than something a company can switch on itself.
+  if (provider === 'smtp') {
+    const g = await pool.query<{ ok: boolean }>(
+      'SELECT self_hosted_mail_enabled AS ok FROM companies WHERE id = $1',
+      [companyId],
+    );
+    if (!g.rows[0]?.ok) {
+      return ok(
+        { error: 'This company is not authorized to send through the self-hosted mail server.' },
+        403,
+      );
+    }
+  }
+
+  // ONE email provider per company. Two enabled email connectors would mean the
+  // provider that actually sends depends on resolution order rather than on what
+  // was configured — and the domain-verification flow differs per provider, so a
+  // company could verify a domain for one while sending through another.
+  const enabledWanted = b.enabled === undefined ? true : Boolean(b.enabled);
+  if (channel === 'email' && enabledWanted) {
+    const other = await pool.query<{ provider: string }>(
+      `SELECT provider FROM company_connectors
+        WHERE company_id = $1 AND channel = 'email' AND enabled AND provider <> $2
+        LIMIT 1`,
+      [companyId, provider],
+    );
+    const inUse = other.rows[0]?.provider;
+    if (inUse) {
+      return ok(
+        {
+          error: `This company already sends email through ${EMAIL_PROVIDER_LABELS[inUse] ?? inUse}. Disconnect it first — a company uses one email provider at a time.`,
+          currentProvider: inUse,
+        },
+        409,
+      );
+    }
+  }
+
   const secret = typeof b.secret === 'string' ? b.secret.trim() : '';
   const existing = await pool.query<{ secret: string | null }>(
     'SELECT secret FROM company_connectors WHERE company_id = $1 AND channel = $2 AND provider = $3',
@@ -1290,7 +1371,7 @@ export const putCompanyConnector: Handler = async (ctx, pool, req) => {
   );
   const effectiveSecret = secret ? encryptSecret(secret) : existing.rows[0]?.secret ?? null;
   if (spec.secretRequired && !effectiveSecret) return ok({ error: 'a credential/secret is required' }, 400);
-  const enabled = b.enabled === undefined ? true : Boolean(b.enabled);
+  const enabled = enabledWanted;
   await pool.query(
     `INSERT INTO company_connectors (company_id, channel, provider, config, secret, enabled, updated_at)
      VALUES ($1,$2,$3,$4::jsonb,$5,$6, now())

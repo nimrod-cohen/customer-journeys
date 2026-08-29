@@ -175,6 +175,31 @@ A company connects PROVIDERS; each powers a messaging CHANNEL (`email`/`sms`/`wh
 - **CRUD:** `GET/PUT /company/connectors`, `DELETE /company/connectors/:id` (`manage_sending_domain`). UI `web/src/screens/Connectors.tsx`: one box per channel; a channel with several providers shows a logo picker and renders ONLY the selected provider's form.
 - **Gating:** the broadcast composer disables a medium with no connector. The automation runner (`run.ts` `resolveChannels`) SKIPS a send node whose channel is disabled — the enrollment still advances, as if the step didn't exist. **Lenient:** a company with ZERO connectors is never gated (legacy/dev/mock behavior); gating kicks in once ≥1 connector exists.
 
+## One email provider per company (exclusive)
+
+A company sends email through **exactly one** provider — self-hosted `smtp`, `ses`, or
+`resend`. Never two at once.
+
+- Enforced twice: a partial unique index (`company_connectors_one_enabled_email`, at
+  most one ENABLED email connector per company) and a **409** from `PUT /company/connectors`
+  naming the provider already in use.
+- **Switching keeps the old credentials.** The index is partial on `enabled`, so a
+  disabled connector for another provider may remain — disconnect, then connect the new
+  one, and the previous credentials are still there to switch back to.
+- **`emailSenderForWorkspace` dispatches on the connector's provider**, not on a
+  preference order. The old order-based resolution ("Resend if present, else SES")
+  meant that with both configured, the provider that actually sent depended on
+  resolution order rather than on what the company chose — while the domain-verification
+  flow differs per provider, so a company could verify a domain for one and send through
+  the other.
+- **Self-hosted is a platform-admin grant** (`companies.self_hosted_mail_enabled`,
+  default false): it spends OUR IP reputation, so it is never self-served. Connecting an
+  `smtp` connector without the grant is a 403.
+- `smtp` carries **no per-company secret** — the SMTP credential is platform-level (Fly
+  env), since every authorized company shares one mail server. Like SES and unlike
+  Resend it is **not** `emailTrusted`: we vouch for the domain, so it must be verified
+  in-app.
+
 ## Configuration readiness
 
 A single source of truth for "is this workspace set up to send?", with a **strict** definition that HARD-DISABLES a channel when unmet.

@@ -51,6 +51,8 @@ export interface ReadinessInputs {
   hasResendConnector: boolean;
   resendFromSet: boolean;
   hasSesConnector: boolean;
+  /** Self-hosted mail server: like SES, needs a verified domain and a sender. */
+  hasSmtpConnector?: boolean;
   verifiedDomainCount: number;
   senderCount: number;
   hasSmsConnector: boolean;
@@ -120,9 +122,10 @@ export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
 }
 
 function computeEmail(i: ReadinessInputs): ReadinessCheck {
-  const hasProvider = i.hasResendConnector || i.hasSesConnector;
+  const selfHosted = i.hasSmtpConnector === true;
+  const hasProvider = i.hasResendConnector || i.hasSesConnector || selfHosted;
   const items: ReadinessItem[] = [
-    { label: 'Email provider connected (Amazon SES or Resend)', ok: hasProvider, scope: 'company', fix: FIX_CONNECTORS },
+    { label: 'Email provider connected', ok: hasProvider, scope: 'company', fix: FIX_CONNECTORS },
   ];
 
   // Resend is trusted (domain verified in Resend's dashboard); it only needs a From.
@@ -139,15 +142,18 @@ function computeEmail(i: ReadinessInputs): ReadinessCheck {
     };
   }
 
-  // SES path: needs a verified sending domain AND a named sender.
+  // SES and self-hosted both need a verified sending domain AND a named sender:
+  // unlike Resend, WE are the ones vouching for the domain, so it must be verified
+  // here rather than in a provider's dashboard.
+  const providerOk = i.hasSesConnector || selfHosted;
   const domainOk = i.verifiedDomainCount > 0;
   const senderOk = i.senderCount > 0;
-  items.push({ label: 'A verified sending domain', ok: i.hasSesConnector && domainOk, scope: 'workspace', fix: FIX_DOMAINS });
-  items.push({ label: 'A sender address (From)', ok: i.hasSesConnector && senderOk, scope: 'workspace', fix: FIX_DOMAINS });
+  items.push({ label: 'A verified sending domain', ok: providerOk && domainOk, scope: 'workspace', fix: FIX_DOMAINS });
+  items.push({ label: 'A sender address (From)', ok: providerOk && senderOk, scope: 'workspace', fix: FIX_DOMAINS });
 
-  const ready = i.hasSesConnector && domainOk && senderOk;
+  const ready = providerOk && domainOk && senderOk;
   let summary: string;
-  if (!hasProvider) summary = 'Connect an email provider (Amazon SES or Resend) under Connectors.';
+  if (!hasProvider) summary = 'Connect an email provider under Connectors.';
   else if (!domainOk) summary = 'Verify a sending domain under Workspace settings → Sending domains.';
   else if (!senderOk) summary = 'Add a sender address (From) for your verified domain.';
   else summary = 'Ready to send email.';
@@ -257,6 +263,7 @@ export async function gatherReadiness(pool: Pool, workspaceId: string): Promise<
   const hasResendConnector = !!resend;
   const resendFromSet = !!resend && typeof resend.config?.['from'] === 'string' && (resend.config['from'] as string).trim() !== '';
   const hasSesConnector = conns.some((c) => c.channel === 'email' && c.provider === 'ses');
+  const hasSmtpConnector = conns.some((c) => c.channel === 'email' && c.provider === 'smtp');
   const hasSmsConnector = conns.some((c) => c.channel === 'sms' && c.provider === '019');
   const hasWhatsappConnector = conns.some((c) => c.channel === 'whatsapp' && c.provider === 'meta_whatsapp');
 
@@ -280,6 +287,7 @@ export async function gatherReadiness(pool: Pool, workspaceId: string): Promise<
     hasResendConnector,
     resendFromSet,
     hasSesConnector,
+    hasSmtpConnector,
     verifiedDomainCount: (dom.rows[0] as { n: number }).n,
     senderCount: (snd.rows[0] as { n: number }).n,
     hasSmsConnector,
