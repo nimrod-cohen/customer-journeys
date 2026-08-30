@@ -107,28 +107,28 @@ describe.skipIf(!RUN)('hour_of_day_window parking via the real tick (real Postgr
   it('parks until next opening (ws tz); sweep gate honors next_run_at; resumes inside the window', async () => {
     const id = await enroll(WS_NY, CAMP_NY, PROF_NY);
 
-    // 03:00 UTC on 2026-06-19 == 23:00 NY the PRIOR day (before 09:00 NY) → park.
-    const before = new Date('2026-06-19T03:00:00.000Z');
+    // 03:00 UTC on 2099-06-19 == 23:00 NY the PRIOR day (before 09:00 NY) → park.
+    const before = new Date('2099-06-19T03:00:00.000Z');
     const r1 = await runEnrollment(deps(before), id);
     expect(r1.result).toBe('parked');
     expect((r1 as { node: string }).node).toBe('win');
 
-    // next_run_at == 2026-06-19 09:00 NY → UTC (EDT, -4 ⇒ 13:00Z). Read back as text.
+    // next_run_at == 2099-06-19 09:00 NY → UTC (EDT, -4 ⇒ 13:00Z). Read back as text.
     const row = await admin.query('SELECT next_run_at::text AS t FROM automation_enrollments WHERE id = $1', [id]);
-    const expectedIso = new Date(zonedInputToUtcIso('2026-06-19T09:00', NY)).toISOString();
+    const expectedIso = new Date(zonedInputToUtcIso('2099-06-19T09:00', NY)).toISOString();
     expect(new Date(row.rows[0].t).toISOString()).toBe(expectedIso);
-    expect(expectedIso).toBe('2026-06-19T13:00:00.000Z');
+    expect(expectedIso).toBe('2099-06-19T13:00:00.000Z');
 
     // REAL sweep gate: not due before 13:00Z, due at/after.
-    const sBefore = buildSweepQuery(new Date('2026-06-19T12:59:00.000Z'));
+    const sBefore = buildSweepQuery(new Date('2099-06-19T12:59:00.000Z'));
     const dueBefore = await admin.query(sBefore.text, sBefore.values);
     expect(dueBefore.rows.find((x) => x.id === id)).toBeUndefined();
-    const sAfter = buildSweepQuery(new Date('2026-06-19T13:00:01.000Z'));
+    const sAfter = buildSweepQuery(new Date('2099-06-19T13:00:01.000Z'));
     const dueAfter = await admin.query(sAfter.text, sAfter.values);
     expect(dueAfter.rows.find((x) => x.id === id)).toBeDefined();
 
     // Resume inside the window (14:00 NY == 18:00Z) → advances past win to exit.
-    const inside = new Date('2026-06-19T18:00:00.000Z');
+    const inside = new Date('2099-06-19T18:00:00.000Z');
     const r2 = await runEnrollment(deps(inside), id);
     expect(r2.result).toBe('completed');
     const done = await admin.query('SELECT status, next_run_at FROM automation_enrollments WHERE id = $1', [id]);
@@ -137,9 +137,9 @@ describe.skipIf(!RUN)('hour_of_day_window parking via the real tick (real Postgr
   });
 
   it('per-workspace tz: NY vs default-UTC park at DIFFERENT UTC instants for the same wall-clock window', async () => {
-    // now = 2026-06-19 07:00 UTC. For UTC ws: 07:00 local < 09:00 → opening today 09:00Z.
+    // now = 2099-06-19 07:00 UTC. For UTC ws: 07:00 local < 09:00 → opening today 09:00Z.
     // For NY ws: 07:00 UTC == 03:00 NY < 09:00 NY → opening today 09:00 NY == 13:00Z.
-    const now = new Date('2026-06-19T07:00:00.000Z');
+    const now = new Date('2099-06-19T07:00:00.000Z');
     const idNy = await enroll(WS_NY, CAMP_NY, PROF_NY);
     const idUtc = await enroll(WS_UTC, CAMP_UTC, PROF_UTC);
 
@@ -152,8 +152,8 @@ describe.skipIf(!RUN)('hour_of_day_window parking via the real tick (real Postgr
     const utc = await admin.query('SELECT next_run_at::text AS t FROM automation_enrollments WHERE id = $1', [idUtc]);
     const nyIso = new Date(ny.rows[0].t).toISOString();
     const utcIso = new Date(utc.rows[0].t).toISOString();
-    expect(utcIso).toBe('2026-06-19T09:00:00.000Z'); // UTC default
-    expect(nyIso).toBe('2026-06-19T13:00:00.000Z'); // NY (EDT -4)
+    expect(utcIso).toBe('2099-06-19T09:00:00.000Z'); // UTC default
+    expect(nyIso).toBe('2099-06-19T13:00:00.000Z'); // NY (EDT -4)
     expect(nyIso).not.toBe(utcIso); // per-workspace tz, not a constant
   });
 

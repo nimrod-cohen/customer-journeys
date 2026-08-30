@@ -75,23 +75,23 @@ describe.skipIf(!RUN)('wait deferral via the real sweep (real Postgres)', () => 
     );
     const id = enr.rows[0].id;
 
-    const t0 = new Date('2026-06-07T12:00:00.000Z');
+    const t0 = new Date('2099-06-07T12:00:00.000Z');
     const r1 = await runEnrollment(deps(t0), id);
     expect(r1.result).toBe('parked');
-    expect((r1 as { nextRunAt: Date }).nextRunAt.toISOString()).toBe('2026-06-07T14:00:00.000Z');
+    expect((r1 as { nextRunAt: Date }).nextRunAt.toISOString()).toBe('2099-06-07T14:00:00.000Z');
 
     // Sweep 1h later: NOT due.
-    const s1 = buildSweepQuery(new Date('2026-06-07T13:00:00.000Z'));
+    const s1 = buildSweepQuery(new Date('2099-06-07T13:00:00.000Z'));
     const due1 = await admin.query(s1.text, s1.values);
     expect(due1.rows.find((x) => x.id === id)).toBeUndefined();
 
     // Sweep 2h later: due.
-    const s2 = buildSweepQuery(new Date('2026-06-07T14:00:01.000Z'));
+    const s2 = buildSweepQuery(new Date('2099-06-07T14:00:01.000Z'));
     const due2 = await admin.query(s2.text, s2.values);
     expect(due2.rows.find((x) => x.id === id)).toBeDefined();
 
     // Running after the wait completes.
-    const r2 = await runEnrollment(deps(new Date('2026-06-07T14:00:01.000Z')), id);
+    const r2 = await runEnrollment(deps(new Date('2099-06-07T14:00:01.000Z')), id);
     expect(r2.result).toBe('completed');
   });
 });

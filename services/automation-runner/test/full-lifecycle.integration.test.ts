@@ -108,7 +108,7 @@ describe.skipIf(!RUN)('automation full lifecycle (real Postgres)', () => {
     const enrollmentId = enr.rows[0].id;
 
     // Tick 1 @ T0: trigger → wait → PARK at wait (next_run_at = T0 + 1h).
-    const t0 = new Date('2026-06-07T12:00:00.000Z');
+    const t0 = new Date('2099-06-07T12:00:00.000Z');
     const sqs1 = new CapturingSqs();
     const r1 = await runEnrollment(makeDeps(t0, sqs1), enrollmentId);
     expect(r1.result).toBe('parked');
@@ -121,7 +121,7 @@ describe.skipIf(!RUN)('automation full lifecycle (real Postgres)', () => {
     expect(due0.rows.find((x) => x.id === enrollmentId)).toBeUndefined();
 
     // Tick 2 @ T0 + 2h: the wait has elapsed → condition(true)→send→exit.
-    const t2 = new Date('2026-06-07T14:00:00.000Z');
+    const t2 = new Date('2099-06-07T14:00:00.000Z');
     const sweepLate = buildSweepQuery(t2);
     const due2 = await admin.query(sweepLate.text, sweepLate.values);
     expect(due2.rows.find((x) => x.id === enrollmentId)).toBeDefined();

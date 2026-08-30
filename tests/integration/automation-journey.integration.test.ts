@@ -176,6 +176,17 @@ describeMaybe('cross-phase automation journey (real Postgres)', () => {
     };
   }
 
+// A parked enrollment must never be due by WALL CLOCK. `buildSweepQuery` /
+// `sweepDueAutomationEnrollments` are GLOBAL — they span every workspace, as the
+// production cron does — so any other suite sweeping the shared test database at
+// real `now()` would claim this row and advance it out from under us, between the
+// tick that parks it and the tick that resumes it. That is silent: the sweeper's
+// per-row try/catch swallows nothing and simply moves a row it has no idea it
+// doesn't own, and this test then fails somewhere unrelated.
+//
+// The fake clock is therefore anchored far in the future. These dates were 2026
+// when written, which was fine until real time caught up with them — the failure
+// only began once the clock passed them.
   it('segment entry → enroll → wait → branch → send through the real dispatcher', async () => {
     // 1. Segment entry drives enrollment.
     const change: SegmentChangeLogRow = {
@@ -194,17 +205,17 @@ describeMaybe('cross-phase automation journey (real Postgres)', () => {
     const enrollmentId = enr.rows[0].id;
 
     // 2. Tick 1 @ T0: trigger → wait → PARK (next_run_at = T0 + 1d).
-    const t0 = new Date('2026-06-07T12:00:00.000Z');
+    const t0 = new Date('2099-06-07T12:00:00.000Z');
     const r1 = await runEnrollment(runDeps(t0, new CapturingSqs()), enrollmentId);
     expect(r1.result).toBe('parked');
 
     // 3. Real sweep before the wait elapses: NOT due.
-    const early = buildSweepQuery(new Date('2026-06-07T18:00:00.000Z'));
+    const early = buildSweepQuery(new Date('2099-06-07T18:00:00.000Z'));
     const dueEarly = await admin.query(early.text, early.values);
     expect(dueEarly.rows.find((x) => x.id === enrollmentId)).toBeUndefined();
 
     // 4. Real sweep after the wait: due.
-    const t2 = new Date('2026-06-08T12:00:01.000Z');
+    const t2 = new Date('2099-06-08T12:00:01.000Z');
     const late = buildSweepQuery(t2);
     const dueLate = await admin.query(late.text, late.values);
     expect(dueLate.rows.find((x) => x.id === enrollmentId)).toBeDefined();
