@@ -25,7 +25,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'automations', label: 'Automations', path: '/automations', capability: 'manage_content' },
   // The third way to send, beside a blast and a journey: triggered by the customer's
   // own application over the API.
-  { id: 'transactional', label: 'Transactional', path: '/transactional', capability: 'manage_content' },
+  { id: 'transactional', label: 'Transactional messages', path: '/transactional', capability: 'manage_content' },
   // Asset management = email templates + image gallery tabs on one screen.
   { id: 'templates', label: 'Asset management', path: '/templates', capability: 'manage_content' },
   // The email editor itself (/editor) has no standalone nav item — it is reached

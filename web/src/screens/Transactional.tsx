@@ -12,7 +12,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { clearEditorReturn } from '../store/editorReturn.js';
-import { Button, Card, PageHeader, EmptyState, ActionMenu, Badge, Drawer, Field, Input, Select, Textarea } from '../ui/kit.js';
+import { Button, PageHeader, EmptyState, ActionMenu, Badge, Drawer, Field, Input, Select, Textarea } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
 import { designToMjml } from '../email-designer/mjml-serializer.js';
@@ -63,10 +63,19 @@ export function Transactional() {
   const [emailError, setEmailError] = useState('');
 
   const load = async (): Promise<void> => {
-    const [emails, texts] = await Promise.all([
+    // Settled, not all: if one source fails the other still renders, and the
+    // banner names the real cause instead of blanking the screen behind a
+    // generic message.
+    const [emailsR, textsR] = await Promise.allSettled([
       api.get<{ templates: EmailRow[] }>('/templates'),
       api.get<{ templates: TextRow[] }>('/text-templates'),
     ]);
+    const failures: string[] = [];
+    if (emailsR.status === 'rejected') failures.push(`Email: ${msg(emailsR.reason, 'request failed')}`);
+    if (textsR.status === 'rejected') failures.push(`SMS/WhatsApp: ${msg(textsR.reason, 'request failed')}`);
+    setError(failures.join(' · '));
+    const emails = emailsR.status === 'fulfilled' ? emailsR.value : { templates: [] };
+    const texts = textsR.status === 'fulfilled' ? textsR.value : { templates: [] };
     const list: Item[] = [
       ...emails.templates
         .filter((t) => t.transactional_key)
@@ -84,12 +93,13 @@ export function Transactional() {
     setItems(list);
   };
 
-  useEffect(() => {
-    void load().catch(() => setError('Could not load transactional messages.'));
-  }, []);
-
   const msg = (e: unknown, fallback: string): string =>
     (e as { error?: string })?.error ?? (e instanceof Error ? e.message : fallback);
+
+  useEffect(() => {
+    void load().catch((e) => setError(msg(e, 'Could not load transactional messages.')));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Create an email template, key it, then open the designer on it. */
   const createEmail = async (): Promise<void> => {
@@ -279,29 +289,15 @@ export function Transactional() {
         </div>
       )}
 
-      <Card class="mt-6 p-5" data-testid="transactional-howto">
-        <h2 class="text-base font-bold text-ink-900">Sending one</h2>
-        <p class="mt-1 text-sm text-stone-600">
-          Use a <b>secret key</b> (<code class="font-mono text-xs">sk_live_…</code>) from{' '}
-          <b>Workspace settings → API keys</b> — never the public write key, since this sends real mail from your
-          verified domain.
-        </p>
-        <pre class="mt-3 overflow-x-auto rounded-lg bg-stone-900 p-3 text-xs leading-relaxed text-stone-100">
-{`POST /v1/send
-Authorization: Bearer sk_live_…
-
-{
-  "template": "otp",
-  "to": "jane@example.com",
-  "data": { "code": "123456" }
-}`}
-        </pre>
-        <p class="mt-2 text-sm text-stone-600">
-          Everything in <code class="font-mono text-xs">data</code> is available as{' '}
-          <code class="font-mono text-xs">{'{{data.code}}'}</code> in the subject and the body. For SMS and WhatsApp,{' '}
-          <code class="font-mono text-xs">to</code> is a phone number instead.
-        </p>
-      </Card>
+      {/* The how-to lives in /docs — one place to maintain, and the audience for it
+          is a developer who is already reading the API reference. */}
+      <p class="mt-6 text-sm text-stone-500" data-testid="transactional-howto">
+        Sending these, the merge values, and who gets skipped are covered in the{' '}
+        <a class="font-semibold text-brand-700 hover:underline" href="/docs" target="_blank" rel="noreferrer">
+          API documentation
+        </a>
+        .
+      </p>
 
       {/* New email: name + key, then straight into the designer. */}
       <Drawer

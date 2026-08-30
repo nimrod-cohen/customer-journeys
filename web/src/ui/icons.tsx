@@ -36,6 +36,16 @@ export const ICONS: Record<string, JSX.Element> = {
       <path d="M7 6h6a4 4 0 0 1 4 4M7 18h6a4 4 0 0 0 4-4" />
     </I>
   ),
+  // An envelope struck by a bolt: a message your application fires, as opposed to
+  // the broadcasts paper-plane (one blast) or the automations flow (a journey).
+  transactional: (
+    <I>
+      <path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6" />
+      <path d="M3 7v10a2 2 0 0 0 2 2h8" />
+      <path d="m3.5 7.5 8.5 6 4-2.8" />
+      <path d="M18 14l-2.5 4H19l-2.5 4" />
+    </I>
+  ),
   editor: <I d="M4 20h16M4 16l9-9 4 4-9 9H4v-4Zm9-9 2-2 4 4-2 2" />,
   templates: (
     <I>

@@ -15,11 +15,19 @@ const PORT = Number(process.env.PORT ?? process.env.LOCAL_API_PORT ?? 8787);
 // while the web tier scales horizontally (the DB claims make it safe either way).
 const MODE = (process.env.APP_MODE ?? 'all') as 'web' | 'worker' | 'all';
 const RUN_SWEEPS = MODE === 'worker' || MODE === 'all';
-// Only the single-runner role applies migrations (the `worker` in prod; `all` in
-// dev), avoiding a multi-web-instance race — plus runPendingMigrations takes an
-// advisory lock. On every boot it applies any OUTSTANDING migrations to the DB
-// (tracked in schema_migrations), so a deploy carries its own schema changes.
-const MAY_MIGRATE = MODE === 'worker' || MODE === 'all';
+// EVERY role applies migrations on boot. This was once gated to the single-runner
+// role to avoid a multi-web-instance race, but `runPendingMigrations` already takes
+// an advisory lock, so the gate bought nothing and cost a great deal: when the
+// worker machine was not running, a deploy shipped web code whose queries referenced
+// columns that had never been created, and the only symptom was 500s on the routes
+// that used them. Worse, the failure is silent at deploy time — the web health check
+// passes, because the schema gap only shows up on the specific query.
+//
+// Letting the web role migrate ties the schema guarantee to the machine whose health
+// check actually gates the deploy: a failing migration throws here → boot fails →
+// Fly keeps the previous version, which is the property the gate was meant to protect
+// in the first place. Concurrent boots serialise on the advisory lock; the loser
+// simply finds the schema up to date.
 // Absolute path to the built SPA (web/dist). When set, this service also serves
 // the admin SPA (single-container production). Unset in dev (Vite serves it).
 const WEB_DIST_DIR = process.env.WEB_DIST_DIR;
@@ -39,17 +47,15 @@ async function main(): Promise<void> {
   // up-to-date DB is a no-op. Gated to the single migrator role + advisory-locked.
   // A failing migration throws here → boot fails → the deploy's health check fails
   // and Fly keeps the previous version (never a half-applied schema).
-  if (MAY_MIGRATE) {
-    const { applied, baselined } = await runPendingMigrations(pool);
-    // eslint-disable-next-line no-console
-    if (baselined.length) console.log(`[local-api] baselined ${baselined.length} pre-existing migration(s)`);
-    // eslint-disable-next-line no-console
-    console.log(
-      applied.length
-        ? `[local-api] applied ${applied.length} pending migration(s): ${applied.join(', ')}`
-        : '[local-api] database schema up to date',
-    );
-  }
+  const { applied, baselined } = await runPendingMigrations(pool);
+  // eslint-disable-next-line no-console
+  if (baselined.length) console.log(`[local-api] baselined ${baselined.length} pre-existing migration(s)`);
+  // eslint-disable-next-line no-console
+  console.log(
+    applied.length
+      ? `[local-api] applied ${applied.length} pending migration(s): ${applied.join(', ')}`
+      : '[local-api] database schema up to date',
+  );
 
   const deps = makeLocalDeps(pool);
   const app = createApp({ pool, deps, ...(WEB_DIST_DIR ? { webDistDir: WEB_DIST_DIR } : {}) });
