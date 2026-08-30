@@ -57,7 +57,7 @@ function WhatsAppGlyph(): JSX.Element {
 // (AWS never approved production access) but companies still hold connectors for it,
 // and the lookup below is non-optional, so removing it would crash their settings page.
 const PROVIDER_META: Record<string, { label: string; color: string; glyph: () => JSX.Element }> = {
-  smtp: { label: 'Our mail server', color: '#0F766E', glyph: EnvelopeGlyph },
+  smtp: { label: 'Internal mail server', color: '#0F766E', glyph: EnvelopeGlyph },
   ses: { label: 'Amazon SES', color: '#FF9900', glyph: EnvelopeGlyph },
   resend: { label: 'Resend', color: '#0B0B0B', glyph: EnvelopeGlyph },
   '019': { label: '019 SMS', color: '#0EA5E9', glyph: ChatGlyph },
