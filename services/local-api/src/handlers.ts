@@ -6111,25 +6111,65 @@ export const adminCreateCompany: Handler = async (ctx, pool, req) => {
 };
 
 /**
- * DELETE /admin/companies/:id — delete a company (platform admin; audited). Guard:
- * only an EMPTY company (no workspaces) can be deleted, so no tenant data is ever
- * orphaned. Move/delete its workspaces first.
+ * DELETE /admin/companies/:id — delete a company (platform admin; audited).
+ *
+ * By DEFAULT only an EMPTY company can be deleted: a company with workspaces 409s,
+ * so no tenant data is ever destroyed by a request that looks like tidying up an
+ * unused row. Deleting everything is possible, but it has to be asked for:
+ * `delete_workspaces: true` purges every workspace first, using the SAME purge the
+ * workspace delete uses so the two paths cannot drift.
+ *
+ * The company's own config (connectors, R2, SES, channel, WhatsApp, members) is ON
+ * DELETE CASCADE, so it goes with the row. `admin_audit_log` deliberately survives —
+ * it records that this happened, and an audit trail that vanishes with the thing it
+ * audits is not an audit trail.
  */
 export const adminDeleteCompany: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  const confirm = typeof asObject(req.body).confirm_name === 'string' ? String(asObject(req.body).confirm_name) : '';
+  const body = asObject(req.body);
+  const confirm = typeof body.confirm_name === 'string' ? String(body.confirm_name) : '';
+  const cascade = body.delete_workspaces === true;
   const c = await pool.query<{ name: string }>('SELECT name FROM companies WHERE id = $1', [id]);
   if (!c.rows[0]) return ok({ error: 'not found' }, 404);
   if (confirm.trim() !== c.rows[0].name) {
     return ok({ error: 'company name confirmation does not match' }, 400);
   }
-  const w = await pool.query('SELECT 1 FROM workspaces WHERE company_id = $1 LIMIT 1', [id]);
-  if ((w.rowCount ?? 0) > 0) return ok({ error: 'company still has workspaces' }, 409);
+
+  const w = await pool.query<{ id: string; name: string }>(
+    'SELECT id, name FROM workspaces WHERE company_id = $1',
+    [id],
+  );
+  const workspaces = w.rows;
+
+  if (workspaces.length > 0 && !cascade) {
+    return ok(
+      {
+        error: 'company still has workspaces',
+        workspaces: workspaces.map((x) => x.name),
+        hint: 'delete them first, or pass delete_workspaces: true to remove the company and all of its data',
+      },
+      409,
+    );
+  }
+
+  // Refuse to delete the company the caller is acting from: it would revoke their
+  // own session mid-request and leave the result ambiguous.
+  if (cascade && workspaces.some((x) => x.id === ctx.workspaceId)) {
+    return ok({ error: 'switch to a workspace in another company before deleting this one' }, 400);
+  }
+
+  for (const ws of workspaces) {
+    await purgeWorkspace(pool, ws.id);
+  }
   await pool.query('DELETE FROM companies WHERE id = $1', [id]);
   await writeAuditEntry(
-    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.delete_company', { company_id: id, name: c.rows[0].name }),
+    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.delete_company', {
+      company_id: id,
+      name: c.rows[0].name,
+      workspaces_deleted: workspaces.length,
+    }),
   );
-  return ok({ deleted: true });
+  return ok({ deleted: true, workspaces_deleted: workspaces.length });
 };
 
 /** PATCH /admin/companies/:id — rename a company (platform admin; audited). */
