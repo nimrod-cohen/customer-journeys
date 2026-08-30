@@ -22,7 +22,9 @@ test('changes autosave without clicking save', async ({ page }) => {
   await expect(page.getByTestId('template-list')).toContainText('Autosaved one');
 
   // And re-opening loads the autosaved design.
-  await page.getByTestId('template-item').filter({ hasText: 'Autosaved one' }).getByTestId('template-edit').click();
+  const saved = page.getByTestId('template-item').filter({ hasText: 'Autosaved one' });
+  await saved.getByTestId('template-actions').click();
+  await saved.getByTestId('template-edit').click();
   await page.getByTestId('email-editor').waitFor();
   await expect(page.getByTestId('canvas-element')).toHaveCount(1);
 });

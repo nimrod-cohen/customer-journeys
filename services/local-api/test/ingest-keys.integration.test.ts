@@ -3,6 +3,7 @@
 // session to upsert a profile + record an event — scoped to the key's workspace
 // (never a body field, inv.2). Real Postgres; never mocks the DB.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { createHash } from 'node:crypto';
 import { hasDatabaseUrl, adminPool } from '@cdp/db';
 import { makePgLookups, makeLocalDeps, dispatch, type DispatchEnv } from '../src/index.js';
 import { ingestTrack, ingestIdentify } from '../src/handlers.js';
@@ -126,6 +127,47 @@ describeMaybe('ingest write keys + /v1 track/identify (real Postgres)', () => {
       [WS, pid],
     );
     expect(act.rows[0].n).toBe(1);
+  });
+
+  // The security property behind the two key kinds. A secret key can send mail
+  // from a verified domain, so it must never be retrievable after creation — a
+  // stored copy is one database read away from being a spam relay.
+  describe('secret keys', () => {
+    it('mints an sk_live_ key and NEVER stores a copy of it', async () => {
+      const created = await call('POST', '/ingest-keys', { kind: 'secret', label: 'server' });
+      const raw = body(created).key as string;
+      expect(raw.startsWith('sk_live_')).toBe(true);
+      expect(body(created).kind).toBe('secret');
+
+      const { rows } = await pool.query<{ key_full: string | null; kind: string }>(
+        'SELECT key_full, kind FROM ingest_keys WHERE key_hash = $1',
+        [createHash('sha256').update(raw).digest('hex')],
+      );
+      expect(rows[0]!.kind).toBe('secret');
+      expect(rows[0]!.key_full).toBeNull();
+
+      // The list must not leak it either.
+      const list = await call('GET', '/ingest-keys');
+      const row = (body(list).keys as Array<{ kind: string; key_full: string | null }>).find(
+        (k) => k.kind === 'secret',
+      );
+      expect(row?.key_full).toBeNull();
+    });
+
+    // Secret is strictly more privileged, so ingest must keep working with it.
+    it('works for ordinary ingest too', async () => {
+      const created = await call('POST', '/ingest-keys', { kind: 'secret' });
+      const raw = body(created).key as string;
+      expect((await ingestTrack(pool, raw, { email: 'sk@example.com', event: 'signup' })).status).toBe(202);
+    });
+
+    // Anything other than an explicit 'secret' stays public — the safe default.
+    it('defaults to a public key', async () => {
+      for (const kind of [undefined, 'public', 'SECRET', true]) {
+        const created = await call('POST', '/ingest-keys', kind === undefined ? {} : { kind });
+        expect((body(created).key as string).startsWith('pk_live_')).toBe(true);
+      }
+    });
   });
 
   it('rejects an unknown or malformed key', async () => {

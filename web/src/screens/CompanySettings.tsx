@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { useStore } from '../store/store.js';
-import { api, sessionStore, refreshMe, switchWorkspace } from '../store/session.js';
+import { api, sessionStore, refreshMe, switchWorkspace, logout } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader } from '../ui/kit.js';
 import { can } from '@cdp/tenancy';
@@ -45,6 +45,27 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
   const [delConfirm, setDelConfirm] = useState('');
   const [delBusy, setDelBusy] = useState(false);
   const [delErr, setDelErr] = useState('');
+  // Closing the whole company account. Separate state from the workspace delete:
+  // this one signs the caller out, so it must not share a busy flag with it.
+  const [closing, setClosing] = useState(false);
+  const [closeConfirm, setCloseConfirm] = useState('');
+  const [closeBusy, setCloseBusy] = useState(false);
+  const [closeErr, setCloseErr] = useState('');
+  const closeAccount = async (): Promise<void> => {
+    setCloseBusy(true);
+    setCloseErr('');
+    try {
+      await api.del('/company', { body: { confirm_name: closeConfirm.trim() } });
+      // There is nothing left to come back to, so drop the session rather than
+      // leaving a token pointing at deleted workspaces.
+      logout();
+      navigate('/login');
+    } catch (e) {
+      setCloseErr((e as { error?: string })?.error ?? 'Could not close the account.');
+      setCloseBusy(false);
+    }
+  };
+
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
   // Rename the company itself.
@@ -238,6 +259,78 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
       </Card>
 
       <CompanyLogo />
+
+      {/* Closing the account is the customer's own decision about data they own —
+          it ends their access, which is the point, not a reason to make it a
+          support ticket. A platform admin uses the admin console instead, so this
+          never appears while viewing someone else's company cross-tenant. */}
+      {!session.isPlatformAdmin ? (
+        <Card data-testid="close-account" class="mt-6 border-rose-200 p-5">
+          <h2 class="text-base font-bold text-rose-700">Close this account</h2>
+          <p class="mt-1 text-sm text-stone-600">
+            Permanently deletes <b>{session.companyName ?? 'this company'}</b>, every workspace it owns, and all of
+            their data — profiles, segments, broadcasts, automations and sending configuration. You'll be signed out.
+            This can't be undone.
+          </p>
+          {closing ? (
+            <div class="mt-4">
+              <Field
+                label="Type the company name to confirm"
+                hint="This is the only safeguard — there is no undo and no backup to restore from."
+              >
+                <Input
+                  data-testid="close-account-confirm"
+                  class="max-w-sm"
+                  value={closeConfirm}
+                  placeholder={session.companyName ?? ''}
+                  onInput={(e: Event) => setCloseConfirm((e.target as HTMLInputElement).value)}
+                />
+              </Field>
+              {closeErr ? (
+                <p data-testid="close-account-error" class="mt-2 text-sm text-rose-600">
+                  {closeErr}
+                </p>
+              ) : null}
+              <div class="mt-3 flex gap-2">
+                <Button
+                  data-testid="close-account-confirm-btn"
+                  variant="danger"
+                  loading={closeBusy}
+                  disabled={closeConfirm.trim() !== (session.companyName ?? '') || closeBusy}
+                  onClick={closeAccount}
+                >
+                  Close account permanently
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={closeBusy}
+                  onClick={() => {
+                    setClosing(false);
+                    setCloseConfirm('');
+                    setCloseErr('');
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button
+              data-testid="close-account-start"
+              variant="danger"
+              size="sm"
+              class="mt-3"
+              onClick={() => {
+                setClosing(true);
+                setCloseConfirm('');
+                setCloseErr('');
+              }}
+            >
+              Close account…
+            </Button>
+          )}
+        </Card>
+      ) : null}
       </>
       ) : null}
 

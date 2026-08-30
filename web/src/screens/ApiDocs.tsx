@@ -119,9 +119,53 @@ export function ApiDocs() {
         </p>
       </Card>
 
+      {/* ---- Transactional send ---- */}
+      <Card data-testid="docs-transactional" class="p-6">
+        <h3 class="font-bold text-ink-900">2. Transactional email (secret key)</h3>
+        <p class="mt-1 text-sm text-stone-600">
+          Send a designed template to one person, right now, with values filled in — a one-time
+          code, a password reset, an order receipt. This one needs a <b>secret key</b> (
+          <Code>sk_live_…</Code>, minted in <b>Workspace settings → API keys</b>), not the public
+          write key: it sends mail from your verified domain to whatever address it's given, so it
+          must stay on your server. Design the email in the app, give it a <b>key</b> under <b>Asset management → Email templates → ⋮ → Use for transactional API</b>,
+          and your code refers to that key from then on. Redesign the template, or move the key to a
+          different one, and nothing on your side changes.
+        </p>
+        <div class="mt-4">
+          <Method verb="POST" path="/v1/send" />
+          <Pre>{`curl -X POST ${origin}/v1/send \\
+  -H 'content-type: application/json' \\
+  -H 'authorization: Bearer sk_live_your_secret_key' \\
+  -d '{ "template": "otp",
+        "to": "jane@example.com",
+        "data": { "code": "123456", "expires_in": "10 minutes" } }'
+# → { "sent": true, "message_id": "…" }`}</Pre>
+        </div>
+        <p class="mt-3 text-sm text-stone-600">
+          Everything in <Code>data</Code> is available in the subject and the body as{' '}
+          <Code>{'{{data.code}}'}</Code>; nested values flatten to{' '}
+          <Code>{'{{data.order.id}}'}</Code>. The recipient's own profile fields stay available as{' '}
+          <Code>{'{{customer.first_name}}'}</Code>, and a recipient we've never seen before is
+          created as a profile.
+        </p>
+        <p class="mt-3 text-sm text-stone-600">
+          <b>Who does not receive it.</b> Addresses that hard-bounced, and people who reported you as
+          spam, are always skipped — mailing them damages your ability to reach everyone else.
+          People who unsubscribed from marketing are skipped too, unless the request sets{' '}
+          <Code>"ignore_unsubscribe": true</Code> — use that only for messages the recipient
+          triggered and needs, like a login code, where not sending locks them out of their own
+          account.
+        </p>
+        <p class="mt-3 text-xs text-stone-500">
+          A skipped send is still <Code>200</Code> with <Code>{'{ "sent": false, "reason": … }'}</Code>{' '}
+          — it's a decision, not a failure, so there's nothing to retry. A <Code>404</Code> means no
+          template carries that key in this workspace.
+        </p>
+      </Card>
+
       {/* ---- Server-side admin API ---- */}
       <Card class="p-6">
-        <h3 class="font-bold text-ink-900">2. Server-side admin API (bearer token)</h3>
+        <h3 class="font-bold text-ink-900">3. Server-side admin API (bearer token)</h3>
         <p class="mt-1 text-sm text-stone-600">
           For trusted backends that need full access (not just ingest). Exchange credentials for a
           token, then send <Code>Authorization: Bearer &lt;token&gt;</Code>. <b>Never use this from a

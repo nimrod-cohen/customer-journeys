@@ -305,6 +305,35 @@ A `domain_senders` row (a named "From" identity) may only be created for a **ver
 - `validateSenderId` rejects a cross-workspace `sender_id` (inv.2). The **To** is a recipient token rendered per recipient at send; suppression and unsubscribe still key on `profile.email`.
 - **Editor return context** (`store/editorReturn.ts`) is persisted in `sessionStorage` so a refresh inside the editor keeps the "← Back to …" target. Standalone editor opens must call `clearEditorReturn()` so a stale return can't mislabel Back.
 
+## Transactional email (`POST /v1/send`)
+
+A designed template sent to ONE person on demand, with values supplied by the caller.
+**Authenticated by a SECRET key (`sk_live_`), never the public write key.** `ingest_keys.kind`
+(`public`|`secret`) splits the two: the `pk_live_` key is documented as safe to embed in
+front-end code, and honouring it here would turn any customer's page source into a spam
+relay sending from their verified domain under our reputation. A secret key is stored as a
+hash only (`key_full` NULL) and shown once; ingest (`/v1/identify`, `/v1/track`) accepts
+either kind, since secret is strictly more privileged. The workspace comes from the key,
+never the body (inv.2).
+
+- **Addressed by a stable KEY, not a uuid.** `email_templates.transactional_key`
+  (partial-unique per workspace, `WHERE transactional_key IS NOT NULL`) is what the
+  integrator hardcodes, so the template behind `'otp'` can be redesigned or replaced
+  without anyone redeploying. Set via `PUT /templates/:id/transactional-key`
+  (`manage_content`, library templates only) — deliberately NOT part of
+  `updateTemplate`, which is the designer's per-keystroke autosave target where a
+  uniqueness 409 would surface as a mystery save failure. Normalized (trim +
+  lowercase) on BOTH write and lookup, so `OTP` reaches `otp` instead of a 404.
+- **`data.*` is a THIRD merge namespace** beside `customer.*` and `event.*`
+  (`dataMerge`, depth-capped): a caller cannot shadow a profile field by naming a
+  parameter `email`. Subject AND body render through the same engine.
+- **Consent vs deliverability are separate gates** (`decideTransactionalSend`, pure).
+  Hard bounce, permanent soft bounce and complaint ALWAYS block — no flag overrides
+  them, because mailing a dead box or a complainant damages the shared IP and cannot
+  help the recipient. An unsubscribe blocks **by default** and is overridden per
+  request with `ignore_unsubscribe: true`, for messages the recipient triggered and
+  needs. A skip is `200 {sent:false, reason}` — a decision, not a failure to retry.
+
 ## Broadcasts (§9A)
 
 A broadcast sends over **email** (template instance) or **sms/whatsapp** (a merge-tag-enabled `text_body` on the broadcast row). `broadcasts.medium` (CHECK `email|sms|whatsapp`), `broadcasts.text_body`, `messages_log.medium`.
