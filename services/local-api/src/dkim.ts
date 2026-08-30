@@ -435,3 +435,75 @@ export function nodeDnsResolver(): DnsResolver {
     },
   };
 }
+
+// ── self-hosted sending-domain setup (the DIRECT model) ──────────────────────
+//
+// A company on the internal mail server has no Amazon SES account, so none of the
+// SES identity flow applies to it. What it publishes instead is OUR public key,
+// under its OWN domain:
+//
+//     cdp._domainkey.customer.com  TXT  "v=DKIM1; k=rsa; p=<our public key>"
+//
+// OpenDKIM then signs with `d=customer.com`, which is what makes DMARC align. One
+// key file on the mail server serves every customer domain (its KeyTable entry
+// substitutes the sender's domain), so adding a domain needs no work on the box —
+// which is exactly why this is the model that works on day one.
+
+/** The public half of the mail server's signing key, as published in the TXT value. */
+export function selfHostedDkimPublicKey(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = (env.SELF_HOSTED_DKIM_PUBLIC_KEY ?? '').trim();
+  if (!raw) return null;
+  // Accept either the bare base64 key or a whole `v=DKIM1; k=rsa; p=…` value, since
+  // the value is copied off the mail server and both forms are what you find there.
+  const p = /p=([A-Za-z0-9+/=\s]+)/.exec(raw);
+  return (p ? p[1]! : raw).replace(/\s+/g, '');
+}
+
+/** The DNS selector the mail server signs with. */
+export function selfHostedDkimSelector(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.SELF_HOSTED_DKIM_SELECTOR ?? 'cdp').trim() || 'cdp';
+}
+
+export interface SelfHostedDnsRecord {
+  role: string;
+  type: string;
+  name: string;
+  value: string;
+  required: boolean;
+  note?: string;
+}
+
+/**
+ * The records a self-hosted customer domain must publish. PURE.
+ *
+ * DMARC is REQUIRED rather than recommended here: Gmail and Yahoo refuse bulk mail
+ * from a domain without it, so a domain that verified without one would pass our
+ * check and then be rejected by the receivers that matter. SPF is deliberately
+ * absent — the envelope sender lives in our bounce domain, so the customer's own
+ * SPF record has no bearing on this mail, and asking for one invites a wrong edit
+ * to an existing record.
+ */
+export function selfHostedDomainRecords(
+  domain: string,
+  selector: string,
+  publicKey: string,
+): SelfHostedDnsRecord[] {
+  return [
+    {
+      role: 'dkim',
+      type: 'TXT',
+      name: `${selector}._domainkey.${domain}`,
+      value: `v=DKIM1; k=rsa; p=${publicKey}`,
+      required: true,
+      note: 'Lets our mail server sign as your domain. Some DNS panels split long values automatically — that is fine.',
+    },
+    {
+      role: 'dmarc',
+      type: 'TXT',
+      name: `_dmarc.${domain}`,
+      value: 'v=DMARC1; p=none; rua=mailto:dmarc@' + domain,
+      required: true,
+      note: 'Gmail and Yahoo require a DMARC policy for bulk senders. Keep your own record if you already have one.',
+    },
+  ];
+}

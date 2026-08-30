@@ -138,10 +138,15 @@ import {
   type TransactionalRequest,
 } from './transactional-send.js';
 import { createSmtpEmailClient, smtpTransportFromEnv } from '@cdp/email';
-import { verifySelfHostedDomain, nodeDnsResolver } from './dkim.js';
+import {
+  verifySelfHostedDomain,
+  nodeDnsResolver,
+  selfHostedDkimPublicKey,
+  selfHostedDkimSelector,
+  selfHostedDomainRecords,
+} from './dkim.js';
 
 /** The OpenDKIM selector our mail server signs with for customer domains. */
-const SELF_HOSTED_DKIM_SELECTOR = 'cdp';
 
 /** A handler's request shape (already parsed by the server). */
 export interface HandlerRequest {
@@ -1074,6 +1079,54 @@ async function emailSenderForWorkspace(
   return { ...ses, trusted: false };
 }
 
+/**
+ * Which email provider this workspace's COMPANY actually sends through.
+ *
+ * The sending-domain flow differs completely per provider — SES verifies its own
+ * identity, Resend verifies in its dashboard, self-hosted publishes our key — so
+ * every screen in that flow has to ask this before it says anything about DNS. It
+ * used to assume SES, which is why a self-hosted company was told to go and add
+ * Amazon credentials it will never have.
+ */
+async function emailProviderForWorkspace(
+  pool: Pool,
+  workspaceId: string,
+): Promise<'smtp' | 'resend' | 'ses' | null> {
+  const { rows } = await pool.query<{ provider: string }>(
+    `SELECT c.provider FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
+      WHERE w.id = $1 AND c.channel = 'email' AND c.enabled
+      ORDER BY c.updated_at DESC LIMIT 1`,
+    [workspaceId],
+  );
+  const p = rows[0]?.provider;
+  return p === 'smtp' || p === 'resend' || p === 'ses' ? p : null;
+}
+
+/**
+ * The self-hosted domain's records + live DNS status, or the reason there are none.
+ * Shared by the GET and the check so the two can never describe different records.
+ */
+async function selfHostedDomainSetup(
+  domain: string,
+  verified: boolean,
+): Promise<{ records: DnsRecordOut[]; error?: string }> {
+  const key = selfHostedDkimPublicKey();
+  if (!key) {
+    return {
+      records: [],
+      error:
+        'The internal mail server has no signing key configured on this deployment, so a domain cannot be set up for it yet. This is on us, not on your DNS.',
+    };
+  }
+  const records = selfHostedDomainRecords(domain, selfHostedDkimSelector(), key).map((r) => ({ ...r }));
+  // Live DNS only where there is a real mail server behind this — the same rule the
+  // SES path uses for real credentials. Without one the whole flow is simulated, and
+  // a dev box waiting on public DNS retries for records it will never find just
+  // makes the screen (and the test suite) slow.
+  const live = smtpTransportFromEnv() !== null;
+  return { records: await withDnsStatus(records as DnsRecordOut[], live, verified) };
+}
+
 const SES_NOT_CONFIGURED =
   'This company has no Amazon SES credentials. Add them in Company settings before setting up a sending domain.';
 
@@ -1906,6 +1959,13 @@ async function lookupRecordStatus(rec: DnsRecordOut): Promise<DnsRecordStatus> {
       if (rec.role === 'dmarc') {
         return txts.some((t) => t.toLowerCase().startsWith('v=dmarc1')) ? 'found' : 'missing';
       }
+      if (rec.role === 'dkim') {
+        // A 2048-bit key is published as several strings a resolver rejoins, and
+        // panels reflow the whitespace, so compare on the KEY rather than on the
+        // exact string we handed out.
+        const want = rec.value.replace(/\s+/g, '');
+        return txts.some((t) => t.replace(/\s+/g, '') === want) ? 'found' : txts.length ? 'mismatch' : 'missing';
+      }
       return txts.includes(rec.value) ? 'found' : txts.length ? 'mismatch' : 'missing';
     }
   } catch {
@@ -2077,6 +2137,24 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const { ses_identity, dkim_tokens, ...domainOut } = row;
   void ses_identity;
   void dkim_tokens;
+
+  const provider = await emailProviderForWorkspace(pool, ctx.workspaceId);
+  if (provider === 'smtp') {
+    const { records, error } = await selfHostedDomainSetup(row.domain, row.verified);
+    return ok({ domain: domainOut, records, provider, ...(error ? { setupError: error } : {}) });
+  }
+  if (provider === 'resend') {
+    // Resend verifies the domain in its own dashboard and we send with its trusted
+    // From, so there is nothing to publish here and nothing for us to check.
+    return ok({
+      domain: domainOut,
+      records: [],
+      provider,
+      setupError:
+        'Your company sends through Resend, which verifies domains in the Resend dashboard. Verify it there, then set your default From under Workspace settings — no records are needed here.',
+    });
+  }
+
   const { ses, mode, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
   // No SES credentials → don't simulate. Surface the error and show no records so
   // the UI blocks setup until the company configures SES.
@@ -2119,16 +2197,22 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const postmaster = await syncPostmasterForDomain(pool, ctx.workspaceId, req.params.id!, row.domain);
   // A self-hosted company has no SES at all, so it verifies against the DKIM key
   // the domain published for OUR mail server instead of asking SES.
-  const selfHosted = await pool.query<{ n: number }>(
-    `SELECT count(*)::int AS n FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
-      WHERE w.id = $1 AND c.channel = 'email' AND c.provider = 'smtp' AND c.enabled`,
-    [ctx.workspaceId],
-  );
-  if ((selfHosted.rows[0]?.n ?? 0) > 0) {
+  const provider = await emailProviderForWorkspace(pool, ctx.workspaceId);
+  if (provider === 'smtp') {
+    // The expected key is the mail server's OWN public key, from configuration —
+    // NOT the domain's `dkim_tokens`, which only ever hold SES tokens and are empty
+    // for a self-hosted company. Comparing against an empty string made any TXT
+    // record at all count as a match, so a domain could verify without publishing
+    // our key and then send mail nothing could validate.
+    const expectedPublicKey = selfHostedDkimPublicKey();
+    const { records, error } = await selfHostedDomainSetup(row.domain, row.verified);
+    if (!expectedPublicKey) {
+      return ok({ verified: row.verified, selfHosted: true, provider, records, postmaster, error });
+    }
     const v = await verifySelfHostedDomain(nodeDnsResolver(), {
       customerDomain: row.domain,
-      selector: SELF_HOSTED_DKIM_SELECTOR,
-      expectedPublicKey: row.dkim_tokens?.[0] ?? '',
+      selector: selfHostedDkimSelector(),
+      expectedPublicKey,
     });
     if (v.verified && !row.verified) {
       const upd = scopedQuery(
@@ -2141,17 +2225,14 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
     return ok({
       verified: v.verified || row.verified,
       selfHosted: true,
+      provider,
       checks: v.checks,
       postmaster,
-      records: [
-        {
-          type: 'TXT',
-          name: `${SELF_HOSTED_DKIM_SELECTOR}._domainkey.${row.domain}`,
-          value: row.dkim_tokens?.[0] ?? '',
-          purpose: 'DKIM — lets our mail server sign as your domain',
-        },
-      ],
+      records,
     });
+  }
+  if (provider === 'resend') {
+    return ok({ verified: row.verified, provider, records: [], postmaster });
   }
 
   const { ses, mode, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);

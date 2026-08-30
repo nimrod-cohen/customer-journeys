@@ -266,6 +266,21 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   request BODY as well as the path, and `complianceStatus` returns
   `complianceData.rowData[]` requirement/status pairs, not flat `spfStatus`/`dkimStatus`
   fields. Verification is a readiness **warning** and never gates sending.
+- **The sending-domain flow BRANCHES ON THE PROVIDER** (`emailProviderForWorkspace`).
+  It assumed SES, so a self-hosted company opening its domain was told to add Amazon
+  credentials it will never have. SES → the identity + CNAME flow; Resend → nothing to
+  publish (it verifies in its own dashboard); **smtp → the DIRECT model**: the customer
+  publishes OUR public key at `<selector>._domainkey.<domain>` (TXT) plus a DMARC
+  record, and `POST /sending-domains/:id/check` resolves both. One key file on the mail
+  server serves every customer domain (its KeyTable entry substitutes the sender's
+  domain), so adding a domain needs no work on the box. The key comes from
+  **`SELF_HOSTED_DKIM_PUBLIC_KEY`** (+ `SELF_HOSTED_DKIM_SELECTOR`, default `cdp`);
+  unset, the screen says the DEPLOYMENT has no signing key rather than blaming the
+  customer's DNS. **Never verify against `sending_domains.dkim_tokens` here** — those
+  are SES tokens, empty for a self-hosted company, and an empty expected key matched
+  any TXT record at all, so a domain could verify without publishing anything. Live DNS
+  lookups run only when a real SMTP transport is configured, mirroring the SES path's
+  `mode === 'real'`.
 - **The MTA agent is a thin forwarder** (`services/mail-agent/mail-agent.mjs`): read
   Maildir, post raw, delete on 2xx. It parses nothing, so a parser fix is an app deploy
   rather than an ssh session on a mail server.

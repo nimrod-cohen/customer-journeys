@@ -128,6 +128,9 @@ function DomainEditor({ id }: { id: string }) {
   // Set when SES can't be reached — most importantly when the company has NO SES
   // credentials. We then BLOCK setup (no records, no verify) rather than simulate.
   const [sesError, setSesError] = useState('');
+  // Which provider this company sends through. The DNS story is completely
+  // different per provider, so nothing on this screen may assume SES.
+  const [provider, setProvider] = useState<'smtp' | 'resend' | 'ses' | null>(null);
   // sender inputs
   const [sName, setSName] = useState('');
   const [sLocal, setSLocal] = useState('');
@@ -135,12 +138,17 @@ function DomainEditor({ id }: { id: string }) {
   const [sError, setSError] = useState('');
 
   const load = async (): Promise<void> => {
-    const d = await api.get<{ domain: DomainDetail; records: DnsRecord[]; sesError?: string }>(
-      `/sending-domains/${id}`,
-    );
+    const d = await api.get<{
+      domain: DomainDetail;
+      records: DnsRecord[];
+      sesError?: string;
+      setupError?: string;
+      provider?: 'smtp' | 'resend' | 'ses' | null;
+    }>(`/sending-domains/${id}`);
     setDomain(d.domain);
     setRecords(d.records);
-    setSesError(d.sesError ?? '');
+    setProvider(d.provider ?? null);
+    setSesError(d.sesError ?? d.setupError ?? '');
     if (d.domain.verified) {
       const s = await api.get<{ senders: Sender[] }>('/domain-senders');
       setSenders(s.senders.filter((x) => x.domain === d.domain.domain));
@@ -152,11 +160,19 @@ function DomainEditor({ id }: { id: string }) {
     void load().catch(() => navigate('/settings/domains'));
   }, [id]);
 
+  const selfHosted = provider === 'smtp';
+
   const check = async (): Promise<void> => {
     setChecking(true);
     setCheckMsg('');
     try {
-      const r = await api.post<{ verified: boolean; dkimStatus?: string; records?: DnsRecord[]; error?: string }>(
+      const r = await api.post<{
+        verified: boolean;
+        dkimStatus?: string;
+        records?: DnsRecord[];
+        error?: string;
+        checks?: { label: string; ok: boolean; detail?: string }[];
+      }>(
         `/sending-domains/${id}/check`,
         {},
       );
@@ -164,7 +180,20 @@ function DomainEditor({ id }: { id: string }) {
         setSesError(r.error);
       } else if (r.verified) {
         setSesError('');
-        setCheckMsg('Verified — Amazon SES confirmed DKIM for this domain.');
+        setCheckMsg(
+          selfHosted
+            ? 'Verified — your domain publishes our signing key, so we can send as it.'
+            : 'Verified — Amazon SES confirmed DKIM for this domain.',
+        );
+      } else if (selfHosted) {
+        // Our own check is a DNS lookup, so it can say exactly which record is
+        // missing rather than waiting on a provider's polling schedule.
+        const failed = (r.checks ?? []).filter((c) => !c.ok);
+        setCheckMsg(
+          failed.length
+            ? `Not verified yet — ${failed.map((c) => c.detail ?? c.label).join('; ')}.`
+            : 'Not verified yet. Publish the records above, then check again (DNS can take a while to propagate).',
+        );
       } else {
         // If the required (DKIM) records are already visible to us, SES just
         // hasn't polled them yet — say so rather than "publish the records".
@@ -180,7 +209,7 @@ function DomainEditor({ id }: { id: string }) {
       await load();
       refreshReadiness(); // a newly-verified domain clears the Workspace settings badge
     } catch (e) {
-      setCheckMsg((e as { error?: string })?.error ?? 'Could not check with SES.');
+      setCheckMsg((e as { error?: string })?.error ?? 'Could not check the domain.');
     } finally {
       setChecking(false);
     }
@@ -278,10 +307,21 @@ function DomainEditor({ id }: { id: string }) {
         <Card data-testid="dns-section" class="p-5">
           <h2 class="text-base font-bold text-ink-900">DNS records</h2>
           <p class="mt-1 text-sm text-stone-500">
-            Add these records at your DNS provider, then check. The <b>DKIM (CNAME)</b> records are{' '}
-            <b>required</b> — Amazon SES verifies the domain on them, and DKIM alignment makes DMARC pass. <b>SPF</b> and{' '}
-            <b>DMARC</b> are recommended for deliverability but not needed to verify. Propagation can take from minutes
-            to a few hours.
+            {selfHosted ? (
+              <>
+                Add these records at your DNS provider, then check. The <b>DKIM (TXT)</b> record publishes our mail
+                server's signing key under your domain, which is what lets us send as you and makes DMARC pass;{' '}
+                <b>DMARC</b> is required too, because Gmail and Yahoo refuse bulk mail from a domain without it.
+                Propagation can take from minutes to a few hours.
+              </>
+            ) : (
+              <>
+                Add these records at your DNS provider, then check. The <b>DKIM (CNAME)</b> records are <b>required</b> —
+                Amazon SES verifies the domain on them, and DKIM alignment makes DMARC pass. <b>SPF</b> and <b>DMARC</b>{' '}
+                are recommended for deliverability but not needed to verify. Propagation can take from minutes to a few
+                hours.
+              </>
+            )}
           </p>
           {sesError ? (
             // No SES credentials (or SES unreachable) → block setup; do NOT
@@ -291,15 +331,20 @@ function DomainEditor({ id }: { id: string }) {
               class="mt-3 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-800 ring-1 ring-inset ring-rose-200"
             >
               <p>{sesError}</p>
-              <Button
-                data-testid="go-to-ses-config"
-                variant="secondary"
-                size="sm"
-                class="mt-3"
-                onClick={() => navigate('/company')}
-              >
-                Open Company settings →
-              </Button>
+              {/* Company settings is only the fix when the company is MISSING a
+                  provider's credentials — pointing a self-hosted company there
+                  sends them to look for an Amazon account they do not have. */}
+              {provider === null || provider === 'ses' ? (
+                <Button
+                  data-testid="go-to-ses-config"
+                  variant="secondary"
+                  size="sm"
+                  class="mt-3"
+                  onClick={() => navigate('/company')}
+                >
+                  Open Company settings →
+                </Button>
+              ) : null}
             </div>
           ) : (
             <>
