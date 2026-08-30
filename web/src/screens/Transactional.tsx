@@ -15,6 +15,8 @@ import { clearEditorReturn } from '../store/editorReturn.js';
 import { Button, Card, PageHeader, EmptyState, ActionMenu, Badge, Drawer, Field, Input, Select, Textarea } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
+import { designToMjml } from '../email-designer/mjml-serializer.js';
+import { emptyDesign } from '../email-designer/model.js';
 
 type Medium = 'email' | 'sms' | 'whatsapp';
 
@@ -100,7 +102,13 @@ export function Transactional() {
       return;
     }
     try {
-      const created = await api.post<{ template: { id: string } }>('/templates', { body: { name, mjml: '' } });
+      // Seed the SAME empty design the designer starts from, serialized the same
+      // way: the server compiles MJML strictly and rejects an empty document, so a
+      // blank string here 500s instead of creating anything.
+      const design = emptyDesign();
+      const created = await api.post<{ template: { id: string } }>('/templates', {
+        body: { name, mjml: designToMjml(design), design },
+      });
       const id = created.template.id;
       try {
         await api.put(`/templates/${id}/transactional-key`, { body: { transactional_key: key } });
