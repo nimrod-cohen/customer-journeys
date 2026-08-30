@@ -14,7 +14,21 @@ const PORT = Number(process.env.PORT ?? process.env.LOCAL_API_PORT ?? 8787);
 // dev default) does both in one process. Splitting keeps the sweeps single-runner
 // while the web tier scales horizontally (the DB claims make it safe either way).
 const MODE = (process.env.APP_MODE ?? 'all') as 'web' | 'worker' | 'all';
-const RUN_SWEEPS = MODE === 'worker' || MODE === 'all';
+// EVERY role sweeps. On Fly these in-process sweeps ARE the production scheduler —
+// there is no EventBridge cron here — so if they don't run, scheduled broadcasts
+// never fire and automation enrollments never advance.
+//
+// They used to run only in the `worker` role, and that role turned out not to be
+// dependable: `fly deploy` recreates a machine with no service in whatever state it
+// was in, so a worker that stopped once stayed stopped through every later deploy,
+// silently, while the app looked healthy.
+//
+// Running them on the always-on web tier is safe because concurrency was already
+// designed for: automation ticks take a single-winner FOR UPDATE claim, and a
+// broadcast cannot double-send because the outbox is unique on
+// (broadcast_id, profile_id) (CLAUDE.md inv.5). Two sweepers racing therefore costs
+// a wasted query, not a duplicate message.
+const RUN_SWEEPS = true;
 // EVERY role applies migrations on boot. This was once gated to the single-runner
 // role to avoid a multi-web-instance race, but `runPendingMigrations` already takes
 // an advisory lock, so the gate bought nothing and cost a great deal: when the
