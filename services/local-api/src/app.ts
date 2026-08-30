@@ -23,7 +23,7 @@ import { makePgLookups } from './lookups.js';
 import { makeLocalDeps, type LocalApiDeps } from './deps.js';
 import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
-import { ingestTrack, ingestIdentify, r2StorageForWorkspace } from './handlers.js';
+import { ingestTrack, ingestIdentify, sendTransactional, r2StorageForWorkspace } from './handlers.js';
 import { decideMailEvent, buildMessageLookup, type MessageRef } from './mail-events.js';
 import {
   buildEmailEventInsert,
@@ -322,6 +322,19 @@ export function createApp(opts: CreateAppOptions): Hono {
     const r = await ingestTrack(opts.pool, ingestKeyFrom(c, body), body);
     return c.json(r.body as object, r.status as 200 | 202 | 400 | 401);
   });
+  // Transactional send: a designed template triggered with parameters.
+  //
+  // Unlike the two endpoints around it this one requires a SECRET key (enforced in
+  // sendTransactional): it makes us deliver mail from a verified domain to an
+  // address the caller names, which is not something a page-source-visible key may
+  // do. The key still resolves the workspace, so a caller can never send on behalf
+  // of a workspace it holds no key for (inv. 2).
+  app.post('/v1/send', async (c) => {
+    const body = await safeJson(c);
+    const r = await sendTransactional(opts.pool, ingestKeyFrom(c, body), body, env.deps);
+    return c.json(r.body as object, r.status as 200 | 400 | 401 | 404 | 409 | 502);
+  });
+
   app.post('/v1/identify', async (c) => {
     const body = await safeJson(c);
     const r = await ingestIdentify(opts.pool, ingestKeyFrom(c, body), body);

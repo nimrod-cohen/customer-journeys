@@ -33,7 +33,9 @@ test('create a template in the designer, then re-open it to edit', async ({ page
   await page.getByTestId('editor-back').click();
   await page.getByTestId('templates-screen').waitFor();
   await expect(page.getByTestId('template-list')).toContainText('Newsletter');
-  await page.getByTestId('template-item').filter({ hasText: 'Newsletter' }).getByTestId('template-edit').click();
+  const newsletter = page.getByTestId('template-item').filter({ hasText: 'Newsletter' });
+  await newsletter.getByTestId('template-actions').click();
+  await newsletter.getByTestId('template-edit').click();
   await page.getByTestId('email-editor').waitFor();
   await expect(page.getByTestId('template-name')).toHaveValue('Newsletter');
   await expect(page.getByTestId('email-subject')).toHaveCount(0);
@@ -59,6 +61,7 @@ test('delete an email template from the list (styled confirm)', async ({ page })
   await expect(row).toHaveCount(1);
 
   // Delete → styled confirm (no native dialog) → row disappears.
+  await row.getByTestId('template-actions').click();
   await row.getByTestId('template-delete').click();
   await page.getByTestId('app-dialog').waitFor();
   await page.getByTestId('dialog-confirm').click();
@@ -125,7 +128,9 @@ test('mark a template RTL (right-to-left) and it round-trips', async ({ page }) 
   // Re-open → RTL came back from the stored design.
   await page.getByTestId('editor-back').click();
   await page.getByTestId('templates-screen').waitFor();
-  await page.getByTestId('template-item').filter({ hasText: 'Hebrew news' }).getByTestId('template-edit').click();
+  const hebrew = page.getByTestId('template-item').filter({ hasText: 'Hebrew news' });
+  await hebrew.getByTestId('template-actions').click();
+  await hebrew.getByTestId('template-edit').click();
   await page.getByTestId('email-editor').waitFor();
   await expect(page.locator('.nm-canvas-page')).toHaveAttribute('dir', 'rtl');
   await page.getByTestId('tab-template').click();

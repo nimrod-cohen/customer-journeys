@@ -117,6 +117,15 @@ import {
   type IdentityResult,
 } from './identity.js';
 import { postmasterFromEnv, syncDomainWithPostmaster } from './postmaster.js';
+import { customerMerge } from '@cdp/shared';
+import {
+  parseTransactionalRequest,
+  decideTransactionalSend,
+  dataMerge,
+  renderTransactional,
+  normalizeTransactionalKey,
+  validateTransactionalKey,
+} from './transactional-send.js';
 import { createSmtpEmailClient, smtpTransportFromEnv } from '@cdp/email';
 import { verifySelfHostedDomain, nodeDnsResolver } from './dkim.js';
 
@@ -2875,7 +2884,7 @@ export const importCsvMembers: Handler = async (ctx, pool, req) => {
 export const listTemplates: Handler = async (ctx, pool) => {
   const q = scopedQuery(
     ctx.workspaceId,
-    "SELECT id, name, updated_at FROM email_templates WHERE kind = 'library'",
+    "SELECT id, name, transactional_key, updated_at FROM email_templates WHERE kind = 'library'",
   );
   const { rows } = await pool.query(`${q.text} ORDER BY updated_at DESC`, q.values);
   return ok({ templates: rows });
@@ -2919,7 +2928,7 @@ export const getTemplate: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, mjml, design, kind, source_template_id, subject, sender_id, to_address, from_selected, updated_at FROM email_templates WHERE id = $1',
+    'SELECT id, name, mjml, design, kind, source_template_id, subject, sender_id, to_address, from_selected, transactional_key, updated_at FROM email_templates WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -2971,6 +2980,52 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
   const { rowCount } = await pool.query(q.text, q.values);
   if (!rowCount) return ok({ error: 'not found' }, 404);
   return ok({ updated: rowCount });
+};
+
+/**
+ * PUT /templates/:id/transactional-key — make a library template reachable from
+ * the transactional API, or take it back off.
+ *
+ * Deliberately NOT part of `updateTemplate`: that is the designer's autosave
+ * target, firing on every keystroke, and a uniqueness conflict there would surface
+ * as a mystery autosave failure. Here the caller asked for exactly this, so a 409
+ * can name the template already using the key.
+ *
+ * Body: `{ transactional_key: 'otp' }` to set, `{ transactional_key: null }` to clear.
+ */
+export const setTemplateTransactionalKey: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const raw = b.transactional_key;
+  const clearing = raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '');
+
+  let key: string | null = null;
+  if (!clearing) {
+    key = normalizeTransactionalKey(raw);
+    const bad = validateTransactionalKey(key);
+    if (bad) return ok({ error: bad }, 400);
+
+    // Report the clash before attempting the write, so the message can name the
+    // other template rather than echoing a Postgres constraint name.
+    const clash = scopedQuery(
+      ctx.workspaceId,
+      'SELECT name FROM email_templates WHERE transactional_key = $1 AND id <> $2',
+      [key, id],
+    );
+    const { rows } = await pool.query<{ name: string }>(clash.text, clash.values);
+    if (rows[0]) {
+      return ok({ error: `The key '${key}' is already used by the template “${rows[0].name}”.` }, 409);
+    }
+  }
+
+  const q = scopedQuery(
+    ctx.workspaceId,
+    "UPDATE email_templates SET transactional_key = $1, updated_at = now() WHERE id = $2 AND kind = 'library'",
+    [key, id],
+  );
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ transactional_key: key });
 };
 
 /**
@@ -6456,15 +6511,23 @@ export const adminGetWorkspace: Handler = async (ctx, pool, req) => {
 // ---------------------------------------------------------------------------
 
 const INGEST_KEY_PREFIX = 'pk_live_';
+/**
+ * Secret keys carry a DIFFERENT prefix so a leaked one is recognisable on sight —
+ * in a git diff, a log line, or a paste — rather than looking like the public key
+ * it is safe to embed.
+ */
+const SECRET_KEY_PREFIX = 'sk_live_';
+
+export type IngestKeyKind = 'public' | 'secret';
 
 /** sha256 hex — the ingest key's stored + lookup form (the raw key is never stored). */
 function sha256Hex(s: string): string {
   return createHash('sha256').update(s).digest('hex');
 }
 
-/** Mint a new write key: the raw value (shown ONCE), its hash (stored), a display prefix. */
-function newIngestKey(): { raw: string; hash: string; prefix: string } {
-  const raw = INGEST_KEY_PREFIX + randomBytes(24).toString('base64url');
+/** Mint a new key: the raw value, its hash (stored), a display prefix. */
+function newIngestKey(kind: IngestKeyKind = 'public'): { raw: string; hash: string; prefix: string } {
+  const raw = (kind === 'secret' ? SECRET_KEY_PREFIX : INGEST_KEY_PREFIX) + randomBytes(24).toString('base64url');
   return { raw, hash: sha256Hex(raw), prefix: raw.slice(0, 16) };
 }
 
@@ -6473,16 +6536,25 @@ function newIngestKey(): { raw: string; hash: string; prefix: string } {
  * last_used_at. Cross-workspace lookup by hash — the key IS the credential; there
  * is no session workspace context at ingest.
  */
-async function resolveIngestWorkspace(pool: Pool, rawKey: string): Promise<string | null> {
+async function resolveIngestKey(
+  pool: Pool,
+  rawKey: string,
+): Promise<{ workspaceId: string; kind: IngestKeyKind } | null> {
   const key = typeof rawKey === 'string' ? rawKey.trim() : '';
-  if (!key.startsWith(INGEST_KEY_PREFIX)) return null;
-  const { rows } = await pool.query<{ workspace_id: string }>(
+  if (!key.startsWith(INGEST_KEY_PREFIX) && !key.startsWith(SECRET_KEY_PREFIX)) return null;
+  const { rows } = await pool.query<{ workspace_id: string; kind: IngestKeyKind }>(
     `UPDATE ingest_keys SET last_used_at = now()
       WHERE key_hash = $1 AND revoked_at IS NULL
-      RETURNING workspace_id`,
+      RETURNING workspace_id, kind`,
     [sha256Hex(key)],
   );
-  return rows[0]?.workspace_id ?? null;
+  const row = rows[0];
+  return row ? { workspaceId: row.workspace_id, kind: row.kind } : null;
+}
+
+/** Ingest (identify/track) accepts either kind — a secret key is strictly more privileged. */
+async function resolveIngestWorkspace(pool: Pool, rawKey: string): Promise<string | null> {
+  return (await resolveIngestKey(pool, rawKey))?.workspaceId ?? null;
 }
 
 /**
@@ -6577,6 +6649,152 @@ function objOrEmpty(v: unknown): Record<string, unknown> {
  * email first. Body: { email, event, properties?, traits? }. Mirrors the ingested-
  * event path (features recompute + segment re-eval + event/profile enrollment).
  */
+/**
+ * POST /v1/send — send a designed transactional template, with parameters.
+ *
+ * Authenticated by the same ingest API key as /v1/track: the key IS the credential
+ * and it resolves the workspace, so a caller can never name a workspace it does not
+ * hold a key for (inv. 2).
+ *
+ * The recipient is upserted as a profile. `messages_log.profile_id` is NOT NULL, and
+ * having the person on file is what gives bounce handling, the send in their
+ * timeline, and delivery stats — a transactional send that vanished from the record
+ * would be the one you most wanted to trace when a customer says "I never got my
+ * code".
+ */
+export async function sendTransactional(
+  pool: Pool,
+  rawKey: string,
+  body: unknown,
+  deps: LocalApiDeps,
+): Promise<HandlerResponse> {
+  // Sending demands a SECRET key. The public write key is documented as safe to
+  // embed in front-end code; honouring it here would let anyone who reads a
+  // customer's page source send mail from their verified domain to any address —
+  // a spam relay running on our sending reputation.
+  const auth = await resolveIngestKey(pool, rawKey);
+  if (!auth) return ok({ error: 'invalid or revoked API key' }, 401);
+  if (auth.kind !== 'secret') {
+    return ok(
+      {
+        error:
+          'this endpoint needs a SECRET key (sk_live_…), not the public write key — mint one in Workspace settings → API keys and keep it server-side',
+      },
+      401,
+    );
+  }
+  const ws = auth.workspaceId;
+
+  const parsed = parseTransactionalRequest(body);
+  if ('error' in parsed) return ok({ error: parsed.error }, 400);
+
+  // The template is addressed by its STABLE KEY, so the design behind it can change
+  // without the caller's code changing.
+  const t = await pool.query<{
+    id: string;
+    subject: string | null;
+    compiled_html: string | null;
+    sender_id: string | null;
+  }>(
+    `SELECT id, subject, compiled_html, sender_id
+       FROM email_templates
+      WHERE workspace_id = $1 AND transactional_key = $2
+      LIMIT 1`,
+    [ws, parsed.template],
+  );
+  const tpl = t.rows[0];
+  if (!tpl) {
+    return ok(
+      { error: `no transactional template with key '${parsed.template}' in this workspace` },
+      404,
+    );
+  }
+  if (!tpl.compiled_html) return ok({ error: `template '${parsed.template}' has no content yet` }, 409);
+  if (!tpl.sender_id) return ok({ error: `template '${parsed.template}' has no From address set` }, 409);
+
+  // Recipient state BEFORE deciding: suppression reason and the profile's own
+  // deliverability status are separate signals and either can block.
+  const r = await pool.query<{ profile_id: string | null; email_status: string | null; reason: string | null }>(
+    `SELECT p.id AS profile_id, p.email_status, s.reason
+       FROM (SELECT $2::citext AS email) x
+       LEFT JOIN profiles p ON p.workspace_id = $1 AND p.email = x.email
+       LEFT JOIN suppressions s ON s.workspace_id = $1 AND s.email = x.email`,
+    [ws, parsed.to],
+  );
+  const state = r.rows[0];
+  const verdict = decideTransactionalSend(
+    {
+      email: parsed.to,
+      suppressionReason: state?.reason ?? null,
+      emailStatus: state?.email_status ?? null,
+    },
+    { ignoreMarketingConsent: parsed.ignoreUnsubscribe },
+  );
+  if (!verdict.send) {
+    // 200, not an error: the request was well-formed and we made a deliberate
+    // decision. A caller retrying a "failure" against a dead address helps nobody.
+    return ok({ sent: false, reason: verdict.reason }, 200);
+  }
+
+  const idres = await ingestIdentityFrom(pool, ws, { email: parsed.to });
+  if (!idres.ok) return ok({ error: idres.error }, idres.status);
+
+  const client = await pool.connect();
+  let profileId: string;
+  try {
+    await client.query('BEGIN');
+    const up = await upsertProfileByIdentity(client, ws, idres.identity, {});
+    profileId = up.id;
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    throw e;
+  }
+  client.release();
+
+  const profile = await pool.query<{ email: string | null; attributes: Record<string, unknown> | null }>(
+    'SELECT email, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ws, profileId],
+  );
+  const merge = {
+    ...customerMerge(profile.rows[0] ?? {}),
+    ...dataMerge(parsed.data),
+  };
+  const rendered = renderTransactional(
+    { subject: tpl.subject ?? '', html: tpl.compiled_html },
+    merge,
+  );
+
+  const messageId = randomUUID();
+  const sender = await pool.query<{ name: string; email: string }>(
+    'SELECT name, email FROM domain_senders WHERE workspace_id = $1 AND id = $2',
+    [ws, tpl.sender_id],
+  );
+  const from = sender.rows[0] ? `${sender.rows[0].name} <${sender.rows[0].email}>` : null;
+  if (!from) return ok({ error: `template '${parsed.template}' has an invalid From address` }, 409);
+
+  const { ses } = await emailSenderForWorkspace(pool, ws, deps);
+  try {
+    await ses.sendEmail({
+      from,
+      to: parsed.to,
+      subject: rendered.subject,
+      html: rendered.html,
+      messageId,
+    });
+  } catch (e) {
+    return ok({ sent: false, error: e instanceof Error ? e.message : 'send failed' }, 502);
+  }
+
+  await pool.query(
+    `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium)
+     VALUES ($1, $2, $3, 'sent', 'email')`,
+    [ws, profileId, messageId],
+  );
+  return ok({ sent: true, message_id: messageId }, 200);
+}
+
 export async function ingestTrack(pool: Pool, rawKey: string, body: unknown): Promise<HandlerResponse> {
   const ws = await resolveIngestWorkspace(pool, rawKey);
   if (!ws) return ok({ error: 'invalid or revoked API key' }, 401);
@@ -6651,20 +6869,22 @@ export async function ingestIdentify(pool: Pool, rawKey: string, body: unknown):
   }
 }
 
-/** POST /ingest-keys — mint a new write key. */
+/** POST /ingest-keys — mint a key. `kind: 'secret'` for a server-side sending key. */
 export const createIngestKey: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const label = typeof b.label === 'string' ? b.label.trim() : '';
-  const { raw, hash, prefix } = newIngestKey();
+  const kind: IngestKeyKind = b.kind === 'secret' ? 'secret' : 'public';
+  const { raw, hash, prefix } = newIngestKey(kind);
   const { rows } = await pool.query<{ id: string; created_at: string }>(
-    // The key is public (write-only, embedded in front-end code), so we store the
-    // full value too — it can be copied again later from the UI.
-    `INSERT INTO ingest_keys (workspace_id, key_hash, key_prefix, key_full, label)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-    [ctx.workspaceId, hash, prefix, raw, label || null],
+    // A PUBLIC key is embedded in front-end code anyway, so storing the full value
+    // costs nothing and lets the UI offer it again. A SECRET key is stored as a
+    // hash only: shown once, and unrecoverable afterwards by design.
+    `INSERT INTO ingest_keys (workspace_id, key_hash, key_prefix, key_full, label, kind)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+    [ctx.workspaceId, hash, prefix, kind === 'secret' ? null : raw, label || null, kind],
   );
   return ok(
-    { id: rows[0]!.id, key: raw, key_prefix: prefix, label: label || null, created_at: rows[0]!.created_at },
+    { id: rows[0]!.id, key: raw, key_prefix: prefix, kind, label: label || null, created_at: rows[0]!.created_at },
     201,
   );
 };
@@ -6673,7 +6893,7 @@ export const createIngestKey: Handler = async (ctx, pool, req) => {
  *  keys minted before it was stored — those show by prefix only). */
 export const listIngestKeys: Handler = async (ctx, pool) => {
   const { rows } = await pool.query(
-    `SELECT id, key_prefix, key_full, label, created_at, revoked_at, last_used_at
+    `SELECT id, key_prefix, key_full, kind, label, created_at, revoked_at, last_used_at
        FROM ingest_keys WHERE workspace_id = $1 ORDER BY created_at DESC`,
     [ctx.workspaceId],
   );
@@ -6773,6 +6993,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /templates/:id': updateTemplate,
   'DELETE /templates/:id': deleteTemplate,
   'POST /templates/:id/clone': cloneTemplate,
+  'PUT /templates/:id/transactional-key': setTemplateTransactionalKey,
   'POST /assets': uploadAsset,
   'POST /assets/backfill-r2': backfillAssetsR2,
   'GET /assets': listAssets,
