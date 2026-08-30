@@ -6165,7 +6165,25 @@ export const adminUpdateWorkspace: Handler = async (ctx, pool, req) => {
 // Tenant tables to purge when deleting a workspace, ordered children → parents so
 // foreign keys are satisfied. admin_audit_log is intentionally NOT here (keep the
 // audit trail; its workspace_id has no FK).
-const WORKSPACE_CHILD_TABLES = [
+/**
+ * Every workspace-scoped table, in FK-safe delete order.
+ *
+ * Only tables whose `workspace_id` FK is ON DELETE NO ACTION need to appear —
+ * CASCADE ones (activity_log, ingest_keys, domain_dkim_keys) clear themselves. The
+ * order matters where these tables reference EACH OTHER:
+ *   tracked_* -> broadcasts/automations/profiles      automation_versions -> automations
+ *   topic_subscriptions -> topics/profiles            channel_optouts -> profiles
+ *   email_templates -> domain_senders -> (sending_domains)
+ *
+ * `workspace-purge-covers-schema.integration.test.ts` asserts this list against the
+ * live catalog. It is asserted rather than trusted because it had silently rotted:
+ * eleven tables were missing, so deleting any workspace with a sending domain, a
+ * topic, an asset or a tracked link failed on a foreign-key violation.
+ */
+export const WORKSPACE_CHILD_TABLES = [
+  // Reference broadcasts / automations / profiles — must go first.
+  'tracked_links',
+  'tracked_opens',
   'segment_change_log',
   'segment_memberships',
   'automation_enrollments',
@@ -6174,11 +6192,26 @@ const WORKSPACE_CHILD_TABLES = [
   'outbox',
   'events',
   'profile_features',
+  'topic_subscriptions',
+  'channel_optouts',
   'usage_counters',
+  // Now the things those pointed at.
   'broadcasts',
   'automations',
+  // AFTER automations, not before: automation_versions.automation_id CASCADEs, so
+  // the rows are already gone by now — but automations.active_version_id is NO
+  // ACTION, so deleting the versions FIRST would violate it. The delete below is a
+  // harmless no-op that keeps the table explicitly accounted for.
+  'automation_versions',
+  'topics',
   'segments',
+  // email_templates references domain_senders, which references sending_domains.
   'email_templates',
+  'domain_senders',
+  'sending_domains',
+  'text_templates',
+  'assets',
+  'asset_folders',
   'suppressions',
   'profiles',
   'workspace_users',
