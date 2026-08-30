@@ -22,6 +22,13 @@ interface ProviderSpec {
   /** Omitted when the provider needs no per-company credential (self-hosted). */
   secretLabel?: string;
   hint?: string;
+  /**
+   * Only offered to a company that holds the self-hosted mail GRANT. Sending
+   * through our own mail server spends our IP reputation, so it is never
+   * self-served — and a tile that answers every click with a 403 reads as a bug
+   * rather than as a policy.
+   */
+  requiresSelfHostedGrant?: boolean;
 }
 interface ChannelSpec {
   channel: 'email' | 'sms' | 'whatsapp';
@@ -89,6 +96,7 @@ const CHANNELS: ChannelSpec[] = [
         // No From field: the sender is per WORKSPACE (Workspace settings → Default
         // From, or a named sender on a verified domain), never company-wide.
         fields: [],
+        requiresSelfHostedGrant: true,
         hint: 'Sends through our internal mail server. Add your domain under Workspace settings → Sending domains and publish the DKIM record it shows you.',
       },
       {
@@ -146,18 +154,31 @@ interface Channels {
   sms: boolean;
   whatsapp: boolean;
 }
+/** Just enough of GET /company/readiness to explain a disabled channel. */
+interface ReadinessCheck {
+  id: string;
+  summary: string;
+}
 
 export function ConnectorsPanel() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [channels, setChannels] = useState<Channels>({ email: false, sms: false, whatsapp: false });
+  const [selfHostedMail, setSelfHostedMail] = useState(false);
+  const [reasons, setReasons] = useState<Record<string, string>>({});
 
   const load = async (): Promise<void> => {
-    const [c, ch] = await Promise.all([
-      api.get<{ connectors: Connector[] }>('/company/connectors'),
+    const [c, ch, r] = await Promise.all([
+      api.get<{ connectors: Connector[]; self_hosted_mail_enabled?: boolean }>('/company/connectors'),
       api.get<{ channels: Channels }>('/company/channels'),
+      // Readiness knows WHY a channel is off. Without it the card can only guess,
+      // and it guessed wrong: it said "connect a provider" to companies that had
+      // already connected one and were missing a verified domain instead.
+      api.get<{ checks: ReadinessCheck[] }>('/company/readiness').catch(() => ({ checks: [] })),
     ]);
     setConnectors(c.connectors);
+    setSelfHostedMail(c.self_hosted_mail_enabled === true);
     setChannels(ch.channels);
+    setReasons(Object.fromEntries(r.checks.map((k) => [k.id, k.summary])));
   };
   useEffect(() => {
     void load();
@@ -166,22 +187,56 @@ export function ConnectorsPanel() {
   return (
     <section data-testid="connectors-screen">
       {CHANNELS.map((ch) => (
-        <ChannelBox key={ch.channel} ch={ch} connectors={connectors} enabled={channels[ch.channel]} onChanged={load} />
+        <ChannelBox
+          key={ch.channel}
+          ch={ch}
+          connectors={connectors}
+          enabled={channels[ch.channel]}
+          selfHostedMail={selfHostedMail}
+          reason={reasons[ch.channel] ?? ''}
+          onChanged={load}
+        />
       ))}
     </section>
   );
 }
 
-function ChannelBox({ ch, connectors, enabled, onChanged }: { ch: ChannelSpec; connectors: Connector[]; enabled: boolean; onChanged: () => Promise<void> }) {
+function ChannelBox({
+  ch,
+  connectors,
+  enabled,
+  selfHostedMail,
+  reason,
+  onChanged,
+}: {
+  ch: ChannelSpec;
+  connectors: Connector[];
+  enabled: boolean;
+  selfHostedMail: boolean;
+  reason: string;
+  onChanged: () => Promise<void>;
+}) {
   const configured = connectors.find((c) => c.channel === ch.channel) ?? null;
-  const [selected, setSelected] = useState<string>(configured?.provider ?? ch.providers[0]!.provider);
+  // A granted provider is hidden until the company is allowed to use it — but NEVER
+  // hidden while a connector for it exists, or a company whose grant was revoked
+  // would be left holding a connector it cannot see or disconnect.
+  const providers = ch.providers.filter(
+    (p) => !p.requiresSelfHostedGrant || selfHostedMail || connectors.some((c) => c.provider === p.provider),
+  );
+  const fallback = providers[0] ?? ch.providers[0]!;
+  const [selected, setSelected] = useState<string>(configured?.provider ?? fallback.provider);
   // Follow the configured provider when it loads/changes.
   useEffect(() => {
     if (configured) setSelected(configured.provider);
   }, [configured?.provider]);
-  const spec = ch.providers.find((p) => p.provider === selected) ?? ch.providers[0]!;
+  // The selection can point at a provider that has just been filtered out (the grant
+  // was revoked while the screen was open); fall back rather than render nothing.
+  useEffect(() => {
+    if (!providers.some((p) => p.provider === selected)) setSelected(fallback.provider);
+  }, [providers.length, selected]);
+  const spec = providers.find((p) => p.provider === selected) ?? fallback;
   const existing = connectors.find((c) => c.provider === selected) ?? null;
-  const multi = ch.providers.length > 1;
+  const multi = providers.length > 1;
 
   return (
     <Card data-testid={`connector-channel-${ch.channel}`} class="mb-6 p-5">
@@ -199,14 +254,14 @@ function ChannelBox({ ch, connectors, enabled, onChanged }: { ch: ChannelSpec; c
       <p class="mt-1 text-sm text-stone-500">
         {enabled
           ? `Broadcasts and automations can send over ${ch.label}.`
-          : `Connect a provider to enable ${ch.label}. Until then, ${ch.label} steps are ignored in broadcasts and automations.`}
+          : `${reason || `Connect a provider to enable ${ch.label}.`} Until then, ${ch.label} steps are ignored in broadcasts and automations.`}
       </p>
 
       {multi ? (
         <div class="mt-4">
           <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Provider</p>
           <div class="flex flex-wrap gap-2">
-            {ch.providers.map((p) => {
+            {providers.map((p) => {
               const isSel = p.provider === selected;
               const isConnected = connectors.some((c) => c.provider === p.provider);
               return (

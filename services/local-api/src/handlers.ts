@@ -1360,12 +1360,19 @@ const CONNECTOR_SPECS: Record<string, { channel: string; configKeys: string[]; s
 /** GET /company/connectors — every connector for the active company (secrets NEVER returned). */
 export const listCompanyConnectors: Handler = async (ctx, pool) => {
   const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
-  if (!companyId) return ok({ connectors: [] });
+  if (!companyId) return ok({ connectors: [], self_hosted_mail_enabled: false });
   const { rows } = await pool.query<{ id: string; channel: string; provider: string; config: Record<string, unknown>; enabled: boolean; has_secret: boolean }>(
     "SELECT id, channel, provider, config, enabled, (secret IS NOT NULL AND secret <> '') AS has_secret FROM company_connectors WHERE company_id = $1 ORDER BY channel, provider",
     [companyId],
   );
-  return ok({ connectors: rows });
+  // The self-hosted mail GRANT rides along so the screen can leave the provider
+  // out entirely for a company that may not use it. Offering a tile that answers
+  // every click with a 403 is worse than not offering it: it reads as a bug.
+  const g = await pool.query<{ ok: boolean }>(
+    'SELECT self_hosted_mail_enabled AS ok FROM companies WHERE id = $1',
+    [companyId],
+  );
+  return ok({ connectors: rows, self_hosted_mail_enabled: g.rows[0]?.ok === true });
 };
 
 /** PUT /company/connectors — upsert a connector by (channel, provider). Blank secret on

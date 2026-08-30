@@ -45,6 +45,20 @@ describeMaybe('company connectors + channel availability (real Postgres)', () =>
     await pool.query('DELETE FROM companies WHERE id = $1', [CO]);
   }
 
+  // The Connectors screen leaves the self-hosted provider OUT for a company that
+  // may not use it — offering a tile that answers every click with a 403 reads as a
+  // bug — so the grant has to travel with the connector list.
+  it('reports the self-hosted mail grant alongside the connectors', async () => {
+    const read = async () =>
+      (await dispatch({ method: 'GET', path: '/company/connectors', authorization: owner(), query: {}, body: {} }, env()))
+        .body as { self_hosted_mail_enabled: boolean };
+    expect((await read()).self_hosted_mail_enabled).toBe(false); // never granted by default
+
+    await pool.query('UPDATE companies SET self_hosted_mail_enabled = true WHERE id = $1', [CO]);
+    expect((await read()).self_hosted_mail_enabled).toBe(true);
+    await pool.query('UPDATE companies SET self_hosted_mail_enabled = false WHERE id = $1', [CO]);
+  });
+
   it('starts with no channels enabled', async () => {
     expect(await channels()).toEqual({ email: false, sms: false, whatsapp: false });
   });
