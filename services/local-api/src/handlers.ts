@@ -20,7 +20,13 @@ import {
   unsubscribeLinkSecret,
   type SesEmailClient,
 } from '@cdp/email';
-import { dispatchOutbox, channelConfigForWorkspace, renderTemplateBody, type DispatchDeps } from '@cdp/service-dispatcher';
+import {
+  dispatchOutbox,
+  channelConfigForWorkspace,
+  renderTemplateBody,
+  buildUsageCounterIncrement,
+  type DispatchDeps,
+} from '@cdp/service-dispatcher';
 import { isFrontFacingLanguage } from '@cdp/service-unsubscribe';
 import {
   DEV_USERS,
@@ -1397,7 +1403,10 @@ export const putCompanyConnector: Handler = async (ctx, pool, req) => {
     );
     if (!g.rows[0]?.ok) {
       return ok(
-        { error: 'This company is not authorized to send through the self-hosted mail server.' },
+        {
+          error:
+            'This company is not authorized to send through the self-hosted mail server. Ask a platform admin to enable it in System admin.',
+        },
         403,
       );
     }
@@ -6249,6 +6258,7 @@ export const billingUsage: Handler = async (ctx, pool) => {
 export const adminListCompanies: Handler = async (ctx, pool) => {
   const { rows } = await pool.query(
     `SELECT c.id, c.name, c.status,
+            c.self_hosted_mail_enabled,
             COALESCE(
               json_agg(json_build_object('id', w.id, 'name', w.name, 'status', w.status)
                        ORDER BY w.name) FILTER (WHERE w.id IS NOT NULL),
@@ -6256,7 +6266,7 @@ export const adminListCompanies: Handler = async (ctx, pool) => {
             ) AS workspaces
        FROM companies c
        LEFT JOIN workspaces w ON w.company_id = c.id
-      GROUP BY c.id, c.name, c.status
+      GROUP BY c.id, c.name, c.status, c.self_hosted_mail_enabled
       ORDER BY c.name`,
   );
   await writeAuditEntry(
@@ -6338,18 +6348,60 @@ export const adminDeleteCompany: Handler = async (ctx, pool, req) => {
   return ok({ deleted: true, workspaces_deleted: workspaces.length });
 };
 
-/** PATCH /admin/companies/:id — rename a company (platform admin; audited). */
-export const adminRenameCompany: Handler = async (ctx, pool, req) => {
+/**
+ * PATCH /admin/companies/:id — update a company (platform admin; audited).
+ *
+ * Two independent fields, each optional, so the caller patches only what it names:
+ *   `name`                     — rename.
+ *   `self_hosted_mail_enabled` — the SELF-HOSTED MAIL GRANT. Sending through our own
+ *      mail server spends OUR IP reputation, so a company can never switch it on
+ *      itself (`PUT /company/connectors` 403s an `smtp` connector without it); this
+ *      endpoint is the only way it is ever granted or revoked, and every flip is
+ *      written to admin_audit_log.
+ *
+ * Revoking does NOT delete the connector — the partial unique index is on `enabled`,
+ * so the credentials survive a revoke exactly as they survive a provider switch. It
+ * only stops the company connecting `smtp` again.
+ */
+export const adminUpdateCompany: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
-  const name = typeof asObject(req.body).name === 'string' ? String(asObject(req.body).name).trim() : '';
-  if (!name) return ok({ error: 'name required' }, 400);
-  const { rows } = await pool.query('UPDATE companies SET name = $2 WHERE id = $1 RETURNING id, name, status', [id, name]);
+  const b = asObject(req.body);
+  const hasName = b.name !== undefined;
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  const hasGrant = b.self_hosted_mail_enabled !== undefined;
+  if (hasName && !name) return ok({ error: 'name required' }, 400);
+  if (hasGrant && typeof b.self_hosted_mail_enabled !== 'boolean') {
+    return ok({ error: 'self_hosted_mail_enabled must be a boolean' }, 400);
+  }
+  if (!hasName && !hasGrant) return ok({ error: 'nothing to update' }, 400);
+  const grant = b.self_hosted_mail_enabled === true;
+
+  const sets: string[] = [];
+  const values: unknown[] = [id];
+  if (hasName) {
+    values.push(name);
+    sets.push(`name = $${values.length}`);
+  }
+  if (hasGrant) {
+    values.push(grant);
+    sets.push(`self_hosted_mail_enabled = $${values.length}`);
+  }
+  const { rows } = await pool.query(
+    `UPDATE companies SET ${sets.join(', ')} WHERE id = $1
+      RETURNING id, name, status, self_hosted_mail_enabled`,
+    values,
+  );
   if (!rows[0]) return ok({ error: 'not found' }, 404);
   await writeAuditEntry(
-    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.rename_company', { company_id: id, name }),
+    recordCrossTenantAccess(ctx.userId ?? '', null, hasGrant ? 'admin.update_company' : 'admin.rename_company', {
+      company_id: id,
+      ...(hasName ? { name } : {}),
+      ...(hasGrant ? { self_hosted_mail_enabled: grant } : {}),
+    }),
   );
   return ok({ company: rows[0] });
 };
+
 
 /**
  * PATCH /admin/workspaces/:id — platform admin renames a workspace (audited). A
@@ -6790,6 +6842,15 @@ async function sendTransactionalText(
 ): Promise<HandlerResponse> {
   const medium: Medium = tpl.transactional_medium === 'whatsapp' ? 'whatsapp' : 'sms';
   if (!tpl.body.trim()) return ok({ error: `template '${parsed.template}' has no content yet` }, 409);
+  // The key alone decides the medium, so a caller can address a text message
+  // without realising it. Silently dropping the files would look like a send that
+  // worked; say what happened instead.
+  if (parsed.attachments.length > 0) {
+    return ok(
+      { error: `'${parsed.template}' is an ${medium.toUpperCase()} message, and text messages can't carry attachments` },
+      400,
+    );
+  }
 
   // The workspace's default country turns a national number into E.164; without
   // one, only fully international numbers resolve.
@@ -7003,6 +7064,15 @@ export async function sendTransactional(
       subject: rendered.subject,
       html: rendered.html,
       messageId,
+      ...(parsed.attachments.length > 0
+        ? {
+            attachments: parsed.attachments.map((a) => ({
+              filename: a.filename,
+              contentType: a.contentType,
+              content: a.content,
+            })),
+          }
+        : {}),
     });
   } catch (e) {
     return ok({ sent: false, error: e instanceof Error ? e.message : 'send failed' }, 502);
@@ -7013,7 +7083,19 @@ export async function sendTransactional(
      VALUES ($1, $2, $3, 'sent', 'email')`,
     [ws, profileId, messageId],
   );
-  return ok({ sent: true, message_id: messageId }, 200);
+  // Attachment bytes are metered per workspace: a 5 MB PDF to twenty recipients is
+  // real bandwidth, not noise, and the counter has to exist before the cost view
+  // can ever price it. Additive like the dispatcher's own per-send increment —
+  // nothing stores the bytes, so no rollup could reconcile this one to a source.
+  const attachedBytes = parsed.attachments.reduce((n, a) => n + a.bytes, 0);
+  if (attachedBytes > 0) {
+    const inc = buildUsageCounterIncrement(ws, new Date(), 'attachment_bytes', attachedBytes);
+    await pool.query(inc.text, [...inc.values]);
+  }
+  return ok(
+    { sent: true, message_id: messageId, ...(parsed.attachments.length > 0 ? { attachments: parsed.attachments.length } : {}) },
+    200,
+  );
 }
 
 export async function ingestTrack(pool: Pool, rawKey: string, body: unknown): Promise<HandlerResponse> {
@@ -7275,7 +7357,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /billing/usage': billingUsage,
   'GET /admin/companies': adminListCompanies,
   'POST /admin/companies': adminCreateCompany,
-  'PATCH /admin/companies/:id': adminRenameCompany,
+  'PATCH /admin/companies/:id': adminUpdateCompany,
   'DELETE /admin/companies/:id': adminDeleteCompany,
   'PATCH /admin/workspaces/:id': adminUpdateWorkspace,
   'DELETE /admin/workspaces/:id': adminDeleteWorkspace,

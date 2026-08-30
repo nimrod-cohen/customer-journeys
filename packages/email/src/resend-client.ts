@@ -60,6 +60,15 @@ export function createResendEmailClient(
         html: input.html,
       };
       if (input.headers && Object.keys(input.headers).length > 0) payload.headers = input.headers;
+      // Resend takes the file base64-encoded in the JSON body — exactly the form it
+      // reached us in, so nothing is decoded on this path.
+      if (input.attachments && input.attachments.length > 0) {
+        payload.attachments = input.attachments.map((a) => ({
+          filename: a.filename,
+          content: a.content,
+          content_type: a.contentType,
+        }));
+      }
       const res = await http.post(
         'https://api.resend.com/emails',
         { Authorization: `Bearer ${cfg.apiKey}`, 'content-type': 'application/json' },

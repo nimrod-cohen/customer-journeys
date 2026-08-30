@@ -178,3 +178,36 @@ test('super admin deletes an EMPTY company (button only shows when it has no wor
     .filter({ has: page.getByTestId('admin-company-name').filter({ hasText: /^Acme$/ }) });
   await expect(acme.getByTestId('delete-company')).toHaveCount(0);
 });
+
+// Self-hosted mail spends OUR IP reputation, so a company can never switch it on
+// itself — connecting the internal mail server 403s without this grant. The System
+// admin console is the only place it is given.
+test('super admin grants self-hosted mail to a company (and it sticks)', async ({ page }) => {
+  await loginAs(page, DEV_ADMIN);
+  await page.getByTestId('nav-admin').click();
+  await page.getByTestId('system-admin-console').waitFor();
+
+  const acme = page
+    .locator('[data-testid="admin-company"]')
+    .filter({ has: page.getByTestId('admin-company-name').filter({ hasText: /^Acme$/ }) });
+  // The kit Switch hides its input (sr-only) behind the drawn track, so drive it
+  // by its label the way a person does.
+  const toggle = acme.getByTestId('self-hosted-mail-toggle');
+  const flip = acme.locator('label:has([data-testid="self-hosted-mail-toggle"])');
+  await expect(toggle).not.toBeChecked(); // never granted by default
+
+  await flip.click();
+  await expect(page.getByTestId('toast')).toContainText('Self-hosted mail enabled');
+
+  // Survives a reload — the grant is server state, not a local switch.
+  await page.reload();
+  await page.getByTestId('system-admin-console').waitFor();
+  await expect(toggle).toBeChecked();
+
+  // Revoke again so the shared seed stays as it was.
+  await flip.click();
+  await expect(page.getByTestId('toast')).toContainText('Self-hosted mail disabled');
+  await page.reload();
+  await page.getByTestId('system-admin-console').waitFor();
+  await expect(toggle).not.toBeChecked();
+});

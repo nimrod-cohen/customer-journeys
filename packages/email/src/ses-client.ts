@@ -49,6 +49,24 @@ export interface IdentityVerificationAttributes {
 }
 
 /**
+ * One file attached to an outbound email.
+ *
+ * The bytes travel as BASE64 rather than a Buffer because that is the form they
+ * arrive in (the transactional API takes base64 JSON) and the form two of the three
+ * transports want on the wire — Resend's JSON body and the MIME part built for
+ * self-hosted SMTP. Only the SES client decodes, because the AWS SDK encodes for
+ * itself and would otherwise attach a text file full of base64.
+ */
+export interface EmailAttachment {
+  /** The name the recipient sees. Already sanitized by the caller (no path, no CRLF). */
+  readonly filename: string;
+  /** MIME type, e.g. `application/pdf`. */
+  readonly contentType: string;
+  /** The file, base64-encoded, unwrapped (no newlines, no `data:` prefix). */
+  readonly content: string;
+}
+
+/**
  * A single outbound email, fully prepared by the Dispatcher core (§9 step 5/6).
  * The Dispatcher builds this (no hand-rolled HTML — `html` is the workspace's
  * compiled template with merge tags substituted) and the wrapper maps it 1:1
@@ -68,6 +86,12 @@ export interface SendEmailInput {
   readonly configurationSetName?: string;
   /** Extra message headers — the RFC 8058 List-Unsubscribe pair (§9 step 5). */
   readonly headers?: Readonly<Record<string, string>>;
+  /**
+   * Files to attach. Empty or absent for every broadcast and automation send —
+   * only the transactional API (`POST /v1/send`) supplies them, since a blast
+   * carrying the same file to a whole segment is a mail-server bill, not a feature.
+   */
+  readonly attachments?: readonly EmailAttachment[];
   /**
    * Our own message id (the outbox row id). Only the self-hosted SMTP transport
    * uses it: it becomes both the RFC 5322 Message-ID and the VERP bounce token,
@@ -179,6 +203,15 @@ export class ProdSesEmailClient implements SesEmailClient {
       Name,
       Value,
     }));
+    // SESv2 takes attachments on the SIMPLE content, so there is no need to hand-roll
+    // a raw MIME message here. RawContent is BYTES: the SDK base64-encodes it on the
+    // way out, so passing our already-encoded string would attach the encoding.
+    const attachments = (input.attachments ?? []).map((a) => ({
+      RawContent: new Uint8Array(Buffer.from(a.content, 'base64')),
+      FileName: a.filename,
+      ContentType: a.contentType,
+      ContentDisposition: 'ATTACHMENT' as const,
+    }));
     const out = await this.client.send(
       new SendEmailCommand({
         FromEmailAddress: input.from,
@@ -191,6 +224,7 @@ export class ProdSesEmailClient implements SesEmailClient {
             Subject: { Data: input.subject },
             Body: { Html: { Data: input.html } },
             ...(headers.length > 0 ? { Headers: headers } : {}),
+            ...(attachments.length > 0 ? { Attachments: attachments } : {}),
           },
         },
       }),

@@ -189,6 +189,40 @@ export function ApiDocs() {
           leaving <Code>{'{{…}}'}</Code> visible in the message.
         </p>
 
+        <p class="mt-3 text-sm text-stone-600">
+          Values are inserted into the HTML body as <b>text</b> — <Code>&amp;</Code> and{' '}
+          <Code>&lt;</Code> in a value show up as written rather than reshaping the message. If a
+          parameter genuinely carries HTML you composed yourself, ask for it raw with three braces:{' '}
+          <Code>{'{{{data.body_html}}}'}</Code>. Subjects and text messages are plain text and are
+          never escaped.
+        </p>
+
+        <p class="mt-4 text-sm font-semibold text-ink-900">Attaching files</p>
+        <p class="mt-1 text-sm text-stone-600">
+          Send files with the message by passing them base64-encoded. <Code>filename</Code> and{' '}
+          <Code>content</Code> are required; <Code>content_type</Code> is optional and inferred from
+          the extension when you leave it out. Email only — an SMS or WhatsApp key with attachments
+          is a <Code>400</Code> rather than a send that quietly drops them.
+        </p>
+        <Pre>{`curl -X POST ${origin}/v1/send \\
+  -H 'content-type: application/json' \\
+  -H 'authorization: Bearer sk_live_your_secret_key' \\
+  -d '{ "template": "receipt",
+        "to": "jane@example.com",
+        "data": { "order": "1234" },
+        "attachments": [
+          { "filename": "invoice.pdf",
+            "content_type": "application/pdf",
+            "content": "JVBERi0xLjQK…" } ] }'
+# → { "sent": true, "message_id": "…", "attachments": 1 }`}</Pre>
+        <p class="mt-2 text-sm text-stone-600">
+          Up to <b>20 files</b> and <b>25 MB</b> in total, measured on the decoded bytes. Bear in
+          mind that base64 inflates the request by about a third, and that many mailboxes reject a
+          message over 25 MB outright — for anything large, link to the file instead of attaching
+          it. Executable file types are refused: sending one gets your domain blocklisted. Anything
+          over a limit is a <Code>400</Code> naming the file, before the message is sent.
+        </p>
+
         <p class="mt-4 text-sm font-semibold text-ink-900">Who does not receive it</p>
         <p class="mt-1 text-sm text-stone-600">
           Addresses that hard-bounced, and people who reported you as spam, are{' '}

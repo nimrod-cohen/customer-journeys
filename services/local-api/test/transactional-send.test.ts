@@ -113,6 +113,40 @@ describe('dataMerge', () => {
   });
 });
 
+// The body is an HTML sink and the subject is not — the same `data.*` value
+// rendering differently in the two halves is the whole point.
+describe('renderTransactional escaping', () => {
+  const merge = { 'data.who': 'Smith & Sons', 'data.markup': '<b>bold</b>' };
+
+  it('escapes a value in the body but not in the subject', () => {
+    const out = renderTransactional({ subject: 'Hi {{data.who}}', html: '<p>Hi {{data.who}}</p>' }, merge);
+    expect(out.subject).toBe('Hi Smith & Sons');
+    expect(out.html).toBe('<p>Hi Smith &amp; Sons</p>');
+  });
+
+  it('renders markup as visible text unless the template asks for it raw', () => {
+    expect(renderTransactional({ subject: '', html: '{{data.markup}}' }, merge).html).toBe('&lt;b&gt;bold&lt;/b&gt;');
+    expect(renderTransactional({ subject: '', html: '{{{data.markup}}}' }, merge).html).toBe('<b>bold</b>');
+  });
+
+  // The composed-HTML case an integrator actually has: they build the body
+  // themselves and pass it in, which is what the triple brace is for.
+  it('lets a caller pass a whole composed body through', () => {
+    const html = '<div>{{{data.body_html}}}</div>';
+    const out = renderTransactional({ subject: 'x', html }, { 'data.body_html': '<h1>Report</h1><p>Ready.</p>' });
+    expect(out.html).toBe('<div><h1>Report</h1><p>Ready.</p></div>');
+  });
+
+  it('drops a javascript: URL passed into an href', () => {
+    const out = renderTransactional(
+      { subject: 'x', html: '<a href="{{data.link}}">Open</a>' },
+      { 'data.link': 'javascript:alert(1)' },
+    );
+    expect(out.html).not.toContain('javascript:');
+    expect(out.html).toContain('Open');
+  });
+});
+
 describe('renderTransactional', () => {
   it('renders BOTH the subject and the body', () => {
     const out = renderTransactional(
@@ -142,6 +176,7 @@ describe('parseTransactionalRequest', () => {
       to: 'a@b.com',
       data: { code: '1' },
       ignoreUnsubscribe: false,
+      attachments: [],
     });
   });
 

@@ -16,7 +16,7 @@
 //
 // The SMTP conversation is injectable so tests assert the exact envelope and
 // headers without opening a socket.
-import type { SendEmailInput, SendEmailResult, SesEmailClient } from './ses-client.js';
+import type { EmailAttachment, SendEmailInput, SendEmailResult, SesEmailClient } from './ses-client.js';
 import { verpReturnPath } from './verp.js';
 
 /** One SMTP submission: envelope plus the already-rendered RFC 5322 message. */
@@ -51,6 +51,67 @@ function headerValue(v: string): string {
   return String(v ?? '').replace(/[\r\n]+/g, ' ').trim();
 }
 
+// ── attachments ──────────────────────────────────────────────────────────────
+//
+// The multipart wrapper is built here rather than by nodemailer's MailComposer
+// for one reason: this transport already composes its single-part message by hand
+// (it owns the Message-ID, which is what makes a VERP bounce attributable), and
+// handing composition to the composer would rewrite every header of live
+// self-hosted mail to fix a part that is thirty deterministic lines. SES needs no
+// raw MIME at all — SESv2 takes attachments on its Simple content.
+
+/** RFC 2045 caps an encoded line at 76 characters; longer lines get mangled in transit. */
+function wrapBase64(b64: string): string {
+  const clean = String(b64 ?? '').replace(/\s+/g, '');
+  const lines: string[] = [];
+  for (let i = 0; i < clean.length; i += 76) lines.push(clean.slice(i, i + 76));
+  return lines.join('\r\n');
+}
+
+/** Strip anything that could end a header line or reach a filesystem. */
+function safeFilename(name: string): string {
+  const clean = String(name ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\r\n\x00-\x1F\x7F]/g, '')
+    .replace(/[\\/]/g, '_')
+    .trim();
+  return clean || 'attachment';
+}
+
+/**
+ * The ASCII form for `filename="…"`. A quote or a backslash would close the
+ * parameter early and let the rest of the name be read as header syntax.
+ */
+function asciiFilename(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  const ascii = safeFilename(name).replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_').trim();
+  return ascii || 'attachment';
+}
+
+/** Only a well-formed type is emitted; anything else could carry header syntax. */
+function safeMimeType(v: string): string {
+  const t = String(v ?? '').trim();
+  return /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(t) ? t : 'application/octet-stream';
+}
+
+/**
+ * One `multipart/mixed` part per file. The filename is written TWICE — the plain
+ * `filename=` for old clients and RFC 2231's `filename*=UTF-8''…` — so a Hebrew or
+ * accented name survives instead of arriving as underscores.
+ */
+function attachmentPart(a: EmailAttachment): string {
+  const name = asciiFilename(a.filename);
+  const encoded = encodeURIComponent(safeFilename(a.filename)).replace(/'/g, '%27');
+  const type = safeMimeType(a.contentType);
+  return [
+    `Content-Type: ${type}; name="${name}"`,
+    'Content-Transfer-Encoding: base64',
+    `Content-Disposition: attachment; filename="${name}"; filename*=UTF-8''${encoded}`,
+    '',
+    wrapBase64(a.content),
+  ].join('\r\n');
+}
+
 /**
  * Build the RFC 5322 message. Header injection is the risk here: `subject` and
  * `to` are merge-rendered per recipient, so a value containing CRLF could append
@@ -61,6 +122,11 @@ export function buildMimeMessage(
   messageId: string,
   messageIdDomain: string,
 ): string {
+  const attachments = input.attachments ?? [];
+  // A message with no attachment stays SINGLE-PART: wrapping every send in a
+  // multipart container to serve the few that carry a file would change the shape
+  // of mail that has none.
+  const boundary = attachments.length > 0 ? `----=_cdp_${messageId.replace(/[^A-Za-z0-9]/g, '')}` : '';
   const headers: string[] = [
     `From: ${headerValue(input.from)}`,
     `To: ${headerValue(input.to)}`,
@@ -68,8 +134,9 @@ export function buildMimeMessage(
     `Message-ID: <${messageId}@${messageIdDomain}>`,
     `Date: ${new Date().toUTCString()}`,
     'MIME-Version: 1.0',
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: 8bit',
+    ...(boundary
+      ? [`Content-Type: multipart/mixed; boundary="${boundary}"`]
+      : ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit']),
   ];
   for (const [k, v] of Object.entries(input.headers ?? {})) {
     // Never let a caller-supplied header overwrite one we control.
@@ -79,7 +146,14 @@ export function buildMimeMessage(
     }
     headers.push(`${key}: ${headerValue(v)}`);
   }
-  return `${headers.join('\r\n')}\r\n\r\n${input.html ?? ''}`;
+  const head = headers.join('\r\n');
+  if (!boundary) return `${head}\r\n\r\n${input.html ?? ''}`;
+
+  const parts = [
+    ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', input.html ?? ''].join('\r\n'),
+    ...attachments.map(attachmentPart),
+  ];
+  return `${head}\r\n\r\n${parts.map((p) => `--${boundary}\r\n${p}\r\n`).join('')}--${boundary}--\r\n`;
 }
 
 /**

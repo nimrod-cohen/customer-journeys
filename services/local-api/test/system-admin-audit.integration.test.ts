@@ -48,7 +48,7 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
       await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM workspaces WHERE id = $1', [ws]);
     }
-    await world.pool.query("DELETE FROM companies WHERE name = ANY(ARRAY['NewCo','TempCo'])");
+    await world.pool.query("DELETE FROM companies WHERE name = ANY(ARRAY['NewCo','TempCo','GrantCo','GrantCo renamed'])");
   }
 
   async function auditCount(): Promise<number> {
@@ -117,6 +117,70 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
     const create = await call(world.env, 'POST', '/admin/companies', { token: t, body: { name: 'NewCo' } });
     expect(create.status).toBe(201);
     expect((create.body as { company: { name: string } }).company.name).toBe('NewCo');
+  });
+
+  // Self-hosted mail spends OUR IP reputation, so a company can never switch it on
+  // itself — PUT /company/connectors 403s an smtp connector without the grant. This
+  // endpoint is the ONLY way it is given, and every flip has to be audited.
+  it('grants and revokes self-hosted mail for a company (audited)', async () => {
+    const t = tokenFor(ADMIN, WS_A);
+    const created = await call(world.env, 'POST', '/admin/companies', { token: t, body: { name: 'GrantCo' } });
+    const id = (created.body as { company: { id: string } }).company.id;
+
+    const listed = await call(world.env, 'GET', '/admin/companies', { token: t });
+    const row = (listed.body as { companies: Array<{ id: string; self_hosted_mail_enabled: boolean }> }).companies.find(
+      (c) => c.id === id,
+    );
+    expect(row?.self_hosted_mail_enabled).toBe(false); // never granted by default
+
+    const before = await auditCount();
+    const on = await call(world.env, 'PATCH', `/admin/companies/${id}`, {
+      token: t,
+      body: { self_hosted_mail_enabled: true },
+    });
+    expect(on.status).toBe(200);
+    expect((on.body as { company: { self_hosted_mail_enabled: boolean } }).company.self_hosted_mail_enabled).toBe(true);
+    expect(await auditCount()).toBe(before + 1);
+
+    const grant = async () =>
+      (
+        await world.pool.query<{ ok: boolean }>('SELECT self_hosted_mail_enabled AS ok FROM companies WHERE id=$1', [
+          id,
+        ])
+      ).rows[0]?.ok;
+    expect(await grant()).toBe(true);
+
+    // Revoking is the same switch the other way.
+    const off = await call(world.env, 'PATCH', `/admin/companies/${id}`, {
+      token: t,
+      body: { self_hosted_mail_enabled: false },
+    });
+    expect(off.status).toBe(200);
+    expect(await grant()).toBe(false);
+
+    // The name is a SEPARATE field: patching one must not touch the other.
+    await call(world.env, 'PATCH', `/admin/companies/${id}`, { token: t, body: { self_hosted_mail_enabled: true } });
+    const renamed = await call(world.env, 'PATCH', `/admin/companies/${id}`, {
+      token: t,
+      body: { name: 'GrantCo renamed' },
+    });
+    expect(renamed.status).toBe(200);
+    expect(await grant()).toBe(true);
+
+    // Garbage in, 400 out — and nothing written.
+    const bad = await call(world.env, 'PATCH', `/admin/companies/${id}`, {
+      token: t,
+      body: { self_hosted_mail_enabled: 'yes' },
+    });
+    expect(bad.status).toBe(400);
+    expect(await grant()).toBe(true);
+
+    // A member of a workspace cannot grant it to their own company.
+    const denied = await call(world.env, 'PATCH', `/admin/companies/${id}`, {
+      token: tokenFor(MEMBER, WS_A),
+      body: { self_hosted_mail_enabled: true },
+    });
+    expect(denied.status).toBe(403);
   });
 
   it('a non-admin member is 403 creating a company', async () => {

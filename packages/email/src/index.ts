@@ -34,6 +34,7 @@ export {
   type IdentityVerificationAttributes,
   type DkimStatus,
   type SendEmailInput,
+  type EmailAttachment,
   type SendEmailResult,
 } from './ses-client.js';
 

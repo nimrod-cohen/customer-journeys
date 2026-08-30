@@ -23,7 +23,7 @@
 // sending reputation of every other tenant on the IP and cannot help the recipient.
 //
 // `suppressions` mixes both kinds behind one row, so the check is by REASON.
-import { renderExpression } from '@cdp/shared';
+import { renderExpression, renderExpressionHtml, sanitizeHrefSchemes } from '@cdp/shared';
 
 /** Reasons in `suppressions.reason` that mean the ADDRESS is bad, not that the person refused. */
 const DELIVERABILITY_REASONS = new Set(['hard_bounce', 'permanent_soft_bounce']);
@@ -157,8 +157,13 @@ export function renderTransactional(
   merge: Record<string, string>,
 ): { subject: string; html: string } {
   return {
+    // The subject is PLAIN TEXT: entity-escaping it would put a literal `&amp;` in
+    // front of the recipient in their inbox list.
     subject: renderExpression(parts.subject ?? '', merge),
-    html: renderExpression(parts.html ?? '', merge),
+    // The body is HTML, so values are escaped — a `data.*` parameter carrying
+    // `<b>` or `&` should show as text, not reshape the message. A caller that
+    // genuinely passes a designed HTML block asks for it with `{{{data.body_html}}}`.
+    html: sanitizeHrefSchemes(renderExpressionHtml(parts.html ?? '', merge)),
   };
 }
 
@@ -183,6 +188,166 @@ export function validateTransactionalKey(key: string): string | null {
   return null;
 }
 
+// ── attachments ──────────────────────────────────────────────────────────────
+//
+// Files ride INLINE, base64 in the JSON body — the shape every other transactional
+// API uses, so an integrator moving over brings their existing code. There is no
+// upload-then-reference flow and no URL fetch: a URL would make our sender fetch
+// arbitrary hosts on request, which is the SSRF surface the webhook node needs a
+// whole allowlist to contain.
+
+/** Most files a single send may carry. */
+export const MAX_ATTACHMENTS = 20;
+
+/**
+ * Cap on the DECODED total across a send. 25 MB is what mailbox providers accept
+ * in practice (Gmail's own limit) and leaves room under the 40 MB message ceiling
+ * both SES and Resend enforce AFTER base64 inflates the payload by a third.
+ */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Extensions we refuse outright. Not a security boundary — the caller holds a
+ * secret key and is trusted — but mail carrying an executable is either a mistake
+ * or an abused key, and either way it gets the sending domain blocklisted. SES
+ * blocks most of these itself; failing here means the caller learns why.
+ */
+const REFUSED_EXTENSIONS = new Set([
+  'ade', 'adp', 'app', 'asp', 'bas', 'bat', 'cer', 'chm', 'cmd', 'com', 'cpl', 'crt', 'csh',
+  'der', 'dll', 'exe', 'fxp', 'gadget', 'hlp', 'hta', 'inf', 'ins', 'isp', 'its', 'jar', 'js',
+  'jse', 'ksh', 'lib', 'lnk', 'mad', 'maf', 'mag', 'mam', 'maq', 'mar', 'mas', 'mat', 'mau',
+  'mav', 'maw', 'mda', 'mdb', 'mde', 'mdt', 'mdw', 'mdz', 'msc', 'msi', 'msp', 'mst', 'ops',
+  'pcd', 'pif', 'plg', 'prf', 'prg', 'reg', 'scf', 'scr', 'sct', 'shb', 'shs', 'sys', 'tmp',
+  'url', 'vb', 'vbe', 'vbs', 'vps', 'vsmacros', 'vss', 'vst', 'vsw', 'vxd', 'ws', 'wsc',
+  'wsf', 'wsh',
+]);
+
+/** Extension → content type for the common cases; anything else is a generic blob. */
+const CONTENT_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
+  pdf: 'application/pdf',
+  csv: 'text/csv',
+  txt: 'text/plain',
+  html: 'text/html',
+  json: 'application/json',
+  xml: 'application/xml',
+  ics: 'text/calendar',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  zip: 'application/zip',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+/** One validated attachment, ready for any of the three transports. */
+export interface ParsedAttachment {
+  readonly filename: string;
+  readonly contentType: string;
+  /** Base64, unwrapped — no newlines, no `data:` prefix. */
+  readonly content: string;
+  /** Decoded size, derived from the base64 length (the bytes are never allocated). */
+  readonly bytes: number;
+}
+
+/** A filename crosses into the recipient's filesystem: keep it a plain leaf name. */
+function safeFilename(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  const noControl = raw.replace(/[\r\n\t\x00-\x1F\x7F]/g, '');
+  const leaf = noControl.split(/[\\/]/).pop() ?? '';
+  return leaf.trim().slice(0, 255);
+}
+
+function extensionOf(filename: string): string {
+  const i = filename.lastIndexOf('.');
+  return i > 0 ? filename.slice(i + 1).toLowerCase() : '';
+}
+
+/**
+ * Decoded byte count of a base64 string, WITHOUT decoding it. The point is to
+ * refuse an oversize payload before allocating it — decoding first to measure is
+ * how a size limit becomes the thing that exhausts memory.
+ */
+function base64Bytes(b64: string): number {
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return (b64.length / 4) * 3 - padding;
+}
+
+export interface ParsedAttachments {
+  readonly attachments: readonly ParsedAttachment[];
+}
+
+/**
+ * Validate the caller's `attachments`. Pure — the bytes are never decoded and no
+ * transport is touched, so an oversize or malformed batch is refused before we do
+ * any work on it.
+ *
+ * Every rejection names the offending file, because the caller is a developer
+ * integrating against this and a request carrying twenty files gets one message.
+ */
+export function parseAttachments(raw: unknown): ParsedAttachments | { error: string } {
+  if (raw === undefined || raw === null) return { attachments: [] };
+  if (!Array.isArray(raw)) {
+    return { error: "'attachments' must be an array of { filename, content } objects" };
+  }
+  if (raw.length > MAX_ATTACHMENTS) {
+    return { error: `too many attachments: ${raw.length} — at most ${MAX_ATTACHMENTS} per message` };
+  }
+
+  const out: ParsedAttachment[] = [];
+  let total = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const at = `attachments[${i}]`;
+    const item = raw[i];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { error: `${at} must be an object with 'filename' and 'content'` };
+    }
+    const a = item as Record<string, unknown>;
+
+    const filename = safeFilename(typeof a.filename === 'string' ? a.filename : '');
+    if (!filename) return { error: `${at} needs a 'filename'` };
+    const ext = extensionOf(filename);
+    if (REFUSED_EXTENSIONS.has(ext)) {
+      return { error: `${filename}: '.${ext}' files can't be emailed — most providers reject them` };
+    }
+
+    // `content` is the field the docs name; `content_base64` is accepted because
+    // it is what several other APIs call it and guessing wrong should not 400.
+    const rawContent = typeof a.content === 'string' ? a.content : typeof a.content_base64 === 'string' ? a.content_base64 : '';
+    // A browser's FileReader hands you a data: URI; take the payload rather than
+    // attaching the prefix as if it were part of the file.
+    const stripped = rawContent.replace(/^data:[^;,]*;base64,/, '').replace(/\s+/g, '');
+    if (!stripped) return { error: `${filename}: 'content' is required — the file, base64-encoded` };
+    if (stripped.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(stripped)) {
+      return { error: `${filename}: 'content' is not valid base64` };
+    }
+
+    const bytes = base64Bytes(stripped);
+    total += bytes;
+    if (total > MAX_ATTACHMENT_BYTES) {
+      return {
+        error: `attachments are too large: ${Math.round(total / 1024 / 1024)} MB — the limit is ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB per message`,
+      };
+    }
+
+    // An explicit type is honoured when it is well-formed; otherwise the extension
+    // decides, since a mislabelled file is worse than a generic one.
+    const declared = typeof a.content_type === 'string' ? a.content_type.trim() : '';
+    const contentType = /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(declared)
+      ? declared
+      : (CONTENT_TYPE_BY_EXTENSION[ext] ?? 'application/octet-stream');
+
+    out.push({ filename, contentType, content: stripped, bytes });
+  }
+  return { attachments: out };
+}
+
 /** A validated request body. */
 export interface TransactionalRequest {
   readonly template: string;
@@ -190,6 +355,8 @@ export interface TransactionalRequest {
   readonly data: Record<string, unknown>;
   /** Send despite an unsubscribe. Deliverability blocks still apply. */
   readonly ignoreUnsubscribe: boolean;
+  /** Files to attach. Email only — a text message has nowhere to put them. */
+  readonly attachments: readonly ParsedAttachment[];
 }
 
 /**
@@ -209,10 +376,13 @@ export function parseTransactionalRequest(body: unknown): TransactionalRequest |
   if (data !== undefined && (typeof data !== 'object' || data === null || Array.isArray(data))) {
     return { error: "'data' must be an object of merge parameters" };
   }
+  const att = parseAttachments(b.attachments);
+  if ('error' in att) return { error: att.error };
   return {
     template,
     to,
     data: (data as Record<string, unknown>) ?? {},
     ignoreUnsubscribe: b.ignore_unsubscribe === true,
+    attachments: att.attachments,
   };
 }

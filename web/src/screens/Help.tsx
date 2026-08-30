@@ -332,6 +332,30 @@ export function Help() {
           </p>
         </div>
 
+        {/* 5. escaping */}
+        <div class="mt-6 border-l-2 border-rose-300 pl-4">
+          <h3 class="font-bold text-ink-900">
+            5. Values are inserted as <em>text</em> <span class="text-stone-400">(email body only)</span>
+          </h3>
+          <p class="mt-1 text-sm text-stone-600">
+            In an email <b>body</b>, whatever a token resolves to is inserted as text: a value
+            containing <Code>&lt;b&gt;</Code> or <Code>&amp;</Code> shows up exactly as written
+            rather than changing the design. That is deliberate — profile attributes can be written
+            by your website through the public tracking key, and mail that reshapes itself around a
+            saved value is how a stranger gets a link of their own into your newsletter.
+          </p>
+          <p class="mt-2 text-sm text-stone-600">
+            When a value really is a designed block of HTML you meant to render, ask for it with{' '}
+            <b>three</b> braces: <Code>{'{{{data.body_html}}}'}</Code>. Use it only for content you
+            generate yourself.
+          </p>
+          <p class="mt-2 text-xs text-stone-500">
+            Subjects, SMS and WhatsApp bodies are plain text and are never escaped. Links are also
+            checked: an <Code>href</Code> that isn't <Code>http</Code>, <Code>https</Code>,{' '}
+            <Code>mailto</Code> or <Code>tel</Code> is dropped.
+          </p>
+        </div>
+
         <p class="mt-5 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600 ring-1 ring-inset ring-stone-200">
           Whitespace around tokens is tolerated (<Code>{'{{ customer.email }}'}</Code> works the same).
           The same tokens are also valid in an <b>Update profile</b> / <b>Update journey</b>{' '}

@@ -5,7 +5,8 @@
 import { useEffect, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { api } from '../store/session.js';
-import { Badge, Button, Card, Field, Input, PageHeader, toneFor } from '../ui/kit.js';
+import { Badge, Button, Card, Field, Input, PageHeader, Switch, toneFor } from '../ui/kit.js';
+import { showToast } from '../ui/toast.js';
 
 interface AdminWorkspace {
   id: string;
@@ -16,6 +17,8 @@ interface AdminCompany {
   id: string;
   name: string;
   status: string;
+  /** The self-hosted mail grant — only a platform admin can flip it (see below). */
+  self_hosted_mail_enabled: boolean;
   workspaces: AdminWorkspace[];
 }
 
@@ -66,6 +69,25 @@ export function SystemAdminConsole() {
       setCoDelBusy(false);
     }
   };
+  /**
+   * Grant or revoke self-hosted mail for a company. Sending through our own mail
+   * server spends OUR IP reputation, so a company cannot switch it on itself —
+   * `PUT /company/connectors` 403s an `smtp` connector without this grant, and this
+   * toggle is the only place it is ever given. The row is updated optimistically and
+   * rolled back on failure so the switch never lies about server state.
+   */
+  const setSelfHostedMail = async (id: string, enabled: boolean) => {
+    setErr('');
+    setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, self_hosted_mail_enabled: enabled } : c)));
+    try {
+      await api.patch(`/admin/companies/${id}`, { body: { self_hosted_mail_enabled: enabled } });
+      showToast(enabled ? 'Self-hosted mail enabled' : 'Self-hosted mail disabled');
+    } catch (e) {
+      setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, self_hosted_mail_enabled: !enabled } : c)));
+      setErr((e as { error?: string })?.error ?? 'could not change the self-hosted mail grant');
+    }
+  };
+
   const saveCompanyRename = async (id: string) => {
     const name = coRenameText.trim();
     if (!name) return;
@@ -187,6 +209,19 @@ export function SystemAdminConsole() {
                 </span>
               )}
               <span class="flex items-center gap-3">
+                <span
+                  class="flex items-center gap-2 text-xs text-stone-500"
+                  title="Allow this company to send email through our own mail server. It spends our IP reputation, so it is never self-served."
+                >
+                  <span>Self-hosted mail</span>
+                  <Switch
+                    data-testid="self-hosted-mail-toggle"
+                    data-id={c.id}
+                    size="sm"
+                    checked={c.self_hosted_mail_enabled}
+                    onChange={(v) => void setSelfHostedMail(c.id, v)}
+                  />
+                </span>
                 <span class="text-xs text-stone-500">
                   {c.workspaces.length} {c.workspaces.length === 1 ? 'workspace' : 'workspaces'}
                 </span>

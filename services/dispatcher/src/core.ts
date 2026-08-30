@@ -11,7 +11,13 @@
 import { createHash } from 'node:crypto';
 import { canSend, buildListUnsubscribeHeaders, type SendingIdentity } from '@cdp/email';
 import type { SendEmailInput } from '@cdp/email';
-import { expandCustomerToken, zonedComponents, type WorkspaceStatus } from '@cdp/shared';
+import {
+  expandCustomerToken,
+  renderExpressionHtml,
+  sanitizeHrefSchemes,
+  zonedComponents,
+  type WorkspaceStatus,
+} from '@cdp/shared';
 import type { ChannelMessage, Medium, MediumGroup } from '@cdp/channels';
 
 /** A parameterized query ready for `pool.query(text, values)` (shared shape). */
@@ -480,7 +486,12 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
     // The subject is personalized too — merge tags ({{customer.*}}) render per
     // recipient, exactly like the To and the body.
     subject: renderTemplateBody(ctx.subject, ctx.merge),
-    html: renderTemplateBody(ctx.template.compiledHtml, ctx.merge),
+    // The BODY is the one HTML sink among renderTemplateBody's callers, so it is
+    // the one that escapes. The merge map here carries PROFILE ATTRIBUTES, which
+    // anyone holding the public `pk_live_` write key can set on any profile by
+    // email — rendered raw, a trait becomes a working link in mail signed by the
+    // workspace's own domain. `{{{token}}}` opts a value back out.
+    html: sanitizeHrefSchemes(renderExpressionHtml(ctx.template.compiledHtml, ctx.merge, 'keep')),
     ...(configSet ? { configurationSetName: configSet } : {}),
     headers: { ...headers },
   };

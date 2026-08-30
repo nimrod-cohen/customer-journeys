@@ -347,6 +347,19 @@ never the body (inv.2).
 - **`data.*` is a THIRD merge namespace** beside `customer.*` and `event.*`
   (`dataMerge`, depth-capped): a caller cannot shadow a profile field by naming a
   parameter `email`. Subject AND body render through the same engine.
+- **Attachments are INLINE base64 on the request, email only** (`parseAttachments`,
+  pure): `attachments: [{ filename, content, content_type? }]` (`content_base64` is
+  accepted as an alias). Capped at **20 files / 25 MB decoded**, measured from the
+  base64 LENGTH so an oversize batch is refused without ever allocating the bytes.
+  Filenames are reduced to a leaf name, executable extensions are refused, and a
+  text key with attachments 400s rather than silently dropping them. There is no URL
+  fetch and no upload-then-reference: a URL would make the sender fetch arbitrary
+  hosts on request. Bytes are metered as `usage_counters.attachment_bytes` (additive
+  — nothing stores the file, so no rollup can reconcile it); the cost view does not
+  price it yet. `SendEmailInput.attachments` carries them to ALL THREE transports —
+  SESv2 `Content.Simple.Attachments` (RawContent is BYTES; the SDK base64-encodes),
+  Resend's JSON `attachments`, and a hand-built `multipart/mixed` for self-hosted
+  SMTP (that path already composes its own message; SES needs no raw MIME).
 - **Consent vs deliverability are separate gates** (`decideTransactionalSend`, pure).
   Hard bounce, permanent soft bounce and complaint ALWAYS block — no flag overrides
   them, because mailing a dead box or a complainant damages the shared IP and cannot
@@ -541,6 +554,38 @@ Supporting layout rules: a condition's arms sit at center ± a FIXED `BRANCH_HAL
 ---
 
 # Segments & personalization
+
+## Merge values are ESCAPED at the HTML sinks
+
+**A merge value is data, not markup.** A broadcast's merge map is built from PROFILE
+ATTRIBUTES, and those are writable by anyone holding the `pk_live_` key we document
+as safe to embed in a public web page (`/v1/identify` is keyed by email, so the
+writer is not limited to their own row). Rendered raw, a trait of
+`<a href="https://phish.example">Update your details</a>` becomes a working link in
+mail signed by the workspace's own domain — and click tracking then rewrites it to
+OUR domain. Not XSS (clients strip `<script>`); worse for a sending platform.
+
+- **`renderExpressionHtml` (`@cdp/shared`) is the HTML sink renderer**, separate from
+  `renderExpression` by construction — most callers must NOT escape (a subject line,
+  a To address, an SMS body, a profile-attribute write would each carry a literal
+  `&amp;`). Only TWO sinks use it: the dispatcher's `buildSendEmailInput` html
+  (`onUnknown:'keep'`) and `renderTransactional`'s html (`'empty'`). Note
+  `renderTemplateBody` has SEVEN call sites and only one is HTML — never add
+  escaping inside it.
+- **`{{{token}}}` writes a value RAW**, for a value that genuinely is a designed HTML
+  block (`{{{data.body_html}}}`). The triple form LEADS the alternation so a raw
+  substitution is never re-scanned by the escaping pass.
+- **`SYSTEM_HTML_MERGE_KEYS`** (currently just `unsubscribe`) are written verbatim in
+  the double-brace form too: `{{unsubscribe}}` resolves to an anchor the dispatcher
+  builds from the signed token, and escaping it leaves every marketing email without
+  a working unsubscribe link. Trusted because nothing outside our code can set a bare
+  key — profile data lands under `customer.*`.
+- **`sanitizeHrefSchemes` runs on the FINAL rendered HTML**, not on the template:
+  escaping does nothing for a value that IS a URL (`javascript:alert(1)` has no
+  HTML-significant character), and the tracking rewrite runs before substitution so it
+  only ever sees `{{token}}`. Allowlist `http`/`https`/`mailto`/`tel`; a schemeless
+  href is left alone; anything else has the attribute REMOVED. Whitespace and control
+  characters are stripped before the scheme is read (`java\tscript:` runs in clients).
 
 ## `customer.*` namespace (extends §8/§11)
 
