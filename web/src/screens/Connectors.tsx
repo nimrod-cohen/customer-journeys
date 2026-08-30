@@ -86,14 +86,16 @@ const CHANNELS: ChannelSpec[] = [
         // No credential field: the SMTP login is platform-level, shared by every
         // authorized company, so there is nothing per-company to enter.
         provider: 'smtp',
-        fields: [{ key: 'from', label: 'Default From', placeholder: 'Acme <news@acme.com>' }],
-        hint: 'Sends through our own mail server. Add your domain under Workspace settings → Sending domains and publish the DKIM record it shows you.',
+        // No From field: the sender is per WORKSPACE (Workspace settings → Default
+        // From, or a named sender on a verified domain), never company-wide.
+        fields: [],
+        hint: 'Sends through our internal mail server. Add your domain under Workspace settings → Sending domains and publish the DKIM record it shows you.',
       },
       {
         provider: 'resend',
-        fields: [{ key: 'from', label: 'From', placeholder: 'Acme <news@acme.com>' }],
+        fields: [],
         secretLabel: 'API key',
-        hint: 'Verify your domain in the Resend dashboard, then enter your API key + the From you send as. No in-app domain verification needed.',
+        hint: 'Verify your domain in the Resend dashboard, then enter your API key. Set the address you send as per workspace, under Workspace settings → Default From. No in-app domain verification needed.',
       },
     ],
   },

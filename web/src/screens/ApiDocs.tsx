@@ -121,18 +121,42 @@ export function ApiDocs() {
 
       {/* ---- Transactional send ---- */}
       <Card data-testid="docs-transactional" class="p-6">
-        <h3 class="font-bold text-ink-900">2. Transactional email (secret key)</h3>
+        <h3 class="font-bold text-ink-900">2. Transactional messages (secret key)</h3>
         <p class="mt-1 text-sm text-stone-600">
-          Send a designed template to one person, right now, with values filled in — a one-time
-          code, a password reset, an order receipt. This one needs a <b>secret key</b> (
-          <Code>sk_live_…</Code>, minted in <b>Workspace settings → API keys</b>), not the public
-          write key: it sends mail from your verified domain to whatever address it's given, so it
-          must stay on your server. Design the email in the app, give it a <b>key</b> under <b>Asset management → Email templates → ⋮ → Use for transactional API</b>,
-          and your code refers to that key from then on. Redesign the template, or move the key to a
-          different one, and nothing on your side changes.
+          One message to one person, triggered by your application: a one-time code, a password
+          reset, an order receipt. Works for <b>email, SMS and WhatsApp</b>.
         </p>
+
+        <p class="mt-4 text-sm font-semibold text-ink-900">Set one up (once)</p>
+        <ol class="mt-1 list-decimal space-y-1 pl-5 text-sm text-stone-600">
+          <li>
+            Go to <b>Transactional</b> in the sidebar and create an email or an SMS/WhatsApp message.
+          </li>
+          <li>
+            Give it a <b>key</b> — <Code>otp</Code>, <Code>password-reset</Code>. This is the only
+            name your code needs to know.
+          </li>
+          <li>
+            For email, set the <b>From</b> and <b>Subject</b> in the designer; both are required
+            before it can send. For SMS/WhatsApp, just write the message.
+          </li>
+          <li>
+            Mint a <b>secret key</b> under <b>Workspace settings → API keys</b> and keep it on your
+            server.
+          </li>
+        </ol>
+        <p class="mt-2 text-sm text-stone-600">
+          Because your code refers to the key and not to a specific design, you can rewrite the
+          message, or move the key to a different one, without deploying anything.
+        </p>
+
         <div class="mt-4">
           <Method verb="POST" path="/v1/send" />
+          <p class="mt-1 text-sm text-stone-600">
+            This one needs a <b>secret key</b> (<Code>sk_live_…</Code>), not the public write key: it
+            sends real mail from your verified domain to whatever address it's given, so it must
+            never sit in a web page or a mobile app.
+          </p>
           <Pre>{`curl -X POST ${origin}/v1/send \\
   -H 'content-type: application/json' \\
   -H 'authorization: Bearer sk_live_your_secret_key' \\
@@ -141,25 +165,46 @@ export function ApiDocs() {
         "data": { "code": "123456", "expires_in": "10 minutes" } }'
 # → { "sent": true, "message_id": "…" }`}</Pre>
         </div>
-        <p class="mt-3 text-sm text-stone-600">
-          Everything in <Code>data</Code> is available in the subject and the body as{' '}
-          <Code>{'{{data.code}}'}</Code>; nested values flatten to{' '}
-          <Code>{'{{data.order.id}}'}</Code>. The recipient's own profile fields stay available as{' '}
-          <Code>{'{{customer.first_name}}'}</Code>, and a recipient we've never seen before is
-          created as a profile.
+
+        <p class="mt-4 text-sm font-semibold text-ink-900">SMS and WhatsApp</p>
+        <p class="mt-1 text-sm text-stone-600">
+          Identical call — the key decides the channel, so <Code>to</Code> is simply a phone number
+          instead. A national number resolves against the workspace's default country.
         </p>
-        <p class="mt-3 text-sm text-stone-600">
-          <b>Who does not receive it.</b> Addresses that hard-bounced, and people who reported you as
-          spam, are always skipped — mailing them damages your ability to reach everyone else.
-          People who unsubscribed from marketing are skipped too, unless the request sets{' '}
-          <Code>"ignore_unsubscribe": true</Code> — use that only for messages the recipient
+        <Pre>{`curl -X POST ${origin}/v1/send \\
+  -H 'content-type: application/json' \\
+  -H 'authorization: Bearer sk_live_your_secret_key' \\
+  -d '{ "template": "otp-sms",
+        "to": "+972541111111",
+        "data": { "code": "123456" } }'
+# → { "sent": true, "message_id": "…", "medium": "sms" }`}</Pre>
+
+        <p class="mt-4 text-sm font-semibold text-ink-900">Filling in the values</p>
+        <p class="mt-1 text-sm text-stone-600">
+          Everything you pass in <Code>data</Code> is available in the subject and the body as{' '}
+          <Code>{'{{data.code}}'}</Code>; nested values flatten to <Code>{'{{data.order.id}}'}</Code>{' '}
+          and lists index as <Code>{'{{data.items.0.sku}}'}</Code>. The recipient's own profile
+          fields stay available as <Code>{'{{customer.first_name}}'}</Code>, and someone we've never
+          seen before is created as a profile. An unknown token renders as nothing rather than
+          leaving <Code>{'{{…}}'}</Code> visible in the message.
+        </p>
+
+        <p class="mt-4 text-sm font-semibold text-ink-900">Who does not receive it</p>
+        <p class="mt-1 text-sm text-stone-600">
+          Addresses that hard-bounced, and people who reported you as spam, are{' '}
+          <b>always skipped</b> — mailing them damages your ability to reach everyone else, and
+          cannot help the recipient. People who unsubscribed are skipped too, unless the request
+          sets <Code>"ignore_unsubscribe": true</Code>. Use that only for messages the recipient
           triggered and needs, like a login code, where not sending locks them out of their own
-          account.
+          account. For SMS and WhatsApp the same flag overrides a channel opt-out; an email
+          unsubscribe never blocks a text.
         </p>
+
         <p class="mt-3 text-xs text-stone-500">
-          A skipped send is still <Code>200</Code> with <Code>{'{ "sent": false, "reason": … }'}</Code>{' '}
-          — it's a decision, not a failure, so there's nothing to retry. A <Code>404</Code> means no
-          template carries that key in this workspace.
+          A skipped send is still <Code>200</Code>, with{' '}
+          <Code>{'{ "sent": false, "reason": … }'}</Code> — a decision, not a failure, so there is
+          nothing to retry. <Code>404</Code> means no message carries that key in this workspace;{' '}
+          <Code>409</Code> means it exists but isn't ready to send yet (no content, or no From).
         </p>
       </Card>
 

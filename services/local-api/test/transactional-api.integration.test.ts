@@ -104,6 +104,14 @@ describeMaybe('POST /v1/send (real Postgres)', () => {
     expect((await res.json()).error).toMatch(/template/);
   });
 
+  // The medium decides what a valid `to` is, so the email check happens once the
+  // key has resolved to an email template.
+  it('400s a malformed email once the key resolves to an email template', async () => {
+    const res = await send({ template: 'otp', to: 'not-an-email' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/valid email/);
+  });
+
   it('404s an unknown template key', async () => {
     const res = await send({ template: 'nope', to: 'a@b.com' });
     expect(res.status).toBe(404);

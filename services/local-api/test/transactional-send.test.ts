@@ -165,11 +165,11 @@ describe('parseTransactionalRequest', () => {
       error: expect.stringContaining('template'),
     });
     expect(parseTransactionalRequest({ template: 'otp' })).toMatchObject({
-      error: expect.stringContaining('to'),
+      error: expect.stringContaining("'to'"),
     });
-    expect(parseTransactionalRequest({ template: 'otp', to: 'nope' })).toMatchObject({
-      error: expect.stringContaining('valid email'),
-    });
+    // What a valid `to` looks like depends on the medium, which is not known until
+    // the key resolves — so shape validation happens there, not here.
+    expect(parseTransactionalRequest({ template: 'otp', to: 'nope' })).toMatchObject({ to: 'nope' });
     expect(parseTransactionalRequest({ template: 'otp', to: 'a@b.com', data: ['x'] })).toMatchObject({
       error: expect.stringContaining('object'),
     });

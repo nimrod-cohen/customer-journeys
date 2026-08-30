@@ -33,6 +33,7 @@ interface TemplateRow {
   readonly sender_id: string | null;
   readonly to_address: string | null;
   readonly from_selected: boolean;
+  readonly transactional_key: string | null;
 }
 interface Sender {
   id: string;
@@ -68,6 +69,10 @@ export function TemplateEditor({
   const [loadedKey, setLoadedKey] = useState(id ? '' : 'new'); // designer mounts when set
   const [legacy, setLegacy] = useState(false); // stored template has no design (old editor)
   const [kind, setKind] = useState(''); // 'library' | 'copy' — a copy is a broadcast/automation's own email instance
+  // A library template that carries a transactional key is sendable in its OWN
+  // right (POST /v1/send reads subject + sender_id off this row), so it needs an
+  // envelope even though it is not a broadcast's copy.
+  const [transactionalKey, setTransactionalKey] = useState<string>('');
   const [status, setStatus] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState('');
   // Envelope (From / To / Subject) — lives on this email instance, autosaved.
@@ -105,6 +110,7 @@ export function TemplateEditor({
         setName(r.template.name);
         nameRef.current = r.template.name;
         setKind(r.template.kind);
+        setTransactionalKey(r.template.transactional_key ?? '');
         setSubject(r.template.subject ?? '');
         subjectRef.current = r.template.subject ?? '';
         // The From is a named sender (no no-reply): the choice is the sender id.
@@ -226,7 +232,11 @@ export function TemplateEditor({
   // "Design email" flow, or a row whose kind is 'copy'). It is NOT a library
   // template — it reads as an email with an envelope. In EMBEDDED mode the
   // designer is always opened for an instance (a copy).
-  const instance = embedded || returnPending || kind === 'copy';
+  const transactional = transactionalKey !== '';
+  const instance = embedded || returnPending || kind === 'copy' || transactional;
+  // A transactional message is addressed by the API call, so it has no stored To —
+  // showing one would imply a recipient this template does not choose.
+  const showTo = instance && !transactional;
   const backLabel = embedded
     ? 'Save & close'
     : returnTarget.startsWith('/automations')
@@ -377,6 +387,7 @@ export function TemplateEditor({
               </p>
             ) : null}
           </Field>
+          {showTo ? (
           <Field label="To">
             <Input
               data-testid="email-to"
@@ -390,6 +401,16 @@ export function TemplateEditor({
               }}
             />
           </Field>
+          ) : (
+            <Field label="To">
+              <p
+                data-testid="email-to-transactional"
+                class="rounded-lg bg-stone-50 px-3 py-2 text-sm text-stone-500 ring-1 ring-inset ring-stone-200"
+              >
+                Set per call, by the <code class="font-mono text-xs">to</code> field of the API request.
+              </p>
+            </Field>
+          )}
           <Field label="Subject" class="sm:col-span-2">
             <Input
               data-testid="email-subject"

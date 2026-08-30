@@ -22,6 +22,7 @@ import { SystemAdminConsole } from './screens/SystemAdminConsole.js';
 import { Dashboards, ProfileExplorer, SuppressionList } from './screens/SimpleScreens.js';
 import { ProfileDetail } from './screens/ProfileDetail.js';
 import { TemplatesList } from './screens/TemplatesList.js';
+import { Transactional } from './screens/Transactional.js';
 import { Help } from './screens/Help.js';
 import { Activity } from './screens/Activity.js';
 import { TemplateEditor } from './screens/TemplateEditor.tsx';
@@ -99,6 +100,8 @@ function screenFor(path: string): JSX.Element {
       return <TemplatesList />;
     case '/automations':
       return <AutomationsList />;
+    case '/transactional':
+      return <Transactional />;
     case '/editor':
       return <TemplateEditor />;
     case '/profiles':

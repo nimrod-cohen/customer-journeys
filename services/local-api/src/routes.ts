@@ -95,6 +95,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /text-templates/:id': 'manage_content',
   'POST /text-templates': 'manage_content',
   'PUT /text-templates/:id': 'manage_content',
+  'PUT /text-templates/:id/transactional-key': 'manage_content',
   'DELETE /text-templates/:id': 'manage_content',
 
   // Ingest (tracking) write keys — session-authed management, owner-gated (they
