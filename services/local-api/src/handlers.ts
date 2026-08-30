@@ -6276,6 +6276,58 @@ async function purgeWorkspace(pool: Pool, id: string): Promise<void> {
   client.release();
 }
 
+/**
+ * DELETE /company — an OWNER closes their OWN company account.
+ *
+ * This deletes everything: every workspace and all of its data, the company's
+ * provider configuration, and the company itself. It necessarily ends the caller's
+ * own access — that is the point of closing an account, not a reason to forbid it.
+ * Requiring a platform admin to do it would make account closure a support ticket,
+ * which is the wrong answer for data a customer owns.
+ *
+ * The company is resolved SERVER-SIDE from the caller's active workspace, never
+ * from the body (inv. 2), so an owner can only ever close their own.
+ *
+ * Reuses the same purge as the workspace delete, so the two cannot drift.
+ * `admin_audit_log` deliberately survives: it records that this happened.
+ */
+export const closeOwnCompany: Handler = async (ctx, pool, req) => {
+  const c = await pool.query<{ company_id: string | null }>(
+    'SELECT company_id FROM workspaces WHERE id = $1',
+    [ctx.workspaceId],
+  );
+  const companyId = c.rows[0]?.company_id;
+  if (!companyId) return ok({ error: 'no active company' }, 400);
+
+  const co = await pool.query<{ name: string }>('SELECT name FROM companies WHERE id = $1', [companyId]);
+  if (!co.rows[0]) return ok({ error: 'not found' }, 404);
+  const name = co.rows[0].name;
+
+  // Typing the company name is the whole safety mechanism here: there is no undo,
+  // and no sibling context to recover from afterwards.
+  const confirm = typeof asObject(req.body).confirm_name === 'string' ? String(asObject(req.body).confirm_name) : '';
+  if (confirm.trim() !== name) {
+    return ok({ error: 'company name confirmation does not match' }, 400);
+  }
+
+  const ws = await pool.query<{ id: string }>('SELECT id FROM workspaces WHERE company_id = $1', [companyId]);
+  for (const row of ws.rows) {
+    await purgeWorkspace(pool, row.id);
+  }
+  await pool.query('DELETE FROM companies WHERE id = $1', [companyId]);
+
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', null, 'company.closed_by_owner', {
+      company_id: companyId,
+      name,
+      workspaces_deleted: ws.rowCount ?? 0,
+    }),
+  );
+  // `signed_out` tells the SPA to drop the session rather than retry requests that
+  // can only 401 from here on.
+  return ok({ deleted: true, workspaces_deleted: ws.rowCount ?? 0, signed_out: true });
+};
+
 /** PATCH /company — an OWNER renames their OWN company (derived from the active workspace). */
 export const renameCompany: Handler = async (ctx, pool, req) => {
   const name = typeof asObject(req.body).name === 'string' ? String(asObject(req.body).name).trim() : '';
@@ -6650,6 +6702,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /company/workspaces': getCompanyWorkspaces,
   'POST /workspaces': createWorkspace,
   'PATCH /company': renameCompany,
+  'DELETE /company': closeOwnCompany,
   'PATCH /workspaces/:id': renameWorkspace,
   'DELETE /workspaces/:id': deleteWorkspace,
   'POST /workspace/members': addMember,
