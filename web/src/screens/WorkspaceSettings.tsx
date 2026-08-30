@@ -7,6 +7,7 @@ import { api } from '../store/session.js';
 import { navigate } from '../router.js';
 import { Button, Card, Field, Input, PageHeader, Select, Switch } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
+import { refreshReadiness } from '../store/readiness.js';
 import { timeZoneList } from '@cdp/shared';
 import { saveWorkspaceTimezone, saveWorkspaceLanguage, type FrontFacingLanguage } from './workspaceSettingsLogic.js';
 import { SendingDomainsPanel } from './SendingDomainsList.tsx';
@@ -43,6 +44,11 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
   const [freqDays, setFreqDays] = useState(7);
   const [quietEnabled, setQuietEnabled] = useState(false);
   const [quietWindows, setQuietWindows] = useState<QuietWin[]>([]);
+  // The default From. Workspace-level, because sending domains and named senders
+  // are per workspace — a company-wide value would make every workspace send as
+  // one address regardless of the domain it verified.
+  const [defaultFrom, setDefaultFrom] = useState('');
+  const [defaultFromSaving, setDefaultFromSaving] = useState(false);
 
   useEffect(() => {
     void api
@@ -53,6 +59,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           timezone?: string;
           front_facing_language?: FrontFacingLanguage;
           default_phone_country?: string | null;
+          default_from?: string | null;
           frequency_cap?: { max?: number; days?: number } | null;
           quiet_hours?: Array<{ startDay?: number; startMinute?: number; endDay?: number; endMinute?: number }> | null;
         };
@@ -63,6 +70,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
         setTimezone(r.settings.timezone || 'UTC');
         setLanguage(r.settings.front_facing_language ?? 'auto');
         setPhoneCountry(r.settings.default_phone_country ?? '');
+        setDefaultFrom(r.settings.default_from ?? '');
         const fc = r.settings.frequency_cap;
         if (fc && typeof fc === 'object') {
           setFreqEnabled(true);
@@ -371,6 +379,48 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
                 showToast((e as { error?: string })?.error ?? 'Could not save the default phone country.', { tone: 'error' });
               } finally {
                 setPhoneCountrySaving(false);
+              }
+            }}
+          >
+            Save
+          </Button>
+        </div>
+      </Card>
+
+      <Card class="mt-6 p-5" data-testid="settings-default-from">
+        <div class="mb-3">
+          <h2 class="text-base font-bold text-ink-900">Default “From”</h2>
+          <p class="mt-1 text-sm text-stone-500">
+            The address this workspace sends as when a message doesn't name its own sender — transactional email, and
+            providers that send from one fixed address. Use a mailbox on a domain you've verified under{' '}
+            <b>Sending domains</b>. Broadcasts and automations still pick their own named sender.
+          </p>
+        </div>
+        <div class="flex flex-wrap items-end gap-2">
+          <Field label="From">
+            <Input
+              data-testid="workspace-default-from"
+              class="w-80"
+              placeholder="Acme <hello@acme.com>"
+              disabled={!settingsLoaded}
+              value={defaultFrom}
+              onInput={(e: Event) => setDefaultFrom((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Button
+            data-testid="workspace-default-from-save"
+            loading={defaultFromSaving}
+            onClick={async () => {
+              setDefaultFromSaving(true);
+              try {
+                await api.put('/workspace/settings', { body: { default_from: defaultFrom.trim() || null } });
+                showToast('Default From saved.', { tone: 'success' });
+                // Email readiness depends on this, and we stay on this route.
+                void refreshReadiness();
+              } catch (e) {
+                showToast((e as { error?: string })?.error ?? 'Could not save the default From.', { tone: 'error' });
+              } finally {
+                setDefaultFromSaving(false);
               }
             }}
           >

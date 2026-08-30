@@ -49,6 +49,11 @@ export interface WorkspaceReadiness {
 /** The DB-derived facts the pure computation needs. */
 export interface ReadinessInputs {
   hasResendConnector: boolean;
+  /**
+   * A From is configured for Resend — from the WORKSPACE's own default_from, or
+   * (legacy) the company connector's. Workspace-level is the correct scope: a
+   * named sender belongs to a domain, and domains are per workspace.
+   */
   resendFromSet: boolean;
   hasSesConnector: boolean;
   /** Self-hosted mail server: like SES, needs a verified domain and a sender. */
@@ -68,6 +73,8 @@ const ROUTE_CONNECTORS = '/company/connectors';
 const ROUTE_DOMAINS = '/settings/domains';
 const ROUTE_STORAGE = '/company/storage';
 const FIX_CONNECTORS: ReadinessFix = { label: 'Open Connectors', route: ROUTE_CONNECTORS };
+/** The default From lives in Workspace settings, not Connectors. */
+const FIX_WORKSPACE_SENDING: ReadinessFix = { label: 'Open Workspace settings', route: '/settings' };
 const FIX_DOMAINS: ReadinessFix = { label: 'Open Sending domains', route: ROUTE_DOMAINS };
 const FIX_STORAGE: ReadinessFix = { label: 'Open Storage', route: ROUTE_STORAGE };
 const FIX_POSTMASTER: ReadinessFix = { label: 'Open Sending domains', route: ROUTE_DOMAINS };
@@ -130,7 +137,12 @@ function computeEmail(i: ReadinessInputs): ReadinessCheck {
 
   // Resend is trusted (domain verified in Resend's dashboard); it only needs a From.
   if (i.hasResendConnector) {
-    items.push({ label: 'Resend “From” address set', ok: i.resendFromSet, scope: 'company', fix: FIX_CONNECTORS });
+    items.push({
+      label: 'Default “From” address set',
+      ok: i.resendFromSet,
+      scope: 'workspace',
+      fix: FIX_WORKSPACE_SENDING,
+    });
     const ready = i.resendFromSet;
     return {
       id: 'email',
@@ -261,7 +273,16 @@ export async function gatherReadiness(pool: Pool, workspaceId: string): Promise<
   );
   const resend = conns.find((c) => c.channel === 'email' && c.provider === 'resend');
   const hasResendConnector = !!resend;
-  const resendFromSet = !!resend && typeof resend.config?.['from'] === 'string' && (resend.config['from'] as string).trim() !== '';
+  // The workspace's own default_from wins; the company connector value remains a
+  // fallback so companies configured before this moved keep reading as ready.
+  const wsFrom = await pool.query<{ v: string | null }>(
+    "SELECT settings->>'default_from' AS v FROM workspaces WHERE id = $1",
+    [workspaceId],
+  );
+  const hasFrom =
+    (typeof wsFrom.rows[0]?.v === 'string' && wsFrom.rows[0]!.v!.trim() !== '') ||
+    (typeof resend?.config?.['from'] === 'string' && (resend.config['from'] as string).trim() !== '');
+  const resendFromSet = !!resend && hasFrom;
   const hasSesConnector = conns.some((c) => c.channel === 'email' && c.provider === 'ses');
   const hasSmtpConnector = conns.some((c) => c.channel === 'email' && c.provider === 'smtp');
   const hasSmsConnector = conns.some((c) => c.channel === 'sms' && c.provider === '019');

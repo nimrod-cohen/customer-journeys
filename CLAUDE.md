@@ -77,6 +77,7 @@ Read via `getWorkspaceSettings`, written via the owner-gated `PUT /workspace/set
 |---|---|
 | `timezone` | IANA zone, default `UTC`. **The single clock for ALL automation time math** (waits, wait-until, hour windows) — DST-correct, never per-broadcast guesswork. |
 | `default_phone_country` | ISO-2, for normalizing national phone numbers to E.164. |
+| `default_from` | The workspace's default From (`Name <a@b.com>`). **Workspace-level, not company-level** — sending domains and named senders are per workspace, so a company-wide value would make every workspace send as one address regardless of the domain it verified. Wins over the legacy `company_connectors.config.from`, which remains a fallback. |
 | `frequency_cap_per_days` / `quiet_hours` | Sending guardrails (see inv.7). |
 | `link_tracking` | Opt-in for BOTH open and click tracking. |
 | `topics_enabled` | Whether the preference center shows topics (default true). |
@@ -305,9 +306,10 @@ A `domain_senders` row (a named "From" identity) may only be created for a **ver
 - `validateSenderId` rejects a cross-workspace `sender_id` (inv.2). The **To** is a recipient token rendered per recipient at send; suppression and unsubscribe still key on `profile.email`.
 - **Editor return context** (`store/editorReturn.ts`) is persisted in `sessionStorage` so a refresh inside the editor keeps the "← Back to …" target. Standalone editor opens must call `clearEditorReturn()` so a stale return can't mislabel Back.
 
-## Transactional email (`POST /v1/send`)
+## Transactional messages (`POST /v1/send`)
 
-A designed template sent to ONE person on demand, with values supplied by the caller.
+A designed message sent to ONE person on demand, with values supplied by the caller.
+**Email, SMS and WhatsApp** — the key decides the medium, so the caller never names it.
 **Authenticated by a SECRET key (`sk_live_`), never the public write key.** `ingest_keys.kind`
 (`public`|`secret`) splits the two: the `pk_live_` key is documented as safe to embed in
 front-end code, and honouring it here would turn any customer's page source into a spam
@@ -316,14 +318,32 @@ hash only (`key_full` NULL) and shown once; ingest (`/v1/identify`, `/v1/track`)
 either kind, since secret is strictly more privileged. The workspace comes from the key,
 never the body (inv.2).
 
-- **Addressed by a stable KEY, not a uuid.** `email_templates.transactional_key`
-  (partial-unique per workspace, `WHERE transactional_key IS NOT NULL`) is what the
-  integrator hardcodes, so the template behind `'otp'` can be redesigned or replaced
-  without anyone redeploying. Set via `PUT /templates/:id/transactional-key`
-  (`manage_content`, library templates only) — deliberately NOT part of
-  `updateTemplate`, which is the designer's per-keystroke autosave target where a
-  uniqueness 409 would surface as a mystery save failure. Normalized (trim +
+- **Addressed by a stable KEY, not a uuid.** `email_templates.transactional_key` and
+  `text_templates.transactional_key` (each partial-unique per workspace) are what the
+  integrator hardcodes, so the message behind `'otp'` can be rewritten or replaced
+  without anyone redeploying. Set via `PUT /templates/:id/transactional-key` and
+  `PUT /text-templates/:id/transactional-key` (`manage_content`) — deliberately NOT
+  part of `updateTemplate`, which is the designer's per-keystroke autosave target
+  where a uniqueness 409 would surface as a mystery save failure. Normalized (trim +
   lowercase) on BOTH write and lookup, so `OTP` reaches `otp` instead of a 404.
+- **ONE key namespace spans email AND text.** A unique index can't cross two tables,
+  so `findTransactionalKeyOwner` checks both and 409s naming the holder. The point is
+  that the caller writes `"template": "otp"` and never has to say which medium it is.
+- **A transactional email carries its OWN envelope.** `/v1/send` reads `subject` and
+  `sender_id` off the template row, so the editor shows the From/Subject card for any
+  template with a `transactional_key` — not only for a `kind='copy'` instance. Without
+  that the envelope is unreachable and every send 409s. The To is NOT shown: the API
+  call supplies the recipient.
+- **A transactional TEXT commits to a channel** (`text_templates.transactional_medium`,
+  `sms|whatsapp`). Ordinary text templates stay medium-agnostic because a broadcast or
+  send node picks the channel; nothing downstream picks it here.
+- **Text consent is the channel opt-out only.** Text has no bounce and no complaint
+  feedback loop, so `decideTransactionalText` gates on `channel_optouts`
+  (`sms_whatsapp`) alone — an email suppression never blocks a text.
+- **Discoverability is the `/transactional` screen** (`web/src/screens/Transactional.tsx`),
+  a top-level nav item beside Broadcasts and Automations: the three ways to send are a
+  blast, a journey, and an API trigger. It lists both media by key and owns the create
+  flows.
 - **`data.*` is a THIRD merge namespace** beside `customer.*` and `event.*`
   (`dataMerge`, depth-capped): a caller cannot shadow a profile field by naming a
   parameter `email`. Subject AND body render through the same engine.

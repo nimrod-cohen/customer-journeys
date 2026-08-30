@@ -88,6 +88,30 @@ export function decideTransactionalSend(
   return { send: true };
 }
 
+/** Is this a syntactically valid email address? */
+export function isEmailAddress(v: string): boolean {
+  return /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(v.trim());
+}
+
+/**
+ * Decide whether a transactional TEXT message may go out.
+ *
+ * Text has no deliverability signal of its own — there is no bounce and no
+ * complaint feedback loop — so the only gate is consent: an opt-out of the
+ * sms/whatsapp channel group. As with email it blocks by default and the caller
+ * overrides per request for a message the recipient triggered.
+ */
+export function decideTransactionalText(
+  r: { phone: string | null; optedOut: boolean },
+  opts: TransactionalOptions = {},
+): TransactionalVerdict {
+  if (!r.phone) return { send: false, reason: 'recipient has no valid phone number' };
+  if (r.optedOut && !opts.ignoreMarketingConsent) {
+    return { send: false, reason: 'recipient opted out of SMS/WhatsApp — pass ignore_unsubscribe to send anyway' };
+  }
+  return { send: true };
+}
+
 /**
  * Flatten API-supplied parameters into `data.*` merge keys.
  *
@@ -178,8 +202,9 @@ export function parseTransactionalRequest(body: unknown): TransactionalRequest |
   const template = normalizeTransactionalKey(b.template);
   const to = typeof b.to === 'string' ? b.to.trim() : '';
   if (!template) return { error: "'template' is required — the template's transactional key, e.g. 'otp'" };
-  if (!to) return { error: "'to' is required — the recipient email address" };
-  if (!to.includes('@')) return { error: `'to' is not a valid email address: ${to}` };
+  // A key can resolve to an email or a text message, so what a valid `to` looks
+  // like is not known until the template is found. Only emptiness is decidable here.
+  if (!to) return { error: "'to' is required — the recipient's email address or phone number" };
   const data = b.data;
   if (data !== undefined && (typeof data !== 'object' || data === null || Array.isArray(data))) {
     return { error: "'data' must be an object of merge parameters" };

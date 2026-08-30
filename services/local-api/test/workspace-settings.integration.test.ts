@@ -114,6 +114,53 @@ describeMaybe('workspace settings: lowercase_emails (real Postgres)', () => {
     expect(s.frequency_cap).toBeNull();
   });
 
+  // The From is WORKSPACE-level: sending domains and named senders are per
+  // workspace, so a company-wide value would make every workspace send as one
+  // address regardless of the domain it actually verified.
+  describe('default_from', () => {
+    const put = (default_from: unknown) =>
+      call(world.env, 'PUT', '/workspace/settings', { token: tok(), body: { default_from } });
+    const read = async (): Promise<string | null> => {
+      const get = await call(world.env, 'GET', '/workspace/settings', { token: tok() });
+      return (get.body as { settings: { default_from: string | null } }).settings.default_from;
+    };
+
+    it('accepts a bare address and a display form', async () => {
+      await put('hello@acme.com');
+      expect(await read()).toBe('hello@acme.com');
+      await put('Acme Ltd. <hello@acme.com>');
+      expect(await read()).toBe('Acme Ltd. <hello@acme.com>');
+    });
+
+    it('trims, and clears with null or an empty string', async () => {
+      await put('  hello@acme.com  ');
+      expect(await read()).toBe('hello@acme.com');
+      await put(null);
+      expect(await read()).toBeNull();
+      await put('x@y.co');
+      await put('');
+      expect(await read()).toBeNull();
+    });
+
+    // A malformed From produces mail every provider bounces, so catch it here
+    // rather than at send time.
+    it('rejects a malformed address and writes nothing', async () => {
+      await put('good@acme.com');
+      for (const bad of ['not-an-email', 'a@b', 'Name <not-an-email>', '@acme.com', 42]) {
+        expect((await put(bad)).status, `${String(bad)} should be rejected`).toBe(400);
+      }
+      expect(await read()).toBe('good@acme.com');
+    });
+
+    // The merge must not disturb siblings (CLAUDE.md: sibling-preserving jsonb merge).
+    it('leaves other settings untouched', async () => {
+      await call(world.env, 'PUT', '/workspace/settings', { token: tok(), body: { timezone: 'Asia/Jerusalem' } });
+      await put('hello@acme.com');
+      const get = await call(world.env, 'GET', '/workspace/settings', { token: tok() });
+      expect((get.body as { settings: { timezone: string } }).settings.timezone).toBe('Asia/Jerusalem');
+    });
+  });
+
   it('rejects an invalid cap and an out-of-range quiet hour (400)', async () => {
     const badCap = await call(world.env, 'PUT', '/workspace/settings', {
       token: tok(),

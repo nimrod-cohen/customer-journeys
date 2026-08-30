@@ -20,7 +20,7 @@ import {
   unsubscribeLinkSecret,
   type SesEmailClient,
 } from '@cdp/email';
-import { dispatchOutbox, channelConfigForWorkspace, type DispatchDeps } from '@cdp/service-dispatcher';
+import { dispatchOutbox, channelConfigForWorkspace, renderTemplateBody, type DispatchDeps } from '@cdp/service-dispatcher';
 import { isFrontFacingLanguage } from '@cdp/service-unsubscribe';
 import {
   DEV_USERS,
@@ -35,6 +35,8 @@ import {
   createWhatsAppTemplate,
   deleteWhatsAppTemplate,
   normalizePhone,
+  resolveChannelProvider,
+  type Medium,
   type WhatsAppTemplatesConfig,
 } from '@cdp/channels';
 import { parsePageParams, pageClause, pageMeta } from './pagination.js';
@@ -125,6 +127,9 @@ import {
   renderTransactional,
   normalizeTransactionalKey,
   validateTransactionalKey,
+  decideTransactionalText,
+  isEmailAddress,
+  type TransactionalRequest,
 } from './transactional-send.js';
 import { createSmtpEmailClient, smtpTransportFromEnv } from '@cdp/email';
 import { verifySelfHostedDomain, nodeDnsResolver } from './dkim.js';
@@ -699,6 +704,30 @@ async function lowercaseEmailsEnabled(pool: Pool, workspaceId: string): Promise<
   return rows[0]?.v !== 'false'; // default ON
 }
 
+/**
+ * Parse a From value — a bare `a@b.com` or a display form `Name <a@b.com>` —
+ * returning the address, or null when it is neither. Deliberately permissive about
+ * the display name (people put commas and apostrophes in company names) and strict
+ * only about the address itself.
+ */
+export function parseFromAddress(raw: string): string | null {
+  const v = String(raw ?? '').trim();
+  if (!v) return null;
+  const angled = /^(.*)<\s*([^<>\s]+)\s*>$/.exec(v);
+  const addr = angled ? angled[2]! : v;
+  return /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(addr) ? addr : null;
+}
+
+/** The workspace's own default From, or null. Workspace-level by design (see settings). */
+async function workspaceDefaultFrom(pool: Pool, workspaceId: string): Promise<string | null> {
+  const { rows } = await pool.query<{ v: string | null }>(
+    "SELECT settings->>'default_from' AS v FROM workspaces WHERE id = $1",
+    [workspaceId],
+  );
+  const v = rows[0]?.v;
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
 /** Apply the workspace email-casing policy to an email (else return as-is). */
 function applyEmailPolicy(email: string, lowercase: boolean): string {
   return lowercase ? email.toLowerCase() : email;
@@ -729,6 +758,13 @@ export const getWorkspaceSettings: Handler = async (ctx, pool) => {
         typeof settings.default_phone_country === 'string' && /^[A-Za-z]{2}$/.test(settings.default_phone_country)
           ? settings.default_phone_country.toUpperCase()
           : null,
+      // The workspace's default From ("Name <a@b.com>"). Workspace-level, NOT
+      // company-level: sending domains and named senders are per workspace, so a
+      // company-wide From would make every workspace send as one address
+      // regardless of the domain it actually verified. null = none set.
+      default_from: typeof settings.default_from === 'string' && settings.default_from.trim()
+        ? settings.default_from.trim()
+        : null,
       // Sending guardrails (CLAUDE.md inv.7), read by the dispatcher.
       // frequency_cap: { max, days } | null (null = off) — at most `max` messages
       // per recipient in a rolling `days`-day window. quiet_hours: a per-weekday
@@ -774,6 +810,18 @@ export const updateWorkspaceSettings: Handler = async (ctx, pool, req) => {
       patch.default_phone_country = b.default_phone_country.toUpperCase();
     } else {
       return ok({ error: 'default_phone_country must be a 2-letter ISO country code (or null)' }, 400);
+    }
+  }
+  if (b.default_from !== undefined) {
+    // '' / null clears it. Otherwise a bare address or "Name <addr>" — validated
+    // here so a malformed From is rejected at the setting rather than silently
+    // producing mail every provider bounces.
+    if (b.default_from === null || (typeof b.default_from === 'string' && b.default_from.trim() === '')) {
+      patch.default_from = null;
+    } else if (typeof b.default_from === 'string' && parseFromAddress(b.default_from)) {
+      patch.default_from = b.default_from.trim();
+    } else {
+      return ok({ error: 'default_from must be an email address, optionally as "Name <you@example.com>"' }, 400);
     }
   }
   if (b.frequency_cap !== undefined) {
@@ -991,7 +1039,9 @@ async function emailSenderForWorkspace(
 
   if (conn?.provider === 'resend' && conn.secret) {
     const apiKey = isEncryptedSecret(conn.secret) ? decryptSecret(conn.secret) : conn.secret;
-    const from = String(conn.config.from ?? '');
+    // The WORKSPACE's From wins; the company connector value stays as a fallback so
+    // companies configured before this was workspace-level keep working untouched.
+    const from = (await workspaceDefaultFrom(pool, workspaceId)) ?? String(conn.config.from ?? '');
     return { ses: createResendEmailClient({ apiKey, from }, deps.resendHttp), mode: 'real', region: null, trusted: true };
   }
 
@@ -2600,6 +2650,47 @@ export const deleteTopic: Handler = async (ctx, pool, req) => {
   return ok({ deleted: rowCount });
 };
 
+/**
+ * PUT /text-templates/:id/transactional-key — make a text template sendable from
+ * the transactional API, or take it back off.
+ *
+ * The email sibling of this lives on /templates/:id/transactional-key and shares
+ * the same key namespace, so 'otp' can only ever mean one message.
+ *
+ * Body: `{ transactional_key, medium }`; a null/blank key clears both.
+ */
+export const setTextTemplateTransactionalKey: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const b = asObject(req.body);
+  const raw = b.transactional_key;
+  const clearing = raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '');
+
+  let key: string | null = null;
+  let medium: string | null = null;
+  if (!clearing) {
+    key = normalizeTransactionalKey(raw);
+    const bad = validateTransactionalKey(key);
+    if (bad) return ok({ error: bad }, 400);
+    // Unlike a broadcast body, a transactional text has nothing downstream to pick
+    // its channel, so it must commit to one.
+    if (b.medium !== 'sms' && b.medium !== 'whatsapp') {
+      return ok({ error: "medium must be 'sms' or 'whatsapp'" }, 400);
+    }
+    medium = b.medium;
+    const clash = await findTransactionalKeyOwner(pool, ctx.workspaceId, key, id);
+    if (clash) return ok({ error: `The key '${key}' is already used by “${clash}”.` }, 409);
+  }
+
+  const q = scopedQuery(
+    ctx.workspaceId,
+    'UPDATE text_templates SET transactional_key = $1, transactional_medium = $2, updated_at = now() WHERE id = $3',
+    [key, medium, id],
+  );
+  const { rowCount } = await pool.query(q.text, q.values);
+  if (!rowCount) return ok({ error: 'not found' }, 404);
+  return ok({ transactional_key: key, medium });
+};
+
 // ---------------------------------------------------------------------------
 // text templates (a reusable plain-text SMS/WhatsApp body library) — workspace-
 // scoped CRUD (manage_content). A text template is medium-AGNOSTIC: the same body
@@ -2612,7 +2703,7 @@ export const deleteTopic: Handler = async (ctx, pool, req) => {
 export const listTextTemplates: Handler = async (ctx, pool) => {
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, body, created_at, updated_at FROM text_templates',
+    'SELECT id, name, body, transactional_key, transactional_medium, created_at, updated_at FROM text_templates',
   );
   const { rows } = await pool.query(`${q.text} ORDER BY updated_at DESC`, q.values);
   return ok({ templates: rows });
@@ -2623,7 +2714,7 @@ export const getTextTemplate: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, body, created_at, updated_at FROM text_templates WHERE id = $1',
+    'SELECT id, name, body, transactional_key, transactional_medium, created_at, updated_at FROM text_templates WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -2667,7 +2758,7 @@ export const updateTextTemplate: Handler = async (ctx, pool, req) => {
   if (!rowCount) return ok({ error: 'not found' }, 404);
   const sel = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, body, created_at, updated_at FROM text_templates WHERE id = $1',
+    'SELECT id, name, body, transactional_key, transactional_medium, created_at, updated_at FROM text_templates WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(sel.text, sel.values);
@@ -2983,6 +3074,35 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
 };
 
 /**
+ * Who already holds this transactional key in the workspace, if anyone.
+ *
+ * The key namespace spans BOTH email and text templates: the integrator writes
+ * "template": "otp" without saying which medium it is, so two messages cannot
+ * share a key. A unique index can't span two tables, so the check lives here —
+ * and naming the offender turns a dead end into a next step.
+ */
+async function findTransactionalKeyOwner(
+  pool: Pool,
+  workspaceId: string,
+  key: string,
+  exceptId: string,
+): Promise<string | null> {
+  // Two scoped queries rather than one UNION: scopedQuery injects its workspace
+  // predicate at the FIRST WHERE it finds, so a UNION would leave the second
+  // branch unscoped — exactly the tenant leak the helper exists to prevent.
+  for (const table of ['email_templates', 'text_templates'] as const) {
+    const q = scopedQuery(
+      workspaceId,
+      `SELECT name FROM ${table} WHERE transactional_key = $1 AND id <> $2`,
+      [key, exceptId],
+    );
+    const { rows } = await pool.query<{ name: string }>(q.text, q.values);
+    if (rows[0]) return rows[0].name;
+  }
+  return null;
+}
+
+/**
  * PUT /templates/:id/transactional-key — make a library template reachable from
  * the transactional API, or take it back off.
  *
@@ -3005,17 +3125,8 @@ export const setTemplateTransactionalKey: Handler = async (ctx, pool, req) => {
     const bad = validateTransactionalKey(key);
     if (bad) return ok({ error: bad }, 400);
 
-    // Report the clash before attempting the write, so the message can name the
-    // other template rather than echoing a Postgres constraint name.
-    const clash = scopedQuery(
-      ctx.workspaceId,
-      'SELECT name FROM email_templates WHERE transactional_key = $1 AND id <> $2',
-      [key, id],
-    );
-    const { rows } = await pool.query<{ name: string }>(clash.text, clash.values);
-    if (rows[0]) {
-      return ok({ error: `The key '${key}' is already used by the template “${rows[0].name}”.` }, 409);
-    }
+    const clash = await findTransactionalKeyOwner(pool, ctx.workspaceId, key, id);
+    if (clash) return ok({ error: `The key '${key}' is already used by “${clash}”.` }, 409);
   }
 
   const q = scopedQuery(
@@ -6662,6 +6773,100 @@ function objOrEmpty(v: unknown): Record<string, unknown> {
  * would be the one you most wanted to trace when a customer says "I never got my
  * code".
  */
+/**
+ * Send a transactional SMS / WhatsApp message.
+ *
+ * The text sibling of the email path above: same key, same `data.*` merge, same
+ * consent-by-default rule. What differs is that text has no deliverability signal —
+ * no bounce, no complaint feedback loop — so the only gate is the channel opt-out,
+ * and the recipient is identified by phone rather than email.
+ */
+async function sendTransactionalText(
+  pool: Pool,
+  ws: string,
+  parsed: TransactionalRequest,
+  tpl: { id: string; body: string; transactional_medium: string | null },
+  deps: LocalApiDeps,
+): Promise<HandlerResponse> {
+  const medium: Medium = tpl.transactional_medium === 'whatsapp' ? 'whatsapp' : 'sms';
+  if (!tpl.body.trim()) return ok({ error: `template '${parsed.template}' has no content yet` }, 409);
+
+  // The workspace's default country turns a national number into E.164; without
+  // one, only fully international numbers resolve.
+  const phone = normalizePhone(parsed.to, await defaultPhoneCountry(pool, ws));
+
+  // Consent is profile-keyed, so an opt-out survives a change of phone number.
+  const r = await pool.query<{ profile_id: string | null; opted_out: boolean }>(
+    `SELECT p.id AS profile_id, (o.profile_id IS NOT NULL) AS opted_out
+       FROM (SELECT $2::text AS phone) x
+       LEFT JOIN profiles p ON p.workspace_id = $1 AND p.phone = x.phone
+       LEFT JOIN channel_optouts o
+              ON o.workspace_id = $1 AND o.profile_id = p.id AND o.medium_group = 'sms_whatsapp'`,
+    [ws, phone ?? ''],
+  );
+  const state = r.rows[0];
+  const verdict = decideTransactionalText(
+    { phone, optedOut: state?.opted_out === true },
+    { ignoreMarketingConsent: parsed.ignoreUnsubscribe },
+  );
+  if (!verdict.send) {
+    // A bad number is the caller's mistake to fix, not a decision about the
+    // recipient — so it is a 400, while a consent skip is a deliberate 200.
+    if (!phone) return ok({ error: `'to' is not a valid phone number: ${parsed.to}` }, 400);
+    return ok({ sent: false, reason: verdict.reason }, 200);
+  }
+
+  const idres = await ingestIdentityFrom(pool, ws, { phone: phone! });
+  if (!idres.ok) return ok({ error: idres.error }, idres.status);
+
+  const client = await pool.connect();
+  let profileId: string;
+  try {
+    await client.query('BEGIN');
+    const up = await upsertProfileByIdentity(client, ws, idres.identity, {});
+    profileId = up.id;
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    throw e;
+  }
+  client.release();
+
+  const profile = await pool.query<{ email: string | null; phone: string | null; attributes: Record<string, unknown> | null }>(
+    'SELECT email, phone, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ws, profileId],
+  );
+  const merge = { ...customerMerge(profile.rows[0] ?? {}), ...dataMerge(parsed.data) };
+  const body = renderTemplateBody(tpl.body, merge);
+
+  const reader = {
+    query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+      const r = await pool.query(text, values ? [...values] : undefined);
+      return { rows: r.rows as T[] };
+    },
+  };
+  // A real '019'/Meta gateway when the company configured one, else the
+  // deterministic MOCK — so dev and e2e send text for real, offline.
+  const cfg = await channelConfigForWorkspace(reader, ws, medium);
+  const provider = resolveChannelProvider(medium, cfg ?? undefined, deps.channelHttp);
+
+  let providerMessageId: string;
+  try {
+    const res = await provider.send({ to: phone!, body });
+    providerMessageId = res.providerMessageId;
+  } catch (e) {
+    return ok({ sent: false, error: e instanceof Error ? e.message : 'send failed' }, 502);
+  }
+
+  await pool.query(
+    `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium)
+     VALUES ($1, $2, $3, 'sent', $4)`,
+    [ws, profileId, providerMessageId, medium],
+  );
+  return ok({ sent: true, message_id: providerMessageId, medium }, 200);
+}
+
 export async function sendTransactional(
   pool: Pool,
   rawKey: string,
@@ -6688,8 +6893,9 @@ export async function sendTransactional(
   const parsed = parseTransactionalRequest(body);
   if ('error' in parsed) return ok({ error: parsed.error }, 400);
 
-  // The template is addressed by its STABLE KEY, so the design behind it can change
-  // without the caller's code changing.
+  // The message is addressed by its STABLE KEY, so what sits behind it can change
+  // without the caller's code changing. One key namespace spans email and text, so
+  // the integrator never has to say which medium 'otp' is — the message knows.
   const t = await pool.query<{
     id: string;
     subject: string | null;
@@ -6703,11 +6909,26 @@ export async function sendTransactional(
     [ws, parsed.template],
   );
   const tpl = t.rows[0];
+
   if (!tpl) {
+    const txt = await pool.query<{ id: string; body: string; transactional_medium: string | null }>(
+      `SELECT id, body, transactional_medium
+         FROM text_templates
+        WHERE workspace_id = $1 AND transactional_key = $2
+        LIMIT 1`,
+      [ws, parsed.template],
+    );
+    if (txt.rows[0]) {
+      return sendTransactionalText(pool, ws, parsed, txt.rows[0], deps);
+    }
     return ok(
       { error: `no transactional template with key '${parsed.template}' in this workspace` },
       404,
     );
+  }
+
+  if (!isEmailAddress(parsed.to)) {
+    return ok({ error: `'to' is not a valid email address: ${parsed.to}` }, 400);
   }
   if (!tpl.compiled_html) return ok({ error: `template '${parsed.template}' has no content yet` }, 409);
   if (!tpl.sender_id) return ok({ error: `template '${parsed.template}' has no From address set` }, 409);
@@ -6977,6 +7198,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /text-templates/:id': getTextTemplate,
   'POST /text-templates': createTextTemplate,
   'PUT /text-templates/:id': updateTextTemplate,
+  'PUT /text-templates/:id/transactional-key': setTextTemplateTransactionalKey,
   'DELETE /text-templates/:id': deleteTextTemplate,
   'GET /segments': listSegments,
   'GET /segments/:id': getSegment,
