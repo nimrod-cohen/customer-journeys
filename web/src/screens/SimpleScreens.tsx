@@ -1,4 +1,4 @@
-// Lean read-mostly screens (§12): Dashboards, ProfileExplorer, SuppressionList,
+// Lean read-mostly screens (§12): Dashboard, ProfileExplorer, SuppressionList,
 // BillingUsageView. Each fetches its workspace-scoped data from the API (the
 // server scopes by the token's workspace_id) and renders a styled table/list.
 // (Visual redesign; all data-testid attributes preserved.)
@@ -74,7 +74,7 @@ export function Dashboards() {
   const complaintTone = health ? rateTone(health.rates.complaint, 0.001, 0.005) : 'success';
   return (
     <section data-testid="dashboards">
-      <PageHeader title="Dashboards" subtitle="Workspace activity at a glance." />
+      <PageHeader title="Dashboard" subtitle="Workspace activity at a glance." />
       {s ? (
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Stat label="Profiles" value={s.profiles} testId="dash-profiles" />
@@ -140,8 +140,16 @@ export function Dashboards() {
           <Card class="mt-4 p-5">
             <div class="flex items-baseline justify-between">
               <p class="text-xs font-semibold uppercase tracking-wide text-stone-500">Suppression list</p>
-              <span data-testid="dh-suppressed-total" class="font-display text-xl font-bold text-ink-900">
-                {health.suppression.total}
+              {/* The total is the whole list; the four reasons below break it down.
+                  It carries its own word — an unlabelled number floating opposite a
+                  heading reads as a stray digit. */}
+              <span class="flex items-baseline gap-1.5">
+                <span data-testid="dh-suppressed-total" class="font-display text-xl font-bold text-ink-900">
+                  {health.suppression.total}
+                </span>
+                <span class="text-xs text-stone-500">
+                  {health.suppression.total === 1 ? 'address in total' : 'addresses in total'}
+                </span>
               </span>
             </div>
             <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
