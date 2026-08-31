@@ -125,8 +125,8 @@ function DomainEditor({ id }: { id: string }) {
   const [checking, setChecking] = useState(false);
   const [checkMsg, setCheckMsg] = useState('');
   const [error, setError] = useState('');
-  // Set when SES can't be reached — most importantly when the company has NO SES
-  // credentials. We then BLOCK setup (no records, no verify) rather than simulate.
+  // Why setup can't proceed: no SES credentials, SES unreachable, or (self-hosted)
+  // no signing key configured on the deployment. We BLOCK rather than simulate.
   const [sesError, setSesError] = useState('');
   // Which provider this company sends through. The DNS story is completely
   // different per provider, so nothing on this screen may assume SES.
@@ -195,8 +195,9 @@ function DomainEditor({ id }: { id: string }) {
             : 'Not verified yet. Publish the records above, then check again (DNS can take a while to propagate).',
         );
       } else {
-        // If the required (DKIM) records are already visible to us, SES just
-        // hasn't polled them yet — say so rather than "publish the records".
+        // SES only (a self-hosted domain took the branch above): if the required
+        // records are already visible to us, SES simply hasn't polled them yet —
+        // say so rather than "publish the records".
         const dkim = (r.records ?? []).filter((x) => x.required);
         const allDkimVisible = dkim.length > 0 && dkim.every((x) => x.status === 'found');
         const status = r.dkimStatus ?? 'pending';
@@ -269,18 +270,22 @@ function DomainEditor({ id }: { id: string }) {
 
   if (!domain) return <p class="text-sm text-stone-500">Loading…</p>;
 
-  // The one check action always re-looks-up DNS AND asks SES; the LABEL reflects
-  // what the user needs next: while the required (DKIM) records aren't all found
-  // in DNS yet, the job is to fix/recheck DNS; once they're all present, it's on
-  // SES to confirm; after that it's a re-verify.
+  // The LABEL says what happens next, and WHO confirms it differs by provider: SES
+  // verifies on its own schedule after seeing the records, while for the internal
+  // mail server the DNS lookup IS the verification — there is no third party to
+  // wait for, so naming one would be a lie about how long this takes.
   const requiredRecords = records.filter((r) => r.required);
   const allRequiredFound = requiredRecords.length > 0 && requiredRecords.every((r) => r.status === 'found');
   const checkLabel = checking
     ? 'Checking…'
     : domain.verified
-      ? 'Re-check with SES'
+      ? selfHosted
+        ? 'Re-check DNS'
+        : 'Re-check with SES'
       : allRequiredFound
-        ? 'Verify with SES'
+        ? selfHosted
+          ? 'Verify domain'
+          : 'Verify with SES'
         : 'Recheck DNS';
 
   return (

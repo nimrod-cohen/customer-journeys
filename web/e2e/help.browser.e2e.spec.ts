@@ -17,9 +17,12 @@ test('Help is in the nav and explains email status vs consent vs suppression', a
   await expect(page.getByTestId('help')).toContainText('soft-bounce');
   // The CSV-import behaviour is documented too.
   await expect(page.getByTestId('help-import')).toContainText('import an existing profile');
-  // And how to set up Amazon SES.
-  await expect(page.getByTestId('help-ses')).toContainText('Setting up your Amazon SES account');
-  await expect(page.getByTestId('help-ses')).toContainText('AmazonSESFullAccess');
+  // And how to set up sending — led by the provider that is actually offered. It
+  // used to walk everyone through creating an AWS account, including the companies
+  // on our own mail server, who have no SES account and never will.
+  await expect(page.getByTestId('help-ses')).toContainText('Setting up sending');
+  await expect(page.getByTestId('help-ses')).toContainText('Internal mail server');
+  await expect(page.getByTestId('help-ses')).toContainText('Resend');
 
   // The footer version label reflects the root project version.
   await expect(page.getByTestId('app-version')).toContainText(`v${ROOT_VERSION}`);
