@@ -22,6 +22,7 @@ import {
 } from '@cdp/email';
 import {
   dispatchOutbox,
+  buildDueOutboxQuery,
   channelConfigForWorkspace,
   renderTemplateBody,
   buildUsageCounterIncrement,
@@ -1231,23 +1232,23 @@ export async function sweepDueScheduledBroadcasts(pool: Pool, deps: LocalApiDeps
  * long-standing local behaviour, so a set_attribute/exit-only automation with NO
  * outbox rows is simply a no-op). Failures are isolated and never thrown.
  */
-async function dispatchAutomationOutboxNow(pool: Pool, deps: LocalApiDeps): Promise<void> {
-  // Pending automation outbox rows (a automation send, not a broadcast), per workspace.
-  // The row's payload->>'medium' decides delivery: EMAIL needs REAL SES creds
-  // (mock/none → no-op, the long-standing local behaviour); a TEXT send (sms/
-  // whatsapp) ALWAYS delivers via the deterministic MOCK channel provider — no
-  // credentials needed — exactly like a text broadcast.
-  const { rows } = await pool.query<{ id: string; workspace_id: string; medium: string | null }>(
-    `SELECT id, workspace_id, payload->>'medium' AS medium FROM outbox
-     WHERE status = 'pending' AND payload->>'automation_id' IS NOT NULL
-     ORDER BY workspace_id, created_at`,
-  );
-  if (rows.length === 0) return;
+async function dispatchAutomationOutboxNow(pool: Pool, deps: LocalApiDeps): Promise<number> {
+  // EVERY outbox row that is due — broadcast and automation alike, whether it has
+  // never been tried or is coming back from a transient failure's backoff.
+  //
+  // It used to select only automation rows. A broadcast drains its outbox exactly
+  // ONCE, at send time, so when the mail server was down for that minute every one
+  // of its rows was reset to pending and then never looked at again: the recipients
+  // simply never got the message, with nothing in the UI to say so.
+  const q = buildDueOutboxQuery(new Date());
+  const { rows } = await pool.query<{ id: string; workspace_id: string; medium: string | null }>(q.text, q.values);
+  if (rows.length === 0) return 0;
   const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
   // Build one DispatchDeps per workspace (its company's SES creds + the mock channel
   // resolver), reusing it for every row in that workspace. We also track whether the
   // workspace has REAL SES so an EMAIL row in a mock-SES workspace stays pending.
   const dispatchByWs = new Map<string, { deps: DispatchDeps; realSes: boolean }>();
+  let drained = 0;
   for (const r of rows) {
     let entry = dispatchByWs.get(r.workspace_id);
     if (entry === undefined) {
@@ -1278,13 +1279,24 @@ async function dispatchAutomationOutboxNow(pool: Pool, deps: LocalApiDeps): Prom
     const isText = r.medium === 'sms' || r.medium === 'whatsapp';
     if (!isText && !entry.realSes) continue; // email + no real SES → leave row pending
     try {
-      // dispatchOutbox never throws on a send failure (resets the claim), so one
+      // dispatchOutbox never throws on a send failure (it schedules a retry), so one
       // bad recipient can't abort the batch.
       await dispatchOutbox(entry.deps, r.id);
+      drained++;
     } catch {
-      /* isolate: one failed automation send must not abort the batch */
+      /* isolate: one failed send must not abort the batch */
     }
   }
+  return drained;
+}
+
+/**
+ * Re-drive every outbox row that is due — the graceful wait for a mail server that
+ * was restarting. Runs on a timer beside the other sweeps, in every role, so a
+ * transient failure is picked up minutes later without anyone touching anything.
+ */
+export async function sweepDueOutbox(pool: Pool, deps: LocalApiDeps): Promise<number> {
+  return dispatchAutomationOutboxNow(pool, deps);
 }
 
 /**

@@ -31,6 +31,8 @@ import {
   buildOutboxMarkSent,
   buildOutboxMarkFailed,
   isPermanentSendError,
+  buildOutboxRetrySchedule,
+  MAX_SEND_ATTEMPTS,
   buildSendEmailInput,
   buildChannelMessage,
   resolveTextRecipient,
@@ -233,6 +235,10 @@ export async function dispatchOutbox(
   if (claimedRows.length === 0) {
     return { result: 'noop', reason: 'outbox row not pending (already claimed/sent)' };
   }
+  // The count AFTER this claim — the claim itself is the attempt. Reading it off the
+  // pre-claim row instead would compute one backoff step too short and let the
+  // attempt budget overrun by one.
+  const attempts = claimedRows[0]?.attempts ?? (ob.attempts ?? 0) + 1;
 
   try {
     // 3. Load workspace + profile + template (scoped by workspace_id in code).
@@ -567,6 +573,7 @@ export async function dispatchOutbox(
         automationId: ob.automation_id ?? null,
         broadcastId,
         profileId: profile.id,
+        attempts,
         now,
       });
     }
@@ -624,11 +631,25 @@ export async function dispatchOutbox(
       return { result: 'failure', reason };
     }
   } catch (err) {
-    // Transient send failure (re-thrown above) OR any other error after the claim
-    // → reset to pending so a retry can re-claim it (bounded by attempts → DLQ).
-    await resetClaim(deps, workspaceId, outboxId);
+    // Transient send failure (re-thrown above) OR any other error after the claim.
+    // The row goes back to pending with a GROWING delay so a mail server that is
+    // rebooting is waited out rather than hammered — and once the attempt budget is
+    // spent it becomes a visible failure instead of a row nothing looks at again.
     const reason = err instanceof Error ? err.message : String(err);
-    return { result: 'retryable-failure', reason };
+    // The claimed row is the only thing guaranteed to be in scope here — the failure
+    // may have happened before `profile` or `broadcastId` were ever resolved.
+    const obPayload = (ob.payload ?? {}) as Record<string, unknown>;
+    const outcome = await releaseOrGiveUp(deps, {
+      workspaceId,
+      outboxId,
+      attempts,
+      profileId: ob.profile_id,
+      automationId: ob.automation_id ?? null,
+      broadcastId: typeof obPayload['broadcast_id'] === 'string' ? (obPayload['broadcast_id'] as string) : null,
+      medium: 'email',
+      reason,
+    });
+    return outcome === 'gave-up' ? { result: 'failure', reason } : { result: 'retryable-failure', reason };
   }
 }
 
@@ -641,6 +662,8 @@ interface TextSendArgs {
   readonly automationId: string | null;
   readonly broadcastId: string | null;
   readonly profileId: string;
+  /** Claim count so far — decides retry vs give up. */
+  readonly attempts: number;
   readonly now: Date;
 }
 
@@ -654,7 +677,7 @@ interface TextSendArgs {
  * failure resets the claim for a retry (bounded → DLQ).
  */
 async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Promise<DispatchOutcome> {
-  const { workspaceId, outboxId, ctx, medium, automationId, broadcastId, profileId, now } = args;
+  const { workspaceId, outboxId, ctx, medium, automationId, broadcastId, profileId, attempts, now } = args;
   // No phone → skip (terminal). Record a skipped messages_log row + mark done.
   const rawTo = resolveTextRecipient(ctx);
   if (!rawTo) {
@@ -704,8 +727,17 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
     // it, exactly like the email SES path. Never silently drop an SMS on a gateway
     // blip.
     if (isRetryableSendError(err)) {
-      await resetClaim(deps, workspaceId, outboxId);
-      return { result: 'retryable-failure', reason };
+      const outcome = await releaseOrGiveUp(deps, {
+        workspaceId,
+        outboxId,
+        attempts,
+        profileId,
+        automationId,
+        broadcastId,
+        medium,
+        reason,
+      });
+      return outcome === 'gave-up' ? { result: 'failure', reason } : { result: 'retryable-failure', reason };
     }
     // A PERMANENT failure (4xx, business rejection, bad response) — record a 'failed'
     // messages_log row with the reason and mark the outbox row done (terminal, never
@@ -742,8 +774,9 @@ async function finalizeNonSend(
   target: NonSendTarget,
 ): Promise<DispatchOutcome> {
   if (decision.action === 'defer') {
-    // Re-queue: reset to pending so a later sweep/redrive re-evaluates it.
-    await resetClaim(deps, workspaceId, outboxId);
+    // Quiet hours are not a failure: park the row until the window opens rather than
+    // re-deciding it on every sweep in between.
+    await deferClaim(deps, workspaceId, outboxId, decision.deferUntil ?? deps.now());
     return {
       result: 'defer',
       reason: decision.reason,
@@ -782,19 +815,82 @@ async function finalizeNonSend(
 }
 
 /** Reset a claimed (status='sending') row back to pending for a retry/defer. */
-async function resetClaim(
+/**
+ * A transient failure, resolved: schedule ANOTHER attempt, or stop.
+ *
+ * Stopping matters as much as retrying. A row whose attempts are spent would
+ * otherwise sit `pending` past the sweep's filter — invisible, with nothing in
+ * messages_log to say the recipient never got it. Giving up writes the failure
+ * where a human will see it.
+ */
+async function releaseOrGiveUp(
+  deps: DispatchDeps,
+  args: {
+    workspaceId: string;
+    outboxId: string;
+    attempts: number;
+    profileId: string;
+    automationId: string | null;
+    broadcastId: string | null;
+    medium: Medium;
+    reason: string;
+  },
+): Promise<'retry' | 'gave-up'> {
+  const { workspaceId, outboxId, attempts } = args;
+  if (attempts < MAX_SEND_ATTEMPTS) {
+    await resetClaim(deps, workspaceId, outboxId, attempts);
+    return 'retry';
+  }
+  try {
+    await deps.runInWorkspaceTx(workspaceId, [
+      buildMessagesLogFailure(
+        workspaceId,
+        args.profileId,
+        args.automationId,
+        args.broadcastId,
+        args.medium,
+        'failed',
+        `gave up after ${attempts} attempts: ${args.reason}`,
+      ),
+      buildOutboxMarkFailed(workspaceId, outboxId),
+    ]);
+  } catch {
+    /* best-effort: the row is already past the sweep's attempt filter */
+  }
+  return 'gave-up';
+}
+
+/** Park a claimed row until a known time (quiet hours), leaving attempts alone. */
+async function deferClaim(
   deps: DispatchDeps,
   workspaceId: string,
   outboxId: string,
+  until: Date,
 ): Promise<void> {
   try {
     await deps.runInWorkspaceTx(workspaceId, [
       {
-        text: `UPDATE outbox SET status = 'pending' WHERE workspace_id = $1 AND id = $2 AND status = 'sending'`,
-        values: [workspaceId, outboxId],
+        text: `UPDATE outbox SET status = 'pending', next_attempt_at = $3::timestamptz
+                WHERE workspace_id = $1 AND id = $2 AND status = 'sending'`,
+        values: [workspaceId, outboxId, until.toISOString()],
       },
     ]);
   } catch {
-    /* best-effort; the row stays 'sending' and a redrive/sweep recovers it */
+    /* best-effort; the sweep's stale-claim rule recovers it */
+  }
+}
+
+async function resetClaim(
+  deps: DispatchDeps,
+  workspaceId: string,
+  outboxId: string,
+  attempts = 1,
+): Promise<void> {
+  try {
+    await deps.runInWorkspaceTx(workspaceId, [
+      buildOutboxRetrySchedule(workspaceId, outboxId, attempts, deps.now()),
+    ]);
+  } catch {
+    /* best-effort; the row stays 'sending' and the sweep's stale-claim rule recovers it */
   }
 }

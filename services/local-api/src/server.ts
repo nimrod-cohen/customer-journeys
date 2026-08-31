@@ -6,7 +6,7 @@ import { serve } from '@hono/node-server';
 import { getPool, runPendingMigrations } from '@cdp/db';
 import { createApp } from './app.js';
 import { makeLocalDeps } from './deps.js';
-import { sweepDueScheduledBroadcasts, sweepDueAutomationEnrollments } from './handlers.js';
+import { sweepDueScheduledBroadcasts, sweepDueAutomationEnrollments, sweepDueOutbox } from './handlers.js';
 
 const PORT = Number(process.env.PORT ?? process.env.LOCAL_API_PORT ?? 8787);
 // Process role (production runs a `web` service — HTTP, no sweeps — plus ONE
@@ -52,6 +52,9 @@ const SWEEP_MS = Number(process.env.LOCAL_SCHEDULE_SWEEP_MS ?? 30_000);
 // for the production EventBridge automation sweep / scheduledSweepHandler — without
 // it enrollments are created but never advance). 0 disables it.
 const AUTOMATION_SWEEP_MS = Number(process.env.LOCAL_AUTOMATION_SWEEP_MS ?? 30_000);
+// How often due outbox rows are re-driven — a send that failed transiently (our mail
+// server restarting) waits out its backoff and is picked up here. 0 disables it.
+const OUTBOX_SWEEP_MS = Number(process.env.LOCAL_OUTBOX_SWEEP_MS ?? 60_000);
 
 async function main(): Promise<void> {
   const pool = getPool();
@@ -92,6 +95,25 @@ async function main(): Promise<void> {
     };
     void sweep(); // catch any already-overdue broadcast on boot
     setInterval(() => void sweep(), SWEEP_MS);
+  }
+
+  // Outbox drain: re-drive every send whose retry time has arrived. This is what
+  // makes an unreachable mail server a WAIT rather than a loss — a submission that
+  // failed while the box was restarting comes back a minute later, then two, then
+  // four. Without it a broadcast's rows were drained exactly once, at send time.
+  if (RUN_SWEEPS && OUTBOX_SWEEP_MS > 0) {
+    const drain = async (): Promise<void> => {
+      try {
+        const n = await sweepDueOutbox(pool, deps);
+        // eslint-disable-next-line no-console
+        if (n > 0) console.log(`[local-api] re-drove ${n} due outbox row(s)`);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[local-api] outbox drain failed', e);
+      }
+    };
+    void drain(); // anything left due from before a restart
+    setInterval(() => void drain(), OUTBOX_SWEEP_MS);
   }
 
   // Automation-enrollment sweep: advance any enrollment whose next_run_at has passed

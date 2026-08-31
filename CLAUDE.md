@@ -412,6 +412,22 @@ Every skip writes a `messages_log` row with `status='skipped'` and a human `reas
 
 **Skip reasons:** hard suppression; `channel_optouts` for the message's `mediumGroupOf(medium)`; `topic_subscriptions.subscribed=false` for the message's topic; frequency cap; quiet hours; `'recipient has no email address'`; `'recipient has no phone'`; `'invalid phone number'`.
 
+**A transient send failure is a WAIT, not a loss.** `isPermanentSendError` decides:
+an SMTP `5xx` or `EAUTH`, or a SES hard rejection, is permanent (record the failure,
+stop); a connection-level error (`ECONN*`/`ETIMEDOUT`/`ESOCKET`/`EAI_AGAIN`) or a
+`4xx` reply is our own mail server restarting, so the row returns to `pending` with
+`outbox.next_attempt_at = now + retryDelayMs(attempts)` — doubling from 1 min, capped
+at 30, giving up after `MAX_SEND_ATTEMPTS` (10, ~4h) with a `gave up after N attempts`
+messages_log row so it is never silently un-sent. **The first retry deliberately
+waits** rather than firing instantly, or the whole budget is spent inside the reboot
+window. Quiet-hours deferral parks at `deferUntil` instead (not an error backoff).
+**`sweepDueOutbox` (`LOCAL_OUTBOX_SWEEP_MS`, 60s) is what re-drives them**, across
+broadcasts AND automations, plus `sending` rows abandoned >15 min by a killed worker.
+Before it, `dispatchBroadcastNow` drained a broadcast's outbox EXACTLY ONCE at send
+time, so rows reset during an outage sat pending forever and those recipients were
+never mailed. (A relay outage downstream of our MTA needs none of this — Postfix
+queues and retries on its own.)
+
 **Missing address is a clean SKIP, never a throw** — checked before `buildSendEmailInput`/SES and before the text provider.
 
 **Routing by medium.** Email → the SES/Resend path (the only email send site), rendering `compiled_html`, `subject`, and `to_address` through `renderTemplateBody`. Text → `dispatchTextChannel`, which renders `text_body` + the To phone (default token `{{customer.phone}}`), normalizes the phone to E.164 with the company `defaultCountry`, calls the injected `ChannelProvider`, and writes `messages_log(medium, provider id)` + `usage_counters` + mark-sent in ONE tx. Text sends do no link/open tracking (no HTML).

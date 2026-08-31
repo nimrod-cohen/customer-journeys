@@ -635,7 +635,30 @@ export function buildOutboxMarkFailed(workspaceId: string, outboxId: string): Sq
  */
 export function isPermanentSendError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
-  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  const e = err as {
+    name?: string;
+    code?: string;
+    responseCode?: number;
+    $metadata?: { httpStatusCode?: number };
+  };
+
+  // ── SMTP (our own mail server) ──
+  // Bad credentials cannot be retried into working, and every attempt is a failed
+  // auth against our own server.
+  if (e.code === 'EAUTH') return true;
+  // A connection-level failure is the mail server being restarted, DNS still cold,
+  // or TLS timing out — precisely the case that must WAIT rather than fail.
+  if (typeof e.code === 'string' && /^(ECONN|ETIMEDOUT|ESOCKET|EAI_AGAIN|EDNS|EPIPE|EHOSTUNREACH|ENETUNREACH)/.test(e.code)) {
+    return false;
+  }
+  // The SMTP reply code says it outright: 5xx is "never", 4xx is "not now" (the
+  // receiving MTA would itself retry a 4xx, so we must not treat it as final).
+  if (typeof e.responseCode === 'number') {
+    if (e.responseCode >= 500) return true;
+    if (e.responseCode >= 400) return false;
+  }
+
+  // ── SES ──
   const name = e.name ?? '';
   if (/MessageRejected|NotVerified|SendingPaused|AccountSuspended|InvalidParameter|BadRequest|Forbidden/i.test(name)) {
     return true;
@@ -643,6 +666,81 @@ export function isPermanentSendError(err: unknown): boolean {
   const throttle = /Throttl|TooManyRequests|LimitExceeded/i.test(name);
   const code = e.$metadata?.httpStatusCode;
   return typeof code === 'number' && code >= 400 && code < 500 && !throttle;
+}
+
+// ── retry scheduling ─────────────────────────────────────────────────────────
+//
+// A transient send failure means the message is EARLY, not failed. The row goes
+// back to `pending` carrying a `next_attempt_at`, and a sweep re-claims it once
+// that time passes.
+
+/** How many times a row may be claimed before we stop and record a failure. */
+export const MAX_SEND_ATTEMPTS = 10;
+
+/** Longest a retry ever waits — long enough to be patient, short enough to notice. */
+const MAX_RETRY_DELAY_MS = 30 * 60_000;
+
+/**
+ * Delay before attempt `attempts + 1`. Doubling from a minute, capped at thirty.
+ *
+ * The first retry deliberately waits rather than firing immediately: a mail server
+ * that is rebooting refuses connections for a minute or two, and an instant retry
+ * would spend the whole attempt budget inside that window and give up just as the
+ * box comes back. Deterministic (no jitter) — the sweep is the only caller and the
+ * rows are claimed one at a time, so there is no thundering herd to spread out.
+ */
+export function retryDelayMs(attempts: number): number {
+  const n = Math.max(1, Math.floor(attempts));
+  return Math.min(60_000 * 2 ** (n - 1), MAX_RETRY_DELAY_MS);
+}
+
+/**
+ * Release a claimed row for a LATER retry. workspace_id bound at $1.
+ *
+ * Guarded on `status = 'sending'` so it can only release a row this worker is
+ * actually holding — otherwise a slow retry could resurrect a row another worker
+ * has since sent.
+ */
+export function buildOutboxRetrySchedule(
+  workspaceId: string,
+  outboxId: string,
+  attempts: number,
+  now: Date,
+): SqlStatement {
+  if (!workspaceId) throw new Error('buildOutboxRetrySchedule: workspaceId is required');
+  const nextAt = new Date(now.getTime() + retryDelayMs(attempts));
+  return {
+    text: `UPDATE outbox
+           SET status = 'pending', next_attempt_at = $3::timestamptz
+           WHERE workspace_id = $1 AND id = $2 AND status = 'sending'`,
+    values: [workspaceId, outboxId, nextAt.toISOString()],
+  };
+}
+
+/**
+ * Rows ready for (another) send attempt, across every workspace — the sweep's
+ * input. Cross-tenant BY DESIGN, mirroring the production queue: the caller
+ * dispatches each row through the workspace-scoped path, which binds its own
+ * workspace_id.
+ *
+ * Two shapes are due:
+ *   - `pending` whose backoff has elapsed (or was never set), and
+ *   - `sending` rows abandoned by a process that died mid-send. Nothing else ever
+ *     recovers those, and a crashed worker must not cost a recipient their message.
+ */
+export function buildDueOutboxQuery(now: Date, limit = 500): SqlStatement {
+  return {
+    text: `SELECT id, workspace_id, payload->>'medium' AS medium
+             FROM outbox
+            WHERE attempts < ${MAX_SEND_ATTEMPTS}
+              AND (
+                (status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= $1::timestamptz))
+                OR (status = 'sending' AND created_at < $1::timestamptz - interval '15 minutes')
+              )
+            ORDER BY created_at
+            LIMIT $2`,
+    values: [now.toISOString(), limit],
+  };
 }
 
 /**
