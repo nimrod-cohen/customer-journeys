@@ -390,6 +390,24 @@ never the body (inv.2).
   SESv2 `Content.Simple.Attachments` (RawContent is BYTES; the SDK base64-encodes),
   Resend's JSON `attachments`, and a hand-built `multipart/mixed` for self-hosted
   SMTP (that path already composes its own message; SES needs no raw MIME).
+- **`cc` / `bcc` are COPIES, not sends** (email only; a text key 400s). One message is
+  rendered for the `to` profile and delivered to every address — `{{customer.*}}` is
+  the primary's throughout, and tracking attributes to them. Copies **never become
+  profiles** (that would fill the CDP with accountants and archive mailboxes and count
+  them as customers) and are **not subscribers**: `blocksCopy` gates them on
+  hard-bounce / permanent-soft-bounce / complaint ONLY, never on an unsubscribe. A
+  blocked copy is dropped and the rest still send; the response names dropped `cc`
+  addresses but only COUNTS dropped `bcc`, since nothing may echo a blind copy. Capped
+  at `MAX_RECIPIENTS` (20 incl. `to`), addresses validated before any transport sees
+  them (a CRLF would inject a header). Metered as `usage_counters.email_recipients` —
+  SES bills per recipient, and the monthly rollup would overwrite `emails_sent`.
+  **`messages_log.cc_addresses`/`bcc_addresses` exist for BOUNCE ATTRIBUTION**: one
+  message carries one VERP token, so `decideMailEvent` trusts the address the report
+  NAMES — but only if it is one this message actually reached, else a forged DSN could
+  suppress anyone. `bcc` never appears in a header (`buildMimeMessage` writes `Cc:`
+  only); the SMTP envelope carries every recipient. **Transactional mail sets no
+  `List-Unsubscribe` header at all**, which is what stops a cc'd reader's one-click
+  unsubscribe from silently opting out the primary — keep it that way.
 - **Consent vs deliverability are separate gates** (`decideTransactionalSend`, pure).
   Hard bounce, permanent soft bounce and complaint ALWAYS block — no flag overrides
   them, because mailing a dead box or a complainant damages the shared IP and cannot

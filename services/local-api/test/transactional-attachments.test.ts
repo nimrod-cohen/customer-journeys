@@ -8,8 +8,11 @@ import { describe, it, expect } from 'vitest';
 import {
   parseAttachments,
   parseTransactionalRequest,
+  parseRecipientList,
+  blocksCopy,
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
+  MAX_RECIPIENTS,
 } from '../src/transactional-send.js';
 
 const b64 = (s: string) => Buffer.from(s).toString('base64');
@@ -122,5 +125,80 @@ describe('parseTransactionalRequest with attachments', () => {
   it('surfaces an attachment problem as the request error', () => {
     const r = parseTransactionalRequest({ template: 'otp', to: 'a@b.com', attachments: 'nope' });
     expect(r).toEqual({ error: expect.stringMatching(/attachments/) });
+  });
+});
+
+describe('parseRecipientList (cc / bcc)', () => {
+  it('accepts a single address or a list, and treats absence as none', () => {
+    expect(parseRecipientList('a@b.com', 'cc')).toEqual(['a@b.com']);
+    expect(parseRecipientList(['a@b.com', 'c@d.com'], 'cc')).toEqual(['a@b.com', 'c@d.com']);
+    expect(parseRecipientList(undefined, 'cc')).toEqual([]);
+    expect(parseRecipientList(null, 'bcc')).toEqual([]);
+    expect(parseRecipientList('', 'cc')).toEqual([]);
+  });
+
+  // The same address twice is one delivery; two copies of one message reads as a
+  // bug in the sender.
+  it('de-duplicates case-insensitively', () => {
+    expect(parseRecipientList(['A@b.com', 'a@B.com', 'c@d.com'], 'cc')).toEqual(['A@b.com', 'c@d.com']);
+  });
+
+  // Addresses land in message headers, so a CRLF in one could append a header.
+  it('rejects an address containing CRLF, before any transport sees it', () => {
+    expect(parseRecipientList(['ok@b.com\r\nBcc: attacker@evil.com'], 'cc')).toEqual({
+      error: expect.stringMatching(/invalid email/i),
+    });
+  });
+
+  it('rejects malformed addresses and non-strings, naming the field', () => {
+    expect(parseRecipientList(['not-an-email'], 'bcc')).toEqual({ error: expect.stringMatching(/'bcc'/) });
+    expect(parseRecipientList([42], 'cc')).toEqual({ error: expect.stringMatching(/'cc'/) });
+  });
+});
+
+describe('parseTransactionalRequest with copies', () => {
+  const req = (over: Record<string, unknown>) =>
+    parseTransactionalRequest({ template: 'receipt', to: 'a@b.com', ...over });
+
+  it('carries cc and bcc through', () => {
+    const r = req({ cc: 'x@y.com', bcc: ['z@y.com'] });
+    if ('error' in r) throw new Error(r.error);
+    expect(r.cc).toEqual(['x@y.com']);
+    expect(r.bcc).toEqual(['z@y.com']);
+  });
+
+  it('defaults both to empty', () => {
+    const r = req({});
+    if ('error' in r) throw new Error(r.error);
+    expect(r.cc).toEqual([]);
+    expect(r.bcc).toEqual([]);
+  });
+
+  // The cap counts the primary too — the limit is on what one message costs.
+  it('refuses more recipients than the cap, naming the limit', () => {
+    const many = Array.from({ length: MAX_RECIPIENTS }, (_, i) => `c${i}@acme.com`);
+    expect(req({ cc: many })).toEqual({ error: expect.stringMatching(new RegExp(`${MAX_RECIPIENTS}`)) });
+  });
+
+  it('allows exactly the cap', () => {
+    const many = Array.from({ length: MAX_RECIPIENTS - 1 }, (_, i) => `c${i}@acme.com`);
+    expect('error' in req({ cc: many })).toBe(false);
+  });
+});
+
+describe('blocksCopy', () => {
+  // Deliverability and complaints apply to any address on the wire…
+  it('blocks a copy to a dead or complaining address', () => {
+    expect(blocksCopy('hard_bounce')).toBe(true);
+    expect(blocksCopy('permanent_soft_bounce')).toBe(true);
+    expect(blocksCopy('complaint')).toBe(true);
+  });
+
+  // …consent does not: a cc'd accountant never subscribed, so their unsubscribe
+  // from marketing says nothing about receiving an invoice copy.
+  it('does NOT block a copy to someone who merely unsubscribed', () => {
+    expect(blocksCopy('unsubscribe')).toBe(false);
+    expect(blocksCopy('manual')).toBe(false);
+    expect(blocksCopy(null)).toBe(false);
   });
 });

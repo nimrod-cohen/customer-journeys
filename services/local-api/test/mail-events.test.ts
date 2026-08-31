@@ -143,3 +143,71 @@ describe('buildMessageLookup', () => {
     expect(q.text).toContain('ses_message_id = $1');
   });
 });
+
+// A message with copies delivers ONE message to several addresses, all sharing one
+// VERP token — so the token alone cannot say which address failed. The report names
+// it. That name has to be used, and it has to be checked.
+describe('decideMailEvent with cc/bcc copies', () => {
+  const withCopies = async (): Promise<MessageRef> => ({
+    workspaceId: WS,
+    recipient: 'person@example.com',
+    cc: ['accounts@acme.com'],
+    bcc: ['archive@acme.com'],
+  });
+
+  // THE regression: without this the accountant's dead mailbox suppresses the
+  // customer, who then silently stops receiving their own receipts.
+  it('suppresses the CC address the report names, not the primary', async () => {
+    const d = await decideMailEvent(
+      { raw: bounce('5.1.1').replace('Final-Recipient: rfc822; person@example.com', 'Final-Recipient: rfc822; accounts@acme.com') },
+      SECRET,
+      withCopies,
+    );
+    expect(d.action).toBe('suppress');
+    expect(d.recipient).toBe('accounts@acme.com');
+    expect(d.recipient).not.toBe('person@example.com');
+  });
+
+  it('attributes a bounce for a BCC address to that address', async () => {
+    const d = await decideMailEvent(
+      { raw: bounce('5.1.1').replace('Final-Recipient: rfc822; person@example.com', 'Final-Recipient: rfc822; archive@acme.com') },
+      SECRET,
+      withCopies,
+    );
+    expect(d.recipient).toBe('archive@acme.com');
+  });
+
+  // The report body is written by a remote party. A named address that this message
+  // never went to is not evidence about that address — honouring it would let a
+  // forged DSN suppress anyone.
+  it('ignores a named address the message never went to, falling back to the primary', async () => {
+    const d = await decideMailEvent(
+      { raw: bounce('5.1.1').replace('Final-Recipient: rfc822; person@example.com', 'Final-Recipient: rfc822; victim@somewhere.com') },
+      SECRET,
+      withCopies,
+    );
+    expect(d.recipient).toBe('person@example.com');
+  });
+
+  it('still attributes to the primary when the report names it', async () => {
+    const d = await decideMailEvent({ raw: bounce('5.1.1') }, SECRET, withCopies);
+    expect(d.recipient).toBe('person@example.com');
+  });
+
+  it('matches the named address case-insensitively', async () => {
+    const d = await decideMailEvent(
+      { raw: bounce('5.1.1').replace('Final-Recipient: rfc822; person@example.com', 'Final-Recipient: rfc822; Accounts@ACME.com') },
+      SECRET,
+      withCopies,
+    );
+    expect(d.recipient?.toLowerCase()).toBe('accounts@acme.com');
+  });
+});
+
+describe('buildMessageLookup', () => {
+  it('reads the copies alongside the primary recipient', () => {
+    const q = buildMessageLookup(MSG);
+    expect(q.text).toMatch(/cc_addresses/);
+    expect(q.text).toMatch(/bcc_addresses/);
+  });
+});

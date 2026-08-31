@@ -42,7 +42,12 @@ export interface MailEventDecision {
 /** The message row we resolve from a verified VERP token. */
 export interface MessageRef {
   readonly workspaceId: string;
+  /** The primary recipient (the profile the message was rendered for). */
   readonly recipient: string | null;
+  /** Visible copies this message carried, if any. */
+  readonly cc?: readonly string[];
+  /** Blind copies. Stored only so a bounce naming one can be attributed to it. */
+  readonly bcc?: readonly string[];
 }
 
 /**
@@ -86,6 +91,16 @@ export async function decideMailEvent(
   const classified = classifyInboundReport(parsed, messageId, ref.recipient);
   const suppress = classified.category === 'hard_bounce' || classified.category === 'complaint';
 
+  // WHICH address failed. The report names one, and it is usually right — a copy can
+  // bounce while the primary is fine, so the primary's address is the wrong answer.
+  // But the report body is written by a remote party, so the named address counts
+  // only when this message actually went to it. Anything else falls back to the
+  // primary; without that check, a forged DSN could suppress any address it liked.
+  const named = classified.recipients[0] ?? null;
+  const wasOnThisMessage =
+    !!named && recipientsOf(ref).some((a) => a.toLowerCase() === named.trim().toLowerCase());
+  const recipient = wasOnThisMessage ? named : ref.recipient;
+
   return {
     action: classified.category === 'other' ? 'record' : suppress ? 'suppress' : 'record',
     reason:
@@ -98,9 +113,14 @@ export async function decideMailEvent(
             : 'unrecognised report — recorded only',
     workspaceId: ref.workspaceId,
     messageId,
-    recipient: classified.recipients[0] ?? ref.recipient,
+    recipient,
     classified,
   };
+}
+
+/** Every address this message was delivered to: the primary plus its copies. */
+function recipientsOf(ref: MessageRef): string[] {
+  return [ref.recipient, ...(ref.cc ?? []), ...(ref.bcc ?? [])].filter((a): a is string => !!a);
 }
 
 function none(reason: string): MailEventDecision {
@@ -126,7 +146,9 @@ function extractToken(recipient: string | null): string | null {
  */
 export function buildMessageLookup(messageId: string): { text: string; values: unknown[] } {
   return {
-    text: `SELECT m.workspace_id, p.email AS recipient_email
+    text: `SELECT m.workspace_id, p.email AS recipient_email,
+                  COALESCE(m.cc_addresses, '{}') AS cc_addresses,
+                  COALESCE(m.bcc_addresses, '{}') AS bcc_addresses
              FROM messages_log m
              JOIN profiles p
                ON p.id = m.profile_id AND p.workspace_id = m.workspace_id

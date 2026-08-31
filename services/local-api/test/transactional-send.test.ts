@@ -177,6 +177,8 @@ describe('parseTransactionalRequest', () => {
       data: { code: '1' },
       ignoreUnsubscribe: false,
       attachments: [],
+      cc: [],
+      bcc: [],
     });
   });
 

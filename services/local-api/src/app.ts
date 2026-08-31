@@ -265,12 +265,23 @@ export function createApp(opts: CreateAppOptions): Hono {
 
     const lookup = async (messageId: string): Promise<MessageRef | null> => {
       const q = buildMessageLookup(messageId);
-      const { rows } = await opts.pool.query<{ workspace_id: string; recipient_email: string | null }>(
-        q.text,
-        q.values as unknown[],
-      );
+      const { rows } = await opts.pool.query<{
+        workspace_id: string;
+        recipient_email: string | null;
+        cc_addresses: string[] | null;
+        bcc_addresses: string[] | null;
+      }>(q.text, q.values as unknown[]);
       const r = rows[0];
-      return r ? { workspaceId: r.workspace_id, recipient: r.recipient_email } : null;
+      return r
+        ? {
+            workspaceId: r.workspace_id,
+            recipient: r.recipient_email,
+            // The copies come along so the report's named address can be checked
+            // against the addresses this message actually reached.
+            cc: r.cc_addresses ?? [],
+            bcc: r.bcc_addresses ?? [],
+          }
+        : null;
     };
 
     const decision = await decideMailEvent(

@@ -130,6 +130,7 @@ import { customerMerge } from '@cdp/shared';
 import {
   parseTransactionalRequest,
   decideTransactionalSend,
+  blocksCopy,
   dataMerge,
   renderTransactional,
   normalizeTransactionalKey,
@@ -7005,6 +7006,12 @@ async function sendTransactionalText(
       400,
     );
   }
+  if (parsed.cc.length > 0 || parsed.bcc.length > 0) {
+    return ok(
+      { error: `'${parsed.template}' is an ${medium.toUpperCase()} message, and text messages have no cc or bcc` },
+      400,
+    );
+  }
 
   // The workspace's default country turns a national number into E.164; without
   // one, only fully international numbers resolve.
@@ -7210,11 +7217,30 @@ export async function sendTransactional(
   const from = sender.rows[0] ? `${sender.rows[0].name} <${sender.rows[0].email}>` : null;
   if (!from) return ok({ error: `template '${parsed.template}' has an invalid From address` }, 409);
 
+  // Screen the COPIES. Deliverability and complaints apply to any address we put on
+  // the wire; consent does not — a cc'd accountant never subscribed, so their
+  // unsubscribe from a newsletter says nothing about an invoice copy. A blocked
+  // copy is dropped and the rest still go: a stale archive address must never cost
+  // the primary recipient their receipt.
+  const copies = [...parsed.cc, ...parsed.bcc];
+  const blocked = new Set<string>();
+  if (copies.length > 0) {
+    const { rows: supp } = await pool.query<{ email: string; reason: string }>(
+      'SELECT email::text AS email, reason FROM suppressions WHERE workspace_id = $1 AND email = ANY($2::citext[])',
+      [ws, copies],
+    );
+    for (const r of supp) if (blocksCopy(r.reason)) blocked.add(r.email.toLowerCase());
+  }
+  const cc = parsed.cc.filter((a) => !blocked.has(a.toLowerCase()));
+  const bcc = parsed.bcc.filter((a) => !blocked.has(a.toLowerCase()));
+
   const { ses } = await emailSenderForWorkspace(pool, ws, deps);
   try {
     await ses.sendEmail({
       from,
       to: parsed.to,
+      ...(cc.length > 0 ? { cc } : {}),
+      ...(bcc.length > 0 ? { bcc } : {}),
       subject: rendered.subject,
       html: rendered.html,
       messageId,
@@ -7232,10 +7258,13 @@ export async function sendTransactional(
     return ok({ sent: false, error: e instanceof Error ? e.message : 'send failed' }, 502);
   }
 
+  // The copies are recorded ON the message. A bounce report names the address that
+  // failed, and without this there is no way to tell whether that address was even
+  // on this message — so a report naming anyone at all would suppress them.
   await pool.query(
-    `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium)
-     VALUES ($1, $2, $3, 'sent', 'email')`,
-    [ws, profileId, messageId],
+    `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, cc_addresses, bcc_addresses)
+     VALUES ($1, $2, $3, 'sent', 'email', $4, $5)`,
+    [ws, profileId, messageId, cc, bcc],
   );
   // Attachment bytes are metered per workspace: a 5 MB PDF to twenty recipients is
   // real bandwidth, not noise, and the counter has to exist before the cost view
@@ -7246,8 +7275,29 @@ export async function sendTransactional(
     const inc = buildUsageCounterIncrement(ws, new Date(), 'attachment_bytes', attachedBytes);
     await pool.query(inc.text, [...inc.values]);
   }
+  // SES bills per RECIPIENT, so a message with copies costs more than one send.
+  // Counted separately from `emails_sent`, which the monthly rollup derives from
+  // messages_log (one row per message) and would overwrite.
+  const recipientCount = 1 + cc.length + bcc.length;
+  if (recipientCount > 1) {
+    const inc = buildUsageCounterIncrement(ws, new Date(), 'email_recipients', recipientCount);
+    await pool.query(inc.text, [...inc.values]);
+  }
+  // Counts only for bcc — never the addresses, so nothing can echo a blind copy
+  // back out. Dropped cc addresses ARE named: the caller supplied them and needs to
+  // know which one is unreachable.
+  const droppedCc = parsed.cc.filter((a) => blocked.has(a.toLowerCase()));
+  const droppedBcc = parsed.bcc.length - bcc.length;
   return ok(
-    { sent: true, message_id: messageId, ...(parsed.attachments.length > 0 ? { attachments: parsed.attachments.length } : {}) },
+    {
+      sent: true,
+      message_id: messageId,
+      ...(parsed.attachments.length > 0 ? { attachments: parsed.attachments.length } : {}),
+      recipients: { to: 1, cc: cc.length, bcc: bcc.length },
+      ...(droppedCc.length > 0 || droppedBcc > 0
+        ? { dropped: { cc: droppedCc, bcc: droppedBcc, reason: 'suppressed — hard bounce or spam complaint' } }
+        : {}),
+    },
     200,
   );
 }

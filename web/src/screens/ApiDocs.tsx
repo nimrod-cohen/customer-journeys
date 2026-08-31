@@ -220,6 +220,41 @@ export function ApiDocs() {
           <Code>{'{{…}}'}</Code> visible.
         </p>
 
+        <p class="mt-4 text-sm font-semibold text-ink-900">Copies: cc and bcc</p>
+        <p class="mt-1 text-sm text-stone-600">
+          Put someone else on the message — an admin on an order receipt, an accountant on an
+          invoice. Each takes one address or a list. Email only: cc or bcc on an SMS/WhatsApp key is
+          a <Code>400</Code>.
+        </p>
+        <Pre>{`curl -X POST ${origin}/v1/send \\
+  -H 'content-type: application/json' \\
+  -H 'authorization: Bearer sk_live_your_secret_key' \\
+  -d '{ "template": "receipt",
+        "to":  "jane@example.com",
+        "cc":  ["accounts@acme.com"],
+        "bcc": ["archive@acme.com"],
+        "data": { "order": "1234" } }'
+# → { "sent": true, "message_id": "…", "recipients": { "to": 1, "cc": 1, "bcc": 1 } }`}</Pre>
+        <p class="mt-2 text-sm text-stone-600">
+          <b>The message is rendered once, for <Code>to</Code>.</b> That is who{' '}
+          <Code>{'{{customer.first_name}}'}</Code> refers to, so a cc'd reader sees the primary
+          recipient's name — this is one message with copies, not several personalised sends. Opens
+          and clicks are attributed to the primary for the same reason.
+        </p>
+        <p class="mt-2 text-sm text-stone-600">
+          <b>Copies are addresses, not people.</b> They never become profiles, never enter segments,
+          and are never counted as customers. They are also not subscribers: an unsubscribe does{' '}
+          <b>not</b> stop a copy, because someone who opted out of your newsletter never agreed or
+          declined to be cc'd on an invoice. What does stop one is a hard bounce or a spam complaint
+          — that address is dropped, the rest of the message still goes, and the response says which
+          (<Code>dropped</Code>). A bcc is only ever counted there, never listed back.
+        </p>
+        <p class="mt-2 text-xs text-stone-500">
+          Up to <b>20 addresses</b> per message counting <Code>to</Code>, and <Code>to</Code> stays a
+          single address — it identifies the person the message is for. Sending is billed per
+          recipient.
+        </p>
+
         <p class="mt-4 text-sm font-semibold text-ink-900">Attaching files</p>
         <p class="mt-1 text-sm text-stone-600">
           Send files with the message by passing them base64-encoded. <Code>filename</Code> and{' '}

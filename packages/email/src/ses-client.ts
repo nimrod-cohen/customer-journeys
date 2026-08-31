@@ -76,8 +76,15 @@ export interface EmailAttachment {
 export interface SendEmailInput {
   /** From address built from the workspace sending identity (§10). */
   readonly from: string;
-  /** Single recipient address. */
+  /** Single recipient address — the person the message is rendered for. */
   readonly to: string;
+  /**
+   * Visible copies. A cc is not a subscriber and never a profile: the message is
+   * rendered once, for `to`, and everyone else receives that same message.
+   */
+  readonly cc?: readonly string[];
+  /** Blind copies. NEVER echoed into a header the to/cc can see. */
+  readonly bcc?: readonly string[];
   /** Subject line. */
   readonly subject: string;
   /** Compiled, merge-substituted HTML body (never hand-rolled). */
@@ -215,7 +222,11 @@ export class ProdSesEmailClient implements SesEmailClient {
     const out = await this.client.send(
       new SendEmailCommand({
         FromEmailAddress: input.from,
-        Destination: { ToAddresses: [input.to] },
+        Destination: {
+          ToAddresses: [input.to],
+          ...(input.cc && input.cc.length > 0 ? { CcAddresses: [...input.cc] } : {}),
+          ...(input.bcc && input.bcc.length > 0 ? { BccAddresses: [...input.bcc] } : {}),
+        },
         ...(input.configurationSetName
           ? { ConfigurationSetName: input.configurationSetName }
           : {}),

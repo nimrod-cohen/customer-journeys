@@ -59,6 +59,8 @@ export function createResendEmailClient(
         subject: input.subject,
         html: input.html,
       };
+      if (input.cc && input.cc.length > 0) payload.cc = [...input.cc];
+      if (input.bcc && input.bcc.length > 0) payload.bcc = [...input.bcc];
       if (input.headers && Object.keys(input.headers).length > 0) payload.headers = input.headers;
       // Resend takes the file base64-encoded in the JSON body — exactly the form it
       // reached us in, so nothing is decoded on this path.

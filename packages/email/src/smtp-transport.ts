@@ -60,7 +60,10 @@ export function makeSmtpTransport(cfg: SmtpTransportConfig): SmtpTransport & { c
       await transporter.sendMail({
         // The VERP bounce address — NOT the visible From. This is what makes an
         // asynchronous bounce attributable to one exact message.
-        envelope: { from: envelope.returnPath, to: envelope.to },
+        // Every recipient goes in the ENVELOPE — including bcc, which appears in no
+        // header. nodemailer would otherwise derive the envelope from the headers
+        // and silently never deliver the blind copies.
+        envelope: { from: envelope.returnPath, to: [...envelope.recipients] },
         raw: envelope.raw,
       });
     },

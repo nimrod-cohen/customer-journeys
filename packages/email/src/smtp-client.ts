@@ -23,8 +23,16 @@ import { verpReturnPath } from './verp.js';
 export interface SmtpEnvelope {
   /** MAIL FROM — the VERP bounce address, never the visible From:. */
   readonly returnPath: string;
-  /** RCPT TO. */
+  /** The primary recipient (the visible `To:`). */
   readonly to: string;
+  /**
+   * EVERY address the message is delivered to — `to` plus cc plus bcc.
+   *
+   * The envelope is what actually decides delivery, and it is also what keeps a
+   * bcc blind: the address appears here and in no header, so no other recipient
+   * can see it.
+   */
+  readonly recipients: readonly string[];
   /** The full message: headers and body. */
   readonly raw: string;
 }
@@ -46,7 +54,7 @@ export interface SmtpEmailConfig {
   readonly messageIdDomain?: string;
 }
 
-/** Fold a header value onto one line; strips CR/LF so a merged value cannot inject headers. */
+/** Fold a header value onto one line; strips CR/LF so a value cannot inject headers. */
 function headerValue(v: string): string {
   return String(v ?? '').replace(/[\r\n]+/g, ' ').trim();
 }
@@ -130,6 +138,9 @@ export function buildMimeMessage(
   const headers: string[] = [
     `From: ${headerValue(input.from)}`,
     `To: ${headerValue(input.to)}`,
+    // Cc is visible by definition; Bcc deliberately gets NO header — it travels in
+    // the SMTP envelope only, which is the whole meaning of "blind".
+    ...(input.cc && input.cc.length > 0 ? [`Cc: ${input.cc.map(headerValue).join(', ')}`] : []),
     `Subject: ${headerValue(input.subject)}`,
     `Message-ID: <${messageId}@${messageIdDomain}>`,
     `Date: ${new Date().toUTCString()}`,
@@ -185,6 +196,7 @@ export function createSmtpEmailClient(cfg: SmtpEmailConfig, transport: SmtpTrans
       await transport.send({
         returnPath: verpReturnPath(cfg.bounceDomain, cfg.verpSecret, messageId),
         to: input.to,
+        recipients: [input.to, ...(input.cc ?? []), ...(input.bcc ?? [])],
         raw,
       });
 

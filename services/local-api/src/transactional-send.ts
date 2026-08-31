@@ -348,6 +348,42 @@ export function parseAttachments(raw: unknown): ParsedAttachments | { error: str
   return { attachments: out };
 }
 
+// ── copies (cc / bcc) ────────────────────────────────────────────────────────
+//
+// A copy is not a second send and not a subscriber. ONE message is rendered for
+// the `to` profile and delivered to several addresses, so `{{customer.*}}` is the
+// primary's throughout — a cc'd reader sees the primary's name, exactly as cc
+// works everywhere else.
+
+/** Cap on to + cc + bcc for one send. SES allows 50; this is friendlier and ample. */
+export const MAX_RECIPIENTS = 20;
+
+/**
+ * Parse a `cc`/`bcc` field: a single address or a list of them.
+ *
+ * Addresses end up in message headers, so a CR or LF in one could append a header
+ * of its own — `isEmailAddress` rejects those along with everything else malformed.
+ * De-duplicated case-insensitively: the same address twice is one delivery, and
+ * sending someone two copies of one message looks like a bug in the sender.
+ */
+export function parseRecipientList(raw: unknown, field: 'cc' | 'bcc'): string[] | { error: string } {
+  if (raw === undefined || raw === null || raw === '') return [];
+  const list = Array.isArray(raw) ? raw : [raw];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const v of list) {
+    if (typeof v !== 'string') return { error: `'${field}' must be an email address or a list of them` };
+    const addr = v.trim();
+    if (!addr) continue;
+    if (!isEmailAddress(addr)) return { error: `'${field}' contains an invalid email address: ${addr.slice(0, 80)}` };
+    const key = addr.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(addr);
+  }
+  return out;
+}
+
 /** A validated request body. */
 export interface TransactionalRequest {
   readonly template: string;
@@ -357,6 +393,10 @@ export interface TransactionalRequest {
   readonly ignoreUnsubscribe: boolean;
   /** Files to attach. Email only — a text message has nowhere to put them. */
   readonly attachments: readonly ParsedAttachment[];
+  /** Visible copies. Email only. */
+  readonly cc: readonly string[];
+  /** Blind copies. Email only, and never echoed anywhere a recipient can see. */
+  readonly bcc: readonly string[];
 }
 
 /**
@@ -378,11 +418,40 @@ export function parseTransactionalRequest(body: unknown): TransactionalRequest |
   }
   const att = parseAttachments(b.attachments);
   if ('error' in att) return { error: att.error };
+
+  const cc = parseRecipientList(b.cc, 'cc');
+  if ('error' in cc) return { error: cc.error };
+  const bcc = parseRecipientList(b.bcc, 'bcc');
+  if ('error' in bcc) return { error: bcc.error };
+  const total = 1 + cc.length + bcc.length;
+  if (total > MAX_RECIPIENTS) {
+    return { error: `too many recipients: ${total} — at most ${MAX_RECIPIENTS} per message, counting to, cc and bcc` };
+  }
+
   return {
     template,
     to,
     data: (data as Record<string, unknown>) ?? {},
     ignoreUnsubscribe: b.ignore_unsubscribe === true,
     attachments: att.attachments,
+    cc,
+    bcc,
   };
+}
+
+
+/**
+ * Reasons a COPY is dropped. Deliberately narrower than the primary's gate.
+ *
+ * A cc'd accountant never subscribed to anything, so an unsubscribe says nothing
+ * about whether they should receive an invoice copy — only that they do not want
+ * marketing. What does apply is deliverability and complaints: mailing a dead box
+ * or someone who reported us as spam damages the sending reputation of every other
+ * tenant, whoever the message was for.
+ */
+const COPY_BLOCKING_REASONS = new Set(['hard_bounce', 'permanent_soft_bounce', 'complaint']);
+
+/** Whether a suppression reason blocks a cc/bcc copy. PURE. */
+export function blocksCopy(suppressionReason: string | null | undefined): boolean {
+  return !!suppressionReason && COPY_BLOCKING_REASONS.has(suppressionReason);
 }
