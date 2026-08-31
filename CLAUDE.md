@@ -258,8 +258,16 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
 - **Every message is signed TWICE**: `d=<customer-domain>` for DMARC alignment, and
   `d=journeys.on-grow.com` from the `platform` selector. The second signature is what
   lets ONE Yahoo CFL registration and ONE reputation view cover every tenant — feedback
-  loops bind to an IP or a DKIM domain, never to a company. OpenDKIM's `SigningTable` is
-  a `refile:`, so a `*` entry adds the platform signature to all mail.
+  loops bind to an IP or a DKIM domain, never to a company.
+  **A `refile:` SigningTable is NOT enough for two signatures** — `MultipleSignatures
+  yes` is, and without it OpenDKIM applies ONLY THE FIRST MATCHING ENTRY. With the
+  catch-all platform entry listed first, every message got the platform signature and
+  nothing else, so no customer domain was ever DMARC-aligned while the tables read as
+  if they were. Customer signing is ONE catch-all pair: KeyTable
+  `customer %:cdp:/etc/opendkim/keys/platform.key` (a lone `%` is replaced with the
+  sender's domain) plus SigningTable `* customer`, so one key file signs for every
+  customer domain and adding a domain needs no work on the box. A more specific entry
+  still wins its own `(d=, s=)`, so `on-grow.com` keeps signing with its own key.
 - **Google Postmaster Tools (API v2)** registers each customer domain under OUR account,
   so the customer publishes one more DNS record instead of creating a Google account.
   Two traps, both found against the live API: `domainStats:query` needs `parent` in the
