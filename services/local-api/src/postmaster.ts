@@ -124,6 +124,11 @@ function googleDate(d: Date): { year: number; month: number; day: number } {
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
 }
 
+/** The domain itself, normalized — what `domainId` wants (no `domains/` prefix). */
+function bareDomain(domain: string): string {
+  return domain.trim().toLowerCase();
+}
+
 function resourceName(domain: string): string {
   return `domains/${encodeURIComponent(domain.trim().toLowerCase())}`;
 }
@@ -163,8 +168,12 @@ export function makePostmasterClient(
   const ok = (s: number) => s >= 200 && s < 300;
 
   return {
+    // Registration is AIP-133 shaped: the id goes in `domainId`, NOT in the body.
+    // Sending `{ name: 'domains/<d>' }` — the obvious reading of the resource docs —
+    // is rejected with `Unknown name "name": Cannot find field`, since the request
+    // message has no such field. Found against the live API.
     async createDomain(domain) {
-      const res = await call('POST', '/domains', { name: resourceName(domain) });
+      const res = await call('POST', `/domains?domainId=${encodeURIComponent(bareDomain(domain))}`, {});
       // Already registered is a SUCCESS: onboarding gets retried in practice, and a
       // second attempt must not look like a failure.
       if (res.status === 409) return { name: resourceName(domain) };
@@ -172,8 +181,11 @@ export function makePostmasterClient(
       return { name: parse<{ name?: string }>(res.body)?.name ?? resourceName(domain) };
     },
 
+    // `verificationMethod` is REQUIRED and its enum is `TXT` | `CNAME` — not the
+    // `DNS_TXT` the site-verification API uses. Omitting it returns a bare
+    // INVALID_ARGUMENT that names nothing.
     async getVerificationToken(domain) {
-      const res = await call('GET', `/${resourceName(domain)}/verificationToken`);
+      const res = await call('GET', `/${resourceName(domain)}/verificationToken?verificationMethod=TXT`);
       if (!ok(res.status)) throw new Error(`postmaster: token for ${domain} failed (${res.status})`);
       const token = parse<{ token?: string; verificationToken?: string }>(res.body);
       const value = token?.token ?? token?.verificationToken ?? null;
@@ -181,13 +193,15 @@ export function makePostmasterClient(
       return value;
     },
 
+    /**
+     * Ask Google to look for the record. The method must match the one the token
+     * was issued for, and success is a bare `{}` with a 200 — there is no `verified`
+     * field to read, so treating its absence as "not verified" would report every
+     * successful verification as a failure.
+     */
     async verifyDomain(domain) {
-      const res = await call('POST', `/${resourceName(domain)}:verify`);
-      if (ok(res.status)) {
-        const parsed = parse<{ verified?: boolean; state?: string }>(res.body);
-        const verified = parsed?.verified === true || parsed?.state === 'VERIFIED';
-        return { verified, detail: verified ? null : 'Google did not report the domain as verified' };
-      }
+      const res = await call('POST', `/${resourceName(domain)}:verify?verificationMethod=TXT`);
+      if (ok(res.status)) return { verified: true, detail: null };
       // A failed verification is the NORMAL case while DNS is still propagating, so
       // it is reported rather than thrown — the caller shows it as "not yet".
       if (res.status === 400 || res.status === 404 || res.status === 412) {

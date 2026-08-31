@@ -92,9 +92,9 @@ function clientWith(routes: Record<string, { status: number; body: string }>): P
 describe('syncDomainWithPostmaster', () => {
   it('registers, fetches the token, and reports verification', async () => {
     const c = clientWith({
-      'POST /domains': { status: 200, body: '{"name":"domains/acme.com"}' },
-      'GET /domains/acme.com/verificationToken': { status: 200, body: '{"token":"google-site-verification=xyz"}' },
-      'POST /domains/acme.com:verify': { status: 200, body: '{"verified":true}' },
+      'POST /domains?domainId=acme.com': { status: 200, body: '{"name":"domains/acme.com"}' },
+      'GET /domains/acme.com/verificationToken?verificationMethod=TXT': { status: 200, body: '{"token":"google-site-verification=xyz"}' },
+      'POST /domains/acme.com:verify?verificationMethod=TXT': { status: 200, body: '{}' },
     });
     expect(await syncDomainWithPostmaster(c, 'acme.com')).toEqual({
       token: 'google-site-verification=xyz',
@@ -105,9 +105,9 @@ describe('syncDomainWithPostmaster', () => {
 
   it('returns the token but unverified while DNS is still propagating', async () => {
     const c = clientWith({
-      'POST /domains': { status: 200, body: '{}' },
-      'GET /domains/acme.com/verificationToken': { status: 200, body: '{"token":"tok"}' },
-      'POST /domains/acme.com:verify': { status: 404, body: '{}' },
+      'POST /domains?domainId=acme.com': { status: 200, body: '{}' },
+      'GET /domains/acme.com/verificationToken?verificationMethod=TXT': { status: 200, body: '{"token":"tok"}' },
+      'POST /domains/acme.com:verify?verificationMethod=TXT': { status: 404, body: '{}' },
     });
     const r = await syncDomainWithPostmaster(c, 'acme.com');
     expect(r.token).toBe('tok');
@@ -125,9 +125,9 @@ describe('syncDomainWithPostmaster', () => {
 
   it('still verifies when the token endpoint fails but verify succeeds', async () => {
     const c = clientWith({
-      'POST /domains': { status: 200, body: '{}' },
-      'GET /domains/acme.com/verificationToken': { status: 500, body: '' },
-      'POST /domains/acme.com:verify': { status: 200, body: '{"verified":true}' },
+      'POST /domains?domainId=acme.com': { status: 200, body: '{}' },
+      'GET /domains/acme.com/verificationToken?verificationMethod=TXT': { status: 500, body: '' },
+      'POST /domains/acme.com:verify?verificationMethod=TXT': { status: 200, body: '{}' },
     });
     const r = await syncDomainWithPostmaster(c, 'acme.com');
     expect(r.token).toBeNull();
@@ -136,9 +136,9 @@ describe('syncDomainWithPostmaster', () => {
 
   it('is idempotent for an already-registered domain', async () => {
     const c = clientWith({
-      'POST /domains': { status: 409, body: '{"error":"exists"}' },
-      'GET /domains/acme.com/verificationToken': { status: 200, body: '{"token":"tok"}' },
-      'POST /domains/acme.com:verify': { status: 200, body: '{"verified":true}' },
+      'POST /domains?domainId=acme.com': { status: 409, body: '{"error":"exists"}' },
+      'GET /domains/acme.com/verificationToken?verificationMethod=TXT': { status: 200, body: '{"token":"tok"}' },
+      'POST /domains/acme.com:verify?verificationMethod=TXT': { status: 200, body: '{}' },
     });
     expect((await syncDomainWithPostmaster(c, 'acme.com')).verified).toBe(true);
   });

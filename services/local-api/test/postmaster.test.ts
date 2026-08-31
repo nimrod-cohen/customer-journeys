@@ -24,19 +24,19 @@ function fake(routes: Record<string, { status: number; body: string }>) {
 
 describe('createDomain', () => {
   it('registers the domain under our account', async () => {
-    const f = fake({ 'POST /domains': { status: 200, body: '{"name":"domains/acme.com"}' } });
+    const f = fake({ 'POST /domains?domainId=acme.com': { status: 200, body: '{"name":"domains/acme.com"}' } });
     expect(await f.client.createDomain(DOMAIN)).toEqual({ name: 'domains/acme.com' });
     expect(f.calls[0]!.auth).toBe('Bearer tok-123');
   });
 
   // Onboarding gets retried; a domain already registered is not a failure.
   it('treats an already-registered domain as success', async () => {
-    const f = fake({ 'POST /domains': { status: 409, body: '{"error":"exists"}' } });
+    const f = fake({ 'POST /domains?domainId=acme.com': { status: 409, body: '{"error":"exists"}' } });
     await expect(f.client.createDomain(DOMAIN)).resolves.toEqual({ name: 'domains/acme.com' });
   });
 
   it('throws on a real API failure', async () => {
-    const f = fake({ 'POST /domains': { status: 500, body: 'boom' } });
+    const f = fake({ 'POST /domains?domainId=acme.com': { status: 500, body: 'boom' } });
     await expect(f.client.createDomain(DOMAIN)).rejects.toThrow(/500/);
   });
 });
@@ -44,27 +44,29 @@ describe('createDomain', () => {
 describe('getVerificationToken', () => {
   it('returns the value the customer must publish', async () => {
     const f = fake({
-      'GET /domains/acme.com/verificationToken': { status: 200, body: '{"token":"google-site-verification=abc"}' },
+      'GET /domains/acme.com/verificationToken?verificationMethod=TXT': { status: 200, body: '{"token":"google-site-verification=abc"}' },
     });
     expect(await f.client.getVerificationToken(DOMAIN)).toBe('google-site-verification=abc');
   });
 
   it('throws when Google returns no token', async () => {
-    const f = fake({ 'GET /domains/acme.com/verificationToken': { status: 200, body: '{}' } });
+    const f = fake({ 'GET /domains/acme.com/verificationToken?verificationMethod=TXT': { status: 200, body: '{}' } });
     await expect(f.client.getVerificationToken(DOMAIN)).rejects.toThrow(/no verification token/);
   });
 });
 
 describe('verifyDomain', () => {
   it('reports success', async () => {
-    const f = fake({ 'POST /domains/acme.com:verify': { status: 200, body: '{"verified":true}' } });
+    // Google answers a successful verification with a bare `{}` — reading a
+    // `verified` field that is never sent would report every success as a failure.
+    const f = fake({ 'POST /domains/acme.com:verify?verificationMethod=TXT': { status: 200, body: '{}' } });
     expect(await f.client.verifyDomain(DOMAIN)).toEqual({ verified: true, detail: null });
   });
 
   // DNS propagation means "not yet" is the normal answer, not an error.
   it('reports a missing record as not-yet rather than throwing', async () => {
     for (const status of [400, 404, 412]) {
-      const f = fake({ 'POST /domains/acme.com:verify': { status, body: '{}' } });
+      const f = fake({ 'POST /domains/acme.com:verify?verificationMethod=TXT': { status, body: '{}' } });
       const r = await f.client.verifyDomain(DOMAIN);
       expect(r.verified).toBe(false);
       expect(r.detail).toMatch(/not found yet/);
@@ -72,7 +74,7 @@ describe('verifyDomain', () => {
   });
 
   it('still throws on an unexpected server error', async () => {
-    const f = fake({ 'POST /domains/acme.com:verify': { status: 503, body: '' } });
+    const f = fake({ 'POST /domains/acme.com:verify?verificationMethod=TXT': { status: 503, body: '' } });
     await expect(f.client.verifyDomain(DOMAIN)).rejects.toThrow(/503/);
   });
 });

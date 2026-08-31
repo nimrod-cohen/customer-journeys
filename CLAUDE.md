@@ -277,10 +277,16 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   for anyone to publish, so the warning could never be cleared.
 - **Google Postmaster Tools (API v2)** registers each customer domain under OUR account,
   so the customer publishes one more DNS record instead of creating a Google account.
-  Two traps, both found against the live API: `domainStats:query` needs `parent` in the
-  request BODY as well as the path, and `complianceStatus` returns
-  `complianceData.rowData[]` requirement/status pairs, not flat `spfStatus`/`dkimStatus`
-  fields. Verification is a readiness **warning** and never gates sending.
+  **Every one of its call shapes had to be found against the live API** — the obvious
+  reading of the resource docs is wrong in each case, and the errors name nothing:
+  registration is AIP-133 (`POST /domains?domainId=<domain>` with an EMPTY body; a
+  body of `{name:'domains/<d>'}` is refused with `Unknown name "name"`); the token and
+  verify calls REQUIRE `?verificationMethod=`, whose enum is `TXT`|`CNAME` (not the
+  site-verification API's `DNS_TXT`); a successful `:verify` returns a bare `{}` with
+  200, so reading a `verified` field reports every success as a failure;
+  `domainStats:query` needs `parent` in the request BODY as well as the path; and
+  `complianceStatus` returns `complianceData.rowData[]` requirement/status pairs, not
+  flat `spfStatus`/`dkimStatus` fields. Verification is a readiness **warning** and never gates sending.
 - **The sending-domain flow BRANCHES ON THE PROVIDER** (`emailProviderForWorkspace`).
   It assumed SES, so a self-hosted company opening its domain was told to add Amazon
   credentials it will never have. SES → the identity + CNAME flow; Resend → nothing to
