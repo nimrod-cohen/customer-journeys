@@ -4,12 +4,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { hasDatabaseUrl } from '@cdp/db';
 import { makeWorld, tokenFor, call, type TestWorld } from './seed.js';
 
-const CO_A = '0c0d0e05-0000-4000-8000-0000000000f1';
-const CO_B = '0c0d0e05-0000-4000-8000-0000000000f2';
-const WS_A = '0c0d0e05-0000-4000-8000-000000000a01'; // company A
-const WS_B = '0c0d0e05-0000-4000-8000-000000000a02'; // company B
-const ADMIN = '0c0d0e05-0000-4000-8000-0000000000b1';
-const USER = '0c0d0e05-0000-4000-8000-0000000000b2';
+const CO_A = '0c0de055-0000-4000-8000-0000000000f1';
+const CO_B = '0c0de055-0000-4000-8000-0000000000f2';
+const WS_A = '0c0de055-0000-4000-8000-000000000a01'; // company A
+const WS_B = '0c0de055-0000-4000-8000-000000000a02'; // company B
+const ADMIN = '0c0de055-0000-4000-8000-0000000000b1';
+const USER = '0c0de055-0000-4000-8000-0000000000b2';
 
 const describeMaybe = hasDatabaseUrl() ? describe : describe.skip;
 

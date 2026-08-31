@@ -8,12 +8,12 @@ import { makeLocalDeps } from '../src/index.js';
 import { sweepDueScheduledBroadcasts } from '../src/handlers.js';
 import type { Pool } from 'pg';
 
-const WS = '0c0d0e70-0000-4000-8000-000000000a01';
-const SEG = '0c0d0e70-0000-4000-8000-0000000000d1';
-const PROF = '0c0d0e70-0000-4000-8000-0000000000f1';
-const TPL = '0c0d0e70-0000-4000-8000-0000000000a2';
-const DUE = '0c0d0e70-0000-4000-8000-0000000000e1';
-const FUTURE = '0c0d0e70-0000-4000-8000-0000000000e2';
+const WS = '0c0df066-0000-4000-8000-000000000a01';
+const SEG = '0c0df066-0000-4000-8000-0000000000d1';
+const PROF = '0c0df066-0000-4000-8000-0000000000f1';
+const TPL = '0c0df066-0000-4000-8000-0000000000a2';
+const DUE = '0c0df066-0000-4000-8000-0000000000e1';
+const FUTURE = '0c0df066-0000-4000-8000-0000000000e2';
 
 const describeMaybe = hasDatabaseUrl() ? describe : describe.skip;
 

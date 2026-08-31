@@ -24,22 +24,34 @@ const emailToggle = (page: import('@playwright/test').Page) =>
 const smsToggle = (page: import('@playwright/test').Page) =>
   page.locator('[data-channel-group="sms_whatsapp"] [data-testid="channel-toggle"]');
 
+/**
+ * Drive the Unsubscribed toggle to `want`, waiting for the write only when there is
+ * one to wait for.
+ *
+ * The previous version waited for a PUT unconditionally after an `uncheck()`. A
+ * toggle that is ALREADY unchecked emits no change event, so no request is ever
+ * made and the wait sat there for the full 60s — the single flakiest test in the
+ * suite, failing on a timeout that said nothing about the cause. Reading the state
+ * first, and asserting it afterwards, removes the race in both directions.
+ */
+async function setUnsubscribed(page: import('@playwright/test').Page, want: boolean): Promise<void> {
+  const unsub = page.getByTestId('attr-unsubscribed');
+  await expect(unsub).toBeVisible();
+  if ((await unsub.isChecked()) === want) return; // already there: nothing will be sent
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/global-subscription') && r.request().method() === 'PUT'),
+    unsub.setChecked(want, { force: true }),
+  ]);
+  await expect(unsub).toBeChecked({ checked: want }); // the write landed AND the UI agrees
+}
+
 /** Reset the open profile to a clean FULLY-SUBSCRIBED baseline (every channel +
  *  topic on, no suppression) via the Attributes "Unsubscribed" toggle, so the test
  *  doesn't depend on residual state. Ends on the Subscriptions tab. */
 async function resetSubscribed(page: import('@playwright/test').Page): Promise<void> {
   await page.getByTestId('tab-attributes').click();
-  const unsub = page.getByTestId('attr-unsubscribed');
-  if (!(await unsub.isChecked())) {
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/global-subscription') && r.request().method() === 'PUT'),
-      unsub.check({ force: true }), // unsubscribe (cascade everything off)
-    ]);
-  }
-  await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/global-subscription') && r.request().method() === 'PUT'),
-    unsub.uncheck({ force: true }), // resume → every channel + topic back on
-  ]);
+  await setUnsubscribed(page, true); // unsubscribe (cascade everything off)
+  await setUnsubscribed(page, false); // resume → every channel + topic back on
   await page.getByTestId('tab-subscriptions').click();
   await page.getByTestId('subscriptions-tab').waitFor();
 }

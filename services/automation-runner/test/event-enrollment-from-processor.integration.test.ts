@@ -12,7 +12,7 @@ import type { EventRow } from '../src/core.js';
 import type { AutomationDefinition } from '../src/dsl.js';
 
 const RUN = hasDatabaseUrl();
-const WS = 'ca110002-0000-0000-0000-0000000000f5';
+const WS = 'ca110022-0000-0000-0000-0000000000f5';
 
 const eventDef = (eventType: string): AutomationDefinition =>
   ({
@@ -95,8 +95,8 @@ describe.skipIf(!RUN)('event enrollment from a processor-style tx (real Postgres
   it('the hook fires after the event lands — both the event row and the enrollment exist', async () => {
     await newAutomation(eventDef('signup'));
     const prof = await newProfile('p-proc');
-    await recordEventAndEnroll(prof, 'signup', {}, 'ca110002-0000-0000-0000-000000000001');
-    const ev = await admin.query('SELECT 1 FROM events WHERE workspace_id = $1 AND event_id = $2', [WS, 'ca110002-0000-0000-0000-000000000001']);
+    await recordEventAndEnroll(prof, 'signup', {}, 'ca110022-0000-0000-0000-000000000001');
+    const ev = await admin.query('SELECT 1 FROM events WHERE workspace_id = $1 AND event_id = $2', [WS, 'ca110022-0000-0000-0000-000000000001']);
     expect(ev.rowCount).toBe(1);
     expect(await enrollCount(prof)).toBe(1);
   });
@@ -104,14 +104,14 @@ describe.skipIf(!RUN)('event enrollment from a processor-style tx (real Postgres
   it('a replayed event_id (event insert is a no-op) does NOT cause a second enrollment', async () => {
     await newAutomation(eventDef('replay2'));
     const prof = await newProfile('p-proc-replay');
-    await recordEventAndEnroll(prof, 'replay2', {}, 'ca110002-0000-0000-0000-000000000002');
-    await recordEventAndEnroll(prof, 'replay2', {}, 'ca110002-0000-0000-0000-000000000002'); // same event_id
+    await recordEventAndEnroll(prof, 'replay2', {}, 'ca110022-0000-0000-0000-000000000002');
+    await recordEventAndEnroll(prof, 'replay2', {}, 'ca110022-0000-0000-0000-000000000002'); // same event_id
     expect(await enrollCount(prof)).toBe(1);
   });
 
   it('an event with no matching automation leaves automation_enrollments empty (no-op, never throws)', async () => {
     const prof = await newProfile('p-proc-nomatch');
-    await recordEventAndEnroll(prof, 'unmatched', {}, 'ca110002-0000-0000-0000-000000000003');
+    await recordEventAndEnroll(prof, 'unmatched', {}, 'ca110022-0000-0000-0000-000000000003');
     expect(await enrollCount(prof)).toBe(0);
   });
 });
