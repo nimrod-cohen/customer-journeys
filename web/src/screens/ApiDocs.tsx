@@ -234,11 +234,33 @@ export function ApiDocs() {
           unsubscribe never blocks a text.
         </p>
 
+        <p class="mt-4 text-sm font-semibold text-ink-900">What to retry</p>
+        <p class="mt-1 text-sm text-stone-600">
+          This call is <b>synchronous</b> — it hands the message to the provider while you wait. A{' '}
+          <Code>502</Code> means that handover failed (our mail server restarting, a provider
+          outage): <b>nothing was sent</b>, and retrying after a short pause is the right response.
+          Retry that one alone, with a growing delay.
+        </p>
+        <p class="mt-2 text-sm text-stone-600">
+          Nothing else is worth retrying. A <Code>200</Code> with <Code>"sent": false</Code> is a
+          decision we made about the recipient, and a <Code>4xx</Code> is something to fix in the
+          request — both will do the same thing next time. There is <b>no de-duplication</b> on this
+          endpoint, so retrying a call that actually succeeded sends a second message; only retry
+          when you got no success back.
+        </p>
+        <p class="mt-2 text-xs text-stone-500">
+          Broadcasts and automations behave differently: those are queued, and a send that fails
+          transiently is retried for you with a growing delay until it succeeds or is recorded as
+          failed. This endpoint is the one case where the retry is yours.
+        </p>
+
         <p class="mt-3 text-xs text-stone-500">
           A skipped send is still <Code>200</Code>, with{' '}
           <Code>{'{ "sent": false, "reason": … }'}</Code> — a decision, not a failure, so there is
           nothing to retry. <Code>404</Code> means no message carries that key in this workspace;{' '}
-          <Code>409</Code> means it exists but isn't ready to send yet (no content, or no From).
+          <Code>409</Code> means it exists but isn't ready to send yet (no content, or no From);{' '}
+          <Code>401</Code> means the key is wrong, revoked, or is the public write key rather than a{' '}
+          <Code>sk_live_</Code> secret.
         </p>
       </Card>
 
