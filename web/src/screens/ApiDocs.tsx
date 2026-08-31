@@ -189,12 +189,35 @@ export function ApiDocs() {
           leaving <Code>{'{{…}}'}</Code> visible in the message.
         </p>
 
-        <p class="mt-3 text-sm text-stone-600">
-          Values are inserted into the HTML body as <b>text</b> — <Code>&amp;</Code> and{' '}
-          <Code>&lt;</Code> in a value show up as written rather than reshaping the message. If a
-          parameter genuinely carries HTML you composed yourself, ask for it raw with three braces:{' '}
-          <Code>{'{{{data.body_html}}}'}</Code>. Subjects and text messages are plain text and are
-          never escaped.
+        <p class="mt-4 text-sm font-semibold text-ink-900">
+          Two braces or three: <Code>{'{{ }}'}</Code> is text, <Code>{'{{{ }}}'}</Code> is HTML
+        </p>
+        <p class="mt-1 text-sm text-stone-600">
+          In an email <b>body</b>, a value substituted with <b>two</b> braces is inserted as{' '}
+          <b>text</b>: the characters that mean something in HTML are escaped, so the recipient sees
+          exactly what you passed. With <b>three</b> braces the value is written as <b>markup</b>,
+          for the case where you composed the HTML yourself.
+        </p>
+        <Pre>{`data: { "who": "Smith & Sons", "block": "<b>Ready</b>" }
+
+{{data.who}}      →  Smith &amp; Sons      shows as:  Smith & Sons
+{{data.block}}    →  &lt;b&gt;Ready&lt;/b&gt;  shows as:  <b>Ready</b>   (as text)
+{{{data.block}}}  →  <b>Ready</b>          shows as:  Ready        (in bold)`}</Pre>
+        <p class="mt-2 text-sm text-stone-600">
+          The default is deliberate. Merge values are not always yours: a broadcast greeting someone
+          by <Code>{'{{customer.first_name}}'}</Code> renders a <b>profile attribute</b>, and those
+          can be written with the public tracking key from any web page. Rendered as markup, a saved
+          value could put someone else's link into mail sent from your verified domain. So reach for
+          three braces only for content you generate — <Code>{'{{{data.body_html}}}'}</Code> for a
+          body you composed — and never for something a visitor could have set.
+        </p>
+        <p class="mt-2 text-xs text-stone-500">
+          This applies to <b>HTML email bodies</b> — transactional, broadcasts and automations
+          alike. Subjects, SMS and WhatsApp bodies are plain text: nothing is escaped there, and
+          three braces mean nothing. Links are checked too: an <Code>href</Code> that resolves to
+          anything but <Code>http</Code>, <Code>https</Code>, <Code>mailto</Code> or <Code>tel</Code>{' '}
+          is dropped. An unknown token renders as nothing rather than leaving{' '}
+          <Code>{'{{…}}'}</Code> visible.
         </p>
 
         <p class="mt-4 text-sm font-semibold text-ink-900">Attaching files</p>
