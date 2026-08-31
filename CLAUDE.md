@@ -390,6 +390,18 @@ never the body (inv.2).
   SESv2 `Content.Simple.Attachments` (RawContent is BYTES; the SDK base64-encodes),
   Resend's JSON `attachments`, and a hand-built `multipart/mixed` for self-hosted
   SMTP (that path already composes its own message; SES needs no raw MIME).
+- **`to` accepts a LIST, and a list FANS OUT** — one message per address, each
+  rendered for that person (`{{customer.*}}` is theirs), each with its own consent
+  check, profile, `message_id` and `messages_log` row, and each isolated so one
+  refusal never stops the rest. Overrides the cc/bcc plan, which kept `to` single.
+  Internally `TransactionalRequest.to` is ALWAYS an array — one code path, so a lone
+  recipient cannot drift from the fan-out — while `toIsList` records what the caller
+  sent, because **the response mirrors the request**: a string returns the original
+  `{sent, message_id}` and a list returns `{sent: <count>, requested, results[]}`.
+  Callers integrated before this must not have their shape moved under them. Copies
+  ride on EVERY message of a fan-out (two `to` + one `cc` = the cc'd person gets two).
+  Text fans out the same way; `MAX_RECIPIENTS` caps `to` and, separately, the
+  recipients of any ONE message.
 - **`cc` / `bcc` are COPIES, not sends** (email only; a text key 400s). One message is
   rendered for the `to` profile and delivered to every address — `{{customer.*}}` is
   the primary's throughout, and tracking attributes to them. Copies **never become

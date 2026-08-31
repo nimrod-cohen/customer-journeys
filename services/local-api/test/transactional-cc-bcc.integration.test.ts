@@ -212,6 +212,87 @@ describeMaybe('POST /v1/send cc/bcc (real Postgres)', () => {
     expect(names).not.toContain('list-unsubscribe-post');
   });
 
+  // Several `to` addresses is a FAN-OUT: one message each, rendered for that person.
+  // The alternative — one message with several To: addresses — would greet everyone
+  // by the first person's name, which is what cc is for.
+  it('sends one personalised message per address, with its own id', async () => {
+    await pool.query(
+      `INSERT INTO profiles (workspace_id, email, attributes) VALUES
+         ($1,'ann@example.com','{"first_name":"Ann"}'::jsonb),
+         ($1,'bob@example.com','{"first_name":"Bob"}'::jsonb)`,
+      [WS],
+    );
+    const res = await send({ template: 'receipt', to: ['ann@example.com', 'bob@example.com'] });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ sent: 2, requested: 2 });
+    expect(body.results.map((r: { to: string; sent: boolean }) => [r.to, r.sent])).toEqual([
+      ['ann@example.com', true],
+      ['bob@example.com', true],
+    ]);
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0]!.html).toContain('Hi Ann');
+    expect(sent[1]!.html).toContain('Hi Bob'); // each greeted by their OWN name
+    expect(body.results[0].message_id).not.toBe(body.results[1].message_id);
+  });
+
+  // One recipient's refusal is theirs alone — the rest of the list still goes.
+  it('isolates a skipped recipient from the others', async () => {
+    await pool.query(
+      "INSERT INTO suppressions (workspace_id, email, reason, source) VALUES ($1,'blocked@example.com','unsubscribe','pref')",
+      [WS],
+    );
+    const res = await send({ template: 'receipt', to: ['blocked@example.com', 'ok@example.com'] });
+    const body = await res.json();
+    expect(body.sent).toBe(1);
+    expect(body.results[0]).toMatchObject({ to: 'blocked@example.com', sent: false });
+    expect(body.results[0].reason).toMatch(/ignore_unsubscribe/);
+    expect(body.results[1]).toMatchObject({ to: 'ok@example.com', sent: true });
+    expect(sent.map((m) => m.to)).toEqual(['ok@example.com']);
+  });
+
+  // The response mirrors the request, so a caller integrated against the single
+  // form keeps the exact shape it was written for.
+  it('keeps the single-address response shape for a plain string', async () => {
+    const res = await send({ template: 'receipt', to: 'solo@example.com' });
+    const body = await res.json();
+    expect(body.sent).toBe(true); // a boolean, not a count
+    expect(body.message_id).toBeTruthy();
+    expect(body.results).toBeUndefined();
+  });
+
+  // …and a one-element ARRAY still gets the list shape: the shape follows what was
+  // asked for, not how many happened to come back.
+  it('returns results for a one-element array', async () => {
+    const body = await (await send({ template: 'receipt', to: ['single@example.com'] })).json();
+    expect(body.sent).toBe(1);
+    expect(body.results).toHaveLength(1);
+  });
+
+  it('de-duplicates the same address listed twice', async () => {
+    const body = await (await send({ template: 'receipt', to: ['dup@example.com', 'DUP@example.com'] })).json();
+    expect(body.requested).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+
+  // A cc rides on EVERY message of a fan-out — that is what "copy me on these" means,
+  // and it is what housing's "CC admin" checkbox does.
+  it('puts the copies on every message of a fan-out', async () => {
+    await send({ template: 'receipt', to: ['one@example.com', 'two@example.com'], cc: ['admin@acme.com'] });
+    expect(sent).toHaveLength(2);
+    expect(sent.every((m) => m.cc?.[0] === 'admin@acme.com')).toBe(true);
+  });
+
+  it('400s more `to` addresses than the cap', async () => {
+    const res = await send({
+      template: 'receipt',
+      to: Array.from({ length: MAX_RECIPIENTS + 1 }, (_, i) => `t${i}@example.com`),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/'to'/);
+  });
+
   it('400s an address that could inject a header', async () => {
     const res = await send({ template: 'receipt', to: 'x@example.com', cc: ['ok@acme.com\r\nBcc: attacker@evil.com'] });
     expect(res.status).toBe(400);

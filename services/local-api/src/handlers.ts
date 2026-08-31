@@ -44,6 +44,7 @@ import {
   normalizePhone,
   resolveChannelProvider,
   type Medium,
+  type ChannelProvider,
   type WhatsAppTemplatesConfig,
 } from '@cdp/channels';
 import { parsePageParams, pageClause, pageMeta } from './pagination.js';
@@ -7013,9 +7014,62 @@ async function sendTransactionalText(
     );
   }
 
+  // One text per recipient, each rendered for that person — the same fan-out the
+  // email path does, for the same reason: a list of recipients means everyone gets
+  // a message written for them, and one person's opt-out must not touch the rest.
+  const defaultCountry = await defaultPhoneCountry(pool, ws);
+  const reader = {
+    query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+      const r = await pool.query(text, values ? [...values] : undefined);
+      return { rows: r.rows as T[] };
+    },
+  };
+  // A real '019'/Meta gateway when the company configured one, else the
+  // deterministic MOCK — so dev and e2e send text for real, offline.
+  const cfg = await channelConfigForWorkspace(reader, ws, medium);
+  const provider = resolveChannelProvider(medium, cfg ?? undefined, deps.channelHttp);
+
+  const results: TransactionalSendResult[] = [];
+  for (const rawTo of parsed.to) {
+    results.push(
+      await sendOneTransactionalText({ pool, ws, to: rawTo, parsed, tpl, medium, defaultCountry, provider }),
+    );
+  }
+
+  if (!parsed.toIsList) {
+    const only = results[0]!;
+    if (only.sent) return ok({ sent: true, message_id: only.message_id, medium }, 200);
+    // A bad number is the caller's mistake to fix, not a decision about the
+    // recipient — so it is a 400, while a consent skip is a deliberate 200.
+    if (only.invalid) return ok({ error: `'to' is not a valid phone number: ${only.to}` }, 400);
+    return only.error !== undefined
+      ? ok({ sent: false, error: only.error }, 502)
+      : ok({ sent: false, reason: only.reason }, 200);
+  }
+  return ok(
+    { sent: results.filter((r) => r.sent).length, requested: results.length, results, medium },
+    200,
+  );
+}
+
+/**
+ * Send the text template to ONE recipient. Never throws — a failure comes back as
+ * that recipient's result so the rest of the list still goes.
+ */
+async function sendOneTransactionalText(args: {
+  pool: Pool;
+  ws: string;
+  to: string;
+  parsed: TransactionalRequest;
+  tpl: { id: string; body: string; transactional_medium: string | null };
+  medium: Medium;
+  defaultCountry: string | null;
+  provider: ChannelProvider;
+}): Promise<TransactionalSendResult> {
+  const { pool, ws, to, parsed, tpl, medium, defaultCountry, provider } = args;
   // The workspace's default country turns a national number into E.164; without
   // one, only fully international numbers resolve.
-  const phone = normalizePhone(parsed.to, await defaultPhoneCountry(pool, ws));
+  const phone = normalizePhone(to, defaultCountry);
 
   // Consent is profile-keyed, so an opt-out survives a change of phone number.
   const r = await pool.query<{ profile_id: string | null; opted_out: boolean }>(
@@ -7032,17 +7086,16 @@ async function sendTransactionalText(
     { ignoreMarketingConsent: parsed.ignoreUnsubscribe },
   );
   if (!verdict.send) {
-    // A bad number is the caller's mistake to fix, not a decision about the
-    // recipient — so it is a 400, while a consent skip is a deliberate 200.
-    if (!phone) return ok({ error: `'to' is not a valid phone number: ${parsed.to}` }, 400);
-    return ok({ sent: false, reason: verdict.reason }, 200);
+    return phone
+      ? { to, sent: false, reason: verdict.reason }
+      : { to, sent: false, reason: verdict.reason, invalid: true };
   }
 
   const idres = await ingestIdentityFrom(pool, ws, { phone: phone! });
-  if (!idres.ok) return ok({ error: idres.error }, idres.status);
+  if (!idres.ok) return { to, sent: false, error: idres.error };
 
-  const client = await pool.connect();
   let profileId: string;
+  const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const up = await upsertProfileByIdentity(client, ws, idres.identity, {});
@@ -7050,10 +7103,10 @@ async function sendTransactionalText(
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
+    return { to, sent: false, error: e instanceof Error ? e.message : 'could not record the recipient' };
+  } finally {
     client.release();
-    throw e;
   }
-  client.release();
 
   const profile = await pool.query<{ email: string | null; phone: string | null; attributes: Record<string, unknown> | null }>(
     'SELECT email, phone, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
@@ -7062,23 +7115,11 @@ async function sendTransactionalText(
   const merge = { ...customerMerge(profile.rows[0] ?? {}), ...dataMerge(parsed.data) };
   const body = renderTemplateBody(tpl.body, merge);
 
-  const reader = {
-    query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
-      const r = await pool.query(text, values ? [...values] : undefined);
-      return { rows: r.rows as T[] };
-    },
-  };
-  // A real '019'/Meta gateway when the company configured one, else the
-  // deterministic MOCK — so dev and e2e send text for real, offline.
-  const cfg = await channelConfigForWorkspace(reader, ws, medium);
-  const provider = resolveChannelProvider(medium, cfg ?? undefined, deps.channelHttp);
-
   let providerMessageId: string;
   try {
-    const res = await provider.send({ to: phone!, body });
-    providerMessageId = res.providerMessageId;
+    ({ providerMessageId } = await provider.send({ to: phone!, body }));
   } catch (e) {
-    return ok({ sent: false, error: e instanceof Error ? e.message : 'send failed' }, 502);
+    return { to, sent: false, error: e instanceof Error ? e.message : 'send failed' };
   }
 
   await pool.query(
@@ -7086,7 +7127,7 @@ async function sendTransactionalText(
      VALUES ($1, $2, $3, 'sent', $4)`,
     [ws, profileId, providerMessageId, medium],
   );
-  return ok({ sent: true, message_id: providerMessageId, medium }, 200);
+  return { to, sent: true, message_id: providerMessageId };
 }
 
 export async function sendTransactional(
@@ -7149,67 +7190,11 @@ export async function sendTransactional(
     );
   }
 
-  if (!isEmailAddress(parsed.to)) {
-    return ok({ error: `'to' is not a valid email address: ${parsed.to}` }, 400);
-  }
   if (!tpl.compiled_html) return ok({ error: `template '${parsed.template}' has no content yet` }, 409);
   if (!tpl.sender_id) return ok({ error: `template '${parsed.template}' has no From address set` }, 409);
+  const bad = parsed.to.find((a) => !isEmailAddress(a));
+  if (bad) return ok({ error: `'to' is not a valid email address: ${bad}` }, 400);
 
-  // Recipient state BEFORE deciding: suppression reason and the profile's own
-  // deliverability status are separate signals and either can block.
-  const r = await pool.query<{ profile_id: string | null; email_status: string | null; reason: string | null }>(
-    `SELECT p.id AS profile_id, p.email_status, s.reason
-       FROM (SELECT $2::citext AS email) x
-       LEFT JOIN profiles p ON p.workspace_id = $1 AND p.email = x.email
-       LEFT JOIN suppressions s ON s.workspace_id = $1 AND s.email = x.email`,
-    [ws, parsed.to],
-  );
-  const state = r.rows[0];
-  const verdict = decideTransactionalSend(
-    {
-      email: parsed.to,
-      suppressionReason: state?.reason ?? null,
-      emailStatus: state?.email_status ?? null,
-    },
-    { ignoreMarketingConsent: parsed.ignoreUnsubscribe },
-  );
-  if (!verdict.send) {
-    // 200, not an error: the request was well-formed and we made a deliberate
-    // decision. A caller retrying a "failure" against a dead address helps nobody.
-    return ok({ sent: false, reason: verdict.reason }, 200);
-  }
-
-  const idres = await ingestIdentityFrom(pool, ws, { email: parsed.to });
-  if (!idres.ok) return ok({ error: idres.error }, idres.status);
-
-  const client = await pool.connect();
-  let profileId: string;
-  try {
-    await client.query('BEGIN');
-    const up = await upsertProfileByIdentity(client, ws, idres.identity, {});
-    profileId = up.id;
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK').catch(() => {});
-    client.release();
-    throw e;
-  }
-  client.release();
-
-  const profile = await pool.query<{ email: string | null; attributes: Record<string, unknown> | null }>(
-    'SELECT email, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
-    [ws, profileId],
-  );
-  const merge = {
-    ...customerMerge(profile.rows[0] ?? {}),
-    ...dataMerge(parsed.data),
-  };
-  const rendered = renderTransactional(
-    { subject: tpl.subject ?? '', html: tpl.compiled_html },
-    merge,
-  );
-
-  const messageId = randomUUID();
   const sender = await pool.query<{ name: string; email: string }>(
     'SELECT name, email FROM domain_senders WHERE workspace_id = $1 AND id = $2',
     [ws, tpl.sender_id],
@@ -7217,11 +7202,11 @@ export async function sendTransactional(
   const from = sender.rows[0] ? `${sender.rows[0].name} <${sender.rows[0].email}>` : null;
   if (!from) return ok({ error: `template '${parsed.template}' has an invalid From address` }, 409);
 
-  // Screen the COPIES. Deliverability and complaints apply to any address we put on
-  // the wire; consent does not — a cc'd accountant never subscribed, so their
-  // unsubscribe from a newsletter says nothing about an invoice copy. A blocked
-  // copy is dropped and the rest still go: a stale archive address must never cost
-  // the primary recipient their receipt.
+  // Screen the COPIES once — they are the same on every message. Deliverability and
+  // complaints apply to any address we put on the wire; consent does not: a cc'd
+  // accountant never subscribed, so their unsubscribe from a newsletter says nothing
+  // about an invoice copy. A blocked copy is dropped and the rest still go, because
+  // a stale archive address must never cost a recipient their receipt.
   const copies = [...parsed.cc, ...parsed.bcc];
   const blocked = new Set<string>();
   if (copies.length > 0) {
@@ -7233,29 +7218,169 @@ export async function sendTransactional(
   }
   const cc = parsed.cc.filter((a) => !blocked.has(a.toLowerCase()));
   const bcc = parsed.bcc.filter((a) => !blocked.has(a.toLowerCase()));
+  const droppedCc = parsed.cc.filter((a) => blocked.has(a.toLowerCase()));
+  const droppedBcc = parsed.bcc.length - bcc.length;
 
   const { ses } = await emailSenderForWorkspace(pool, ws, deps);
+  const attachments = parsed.attachments.map((a) => ({
+    filename: a.filename,
+    contentType: a.contentType,
+    content: a.content,
+  }));
+  const attachedBytes = parsed.attachments.reduce((n, a) => n + a.bytes, 0);
+
+  const results: TransactionalSendResult[] = [];
+  for (const addr of parsed.to) {
+    results.push(
+      await sendOneTransactionalEmail({
+        pool,
+        ws,
+        to: addr,
+        parsed,
+        tpl: { subject: tpl.subject, compiled_html: tpl.compiled_html },
+        from,
+        cc,
+        bcc,
+        ses,
+        attachments,
+        attachedBytes,
+      }),
+    );
+  }
+
+  const droppedBlock =
+    droppedCc.length > 0 || droppedBcc > 0
+      ? { dropped: { cc: droppedCc, bcc: droppedBcc, reason: 'suppressed — hard bounce or spam complaint' } }
+      : {};
+
+  // The response mirrors the request. A caller that passed a single string keeps the
+  // exact shape it integrated against; only a caller that asked for several
+  // recipients gets a list back, where a partial result is meaningful.
+  if (!parsed.toIsList) {
+    const only = results[0]!;
+    if (only.sent) {
+      return ok(
+        {
+          sent: true,
+          message_id: only.message_id,
+          ...(parsed.attachments.length > 0 ? { attachments: parsed.attachments.length } : {}),
+          recipients: { to: 1, cc: cc.length, bcc: bcc.length },
+          ...droppedBlock,
+        },
+        200,
+      );
+    }
+    // A refusal is a decision (200); a transport failure is not (502).
+    return only.error !== undefined
+      ? ok({ sent: false, error: only.error }, 502)
+      : ok({ sent: false, reason: only.reason }, 200);
+  }
+
+  const sentCount = results.filter((r) => r.sent).length;
+  return ok(
+    {
+      sent: sentCount,
+      requested: results.length,
+      results,
+      ...(parsed.attachments.length > 0 ? { attachments: parsed.attachments.length } : {}),
+      recipients: { to: sentCount, cc: cc.length, bcc: bcc.length },
+      ...droppedBlock,
+    },
+    200,
+  );
+}
+
+/** One recipient's outcome. A skip is a decision; an error is a transport failure. */
+interface TransactionalSendResult {
+  readonly to: string;
+  readonly sent: boolean;
+  readonly message_id?: string;
+  readonly reason?: string;
+  readonly error?: string;
+  /** Text only: the number could not be parsed — the caller's mistake, not a decision. */
+  readonly invalid?: boolean;
+}
+
+/**
+ * Send the template to ONE recipient: their consent, their profile, their render,
+ * their message id.
+ *
+ * Each recipient is independent by design — the whole point of a list of `to`
+ * addresses is that everyone gets a message written for them, so one person's
+ * unsubscribe or dead mailbox must not touch anyone else's copy. Never throws: a
+ * failure is returned as this recipient's result so the loop continues.
+ */
+async function sendOneTransactionalEmail(args: {
+  pool: Pool;
+  ws: string;
+  to: string;
+  parsed: TransactionalRequest;
+  tpl: { subject: string | null; compiled_html: string };
+  from: string;
+  cc: readonly string[];
+  bcc: readonly string[];
+  ses: SesEmailClient;
+  attachments: ReadonlyArray<{ filename: string; contentType: string; content: string }>;
+  attachedBytes: number;
+}): Promise<TransactionalSendResult> {
+  const { pool, ws, to, parsed, tpl, from, cc, bcc, ses, attachments, attachedBytes } = args;
+
+  // Recipient state BEFORE deciding: suppression reason and the profile's own
+  // deliverability status are separate signals and either can block.
+  const r = await pool.query<{ profile_id: string | null; email_status: string | null; reason: string | null }>(
+    `SELECT p.id AS profile_id, p.email_status, s.reason
+       FROM (SELECT $2::citext AS email) x
+       LEFT JOIN profiles p ON p.workspace_id = $1 AND p.email = x.email
+       LEFT JOIN suppressions s ON s.workspace_id = $1 AND s.email = x.email`,
+    [ws, to],
+  );
+  const state = r.rows[0];
+  const verdict = decideTransactionalSend(
+    { email: to, suppressionReason: state?.reason ?? null, emailStatus: state?.email_status ?? null },
+    { ignoreMarketingConsent: parsed.ignoreUnsubscribe },
+  );
+  if (!verdict.send) return { to, sent: false, reason: verdict.reason };
+
+  const idres = await ingestIdentityFrom(pool, ws, { email: to });
+  if (!idres.ok) return { to, sent: false, error: idres.error };
+
+  let profileId: string;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const up = await upsertProfileByIdentity(client, ws, idres.identity, {});
+    profileId = up.id;
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    return { to, sent: false, error: e instanceof Error ? e.message : 'could not record the recipient' };
+  } finally {
+    client.release();
+  }
+
+  const profile = await pool.query<{ email: string | null; attributes: Record<string, unknown> | null }>(
+    'SELECT email, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ws, profileId],
+  );
+  // Rendered per recipient: this is what makes several `to` addresses different
+  // from cc, where everyone reads the primary's name.
+  const merge = { ...customerMerge(profile.rows[0] ?? {}), ...dataMerge(parsed.data) };
+  const rendered = renderTransactional({ subject: tpl.subject ?? '', html: tpl.compiled_html }, merge);
+
+  const messageId = randomUUID();
   try {
     await ses.sendEmail({
       from,
-      to: parsed.to,
-      ...(cc.length > 0 ? { cc } : {}),
-      ...(bcc.length > 0 ? { bcc } : {}),
+      to,
+      ...(cc.length > 0 ? { cc: [...cc] } : {}),
+      ...(bcc.length > 0 ? { bcc: [...bcc] } : {}),
       subject: rendered.subject,
       html: rendered.html,
       messageId,
-      ...(parsed.attachments.length > 0
-        ? {
-            attachments: parsed.attachments.map((a) => ({
-              filename: a.filename,
-              contentType: a.contentType,
-              content: a.content,
-            })),
-          }
-        : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
   } catch (e) {
-    return ok({ sent: false, error: e instanceof Error ? e.message : 'send failed' }, 502);
+    return { to, sent: false, error: e instanceof Error ? e.message : 'send failed' };
   }
 
   // The copies are recorded ON the message. A bounce report names the address that
@@ -7264,13 +7389,10 @@ export async function sendTransactional(
   await pool.query(
     `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, cc_addresses, bcc_addresses)
      VALUES ($1, $2, $3, 'sent', 'email', $4, $5)`,
-    [ws, profileId, messageId, cc, bcc],
+    [ws, profileId, messageId, [...cc], [...bcc]],
   );
-  // Attachment bytes are metered per workspace: a 5 MB PDF to twenty recipients is
-  // real bandwidth, not noise, and the counter has to exist before the cost view
-  // can ever price it. Additive like the dispatcher's own per-send increment —
-  // nothing stores the bytes, so no rollup could reconcile this one to a source.
-  const attachedBytes = parsed.attachments.reduce((n, a) => n + a.bytes, 0);
+  // Attachment bytes are metered per MESSAGE: with several recipients the same file
+  // crosses the wire once per message, so that is what it costs.
   if (attachedBytes > 0) {
     const inc = buildUsageCounterIncrement(ws, new Date(), 'attachment_bytes', attachedBytes);
     await pool.query(inc.text, [...inc.values]);
@@ -7283,23 +7405,7 @@ export async function sendTransactional(
     const inc = buildUsageCounterIncrement(ws, new Date(), 'email_recipients', recipientCount);
     await pool.query(inc.text, [...inc.values]);
   }
-  // Counts only for bcc — never the addresses, so nothing can echo a blind copy
-  // back out. Dropped cc addresses ARE named: the caller supplied them and needs to
-  // know which one is unreachable.
-  const droppedCc = parsed.cc.filter((a) => blocked.has(a.toLowerCase()));
-  const droppedBcc = parsed.bcc.length - bcc.length;
-  return ok(
-    {
-      sent: true,
-      message_id: messageId,
-      ...(parsed.attachments.length > 0 ? { attachments: parsed.attachments.length } : {}),
-      recipients: { to: 1, cc: cc.length, bcc: bcc.length },
-      ...(droppedCc.length > 0 || droppedBcc > 0
-        ? { dropped: { cc: droppedCc, bcc: droppedBcc, reason: 'suppressed — hard bounce or spam complaint' } }
-        : {}),
-    },
-    200,
-  );
+  return { to, sent: true, message_id: messageId };
 }
 
 export async function ingestTrack(pool: Pool, rawKey: string, body: unknown): Promise<HandlerResponse> {

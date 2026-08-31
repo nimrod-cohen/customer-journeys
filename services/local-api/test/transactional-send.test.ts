@@ -173,7 +173,8 @@ describe('parseTransactionalRequest', () => {
   it('accepts a valid request', () => {
     expect(parseTransactionalRequest({ template: 'otp', to: 'a@b.com', data: { code: '1' } })).toEqual({
       template: 'otp',
-      to: 'a@b.com',
+      to: ['a@b.com'],
+      toIsList: false,
       data: { code: '1' },
       ignoreUnsubscribe: false,
       attachments: [],
@@ -206,7 +207,7 @@ describe('parseTransactionalRequest', () => {
     });
     // What a valid `to` looks like depends on the medium, which is not known until
     // the key resolves — so shape validation happens there, not here.
-    expect(parseTransactionalRequest({ template: 'otp', to: 'nope' })).toMatchObject({ to: 'nope' });
+    expect(parseTransactionalRequest({ template: 'otp', to: 'nope' })).toMatchObject({ to: ['nope'] });
     expect(parseTransactionalRequest({ template: 'otp', to: 'a@b.com', data: ['x'] })).toMatchObject({
       error: expect.stringContaining('object'),
     });
@@ -215,7 +216,7 @@ describe('parseTransactionalRequest', () => {
   it('trims surrounding whitespace', () => {
     expect(parseTransactionalRequest({ template: '  otp  ', to: '  a@b.com ' })).toMatchObject({
       template: 'otp',
-      to: 'a@b.com',
+      to: ['a@b.com'],
     });
   });
 });

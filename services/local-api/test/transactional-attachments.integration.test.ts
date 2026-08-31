@@ -16,13 +16,16 @@ import type { Pool } from 'pg';
 
 const describeMaybe = hasDatabaseUrl() ? describe : describe.skip;
 
-const CO = '0c0d7788-0000-4000-8000-000000000c01';
-const WS = '0c0d7788-0000-4000-8000-000000000a01';
-const DOMAIN = '0c0d7788-0000-4000-8000-0000000000d1';
-const SENDER = '0c0d7788-0000-4000-8000-0000000000f1';
-const TPL = '0c0d7788-0000-4000-8000-0000000000e1';
-const TEXT_TPL = '0c0d7788-0000-4000-8000-0000000000e2';
-const KEY = 'sk_live_0c0d7788attach';
+// This file's OWN prefix. The integration tier shares one database and each file
+// cleans up by id, so reusing another file's ids means its teardown deletes these
+// fixtures mid-run — which is exactly what happened with transactional-key.
+const CO = '0c0dd044-0000-4000-8000-000000000c01';
+const WS = '0c0dd044-0000-4000-8000-000000000a01';
+const DOMAIN = '0c0dd044-0000-4000-8000-0000000000d1';
+const SENDER = '0c0dd044-0000-4000-8000-0000000000f1';
+const TPL = '0c0dd044-0000-4000-8000-0000000000e1';
+const TEXT_TPL = '0c0dd044-0000-4000-8000-0000000000e2';
+const KEY = 'sk_live_0c0dd044attach';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const PDF = Buffer.from('%PDF-1.4 the august report').toString('base64');

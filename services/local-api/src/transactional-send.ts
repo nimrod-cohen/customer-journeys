@@ -384,10 +384,46 @@ export function parseRecipientList(raw: unknown, field: 'cc' | 'bcc'): string[] 
   return out;
 }
 
+/**
+ * Parse `to`: one address or several.
+ *
+ * Unlike cc/bcc these are not validated as EMAIL addresses here — the template's
+ * key decides the medium, so a `to` may legitimately be a phone number. Only the
+ * shape is decidable at this point.
+ */
+export function parseToList(raw: unknown): string[] | { error: string } {
+  const list = Array.isArray(raw) ? raw : [raw];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const v of list) {
+    if (typeof v !== 'string') return { error: "'to' must be a recipient, or a list of recipients" };
+    const addr = v.trim();
+    if (!addr) continue;
+    // eslint-disable-next-line no-control-regex
+    if (/[\r\n\x00-\x1F\x7F]/.test(addr)) return { error: `'to' contains an invalid recipient: ${addr.slice(0, 80)}` };
+    const key = addr.toLowerCase();
+    if (seen.has(key)) continue; // the same person twice is one message
+    seen.add(key);
+    out.push(addr);
+  }
+  return out;
+}
+
 /** A validated request body. */
 export interface TransactionalRequest {
   readonly template: string;
-  readonly to: string;
+  /**
+   * Every primary recipient. ALWAYS a list internally, even for the single-address
+   * form — one code path, so a lone recipient cannot drift from the fan-out.
+   */
+  readonly to: readonly string[];
+  /**
+   * Whether the caller SENT a list. The response mirrors the request: a string in
+   * gets today's `{ sent, message_id }` back, an array in gets per-recipient
+   * results. Callers integrated before this change must not have their response
+   * shape moved under them.
+   */
+  readonly toIsList: boolean;
   readonly data: Record<string, unknown>;
   /** Send despite an unsubscribe. Deliverability blocks still apply. */
   readonly ignoreUnsubscribe: boolean;
@@ -407,11 +443,13 @@ export interface TransactionalRequest {
 export function parseTransactionalRequest(body: unknown): TransactionalRequest | { error: string } {
   const b = (body ?? {}) as Record<string, unknown>;
   const template = normalizeTransactionalKey(b.template);
-  const to = typeof b.to === 'string' ? b.to.trim() : '';
   if (!template) return { error: "'template' is required — the template's transactional key, e.g. 'otp'" };
+  const toParsed = parseToList(b.to);
+  if ('error' in toParsed) return { error: toParsed.error };
+  const to = toParsed;
   // A key can resolve to an email or a text message, so what a valid `to` looks
   // like is not known until the template is found. Only emptiness is decidable here.
-  if (!to) return { error: "'to' is required — the recipient's email address or phone number" };
+  if (to.length === 0) return { error: "'to' is required — the recipient's email address or phone number" };
   const data = b.data;
   if (data !== undefined && (typeof data !== 'object' || data === null || Array.isArray(data))) {
     return { error: "'data' must be an object of merge parameters" };
@@ -423,14 +461,20 @@ export function parseTransactionalRequest(body: unknown): TransactionalRequest |
   if ('error' in cc) return { error: cc.error };
   const bcc = parseRecipientList(b.bcc, 'bcc');
   if ('error' in bcc) return { error: bcc.error };
-  const total = 1 + cc.length + bcc.length;
-  if (total > MAX_RECIPIENTS) {
-    return { error: `too many recipients: ${total} — at most ${MAX_RECIPIENTS} per message, counting to, cc and bcc` };
+  // Two separate caps, because `to` and the copies mean different things: each `to`
+  // is its OWN message, while cc/bcc ride along on every one of them.
+  if (to.length > MAX_RECIPIENTS) {
+    return { error: `too many recipients: ${to.length} in 'to' — at most ${MAX_RECIPIENTS} per request` };
+  }
+  const perMessage = 1 + cc.length + bcc.length;
+  if (perMessage > MAX_RECIPIENTS) {
+    return { error: `too many recipients: ${perMessage} on one message — at most ${MAX_RECIPIENTS}, counting to, cc and bcc` };
   }
 
   return {
     template,
     to,
+    toIsList: Array.isArray(b.to),
     data: (data as Record<string, unknown>) ?? {},
     ignoreUnsubscribe: b.ignore_unsubscribe === true,
     attachments: att.attachments,

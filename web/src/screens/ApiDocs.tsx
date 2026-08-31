@@ -220,39 +220,72 @@ export function ApiDocs() {
           <Code>{'{{…}}'}</Code> visible.
         </p>
 
-        <p class="mt-4 text-sm font-semibold text-ink-900">Copies: cc and bcc</p>
+        <p class="mt-4 text-sm font-semibold text-ink-900">Who it goes to: to, cc and bcc</p>
         <p class="mt-1 text-sm text-stone-600">
-          Put someone else on the message — an admin on an order receipt, an accountant on an
-          invoice. Each takes one address or a list. Email only: cc or bcc on an SMS/WhatsApp key is
-          a <Code>400</Code>.
+          Each field takes a single address or a list. They mean different things, and the
+          difference is worth a moment:
         </p>
+        <ul class="mt-2 space-y-1.5 text-sm text-stone-700">
+          <li>
+            • <Code>to</Code> — the people the message is <b>for</b>. Several addresses means{' '}
+            <b>several messages</b>, one each, every one rendered for that person.
+          </li>
+          <li>
+            • <Code>cc</Code> — a visible copy. <b>One</b> message, rendered for the{' '}
+            <Code>to</Code> recipient, that the cc'd person also receives and can see they share.
+          </li>
+          <li>
+            • <Code>bcc</Code> — the same, but no other recipient can see the address.
+          </li>
+        </ul>
         <Pre>{`curl -X POST ${origin}/v1/send \\
   -H 'content-type: application/json' \\
   -H 'authorization: Bearer sk_live_your_secret_key' \\
   -d '{ "template": "receipt",
-        "to":  "jane@example.com",
+        "to":  ["jane@example.com", "bob@example.com"],
         "cc":  ["accounts@acme.com"],
         "bcc": ["archive@acme.com"],
         "data": { "order": "1234" } }'
-# → { "sent": true, "message_id": "…", "recipients": { "to": 1, "cc": 1, "bcc": 1 } }`}</Pre>
-        <p class="mt-2 text-sm text-stone-600">
-          <b>The message is rendered once, for <Code>to</Code>.</b> That is who{' '}
-          <Code>{'{{customer.first_name}}'}</Code> refers to, so a cc'd reader sees the primary
-          recipient's name — this is one message with copies, not several personalised sends. Opens
-          and clicks are attributed to the primary for the same reason.
+
+# Jane and Bob each get their own message, greeting them by their own name.
+# The accountant and the archive are copied on BOTH.
+# → { "sent": 2, "requested": 2,
+#     "results": [ { "to": "jane@example.com", "sent": true,  "message_id": "…" },
+#                  { "to": "bob@example.com",  "sent": true,  "message_id": "…" } ],
+#     "recipients": { "to": 2, "cc": 1, "bcc": 1 } }`}</Pre>
+
+        <p class="mt-3 text-sm font-semibold text-ink-900">Several recipients, one at a time</p>
+        <p class="mt-1 text-sm text-stone-600">
+          A list of <Code>to</Code> addresses is a <b>fan-out</b>, not one message with several
+          names on it: each recipient gets their own message, their own{' '}
+          <Code>{'{{customer.*}}'}</Code> values and their own <Code>message_id</Code>, and each is
+          checked for consent on their own. One person being unsubscribed never stops anyone else's
+          message. <b>A copy, by contrast, rides on every message</b> — two <Code>to</Code>{' '}
+          addresses and one <Code>cc</Code> means the cc'd person receives two emails.
         </p>
         <p class="mt-2 text-sm text-stone-600">
-          <b>Copies are addresses, not people.</b> They never become profiles, never enter segments,
-          and are never counted as customers. They are also not subscribers: an unsubscribe does{' '}
-          <b>not</b> stop a copy, because someone who opted out of your newsletter never agreed or
-          declined to be cc'd on an invoice. What does stop one is a hard bounce or a spam complaint
-          — that address is dropped, the rest of the message still goes, and the response says which
-          (<Code>dropped</Code>). A bcc is only ever counted there, never listed back.
+          <b>The response follows the request.</b> Pass a string and you get{' '}
+          <Code>{'{ "sent": true, "message_id": … }'}</Code>, exactly as before. Pass a list — even
+          a list of one — and you get <Code>results</Code>, one entry per address, each with its own{' '}
+          <Code>sent</Code> and either a <Code>message_id</Code> or a <Code>reason</Code>. Because a
+          call can now partly succeed, retry from <Code>results</Code>, never the whole request:
+          there is no de-duplication, so a blanket retry re-sends to everyone it already reached.
+        </p>
+
+        <p class="mt-3 text-sm font-semibold text-ink-900">Copies are addresses, not people</p>
+        <p class="mt-1 text-sm text-stone-600">
+          A cc or bcc never becomes a profile, never enters a segment, and is never counted as a
+          customer. They are also not subscribers: an unsubscribe does <b>not</b> stop a copy,
+          because someone who left your newsletter never agreed or declined to be cc'd on an
+          invoice. What does stop one is a hard bounce or a spam complaint — that address is
+          dropped, the message still goes to everyone else, and the response says which under{' '}
+          <Code>dropped</Code>. A dropped bcc is only ever counted there, never named.
         </p>
         <p class="mt-2 text-xs text-stone-500">
-          Up to <b>20 addresses</b> per message counting <Code>to</Code>, and <Code>to</Code> stays a
-          single address — it identifies the person the message is for. Sending is billed per
-          recipient.
+          Up to <b>20</b> addresses in <Code>to</Code>, and up to <b>20</b> on any one message
+          counting its <Code>to</Code>, cc and bcc. Duplicates are collapsed. Sending is billed per
+          recipient. Email only — <Code>cc</Code> or <Code>bcc</Code> on an SMS or WhatsApp key is a{' '}
+          <Code>400</Code>, while a list of <Code>to</Code> numbers fans out there too.
         </p>
 
         <p class="mt-4 text-sm font-semibold text-ink-900">Attaching files</p>
