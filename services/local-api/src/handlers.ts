@@ -1104,6 +1104,43 @@ async function emailProviderForWorkspace(
 }
 
 /**
+ * The optional Google Postmaster record for a domain, or none.
+ *
+ * Gmail reports domain reputation only to an account that has proven ownership, so
+ * we register the customer's domain under OURS and they publish one TXT at the apex.
+ * The readiness page warns when it is missing — and used to point at a screen that
+ * never showed the record, which is a warning with no way to clear it.
+ *
+ * Never throws and never gates: reputation visibility is a nice-to-have, and a
+ * Google outage must not be able to block domain setup.
+ */
+async function postmasterRecordFor(
+  pool: Pool,
+  workspaceId: string,
+  row: SendingDomainRow,
+): Promise<DnsRecordOut[]> {
+  let token = row.gpt_verification_token;
+  // A token already on file is shown whatever the deployment's credentials say —
+  // it was registered once and publishing it is still the right move. Credentials
+  // are only needed to MINT one that does not exist yet.
+  if (!token && postmasterFromEnv()) {
+    const sync = await syncPostmasterForDomain(pool, workspaceId, row.id, row.domain);
+    token = sync.token;
+  }
+  if (!token) return [];
+  return [
+    {
+      role: 'gpt',
+      type: 'TXT',
+      name: row.domain,
+      value: token,
+      required: false,
+      note: 'Optional — lets Gmail report this domain’s reputation and spam rate back to us. Add it alongside your existing TXT records; it never affects sending.',
+    },
+  ];
+}
+
+/**
  * The self-hosted domain's records + live DNS status, or the reason there are none.
  * Shared by the GET and the check so the two can never describe different records.
  */
@@ -1919,6 +1956,9 @@ interface SendingDomainRow {
   ses_identity: string | null;
   dkim_tokens: string[];
   signing_hosted_zone: string | null;
+  /** The Google Postmaster site-verification value to publish at the apex. */
+  gpt_verification_token: string | null;
+  gpt_verified_at: string | null;
 }
 
 type DnsRecordStatus = 'found' | 'missing' | 'mismatch';
@@ -1970,6 +2010,11 @@ async function lookupRecordStatus(rec: DnsRecordOut): Promise<DnsRecordStatus> {
       }
       if (rec.role === 'dmarc') {
         return txts.some((t) => t.toLowerCase().startsWith('v=dmarc1')) ? 'found' : 'missing';
+      }
+      if (rec.role === 'gpt') {
+        // The apex carries several TXT records (SPF, other verifications), so this
+        // asks whether ours is AMONG them rather than whether it is the only one.
+        return txts.includes(rec.value) ? 'found' : txts.length ? 'missing' : 'missing';
       }
       if (rec.role === 'dkim') {
         // A 2048-bit key is published as several strings a resolver rejoins, and
@@ -2135,7 +2180,9 @@ async function loadSendingDomain(
 ): Promise<SendingDomainRow | undefined> {
   const q = scopedQuery(
     workspaceId,
-    'SELECT id, domain, verified, verified_at, ses_identity, dkim_tokens, signing_hosted_zone FROM sending_domains WHERE id = $1',
+    `SELECT id, domain, verified, verified_at, ses_identity, dkim_tokens, signing_hosted_zone,
+            gpt_verification_token, gpt_verified_at
+       FROM sending_domains WHERE id = $1`,
     [id],
   );
   const { rows } = await pool.query<SendingDomainRow>(q.text, q.values);
@@ -2153,7 +2200,13 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   const provider = await emailProviderForWorkspace(pool, ctx.workspaceId);
   if (provider === 'smtp') {
     const { records, error } = await selfHostedDomainSetup(row.domain, row.verified);
-    return ok({ domain: domainOut, records, provider, ...(error ? { setupError: error } : {}) });
+    const gpt = await postmasterRecordFor(pool, ctx.workspaceId, row);
+    return ok({
+      domain: domainOut,
+      records: [...records, ...(await withDnsStatus(gpt, gpt.length > 0, false))],
+      provider,
+      ...(error ? { setupError: error } : {}),
+    });
   }
   if (provider === 'resend') {
     // Resend verifies the domain in its own dashboard and we send with its trusted
@@ -2175,8 +2228,9 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   }
   try {
     const { tokens, signingHostedZone } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
+    const gpt = await postmasterRecordFor(pool, ctx.workspaceId, row);
     const records = await withDnsStatus(
-      dnsRecordsFor(row.domain, tokens, signingHostedZone, region),
+      [...dnsRecordsFor(row.domain, tokens, signingHostedZone, region), ...gpt],
       mode === 'real', // real → live DNS lookups; mock → marked found
       row.verified,
     );

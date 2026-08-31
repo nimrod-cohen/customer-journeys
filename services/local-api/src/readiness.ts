@@ -6,6 +6,7 @@
 // Split into a PURE `computeReadiness(inputs)` (unit-tested exhaustively) and a thin
 // `gatherReadiness(pool, workspaceId)` that reads the DB state and calls it.
 import type { Pool } from 'pg';
+import { postmasterFromEnv } from './postmaster.js';
 
 export type ReadinessChannelId = 'email' | 'sms' | 'whatsapp' | 'storage' | 'postmaster';
 
@@ -67,6 +68,12 @@ export interface ReadinessInputs {
   sendingDomainCount?: number;
   /** How many of those have their Google Postmaster TXT observed in DNS. */
   gptVerifiedCount?: number;
+  /**
+   * Whether THIS DEPLOYMENT can register domains with Google Postmaster at all.
+   * Without the credentials there is no token to publish, so the check would ask
+   * for something the product cannot offer — a warning with no way to clear it.
+   */
+  postmasterConfigured?: boolean;
 }
 
 const ROUTE_CONNECTORS = '/company/connectors';
@@ -99,7 +106,7 @@ export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
     'Ready to send WhatsApp.',
   );
   const storage = computeStorage(i.r2Configured);
-  const postmaster = computePostmaster(i.sendingDomainCount ?? 0, i.gptVerifiedCount ?? 0);
+  const postmaster = computePostmaster(i.sendingDomainCount ?? 0, i.gptVerifiedCount ?? 0, i.postmasterConfigured !== false);
 
   const checks = [email, sms, whatsapp, storage, ...(postmaster ? [postmaster] : [])];
   const errorCount = checks.filter((c) => c.severity === 'error' && c.status !== 'ready').length;
@@ -221,8 +228,12 @@ function computeStorage(r2Configured: boolean): ReadinessCheck {
  * Returns null when the workspace has no sending domains at all: nagging about
  * reputation for a workspace that cannot send yet is noise.
  */
-function computePostmaster(domainCount: number, verifiedCount: number): ReadinessCheck | null {
-  if (domainCount === 0) return null;
+function computePostmaster(
+  domainCount: number,
+  verifiedCount: number,
+  configured: boolean,
+): ReadinessCheck | null {
+  if (domainCount === 0 || !configured) return null;
   const missing = domainCount - verifiedCount;
   const ok = missing === 0;
   return {
@@ -316,5 +327,6 @@ export async function gatherReadiness(pool: Pool, workspaceId: string): Promise<
     r2Configured: (r2.rowCount ?? 0) > 0,
     sendingDomainCount: gptRow.total,
     gptVerifiedCount: gptRow.verified,
+    postmasterConfigured: postmasterFromEnv() !== null,
   });
 }

@@ -122,6 +122,27 @@ describeMaybe('sending-domain setup follows the email provider (real Postgres)',
     process.env.SELF_HOSTED_DKIM_PUBLIC_KEY = PUBKEY;
   });
 
+  // The readiness page warns when a domain has no Google Postmaster record and sends
+  // the reader to this screen to fix it. Before this the screen showed no such
+  // record anywhere, so the warning could not be cleared — the reader was told to do
+  // something the product never offered.
+  it('shows the Google Postmaster record to publish, as optional', async () => {
+    await setProvider('smtp');
+    await pool.query('UPDATE sending_domains SET gpt_verification_token = $2 WHERE id = $1', [
+      domainId,
+      'google-site-verification=abc123',
+    ]);
+    const body = (await get()).body as {
+      records: Array<{ role?: string; type: string; name: string; value: string; required: boolean }>;
+    };
+    const gpt = body.records.find((r) => r.value.startsWith('google-site-verification='));
+    expect(gpt).toBeTruthy();
+    expect(gpt!.type).toBe('TXT');
+    expect(gpt!.name).toBe('acme-self.com'); // the apex, alongside SPF
+    expect(gpt!.required).toBe(false); // reputation is optional; it never gates sending
+    await pool.query('UPDATE sending_domains SET gpt_verification_token = NULL WHERE id = $1', [domainId]);
+  });
+
   it('tells a Resend company to verify in Resend, with nothing to publish here', async () => {
     await setProvider('resend');
     const body = (await get()).body as { provider: string; records: unknown[]; setupError?: string };

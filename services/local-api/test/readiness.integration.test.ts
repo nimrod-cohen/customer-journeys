@@ -38,12 +38,23 @@ describeMaybe('GET /company/readiness (real Postgres)', () => {
 
   beforeAll(async () => {
     pool = adminPool();
+    // The Google Postmaster check only appears where the DEPLOYMENT can register a
+    // domain — without credentials there is no token for anyone to publish, and the
+    // warning would be a red cross with nothing behind it. These stand in for that
+    // capability; nothing here calls Google (registration happens on the domain
+    // screen, not in readiness).
+    process.env.GOOGLE_POSTMASTER_CLIENT_ID = 'test-client';
+    process.env.GOOGLE_POSTMASTER_CLIENT_SECRET = 'test-secret';
+    process.env.GOOGLE_POSTMASTER_REFRESH_TOKEN = 'test-refresh';
     await cleanup();
     await pool.query("INSERT INTO companies (id, name) VALUES ($1,'Acme')", [CO]);
     await pool.query("INSERT INTO workspaces (id, name, status, company_id) VALUES ($1,'W','active',$2)", [WS, CO]);
     await pool.query("INSERT INTO company_users (company_id, user_id, role) VALUES ($1,$2,'owner')", [CO, OWNER]);
   });
   afterAll(async () => {
+    delete process.env.GOOGLE_POSTMASTER_CLIENT_ID;
+    delete process.env.GOOGLE_POSTMASTER_CLIENT_SECRET;
+    delete process.env.GOOGLE_POSTMASTER_REFRESH_TOKEN;
     if (pool) {
       await cleanup();
       await pool.end();
@@ -116,6 +127,16 @@ describeMaybe('GET /company/readiness (real Postgres)', () => {
     r = await readiness();
     expect(check(r, 'storage').status).toBe('ready');
     expect(r.warningCount).toBe(1); // R2 cleared; Postmaster still unverified
+
+    // And where the deployment CANNOT register domains, the check is absent rather
+    // than permanently unclearable — the reader is never sent to a screen to publish
+    // a record that does not exist.
+    const saved = process.env.GOOGLE_POSTMASTER_CLIENT_ID;
+    delete process.env.GOOGLE_POSTMASTER_CLIENT_ID;
+    const unconfigured = await readiness();
+    expect(unconfigured.checks.find((c) => c.id === 'postmaster')).toBeUndefined();
+    expect(unconfigured.warningCount).toBe(0);
+    process.env.GOOGLE_POSTMASTER_CLIENT_ID = saved;
 
     // Publishing the Postmaster TXT clears the last warning — and never affected
     // whether the workspace could send.

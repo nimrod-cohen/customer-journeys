@@ -176,3 +176,40 @@ describe('Gmail reputation monitoring (Postmaster)', () => {
     expect(r.warningCount).toBeGreaterThan(0);
   });
 });
+
+// Google Postmaster is optional monitoring, and only some deployments can register a
+// domain at all. Warning about it where we cannot produce a token to publish leaves
+// a red cross with nothing behind it — the reader is told to fix something the
+// product never offered them.
+describe('computeReadiness — Google Postmaster', () => {
+  const withDomain: ReadinessInputs = { ...BASE, sendingDomainCount: 1, gptVerifiedCount: 0 };
+
+  it('warns when a domain is unverified and this deployment CAN register it', () => {
+    const c = check(computeReadiness({ ...withDomain, postmasterConfigured: true }), 'postmaster');
+    expect(c).toBeTruthy();
+    expect(c.severity).toBe('warning'); // never an error: it does not gate sending
+    expect(c.status).not.toBe('ready');
+  });
+
+  it('says nothing at all when the deployment has no Postmaster credentials', () => {
+    const off = computeReadiness({ ...withDomain, r2Configured: true, postmasterConfigured: false });
+    const on = computeReadiness({ ...withDomain, r2Configured: true, postmasterConfigured: true });
+    expect(off.checks.find((c) => c.id === 'postmaster')).toBeUndefined();
+    expect(off.warningCount).toBe(0);
+    expect(on.warningCount).toBe(1); // the same inputs DO warn where it is offered
+  });
+
+  it('is ready once every domain is verified', () => {
+    const c = check(
+      computeReadiness({ ...withDomain, gptVerifiedCount: 1, postmasterConfigured: true }),
+      'postmaster',
+    );
+    expect(c.status).toBe('ready');
+  });
+
+  // No domains yet is not a gap — there is nothing to register.
+  it('says nothing before any domain exists', () => {
+    const r = computeReadiness({ ...BASE, postmasterConfigured: true });
+    expect(r.checks.find((c) => c.id === 'postmaster')).toBeUndefined();
+  });
+});

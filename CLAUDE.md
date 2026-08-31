@@ -268,6 +268,13 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   sender's domain) plus SigningTable `* customer`, so one key file signs for every
   customer domain and adding a domain needs no work on the box. A more specific entry
   still wins its own `(d=, s=)`, so `on-grow.com` keeps signing with its own key.
+- **The Postmaster TXT is shown as an OPTIONAL record on the domain page** (`role:'gpt'`,
+  at the apex alongside SPF, `required:false`). The readiness warning points at that
+  screen, and for a while the screen showed no such record — a warning with no way to
+  clear it. A token already on file is shown whatever the deployment's credentials
+  say; credentials are needed only to MINT one. And `computeReadiness` omits the check
+  entirely where `postmasterFromEnv()` is null: without credentials there is no token
+  for anyone to publish, so the warning could never be cleared.
 - **Google Postmaster Tools (API v2)** registers each customer domain under OUR account,
   so the customer publishes one more DNS record instead of creating a Google account.
   Two traps, both found against the live API: `domainStats:query` needs `parent` in the
