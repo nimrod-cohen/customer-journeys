@@ -72,3 +72,36 @@ export type R2StorageFactory = (cfg: R2Config) => ObjectStorage;
 export function assetObjectKey(workspaceId: string, assetId: string): string {
   return `assets/${workspaceId}/${assetId}`;
 }
+
+/**
+ * Turn a storage failure into something the person configuring it can act on.
+ *
+ * The raw S3 error name is not an answer: `AccessDenied` on a bucket that plainly
+ * exists means the API token is scoped to a DIFFERENT bucket — R2 will not even
+ * admit whether the bucket is there, answering 403 either way. That exact
+ * misconfiguration otherwise stays invisible until someone's first image upload
+ * 500s, long after whoever set it up has moved on.
+ */
+export function explainStorageError(err: unknown, bucket: string): string {
+  const e = (err ?? {}) as { name?: string; code?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+  const status = e.$metadata?.httpStatusCode;
+  const name = e.name ?? '';
+  const code = e.code ?? '';
+
+  if (name === 'NoSuchBucket') {
+    return `The bucket “${bucket}” does not exist in this account. Check the name, or create it in Cloudflare R2.`;
+  }
+  if (name === 'InvalidAccessKeyId') {
+    return 'That access key id is not recognised. Copy it again from the R2 API token screen.';
+  }
+  if (name === 'SignatureDoesNotMatch') {
+    return 'The secret access key does not match that access key id. Secrets are shown once — if it was lost, roll the token and paste the new pair.';
+  }
+  if (name === 'AccessDenied' || status === 403) {
+    return `Connected, but this token is not allowed to use “${bucket}”. R2 answers 403 for every bucket a token is not scoped to, so the usual cause is a token scoped to a different bucket — re-create it with Object Read & Write on this one.`;
+  }
+  if (/^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT)$/.test(code) || /Timeout|Network/i.test(name)) {
+    return 'Could not reach the endpoint. Check the endpoint URL — it is https://<account-id>.r2.cloudflarestorage.com, with your own account id.';
+  }
+  return e.message || name || 'The storage provider refused the request without saying why.';
+}

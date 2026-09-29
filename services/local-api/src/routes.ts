@@ -46,6 +46,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'GET /company/r2-config': 'manage_sending_domain',
   'PUT /company/r2-config': 'manage_sending_domain',
   'DELETE /company/r2-config': 'manage_sending_domain',
+  'POST /company/r2-config/test': 'manage_sending_domain',
   'GET /company/connectors': 'manage_sending_domain',
   'PUT /company/connectors': 'manage_sending_domain',
   'DELETE /company/connectors/:id': 'manage_sending_domain',

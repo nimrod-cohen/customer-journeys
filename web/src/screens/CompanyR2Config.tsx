@@ -25,6 +25,9 @@ export function CompanyR2Config() {
   const [secret, setSecret] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  // The outcome stays on screen: a toast that vanishes is no good for a message
+  // naming which part of the configuration is wrong.
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = async (): Promise<void> => {
@@ -69,6 +72,26 @@ export function CompanyR2Config() {
       await load();
     } catch (e) {
       setError((e as { error?: string })?.error ?? 'Could not remove the R2 credentials.');
+    }
+  };
+
+  /**
+   * Prove the saved credentials work, by doing what an upload does: write an object,
+   * read it back, delete it. Anything less is a guess — credentials can be
+   * well-formed and the token still scoped to another bucket, which only shows up
+   * later as a failed image upload.
+   */
+  const testConnection = async (): Promise<void> => {
+    setTestResult(null);
+    try {
+      const r = await api.post<{ ok: boolean; message?: string; error?: string; step?: string }>(
+        '/company/r2-config/test',
+        { body: {} },
+      );
+      setTestResult(r.ok ? { ok: true, text: r.message ?? 'Connected.' } : { ok: false, text: r.error ?? 'Could not connect.' });
+      if (r.ok) showToast('Storage connected.', { tone: 'success' });
+    } catch (e) {
+      setTestResult({ ok: false, text: (e as { error?: string })?.error ?? 'Could not reach the storage provider.' });
     }
   };
 
@@ -154,6 +177,9 @@ export function CompanyR2Config() {
           </Button>
           {configured ? (
             <>
+              <Button data-testid="r2-test" variant="secondary" size="sm" onClick={() => testConnection()}>
+                Test connection
+              </Button>
               {pendingDbAssets > 0 ? (
                 <Button data-testid="r2-backfill" variant="secondary" size="sm" onClick={() => backfill()}>
                   Migrate {pendingDbAssets} existing image{pendingDbAssets === 1 ? '' : 's'}
@@ -166,6 +192,18 @@ export function CompanyR2Config() {
           ) : null}
           {saved ? <span class="text-sm text-emerald-600">Saved ✓</span> : null}
         </div>
+        {testResult ? (
+          <p
+            data-testid="r2-test-result"
+            class={`rounded-lg px-3 py-2 text-sm ring-1 ring-inset ${
+              testResult.ok
+                ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
+                : 'bg-rose-50 text-rose-800 ring-rose-200'
+            }`}
+          >
+            {testResult.text}
+          </p>
+        ) : null}
         {error ? (
           <p data-testid="r2-error" class="text-sm text-rose-600">
             {error}

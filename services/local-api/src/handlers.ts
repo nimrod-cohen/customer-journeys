@@ -116,7 +116,7 @@ import {
   type MeteringDeps,
 } from '@cdp/service-metering';
 import type { LocalApiDeps } from './deps.js';
-import { assetObjectKey, type ObjectStorage, type R2StorageFactory } from './storage.js';
+import { assetObjectKey, type ObjectStorage, type R2StorageFactory, explainStorageError } from './storage.js';
 import { gatherReadiness } from './readiness.js';
 import {
   resolveIdentity,
@@ -1645,6 +1645,61 @@ export const deleteCompanyR2Config: Handler = async (ctx, pool) => {
   if (!companyId) return ok({ deleted: 0 });
   const { rowCount } = await pool.query('DELETE FROM company_r2_config WHERE company_id = $1', [companyId]);
   return ok({ deleted: rowCount });
+};
+
+/**
+ * POST /company/r2-config/test — prove the saved credentials actually work.
+ *
+ * A real ROUND TRIP (write → read back → delete) against the configured bucket,
+ * because that is precisely what an image upload does. Nothing short of it is
+ * evidence: credentials can be well-formed, the bucket can exist, and the token can
+ * still be scoped to a different bucket — which R2 reports the same way it reports
+ * a bucket that isn't there. Without this the first proof is a 500 on someone's
+ * first upload, since `POST /assets` calls `put` unguarded and a config row that
+ * exists disables the base64-in-Postgres fallback.
+ *
+ * The test object is written under its own prefix with a random name and deleted
+ * again, so a run leaves nothing behind and can never collide with a real asset.
+ */
+export const testCompanyR2Config: Handler = async (ctx, pool, _req, deps) => {
+  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
+  if (!companyId) return ok({ ok: false, error: 'no company for this workspace' }, 400);
+  const { rows } = await pool.query<{ bucket: string }>(
+    'SELECT bucket FROM company_r2_config WHERE company_id = $1',
+    [companyId],
+  );
+  const bucket = rows[0]?.bucket;
+  const storage = await r2StorageForWorkspace(pool, ctx.workspaceId, deps.makeR2Storage);
+  if (!storage || !bucket) {
+    return ok({ ok: false, error: 'No storage is configured for this company yet. Save the credentials first.' }, 400);
+  }
+
+  const key = `connection-test/${randomUUID()}`;
+  const payload = Buffer.from(`cdp connection test ${new Date().toISOString()}`);
+  let step: 'write' | 'read' | 'delete' = 'write';
+  try {
+    await storage.put(key, payload, 'text/plain');
+    step = 'read';
+    const back = await storage.get(key);
+    if (!back || !back.body.equals(payload)) {
+      // The write was accepted and the read came back empty or different. Rare, and
+      // worth its own message: it is a bucket problem, not a credentials one.
+      await storage.del(key).catch(() => {});
+      return ok({
+        ok: false,
+        step,
+        bucket,
+        error: `Wrote to “${bucket}” but read back nothing. The bucket may have object versioning or a lifecycle rule interfering.`,
+      });
+    }
+    step = 'delete';
+    await storage.del(key);
+    return ok({ ok: true, bucket, message: `Connected to “${bucket}” — wrote, read and deleted a test object.` });
+  } catch (e) {
+    // Never leave the probe object behind when a later step failed.
+    if (step !== 'write') await storage.del(key).catch(() => {});
+    return ok({ ok: false, step, bucket, error: explainStorageError(e, bucket) });
+  }
 };
 
 // --- per-company LOGO (CLAUDE.md company-settings) -----------------------------
@@ -7568,6 +7623,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /company/r2-config': getCompanyR2Config,
   'PUT /company/r2-config': putCompanyR2Config,
   'DELETE /company/r2-config': deleteCompanyR2Config,
+  'POST /company/r2-config/test': testCompanyR2Config,
   'GET /company/connectors': listCompanyConnectors,
   'PUT /company/connectors': putCompanyConnector,
   'DELETE /company/connectors/:id': deleteCompanyConnector,

@@ -151,6 +151,84 @@ describeMaybe('per-company R2 image storage (real Postgres, fake bucket)', () =>
     await pool.query('DELETE FROM assets WHERE id = $1', [id]);
   });
 
+  // "Test connection" must do what an UPLOAD does, or it proves nothing: credentials
+  // can be well-formed, the bucket can exist, and the token can still be scoped to a
+  // different bucket. Without the round trip the first proof is a 500 on someone's
+  // first image.
+  describe('test connection', () => {
+    const test = () =>
+      dispatch({ method: 'POST', path: '/company/r2-config/test', authorization: owner(), query: {}, body: {} }, env());
+
+    const configure = () =>
+      dispatch(
+        {
+          method: 'PUT',
+          path: '/company/r2-config',
+          authorization: owner(),
+          query: {},
+          body: { endpoint: 'https://acct.r2.cloudflarestorage.com', bucket: 'acme-bucket', access_key_id: 'k', secret_access_key: 's' },
+        },
+        env(),
+      );
+
+    it('writes, reads back and DELETES a probe object, leaving nothing behind', async () => {
+      await configure();
+      bucket.puts.length = 0;
+      bucket.dels.length = 0;
+
+      const res = await test();
+      expect(res.status).toBe(200);
+      expect((res.body as { ok: boolean }).ok).toBe(true);
+      expect((res.body as { message: string }).message).toMatch(/acme-bucket/);
+
+      expect(bucket.puts).toHaveLength(1);
+      expect(bucket.dels).toEqual(bucket.puts); // the probe is cleaned up
+      expect(bucket.objects.has(bucket.puts[0]!)).toBe(false); // gone, unlike the real assets around it
+      expect(bucket.puts[0]).toMatch(/^connection-test\//); // its own prefix, never an asset key
+    });
+
+    it('reports a refused write in words the person can act on, not an SDK error name', async () => {
+      await configure();
+      const boom = Object.assign(new Error('Access Denied'), { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } });
+      const original = bucket.put.bind(bucket);
+      bucket.put = async () => {
+        throw boom;
+      };
+      const res = await test();
+      bucket.put = original;
+
+      const body = res.body as { ok: boolean; step: string; error: string };
+      expect(body.ok).toBe(false);
+      expect(body.step).toBe('write');
+      expect(body.error).toMatch(/acme-bucket/);
+      expect(body.error).toMatch(/scoped/i); // the actual cause, named
+      expect(body.error).not.toMatch(/AccessDenied/); // not the raw SDK name
+    });
+
+    // A failure after the write must still tidy up, or a failed test leaves litter
+    // in a customer's bucket every time someone clicks the button.
+    it('deletes the probe even when the read fails', async () => {
+      await configure();
+      bucket.dels.length = 0;
+      const original = bucket.get.bind(bucket);
+      bucket.get = async () => {
+        throw Object.assign(new Error('nope'), { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } });
+      };
+      const res = await test();
+      bucket.get = original;
+
+      expect((res.body as { ok: boolean; step: string }).step).toBe('read');
+      expect(bucket.dels).toHaveLength(1);
+    });
+
+    it('says to save first when nothing is configured', async () => {
+      await pool.query('DELETE FROM company_r2_config WHERE company_id = $1', [CO]);
+      const res = await test();
+      expect(res.status).toBe(400);
+      expect((res.body as { error: string }).error).toMatch(/Save the credentials first/i);
+    });
+  });
+
   it('no R2 config → falls back to base64-in-Postgres, served inline', async () => {
     await pool.query('DELETE FROM company_r2_config WHERE company_id = $1', [CO]);
     const up = await dispatch(
