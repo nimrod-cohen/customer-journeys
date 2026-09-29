@@ -336,10 +336,21 @@ function DomainEditor({ id }: { id: string }) {
               class="mt-3 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-800 ring-1 ring-inset ring-rose-200"
             >
               <p>{sesError}</p>
-              {/* Company settings is only the fix when the company is MISSING a
-                  provider's credentials — pointing a self-hosted company there
-                  sends them to look for an Amazon account they do not have. */}
-              {provider === null || provider === 'ses' ? (
+              {/* Where the fix actually is. With NO provider chosen that is the
+                  Connectors tab — the choice itself; with SES it is the credentials
+                  page. Sending a self-hosted or Resend company anywhere here would
+                  be sending them to look for an account they do not have. */}
+              {provider === null ? (
+                <Button
+                  data-testid="go-to-connectors"
+                  variant="secondary"
+                  size="sm"
+                  class="mt-3"
+                  onClick={() => navigate('/company/connectors')}
+                >
+                  Choose an email provider →
+                </Button>
+              ) : provider === 'ses' ? (
                 <Button
                   data-testid="go-to-ses-config"
                   variant="secondary"

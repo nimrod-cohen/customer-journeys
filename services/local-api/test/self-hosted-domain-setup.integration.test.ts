@@ -151,6 +151,27 @@ describeMaybe('sending-domain setup follows the email provider (real Postgres)',
     expect(body.setupError).toMatch(/Resend dashboard/i);
   });
 
+  // A brand-new company adding its first domain has chosen no provider yet. This
+  // used to fall through to the SES branch and tell them to add Amazon credentials —
+  // for a provider they never picked and which is no longer even offered.
+  it('tells a company with NO provider to choose one, never mentioning SES', async () => {
+    await setProvider(null);
+    const body = (await get()).body as { provider: string | null; records: unknown[]; setupError?: string };
+    expect(body.provider).toBeNull();
+    expect(body.records).toEqual([]);
+    expect(body.setupError).toMatch(/Connectors/);
+    // The MESSAGE is what the reader sees; `sesConfigured` is a legacy field name
+    // the screen still reads, so assert the text rather than the whole payload.
+    expect(body.setupError).not.toMatch(/Amazon|SES/i);
+  });
+
+  it('says the same on a re-check rather than falling through to SES', async () => {
+    await setProvider(null);
+    const body = (await check()).body as { provider: string | null; error?: string };
+    expect(body.error).toMatch(/Connectors/);
+    expect(body.error).not.toMatch(/Amazon|SES/i);
+  });
+
   // The SES path is unchanged for the companies that actually use it.
   it('still asks an SES company for its credentials', async () => {
     await setProvider('ses');

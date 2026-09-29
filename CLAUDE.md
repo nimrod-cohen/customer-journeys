@@ -287,6 +287,12 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   `domainStats:query` needs `parent` in the request BODY as well as the path; and
   `complianceStatus` returns `complianceData.rowData[]` requirement/status pairs, not
   flat `spfStatus`/`dkimStatus` fields. Verification is a readiness **warning** and never gates sending.
+- **A company with NO provider is its own case.** With none connected the flow used to
+  fall through to the SES branch, so a brand-new company adding its first domain was
+  told to add Amazon SES credentials — for a provider it never chose and which is no
+  longer offered. It now names the actual next step (choose one under Connectors) and
+  links there. Only the MESSAGE changes: `mode === 'mock'` still falls through, which
+  is how dev and the test tier verify deterministically.
 - **The sending-domain flow BRANCHES ON THE PROVIDER** (`emailProviderForWorkspace`).
   It assumed SES, so a self-hosted company opening its domain was told to add Amazon
   credentials it will never have. SES → the identity + CNAME flow; Resend → nothing to

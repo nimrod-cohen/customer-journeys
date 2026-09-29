@@ -2223,10 +2223,19 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
   }
 
   const { ses, mode, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
-  // No SES credentials → don't simulate. Surface the error and show no records so
-  // the UI blocks setup until the company configures SES.
+  // Nothing to send with → don't simulate; surface why and show no records. WHICH
+  // reason depends on whether a provider was ever chosen: a company that picked SES
+  // is missing credentials, while a company that picked NOTHING was being told to go
+  // and add Amazon credentials for a provider it never chose. (`mode === 'mock'`
+  // still falls through, which is how dev and the test tier verify deterministically.)
   if (mode === 'none') {
-    return ok({ domain: domainOut, records: [], sesConfigured: false, sesError: SES_NOT_CONFIGURED });
+    return ok({
+      domain: domainOut,
+      records: [],
+      provider,
+      sesConfigured: false,
+      ...(provider === null ? { setupError: 'This company has not connected an email provider yet. Choose one under Company settings → Connectors — that decides what this domain needs, since each provider verifies differently.' } : { sesError: SES_NOT_CONFIGURED }),
+    });
   }
   try {
     const { tokens, signingHostedZone } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);
@@ -2303,10 +2312,17 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
     return ok({ verified: row.verified, provider, records: [], postmaster });
   }
 
+
   const { ses, mode, region } = await sesForWorkspace(pool, ctx.workspaceId, deps);
-  // No SES credentials → don't simulate a verification; require SES first.
+  // As in the GET: don't simulate, and name the reason that actually applies.
   if (mode === 'none') {
-    return ok({ verified: row.verified, sesConfigured: false, postmaster, error: SES_NOT_CONFIGURED });
+    return ok({
+      verified: row.verified,
+      provider,
+      sesConfigured: false,
+      postmaster,
+      error: provider === null ? 'This company has not connected an email provider yet. Choose one under Company settings → Connectors — that decides what this domain needs, since each provider verifies differently.' : SES_NOT_CONFIGURED,
+    });
   }
   try {
     const { identity, tokens, signingHostedZone } = await ensureSesIdentity(ses, pool, ctx.workspaceId, row);

@@ -165,9 +165,12 @@ describeMaybe('register + bootstrap + login (real Postgres)', () => {
     expect(r.status).toBe(403);
   });
 
-  it('with NO SES credentials, domain setup is BLOCKED (no simulation)', async () => {
-    // The registered company has no company_ses_config and LOCAL_SES_FORCE_MOCK
-    // is not set here → setup must surface an error and produce NO records.
+  it('with NO provider connected, domain setup is BLOCKED (no simulation)', async () => {
+    // A freshly registered company has no connector and no credentials, and
+    // LOCAL_SES_FORCE_MOCK is not set here → setup must surface a reason and produce
+    // NO records. The reason is the PROVIDER CHOICE, not missing Amazon credentials:
+    // this company never picked SES, and telling it to go and find an AWS account is
+    // how a brand-new customer's first domain used to dead-end.
     const token = (await loginBody()).token;
     const created = await postAuth('/sending-domains', token, { domain: 'mail.regtest.example' });
     expect(created.status).toBe(201);
@@ -176,9 +179,11 @@ describeMaybe('register + bootstrap + login (real Postgres)', () => {
     const detail = (await (await get(`/sending-domains/${id}`, token)).json()) as {
       records: unknown[];
       sesError?: string;
+      setupError?: string;
     };
     expect(detail.records).toHaveLength(0);
-    expect(detail.sesError).toBeTruthy();
+    expect(detail.setupError ?? detail.sesError).toBeTruthy();
+    expect(detail.setupError).toMatch(/Connectors/);
 
     const check = (await (await postAuth(`/sending-domains/${id}/check`, token, {})).json()) as {
       verified: boolean;
