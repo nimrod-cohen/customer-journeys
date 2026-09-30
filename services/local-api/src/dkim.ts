@@ -392,16 +392,28 @@ export async function verifySelfHostedDomain(
     // record's parts are concatenated before comparing.
     const joined = txt.map((parts) => parts.join(''));
     const ok = joined.some((v) => v.replace(/\s+/g, '').includes(opts.expectedPublicKey.replace(/\s+/g, '')));
+    // A DKIM record that is PRESENT but holds another key is a different problem
+    // from a missing one, and the fix is different too: replace the value rather
+    // than add a record. Telling someone to publish a record they can plainly see
+    // sends them hunting for something that is already there — which is exactly
+    // what happens to a domain that used to sign with a key of its own.
+    const wrongKey = !ok && joined.some((v) => /(^|;)\s*v=DKIM1/i.test(v) || /(^|;)\s*p=/i.test(v));
     checks.push({
       label: 'DKIM key published',
       ok,
-      detail: ok ? undefined : `publish the TXT record at ${opts.selector}._domainkey.${opts.customerDomain}`,
+      detail: ok
+        ? undefined
+        : wrongKey
+          ? `a TXT record exists at ${opts.selector}._domainkey.${opts.customerDomain} but holds a different key — replace its value with the one shown above (don't add a second record)`
+          : `publish the TXT record at ${opts.selector}._domainkey.${opts.customerDomain}`,
     });
   } catch {
     checks.push({
       label: 'DKIM key published',
       ok: false,
-      detail: `no TXT record found at ${opts.selector}._domainkey.${opts.customerDomain}`,
+      // Say what to DO, not just what is absent — this is the one branch where
+      // "publish it" is the right instruction.
+      detail: `nothing resolves at ${opts.selector}._domainkey.${opts.customerDomain} — publish the TXT record shown above`,
     });
   }
 

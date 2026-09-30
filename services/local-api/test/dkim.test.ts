@@ -294,6 +294,51 @@ describe('verifySelfHostedDomain (the day-one model)', () => {
     expect(r.verified).toBe(true);
   });
 
+  // "Publish the record" sends someone hunting for a record that is already there.
+  // A selector holding the WRONG key is a different problem with a different fix —
+  // replace the value — and it is the likely one whenever a domain previously
+  // signed with a key of its own.
+  it('says the value is WRONG when a record exists with another key', async () => {
+    const r = await verifySelfHostedDomain(
+      resolverFor({
+        txt: {
+          'cdp._domainkey.acme.com': [['v=DKIM1; k=rsa; p=SOMEBODYELSESKEY']],
+          '_dmarc.acme.com': [['v=DMARC1; p=none']],
+        },
+      }),
+      args,
+    );
+    expect(r.verified).toBe(false);
+    const dkim = r.checks.find((c) => c.label.startsWith('DKIM'))!;
+    expect(dkim.detail).toMatch(/different key|replace/i);
+    expect(dkim.detail).not.toMatch(/^publish/i); // the record IS published
+  });
+
+  it('still says PUBLISH when the name holds nothing at all', async () => {
+    const r = await verifySelfHostedDomain(
+      resolverFor({ txt: { '_dmarc.acme.com': [['v=DMARC1; p=none']] } }),
+      args,
+    );
+    const dkim = r.checks.find((c) => c.label.startsWith('DKIM'))!;
+    expect(dkim.detail).toMatch(/publish/i);
+  });
+
+  // A name that resolves but carries only unrelated TXT (SPF, verifications) is the
+  // same situation as nothing: our record was never added.
+  it('says PUBLISH when the records there are not DKIM at all', async () => {
+    const r = await verifySelfHostedDomain(
+      resolverFor({
+        txt: {
+          'cdp._domainkey.acme.com': [['some-unrelated-verification=abc']],
+          '_dmarc.acme.com': [['v=DMARC1; p=none']],
+        },
+      }),
+      args,
+    );
+    const dkim = r.checks.find((c) => c.label.startsWith('DKIM'))!;
+    expect(dkim.detail).toMatch(/publish/i);
+  });
+
   // A 2048-bit key is published as several strings the resolver rejoins.
   it('rejoins a multi-string TXT record before comparing', async () => {
     const half = Math.floor(KEY.length / 2);
