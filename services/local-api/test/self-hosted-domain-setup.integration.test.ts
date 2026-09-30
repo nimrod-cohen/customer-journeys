@@ -143,6 +143,29 @@ describeMaybe('sending-domain setup follows the email provider (real Postgres)',
     await pool.query('UPDATE sending_domains SET gpt_verification_token = NULL WHERE id = $1', [domainId]);
   });
 
+  // A domain that already signs with a key of its own keeps it. The shared key is
+  // the DEFAULT, not a requirement — forcing a domain onto it would mean rewriting a
+  // record that is already correct and already signing, and would change nothing for
+  // anyone else.
+  it('shows and checks a domain’s OWN key when it has one', async () => {
+    await setProvider('smtp');
+    const OWN = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAowndomainkey';
+    await pool.query('UPDATE sending_domains SET dkim_public_key = $2 WHERE id = $1', [domainId, OWN]);
+
+    const body = (await get()).body as { records: Array<{ name: string; value: string }> };
+    const dkim = body.records.find((r) => r.name.includes('_domainkey'))!;
+    expect(dkim.value).toContain(OWN);
+    expect(dkim.value).not.toContain(PUBKEY); // NOT the deployment's shared key
+
+    await pool.query('UPDATE sending_domains SET dkim_public_key = NULL WHERE id = $1', [domainId]);
+  });
+
+  it('falls back to the shared key when the domain has none of its own', async () => {
+    await setProvider('smtp');
+    const body = (await get()).body as { records: Array<{ name: string; value: string }> };
+    expect(body.records.find((r) => r.name.includes('_domainkey'))!.value).toContain(PUBKEY);
+  });
+
   it('tells a Resend company to verify in Resend, with nothing to publish here', async () => {
     await setProvider('resend');
     const body = (await get()).body as { provider: string; records: unknown[]; setupError?: string };

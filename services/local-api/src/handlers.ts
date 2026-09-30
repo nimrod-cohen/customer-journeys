@@ -1175,8 +1175,12 @@ async function postmasterRecordFor(
 async function selfHostedDomainSetup(
   domain: string,
   verified: boolean,
+  ownKey?: string | null,
 ): Promise<{ records: DnsRecordOut[]; error?: string }> {
-  const key = selfHostedDkimPublicKey();
+  // A domain that already has a key of its own keeps it — the shared key is the
+  // DEFAULT, not a requirement. Forcing a domain onto it would mean rewriting a
+  // record that is already correct and already signing.
+  const key = ownKey?.trim() || selfHostedDkimPublicKey();
   if (!key) {
     return {
       records: [],
@@ -2042,6 +2046,8 @@ interface SendingDomainRow {
   /** The Google Postmaster site-verification value to publish at the apex. */
   gpt_verification_token: string | null;
   gpt_verified_at: string | null;
+  /** This domain's OWN signing key, when it has one; NULL = the shared key. */
+  dkim_public_key: string | null;
 }
 
 type DnsRecordStatus = 'found' | 'missing' | 'mismatch';
@@ -2264,7 +2270,7 @@ async function loadSendingDomain(
   const q = scopedQuery(
     workspaceId,
     `SELECT id, domain, verified, verified_at, ses_identity, dkim_tokens, signing_hosted_zone,
-            gpt_verification_token, gpt_verified_at
+            gpt_verification_token, gpt_verified_at, dkim_public_key
        FROM sending_domains WHERE id = $1`,
     [id],
   );
@@ -2282,7 +2288,7 @@ export const getSendingDomain: Handler = async (ctx, pool, req, deps) => {
 
   const provider = await emailProviderForWorkspace(pool, ctx.workspaceId);
   if (provider === 'smtp') {
-    const { records, error } = await selfHostedDomainSetup(row.domain, row.verified);
+    const { records, error } = await selfHostedDomainSetup(row.domain, row.verified, row.dkim_public_key);
     const gpt = await postmasterRecordFor(pool, ctx.workspaceId, row);
     return ok({
       domain: domainOut,
@@ -2362,8 +2368,8 @@ export const checkSendingDomain: Handler = async (ctx, pool, req, deps) => {
     // for a self-hosted company. Comparing against an empty string made any TXT
     // record at all count as a match, so a domain could verify without publishing
     // our key and then send mail nothing could validate.
-    const expectedPublicKey = selfHostedDkimPublicKey();
-    const { records, error } = await selfHostedDomainSetup(row.domain, row.verified);
+    const expectedPublicKey = row.dkim_public_key?.trim() || selfHostedDkimPublicKey();
+    const { records, error } = await selfHostedDomainSetup(row.domain, row.verified, row.dkim_public_key);
     if (!expectedPublicKey) {
       return ok({ verified: row.verified, selfHosted: true, provider, records, postmaster, error });
     }

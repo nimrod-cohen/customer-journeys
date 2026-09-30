@@ -322,7 +322,15 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   record, and `POST /sending-domains/:id/check` resolves both. One key file on the mail
   server serves every customer domain (its KeyTable entry substitutes the sender's
   domain), so adding a domain needs no work on the box. The key comes from
-  **`SELF_HOSTED_DKIM_PUBLIC_KEY`** (+ `SELF_HOSTED_DKIM_SELECTOR`, default `cdp`);
+  **`SELF_HOSTED_DKIM_PUBLIC_KEY`** (+ `SELF_HOSTED_DKIM_SELECTOR`, default `cdp`) —
+  unless the domain carries its OWN key in `sending_domains.dkim_public_key`, which
+  both the shown record and the check then use. The shared key is the DEFAULT, not a
+  requirement: a domain that already publishes a key the mail server holds keeps it,
+  rather than rewriting a record that is already correct and already signing. The
+  mail server mirrors that with a specific `*@<domain>` SigningTable entry, which
+  wins its own `(d=, s=)` over the catch-all. Order those entries with the catch-all
+  LAST — putting a specific one first drops the platform signature and can emit two
+  conflicting `s=cdp` signatures for the same domain;
   unset, the screen says the DEPLOYMENT has no signing key rather than blaming the
   customer's DNS. **Never verify against `sending_domains.dkim_tokens` here** — those
   are SES tokens, empty for a self-hosted company, and an empty expected key matched
