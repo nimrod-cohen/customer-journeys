@@ -6077,11 +6077,77 @@ export const getProfileDelivery: Handler = async (ctx, pool, req) => {
     [ctx.workspaceId, id],
   );
 
+  // EVERY message this person was sent, of any medium — the question "what have we
+  // actually sent them?" is the one people come to this tab with, and the report
+  // list above cannot answer it: a successful send reports nothing. Skips and
+  // failures are included WITH their reason, since "why didn't they get it?" is the
+  // same question from the other side.
+  const messages = await pool.query<{
+    id: string;
+    sent_at: string;
+    medium: string;
+    status: string;
+    reason: string | null;
+    ses_message_id: string | null;
+    cc_addresses: string[] | null;
+    bcc_addresses: string[] | null;
+    broadcast_name: string | null;
+    automation_name: string | null;
+  }>(
+    `SELECT m.id, m.sent_at, m.medium, m.status, m.reason, m.ses_message_id,
+            m.cc_addresses, m.bcc_addresses,
+            b.name AS broadcast_name, a.name AS automation_name
+       FROM messages_log m
+       LEFT JOIN broadcasts b ON b.id = m.broadcast_id AND b.workspace_id = m.workspace_id
+       LEFT JOIN automations a ON a.id = m.automation_id AND a.workspace_id = m.workspace_id
+      WHERE m.workspace_id = $1 AND m.profile_id = $2
+      ORDER BY m.sent_at DESC
+      LIMIT 50`,
+    [ctx.workspaceId, id],
+  );
+
+  // What the world said about each of those messages, so a row can show its own
+  // outcome rather than leaving the reports in a separate list to correlate by eye.
+  const ids = messages.rows.map((m) => m.ses_message_id).filter((x): x is string => !!x);
+  const perMessage = ids.length
+    ? await pool.query<{ ses_message_id: string; type: string; sub_type: string | null; occurred_at: string }>(
+        `SELECT raw->>'ses_message_id' AS ses_message_id, type, sub_type, occurred_at
+           FROM email_events
+          WHERE workspace_id = $1 AND raw->>'ses_message_id' = ANY($2)
+          ORDER BY occurred_at`,
+        [ctx.workspaceId, ids],
+      )
+    : { rows: [] as Array<{ ses_message_id: string; type: string; sub_type: string | null; occurred_at: string }> };
+  const eventsByMessage = new Map<string, Array<{ type: string; sub_type: string | null; occurred_at: string }>>();
+  for (const e of perMessage.rows) {
+    const arr = eventsByMessage.get(e.ses_message_id) ?? [];
+    arr.push({ type: e.type, sub_type: e.sub_type, occurred_at: e.occurred_at });
+    eventsByMessage.set(e.ses_message_id, arr);
+  }
+
   return ok({
     email_status: p.rows[0].email_status,
     suppressed: supp.rows[0] ?? null,
     soft_bounce_days: days.rows[0]?.n ?? 0,
     events: events.rows,
+    messages: messages.rows.map((m) => ({
+      id: m.id,
+      sent_at: m.sent_at,
+      medium: m.medium,
+      status: m.status,
+      reason: m.reason,
+      message_id: m.ses_message_id,
+      // Where it came from, in the words the screen shows elsewhere.
+      source: m.broadcast_name
+        ? { kind: 'broadcast', name: m.broadcast_name }
+        : m.automation_name
+          ? { kind: 'automation', name: m.automation_name }
+          : { kind: 'transactional', name: 'Transactional / API' },
+      cc: m.cc_addresses ?? [],
+      // Counted, never listed — a blind copy stays blind wherever it is displayed.
+      bcc_count: (m.bcc_addresses ?? []).length,
+      events: m.ses_message_id ? (eventsByMessage.get(m.ses_message_id) ?? []) : [],
+    })),
     sent_count: sends.rows[0]?.n ?? 0,
     last_sent_at: sends.rows[0]?.last_at ?? null,
     // Which provider decides whether SILENCE here is meaningful: our own mail server

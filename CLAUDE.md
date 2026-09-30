@@ -559,7 +559,12 @@ Three independent state layers. The hard `suppressions` list is untouched and re
   drives suppression — so it cannot live in the row recording what we sent. **Absence
   of a report is not failure**: self-hosted SMTP reports only failures, so an empty
   Delivery tab beside a successful send is the GOOD outcome, and the profile screen
-  says so rather than "no delivery events yet".
+  says so rather than "no delivery events yet". The tab therefore lists the MESSAGES
+  too (`messages[]` on `GET /profiles/:id/delivery`, newest 50, every medium,
+  including skips and failures with their reason) — "what have we actually sent
+  them?" is the question people open it with, and a report list can never answer it.
+  Each row expands to its source, reason, copies and whatever reports that one
+  message drew; `bcc` is COUNTED there, never named.
 - **Delivery health** (`GET /dashboards/delivery-health?days=N`, `manage_content`, default 30d, clamped 1..365) is **EMAIL-ONLY** (`messages_log medium='email'`) so text sends don't pollute SES reputation metrics. Returns outcomes, rates (bounce = bounced/(delivered+bounced); complaint = complained/delivered) colored against SES thresholds (bounce >5% warn / >10% danger; complaint >0.1% warn / >0.5% danger), current suppression size by reason (not windowed), and a gap-filled per-day trend.
 
 ---

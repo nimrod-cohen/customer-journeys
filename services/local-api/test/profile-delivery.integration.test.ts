@@ -69,6 +69,45 @@ describeMaybe('profile delivery health (real Postgres)', () => {
     expect(b.events.length).toBe(3);
   });
 
+  // "What have we actually sent this person?" is the question people open this tab
+  // with, and the reports list cannot answer it — a successful delivery reports
+  // nothing, so it stays empty however much mail went out.
+  it('lists the messages sent, newest first, with their source and outcome', async () => {
+    await world.pool.query(
+      `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, sent_at, reason)
+       VALUES ($1,$2,'msg-sent','sent','email','2026-02-01T09:00:00Z',NULL),
+              ($1,$2,NULL,'skipped','email','2026-02-02T09:00:00Z','recipient unsubscribed'),
+              ($1,$2,'msg-sms','sent','sms','2026-02-03T09:00:00Z',NULL)`,
+      [WS, P],
+    );
+    const body = (await call(world.env, 'GET', `/profiles/${P}/delivery`, { token: tok() })).body as Record<string, unknown>;
+    const msgs = body.messages as Array<{ status: string; medium: string; reason: string | null; source: { kind: string } }>;
+    expect(msgs).toHaveLength(3);
+    expect(msgs[0]!.medium).toBe('sms'); // newest first
+    // A SKIP is shown too, with its reason: "why didn't they get it?" is the same
+    // question from the other side.
+    const skipped = msgs.find((m) => m.status === 'skipped')!;
+    expect(skipped.reason).toBe('recipient unsubscribed');
+    // No broadcast and no automation → it came through the API.
+    expect(msgs.every((m) => m.source.kind === 'transactional')).toBe(true);
+    await world.pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [WS]);
+  });
+
+  // A blind copy stays blind wherever it is displayed.
+  it('counts bcc recipients on a message but never names them', async () => {
+    await world.pool.query(
+      `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, cc_addresses, bcc_addresses)
+       VALUES ($1,$2,'msg-copies','sent','email',ARRAY['seen@acme.com'],ARRAY['blind@acme.com'])`,
+      [WS, P],
+    );
+    const body = (await call(world.env, 'GET', `/profiles/${P}/delivery`, { token: tok() })).body as Record<string, unknown>;
+    const m = (body.messages as Array<{ cc: string[]; bcc_count: number }>)[0]!;
+    expect(m.cc).toEqual(['seen@acme.com']);
+    expect(m.bcc_count).toBe(1);
+    expect(JSON.stringify(body)).not.toContain('blind@acme.com');
+    await world.pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [WS]);
+  });
+
   it('404s for a profile outside the workspace', async () => {
     const r = await call(world.env, 'GET', `/profiles/0c0d0e0b-0000-4000-8000-0000000000ff/delivery`, { token: tok() });
     expect(r.status).toBe(404);

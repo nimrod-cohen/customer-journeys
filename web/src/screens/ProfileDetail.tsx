@@ -833,9 +833,92 @@ interface DeliveryInfo {
   sent_count: number;
   last_sent_at: string | null;
   provider: 'smtp' | 'resend' | 'ses' | null;
+  messages: DeliveryMessage[];
+}
+
+interface DeliveryMessage {
+  id: string;
+  sent_at: string;
+  medium: string;
+  status: string;
+  reason: string | null;
+  message_id: string | null;
+  source: { kind: string; name: string };
+  cc: string[];
+  bcc_count: number;
+  events: Array<{ type: string; sub_type: string | null; occurred_at: string }>;
 }
 
 const SOFT_BOUNCE_DAYS_LIMIT = 3;
+
+/**
+ * One sent message, expandable. Collapsed it answers "what did they get, when, and
+ * did it work"; expanded it carries the detail you only want when chasing a
+ * specific message — where it came from, its id, its copies, and what the receiving
+ * world said about that one message.
+ */
+function MessageRow({ m }: { m: DeliveryMessage }) {
+  const [open, setOpen] = useState(false);
+  const failed = m.status === 'failed';
+  const skipped = m.status === 'skipped';
+  return (
+    <li data-testid="delivery-message-row" class="py-2 text-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        class="flex w-full items-center gap-3 text-left hover:opacity-80"
+      >
+        <span class="w-4 shrink-0 text-xs text-stone-400">{open ? '▾' : '▸'}</span>
+        <span class="w-40 shrink-0 font-mono text-xs text-stone-500">{fmt(m.sent_at)}</span>
+        <Badge tone={failed ? 'danger' : skipped ? 'warn' : 'success'}>{m.status}</Badge>
+        <span class="text-xs uppercase tracking-wide text-stone-400">{m.medium}</span>
+        <span class="min-w-0 flex-1 truncate text-ink-900">{m.source.name}</span>
+        {m.reason ? <span class="truncate text-xs text-stone-500">{m.reason}</span> : null}
+      </button>
+      {open ? (
+        <dl class="ml-7 mt-2 grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-xs text-stone-600">
+          <dt class="text-stone-400">Source</dt>
+          <dd>
+            {m.source.name} <span class="text-stone-400">({m.source.kind})</span>
+          </dd>
+          {m.reason ? (
+            <>
+              <dt class="text-stone-400">Reason</dt>
+              <dd>{m.reason}</dd>
+            </>
+          ) : null}
+          {m.cc.length > 0 ? (
+            <>
+              <dt class="text-stone-400">Cc</dt>
+              <dd>{m.cc.join(', ')}</dd>
+            </>
+          ) : null}
+          {m.bcc_count > 0 ? (
+            <>
+              <dt class="text-stone-400">Bcc</dt>
+              <dd>
+                {m.bcc_count} recipient{m.bcc_count === 1 ? '' : 's'}{' '}
+                <span class="text-stone-400">(hidden by design)</span>
+              </dd>
+            </>
+          ) : null}
+          <dt class="text-stone-400">Reports</dt>
+          <dd>
+            {m.events.length === 0
+              ? 'none — a successful delivery reports nothing'
+              : m.events.map((e) => `${e.type}${e.sub_type ? ` (${e.sub_type})` : ''} · ${fmt(e.occurred_at)}`).join(' · ')}
+          </dd>
+          {m.message_id ? (
+            <>
+              <dt class="text-stone-400">Message id</dt>
+              <dd class="break-all font-mono">{m.message_id}</dd>
+            </>
+          ) : null}
+        </dl>
+      ) : null}
+    </li>
+  );
+}
 
 function DeliveryTab({ id }: { id: string }) {
   const [info, setInfo] = useState<DeliveryInfo | null>(null);
@@ -885,6 +968,19 @@ function DeliveryTab({ id }: { id: string }) {
             </dd>
           </div>
         </dl>
+      </Card>
+
+      <Card class="p-5">
+        <h2 class="text-base font-bold text-ink-900">Messages sent</h2>
+        {info.messages.length === 0 ? (
+          <p class="mt-2 text-sm text-stone-400">Nothing has been sent to this person yet.</p>
+        ) : (
+          <ul class="mt-3 divide-y divide-stone-100">
+            {info.messages.map((m) => (
+              <MessageRow key={m.id} m={m} />
+            ))}
+          </ul>
+        )}
       </Card>
 
       <Card class="p-5">
