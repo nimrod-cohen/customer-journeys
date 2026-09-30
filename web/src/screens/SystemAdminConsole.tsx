@@ -88,6 +88,30 @@ export function SystemAdminConsole() {
     }
   };
 
+  // Add a workspace to a NAMED company. Without this a company with none is
+  // unreachable: the ordinary create derives the company from the caller's active
+  // workspace, so there is nothing to derive from — and a platform admin would
+  // silently create it in whichever company they happen to be viewing.
+  const [wsAddFor, setWsAddFor] = useState<string | null>(null);
+  const [wsAddName, setWsAddName] = useState('');
+  const addWorkspace = async (companyId: string) => {
+    const name = wsAddName.trim();
+    if (!name) return;
+    setErr('');
+    try {
+      const r = await api.post<{ owner_added: boolean }>(`/admin/companies/${companyId}/workspaces`, { body: { name } });
+      setWsAddFor(null);
+      setWsAddName('');
+      await load();
+      showToast(
+        r.owner_added ? `Created “${name}” and gave the company owner access.` : `Created “${name}”.`,
+        { tone: 'success' },
+      );
+    } catch (e) {
+      setErr((e as { error?: string })?.error ?? 'could not create the workspace');
+    }
+  };
+
   const saveCompanyRename = async (id: string) => {
     const name = coRenameText.trim();
     if (!name) return;
@@ -225,6 +249,36 @@ export function SystemAdminConsole() {
                 <span class="text-xs text-stone-500">
                   {c.workspaces.length} {c.workspaces.length === 1 ? 'workspace' : 'workspaces'}
                 </span>
+                {wsAddFor === c.id ? (
+                  <span class="flex items-center gap-2">
+                    <Input
+                      data-testid="admin-workspace-name"
+                      class="max-w-[12rem]"
+                      placeholder="Workspace name"
+                      value={wsAddName}
+                      onInput={(e: Event) => setWsAddName((e.target as HTMLInputElement).value)}
+                    />
+                    <Button data-testid="admin-workspace-create" size="sm" onClick={() => addWorkspace(c.id)}>
+                      Create
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setWsAddFor(null)}>
+                      Cancel
+                    </Button>
+                  </span>
+                ) : (
+                  <Button
+                    data-testid="admin-add-workspace"
+                    data-id={c.id}
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setWsAddFor(c.id);
+                      setWsAddName('');
+                    }}
+                  >
+                    Add workspace
+                  </Button>
+                )}
                 {c.workspaces.length === 0 ? (
                   <Button
                     data-testid="delete-company"
@@ -244,7 +298,10 @@ export function SystemAdminConsole() {
               </span>
             </div>
             {c.workspaces.length === 0 ? (
-              <p class="px-4 py-3 text-sm text-stone-400">No workspaces in this company.</p>
+              <p class="px-4 py-3 text-sm text-stone-400">
+                No workspaces in this company — nobody can sign in to it until one exists. Use{' '}
+                <b>Add workspace</b> above.
+              </p>
             ) : (
               <table class="w-full text-sm">
                 <tbody class="divide-y divide-stone-100">

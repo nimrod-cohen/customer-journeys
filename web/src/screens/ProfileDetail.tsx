@@ -829,6 +829,10 @@ interface DeliveryInfo {
   suppressed: { reason: string; source: string | null; created_at: string } | null;
   soft_bounce_days: number;
   events: Array<{ type: string; sub_type: string | null; occurred_at: string }>;
+  /** What WE sent — separate from `events`, which is what the provider reported back. */
+  sent_count: number;
+  last_sent_at: string | null;
+  provider: 'smtp' | 'resend' | 'ses' | null;
 }
 
 const SOFT_BOUNCE_DAYS_LIMIT = 3;
@@ -886,7 +890,24 @@ function DeliveryTab({ id }: { id: string }) {
       <Card class="p-5">
         <h2 class="text-base font-bold text-ink-900">Recent delivery events</h2>
         {info.events.length === 0 ? (
-          <p class="mt-2 text-sm text-stone-400">No delivery events (deliveries, bounces, complaints) yet.</p>
+          <div class="mt-2 text-sm text-stone-500">
+            {/* These are REPORTS FROM THE PROVIDER, not our own sends — which is why
+                a message can appear in the activity log while this list is empty.
+                For the internal mail server that is the normal outcome: only
+                failures are reported back, so silence means nothing went wrong. */}
+            <p>No bounces or complaints for this address.</p>
+            {info.sent_count > 0 ? (
+              <p class="mt-1 text-stone-400">
+                {info.sent_count} email{info.sent_count === 1 ? '' : 's'} sent
+                {info.last_sent_at ? `, most recently ${fmt(info.last_sent_at)}` : ''}.{' '}
+                {info.provider === 'smtp'
+                  ? 'This list shows what the receiving server tells us afterwards — a successful delivery reports nothing, so an empty list here is the good outcome.'
+                  : 'This list shows what the provider reports afterwards, which arrives separately from the send itself.'}
+              </p>
+            ) : (
+              <p class="mt-1 text-stone-400">Nothing has been sent to this address yet.</p>
+            )}
+          </div>
         ) : (
           <ul class="mt-3 divide-y divide-stone-100">
             {info.events.map((ev, i) => (

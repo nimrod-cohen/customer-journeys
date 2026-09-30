@@ -89,6 +89,17 @@ Read via `getWorkspaceSettings`, written via the owner-gated `PUT /workspace/set
 
 **Company → Workspace (extends §6).** A `companies` table groups workspaces; every workspace has `company_id NOT NULL`. **Isolation is unchanged and stays at the workspace level** — a company is purely the organizational parent so a platform admin can pick company → workspace (sidebar `CompanyWorkspacePicker`, fed by `GET /admin/companies`). Workspaces created without a `company_id` (chiefly integration tests) are auto-assigned to a shared `Unassigned` company by a BEFORE-INSERT trigger; product paths always supply a real one. **A user belongs to ONE company:** `addMember` 409s when adding a user to a workspace whose company differs from one they already belong to.
 
+**A company with ZERO workspaces needs a platform admin to rescue it.** `POST
+/workspaces` derives the company from the CALLER'S ACTIVE workspace, so a company
+with none can never get one that way — there is nothing to derive from, and an admin
+viewing another company would silently create it there instead. `POST
+/workspace/bootstrap` only covers the registered owner while they hold no workspace
+at all. `POST /admin/companies/:id/workspaces` (`view_all_workspaces`, audited) names
+the company explicitly and adds the company's `owner_user_id` as a member — a
+workspace nobody can open is the same dead end one step further on. The platform
+admin is deliberately NOT added: system-admin reaches it by claim, and a membership
+row would make them look like a tenant user.
+
 **Registration creates a COMPANY only — never a workspace.** `POST /auth/register` (`registerOwner`, local-api `session.ts`) inserts the owner `users` row + a `companies` row tagged `owner_user_id`; NO workspace, NO `workspace_users`. The minted token is logged-in but workspace-less, so the response carries `needs_workspace: true`. Because production `authorize()` hard-denies a non-platform-admin token with no active workspace, creating the first workspace is a **session route**: `POST /workspace/bootstrap` (`createFirstWorkspace`) authenticates the token directly, resolves the company server-side from `owner_user_id = <token sub>` (never client-supplied, inv.2), inserts the workspace + owner membership, and **re-mints the token**. `devLogin` mirrors this (workspace-less owner → 200 with `needs_workspace`; anyone else with no membership → 403). The SPA routes such a session to `CreateFirstWorkspace`. Additional workspaces go through the capability-gated `POST /workspaces`.
 
 ## Identity model
@@ -521,6 +532,16 @@ Three independent state layers. The hard `suppressions` list is untouched and re
 - **Unsubscribe attribution:** the unsubscribe POST parses `&b=`/`&c=` and writes an `email_events` row `type='unsubscribe'` attributed to the source + profile. Not trust-sensitive (metrics only); suppression writes stay scoped to the verified token's workspace. A generic header click attributes nothing.
 - **Broadcast funnel** on the list: Sent · Delivered · Failed · Opened · Clicked · Unsubscribed, each a count and a %. Denominators: delivered/failed of *sent*; opened/clicked/unsubscribed of *delivered*; divide-by-zero → `0%`. Delivered/Failed come from `email_events` joined to `messages_log` by `ses_message_id`.
 - **Local dev caveat:** Delivered/Failed are 0 without the feedback pipeline, but clicks, opens, and unsubscribes DO populate locally through those public endpoints.
+- **`messages_log` and `email_events` answer different questions and must stay apart.**
+  `messages_log` is OUR record, written synchronously when the provider accepts the
+  message; `email_events` is what the outside world reported afterwards, and arrives
+  seconds or days later or never. One send yields N reports (`delayed`×3 then
+  `bounce`), some reports match no send we can attribute (forwarded mail, a rotated
+  VERP secret) and are keyed by address alone, and a report is untrusted input that
+  drives suppression — so it cannot live in the row recording what we sent. **Absence
+  of a report is not failure**: self-hosted SMTP reports only failures, so an empty
+  Delivery tab beside a successful send is the GOOD outcome, and the profile screen
+  says so rather than "no delivery events yet".
 - **Delivery health** (`GET /dashboards/delivery-health?days=N`, `manage_content`, default 30d, clamped 1..365) is **EMAIL-ONLY** (`messages_log medium='email'`) so text sends don't pollute SES reputation metrics. Returns outcomes, rates (bounce = bounced/(delivered+bounced); complaint = complained/delivered) colored against SES thresholds (bounce >5% warn / >10% danger; complaint >0.1% warn / >0.5% danger), current suppression size by reason (not windowed), and a gap-filled per-day trend.
 
 ---

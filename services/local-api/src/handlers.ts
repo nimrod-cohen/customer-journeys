@@ -6034,11 +6034,27 @@ export const getProfileDelivery: Handler = async (ctx, pool, req) => {
     [ctx.workspaceId, id, email],
   );
 
+  // How many messages we actually HANDED to a provider. `email_events` is what the
+  // provider told us AFTERWARDS, and the two are routinely different: a send shows
+  // in the activity log while this list stays empty. Returning the count lets the
+  // screen say which of the two is missing instead of implying something is wrong.
+  const sends = await pool.query<{ n: number; last_at: string | null }>(
+    `SELECT count(*)::int AS n, max(sent_at) AS last_at
+       FROM messages_log
+      WHERE workspace_id = $1 AND profile_id = $2 AND medium = 'email' AND status = 'sent'`,
+    [ctx.workspaceId, id],
+  );
+
   return ok({
     email_status: p.rows[0].email_status,
     suppressed: supp.rows[0] ?? null,
     soft_bounce_days: days.rows[0]?.n ?? 0,
     events: events.rows,
+    sent_count: sends.rows[0]?.n ?? 0,
+    last_sent_at: sends.rows[0]?.last_at ?? null,
+    // Which provider decides whether SILENCE here is meaningful: our own mail server
+    // reports only failures, so no news really is good news.
+    provider: await emailProviderForWorkspace(pool, ctx.workspaceId),
   });
 };
 
@@ -6511,6 +6527,56 @@ export const adminCreateCompany: Handler = async (ctx, pool, req) => {
     recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.create_company', { company_id: rows[0].id, name }),
   );
   return ok({ company: rows[0] }, 201);
+};
+
+/**
+ * POST /admin/companies/:id/workspaces — create a workspace in a NAMED company
+ * (platform admin; audited).
+ *
+ * The ordinary `POST /workspaces` derives the company from the caller's ACTIVE
+ * workspace, which makes a company with zero workspaces unreachable: there is no
+ * active workspace to derive from, and a platform admin sitting in another
+ * company's workspace would silently create it in THAT company. The only other
+ * path, `POST /workspace/bootstrap`, is for the registered owner while they hold no
+ * workspace at all — so a company whose workspaces were all deleted, or whose owner
+ * has since joined one elsewhere, had no way back.
+ *
+ * The company's OWNER is added as a member, because a workspace no one can open is
+ * the same dead end one step further along. The platform admin is deliberately NOT
+ * added: system-admin is cross-tenant by claim and reaches it without membership,
+ * and a membership row would make them look like a tenant user.
+ */
+export const adminCreateCompanyWorkspace: Handler = async (ctx, pool, req) => {
+  const companyId = req.params.id!;
+  const name = typeof asObject(req.body).name === 'string' ? String(asObject(req.body).name).trim() : '';
+  if (!name) return ok({ error: 'name required' }, 400);
+
+  const c = await pool.query<{ owner_user_id: string | null }>(
+    'SELECT owner_user_id FROM companies WHERE id = $1',
+    [companyId],
+  );
+  if (!c.rows[0]) return ok({ error: 'not found' }, 404);
+
+  const { rows } = await pool.query<{ id: string; name: string; status: string }>(
+    "INSERT INTO workspaces (name, status, company_id) VALUES ($1, 'active', $2) RETURNING id, name, status",
+    [name, companyId],
+  );
+  const workspace = rows[0]!;
+  const ownerUserId = c.rows[0].owner_user_id;
+  if (ownerUserId) {
+    await pool.query(
+      "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT DO NOTHING",
+      [workspace.id, ownerUserId],
+    );
+  }
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', workspace.id, 'admin.create_workspace', {
+      company_id: companyId,
+      name,
+      owner_added: ownerUserId !== null,
+    }),
+  );
+  return ok({ workspace, owner_added: ownerUserId !== null }, 201);
 };
 
 /**
@@ -7740,6 +7806,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /admin/companies': adminListCompanies,
   'POST /admin/companies': adminCreateCompany,
   'PATCH /admin/companies/:id': adminUpdateCompany,
+  'POST /admin/companies/:id/workspaces': adminCreateCompanyWorkspace,
   'DELETE /admin/companies/:id': adminDeleteCompany,
   'PATCH /admin/workspaces/:id': adminUpdateWorkspace,
   'DELETE /admin/workspaces/:id': adminDeleteWorkspace,

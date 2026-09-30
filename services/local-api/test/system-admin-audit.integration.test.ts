@@ -183,6 +183,62 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
     expect(denied.status).toBe(403);
   });
 
+  // The ordinary POST /workspaces derives the company from the CALLER'S ACTIVE
+  // workspace, so a company with none is unreachable — there is nothing to derive
+  // from, and an admin viewing another company would silently create it there.
+  it('creates a workspace in the NAMED company, not the caller’s own', async () => {
+    const t = tokenFor(ADMIN, WS_A);
+    const created = await call(world.env, 'POST', '/admin/companies', { token: t, body: { name: 'TempCo' } });
+    const companyId = (created.body as { company: { id: string } }).company.id;
+    // Give the company an owner, so the new workspace is reachable by a human.
+    // `companies.owner_user_id` FKs to users, so the row has to exist.
+    await world.pool.query("INSERT INTO users (id, email) VALUES ($1,'member@admin-audit.test') ON CONFLICT DO NOTHING", [MEMBER]);
+    await world.pool.query('UPDATE companies SET owner_user_id = $2 WHERE id = $1', [companyId, MEMBER]);
+
+    const before = await auditCount();
+    const r = await call(world.env, 'POST', `/admin/companies/${companyId}/workspaces`, {
+      token: t,
+      body: { name: 'Rescued' },
+    });
+    expect(r.status).toBe(201);
+    const wsId = (r.body as { workspace: { id: string } }).workspace.id;
+    expect((r.body as { owner_added: boolean }).owner_added).toBe(true);
+    expect(await auditCount()).toBe(before + 1); // cross-tenant write is audited
+
+    // It landed in THAT company — the admin's own active workspace is in another.
+    const { rows } = await world.pool.query<{ company_id: string }>(
+      'SELECT company_id FROM workspaces WHERE id = $1',
+      [wsId],
+    );
+    expect(rows[0]!.company_id).toBe(companyId);
+
+    // …and the company's owner can actually open it, which is the whole point.
+    const { rows: members } = await world.pool.query<{ role: string }>(
+      'SELECT role FROM workspace_users WHERE workspace_id = $1 AND user_id = $2',
+      [wsId, MEMBER],
+    );
+    expect(members[0]?.role).toBe('owner');
+
+    await world.pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [wsId]);
+    await world.pool.query('DELETE FROM workspaces WHERE id = $1', [wsId]);
+    await world.pool.query('DELETE FROM companies WHERE id = $1', [companyId]);
+    await world.pool.query('DELETE FROM users WHERE id = $1', [MEMBER]);
+  });
+
+  it('404s an unknown company and 403s a non-admin', async () => {
+    const missing = await call(world.env, 'POST', `/admin/companies/${WS_B}/workspaces`, {
+      token: tokenFor(ADMIN, WS_A),
+      body: { name: 'X' },
+    });
+    expect(missing.status).toBe(404); // a workspace id is not a company id
+
+    const denied = await call(world.env, 'POST', `/admin/companies/${WS_B}/workspaces`, {
+      token: tokenFor(MEMBER, WS_A),
+      body: { name: 'X' },
+    });
+    expect(denied.status).toBe(403);
+  });
+
   it('a non-admin member is 403 creating a company', async () => {
     const r = await call(world.env, 'POST', '/admin/companies', {
       token: tokenFor(MEMBER, WS_A),
