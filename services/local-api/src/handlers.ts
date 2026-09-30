@@ -555,6 +555,17 @@ async function setMarketerGrants(
 export const listCompanyUsers: Handler = async (ctx, pool) => {
   const companyId = await companyIdForCtx(ctx, pool);
   if (!companyId) return ok({ error: 'no active company' }, 400);
+  return listUsersOfCompany(pool, companyId);
+};
+
+/**
+ * The company-scoped core behind BOTH `GET /company/users` and its admin twin.
+ *
+ * The admin route names the company instead of deriving it from the caller's active
+ * workspace, which is the only way to reach a company that HAS no workspace — and
+ * sharing this core is what stops the two answers drifting apart.
+ */
+async function listUsersOfCompany(pool: Pool, companyId: string): Promise<HandlerResponse> {
   const { rows } = await pool.query<{ user_id: string; role: string; email: string | null; name: string | null }>(
     `SELECT cu.user_id, cu.role, u.email, u.name
        FROM company_users cu LEFT JOIN users u ON u.id = cu.user_id
@@ -588,7 +599,7 @@ export const listCompanyUsers: Handler = async (ctx, pool) => {
     })),
     workspaces: ws.rows,
   });
-};
+}
 
 const COMPANY_USER_EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -601,7 +612,22 @@ const COMPANY_USER_EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export const addCompanyUser: Handler = async (ctx, pool, req, deps) => {
   const companyId = await companyIdForCtx(ctx, pool);
   if (!companyId) return ok({ error: 'no active company' }, 400);
-  const b = asObject(req.body);
+  return addUserToCompany({ pool, deps, companyId, actorUserId: ctx.userId ?? '', body: req.body });
+};
+
+/**
+ * The company-scoped core behind BOTH `POST /company/users` and its admin twin:
+ * link or invite by email, enforce one-company-per-user, set the role and grants.
+ */
+async function addUserToCompany(args: {
+  pool: Pool;
+  deps?: LocalApiDeps;
+  companyId: string;
+  actorUserId: string;
+  body: unknown;
+}): Promise<HandlerResponse> {
+  const { pool, deps, companyId, actorUserId } = args;
+  const b = asObject(args.body);
   const role = String(b.role ?? 'marketer');
   if (!COMPANY_ROLES.has(role)) return ok({ error: 'invalid role' }, 400);
   const email = typeof b.email === 'string' ? b.email.trim() : '';
@@ -633,7 +659,7 @@ export const addCompanyUser: Handler = async (ctx, pool, req, deps) => {
   if (invited && deps?.mailer) {
     try {
       const co = await pool.query<{ name: string }>('SELECT name FROM companies WHERE id = $1', [companyId]);
-      const inviter = await pool.query<{ name: string | null }>('SELECT name FROM users WHERE id = $1', [ctx.userId ?? '']);
+      const inviter = await pool.query<{ name: string | null }>('SELECT name FROM users WHERE id = $1', [actorUserId]);
       await sendInvite(
         { mailer: deps.mailer, appBaseUrl: deps.appBaseUrl, pool },
         { userId, email, companyName: co.rows[0]?.name ?? 'the company', inviterName: inviter.rows[0]?.name ?? null },
@@ -646,7 +672,7 @@ export const addCompanyUser: Handler = async (ctx, pool, req, deps) => {
     { user_id: userId, email, role, workspace_ids: role === 'marketer' ? workspaceIds : [], invited },
     201,
   );
-};
+}
 
 /** PATCH /company/users — change a user's role (incl. pass-ownership) and/or grants. */
 export const updateCompanyUser: Handler = async (ctx, pool, req) => {
@@ -6580,6 +6606,54 @@ export const adminCreateCompanyWorkspace: Handler = async (ctx, pool, req) => {
 };
 
 /**
+ * GET /admin/companies/:id/users — the company's members (platform admin; audited).
+ * POST adds one. Both name the company, so they reach a company that has NO
+ * workspace — which the ctx-derived `/company/users` cannot, since it resolves the
+ * company from the caller's active workspace.
+ */
+export const adminListCompanyUsers: Handler = async (ctx, pool, req) => {
+  const companyId = req.params.id!;
+  const c = await pool.query('SELECT 1 FROM companies WHERE id = $1', [companyId]);
+  if ((c.rowCount ?? 0) === 0) return ok({ error: 'not found' }, 404);
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.list_company_users', { company_id: companyId }),
+  );
+  return listUsersOfCompany(pool, companyId);
+};
+
+/**
+ * POST /admin/companies/:id/users — add a user to a NAMED company (audited).
+ *
+ * A marketer with no workspace grants cannot sign in at all (production `authorize`
+ * denies a non-admin token with no active workspace), so when the caller names no
+ * workspaces this grants ALL of the company's — the admin console's job is to get
+ * someone IN, and narrowing access afterwards is what Company settings is for.
+ */
+export const adminAddCompanyUser: Handler = async (ctx, pool, req, deps) => {
+  const companyId = req.params.id!;
+  const c = await pool.query('SELECT 1 FROM companies WHERE id = $1', [companyId]);
+  if ((c.rowCount ?? 0) === 0) return ok({ error: 'not found' }, 404);
+
+  const b = asObject(req.body);
+  let body = b;
+  if (String(b.role ?? 'marketer') === 'marketer' && !Array.isArray(b.workspace_ids)) {
+    const ws = await pool.query<{ id: string }>('SELECT id FROM workspaces WHERE company_id = $1', [companyId]);
+    body = { ...b, workspace_ids: ws.rows.map((r) => r.id) };
+  }
+  const res = await addUserToCompany({ pool, deps, companyId, actorUserId: ctx.userId ?? '', body });
+  if (res.status === 201) {
+    await writeAuditEntry(
+      recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.add_company_user', {
+        company_id: companyId,
+        email: typeof b.email === 'string' ? b.email : null,
+        role: String(b.role ?? 'marketer'),
+      }),
+    );
+  }
+  return res;
+};
+
+/**
  * DELETE /admin/companies/:id — delete a company (platform admin; audited).
  *
  * By DEFAULT only an EMPTY company can be deleted: a company with workspaces 409s,
@@ -7807,6 +7881,8 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /admin/companies': adminCreateCompany,
   'PATCH /admin/companies/:id': adminUpdateCompany,
   'POST /admin/companies/:id/workspaces': adminCreateCompanyWorkspace,
+  'GET /admin/companies/:id/users': adminListCompanyUsers,
+  'POST /admin/companies/:id/users': adminAddCompanyUser,
   'DELETE /admin/companies/:id': adminDeleteCompany,
   'PATCH /admin/workspaces/:id': adminUpdateWorkspace,
   'DELETE /admin/workspaces/:id': adminDeleteWorkspace,

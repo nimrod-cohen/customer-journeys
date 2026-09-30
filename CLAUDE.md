@@ -89,6 +89,16 @@ Read via `getWorkspaceSettings`, written via the owner-gated `PUT /workspace/set
 
 **Company → Workspace (extends §6).** A `companies` table groups workspaces; every workspace has `company_id NOT NULL`. **Isolation is unchanged and stays at the workspace level** — a company is purely the organizational parent so a platform admin can pick company → workspace (sidebar `CompanyWorkspacePicker`, fed by `GET /admin/companies`). Workspaces created without a `company_id` (chiefly integration tests) are auto-assigned to a shared `Unassigned` company by a BEFORE-INSERT trigger; product paths always supply a real one. **A user belongs to ONE company:** `addMember` 409s when adding a user to a workspace whose company differs from one they already belong to.
 
+**The admin console owns the whole recovery path for a company with no workspace.**
+`/company/users` and `/company/workspaces` derive the company from the caller's
+ACTIVE workspace, so none of them can reach a company that has none — its first
+workspace AND its first person both have to come from the platform admin.
+`GET`/`POST /admin/companies/:id/users` name the company and share their cores
+(`listUsersOfCompany` / `addUserToCompany`) with the ctx-derived handlers, so the two
+routes cannot drift. The admin POST grants a `marketer` EVERY workspace in the
+company when none are named: a marketer with no grants cannot sign in at all, so
+adding one without them would be another dead end.
+
 **A company with ZERO workspaces needs a platform admin to rescue it.** `POST
 /workspaces` derives the company from the CALLER'S ACTIVE workspace, so a company
 with none can never get one that way — there is nothing to derive from, and an admin

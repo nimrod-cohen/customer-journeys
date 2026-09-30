@@ -225,6 +225,42 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
     await world.pool.query('DELETE FROM users WHERE id = $1', [MEMBER]);
   });
 
+  // Company settings → Users derives the company from the caller's ACTIVE workspace,
+  // so a company with none could never get its first person in. These name the
+  // company instead.
+  it('lists and adds company users without needing a workspace in that company', async () => {
+    const t = tokenFor(ADMIN, WS_A);
+    const created = await call(world.env, 'POST', '/admin/companies', { token: t, body: { name: 'TempCo' } });
+    const companyId = (created.body as { company: { id: string } }).company.id;
+
+    const empty = await call(world.env, 'GET', `/admin/companies/${companyId}/users`, { token: t });
+    expect(empty.status).toBe(200);
+    expect((empty.body as { users: unknown[] }).users).toEqual([]);
+
+    const added = await call(world.env, 'POST', `/admin/companies/${companyId}/users`, {
+      token: t,
+      body: { email: 'first@tempco.test', role: 'owner' },
+    });
+    expect(added.status).toBe(201);
+    expect((added.body as { invited: boolean }).invited).toBe(true); // no account yet → invited
+
+    const after = await call(world.env, 'GET', `/admin/companies/${companyId}/users`, { token: t });
+    const users = (after.body as { users: Array<{ email: string; role: string }> }).users;
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ email: 'first@tempco.test', role: 'owner' });
+
+    // The company still has NO workspace — that is the whole point.
+    const { rows } = await world.pool.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM workspaces WHERE company_id = $1',
+      [companyId],
+    );
+    expect(rows[0]!.n).toBe(0);
+
+    await world.pool.query('DELETE FROM company_users WHERE company_id = $1', [companyId]);
+    await world.pool.query("DELETE FROM users WHERE email = 'first@tempco.test'");
+    await world.pool.query('DELETE FROM companies WHERE id = $1', [companyId]);
+  });
+
   it('404s an unknown company and 403s a non-admin', async () => {
     const missing = await call(world.env, 'POST', `/admin/companies/${WS_B}/workspaces`, {
       token: tokenFor(ADMIN, WS_A),
@@ -237,6 +273,11 @@ describeMaybe('system-admin cross-tenant audit (real Postgres)', () => {
       body: { name: 'X' },
     });
     expect(denied.status).toBe(403);
+
+    const deniedUsers = await call(world.env, 'GET', `/admin/companies/${WS_B}/users`, {
+      token: tokenFor(MEMBER, WS_A),
+    });
+    expect(deniedUsers.status).toBe(403);
   });
 
   it('a non-admin member is 403 creating a company', async () => {

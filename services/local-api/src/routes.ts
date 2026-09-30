@@ -204,6 +204,8 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /admin/companies': 'view_all_workspaces',
   'PATCH /admin/companies/:id': 'view_all_workspaces',
   'POST /admin/companies/:id/workspaces': 'view_all_workspaces',
+  'GET /admin/companies/:id/users': 'view_all_workspaces',
+  'POST /admin/companies/:id/users': 'view_all_workspaces',
   'DELETE /admin/companies/:id': 'view_all_workspaces',
   'PATCH /admin/workspaces/:id': 'view_all_workspaces',
   'DELETE /admin/workspaces/:id': 'view_all_workspaces',

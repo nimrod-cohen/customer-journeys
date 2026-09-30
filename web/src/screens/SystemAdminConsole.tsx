@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { api } from '../store/session.js';
-import { Badge, Button, Card, Field, Input, PageHeader, Switch, toneFor } from '../ui/kit.js';
+import { Badge, Button, Card, Field, Input, PageHeader, Select, Switch, toneFor } from '../ui/kit.js';
 import { showToast } from '../ui/toast.js';
 
 interface AdminWorkspace {
@@ -109,6 +109,55 @@ export function SystemAdminConsole() {
       );
     } catch (e) {
       setErr((e as { error?: string })?.error ?? 'could not create the workspace');
+    }
+  };
+
+  // Company users, reachable WITHOUT a workspace in that company. The ordinary
+  // Company settings → Users derives the company from the active workspace, so a
+  // company with none had no way to get its first person in.
+  interface CompanyUser {
+    user_id: string;
+    email: string;
+    name: string | null;
+    role: string;
+  }
+  const [usersFor, setUsersFor] = useState<string | null>(null);
+  const [users, setUsers] = useState<CompanyUser[]>([]);
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserRole, setNewUserRole] = useState('owner');
+  const [usersErr, setUsersErr] = useState('');
+
+  const openUsers = async (companyId: string) => {
+    if (usersFor === companyId) {
+      setUsersFor(null);
+      return;
+    }
+    setUsersFor(companyId);
+    setUsers([]);
+    setUsersErr('');
+    setNewUserEmail('');
+    try {
+      const r = await api.get<{ users: CompanyUser[] }>(`/admin/companies/${companyId}/users`);
+      setUsers(r.users);
+    } catch (e) {
+      setUsersErr((e as { error?: string })?.error ?? 'could not load the company’s users');
+    }
+  };
+
+  const addUser = async (companyId: string) => {
+    const email = newUserEmail.trim();
+    if (!email) return;
+    setUsersErr('');
+    try {
+      const r = await api.post<{ invited: boolean }>(`/admin/companies/${companyId}/users`, {
+        body: { email, role: newUserRole },
+      });
+      setNewUserEmail('');
+      const list = await api.get<{ users: CompanyUser[] }>(`/admin/companies/${companyId}/users`);
+      setUsers(list.users);
+      showToast(r.invited ? `Invited ${email}.` : `Added ${email}.`, { tone: 'success' });
+    } catch (e) {
+      setUsersErr((e as { error?: string })?.error ?? 'could not add the user');
     }
   };
 
@@ -279,7 +328,62 @@ export function SystemAdminConsole() {
                     Add workspace
                   </Button>
                 )}
-                {c.workspaces.length === 0 ? (
+                <Button
+                  data-testid="admin-company-users"
+                  data-id={c.id}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => openUsers(c.id)}
+                >
+                  Users
+                </Button>
+                {usersFor === c.id ? (
+              <div data-testid="admin-company-users-panel" class="border-b border-stone-200 bg-stone-50/60 px-4 py-3">
+                {users.length === 0 ? (
+                  <p class="text-sm text-stone-400">Nobody belongs to this company yet.</p>
+                ) : (
+                  <ul class="mb-3 space-y-1 text-sm">
+                    {users.map((u) => (
+                      <li data-testid="admin-company-user" key={u.user_id} class="flex items-center gap-2">
+                        <span class="text-ink-900">{u.email}</span>
+                        <Badge tone={u.role === 'owner' ? 'success' : 'neutral'}>{u.role}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div class="flex flex-wrap items-end gap-2">
+                  <Field label="Add by email" class="min-w-[16rem] flex-1">
+                    <Input
+                      data-testid="admin-user-email"
+                      type="email"
+                      placeholder="person@company.com"
+                      value={newUserEmail}
+                      onInput={(e: Event) => setNewUserEmail((e.target as HTMLInputElement).value)}
+                    />
+                  </Field>
+                  <Field label="Role">
+                    <Select
+                      data-testid="admin-user-role"
+                      value={newUserRole}
+                      onChange={(e: Event) => setNewUserRole((e.target as HTMLSelectElement).value)}
+                    >
+                      <option value="owner">Owner</option>
+                      <option value="marketer">Marketer</option>
+                      <option value="accounting">Accounting</option>
+                    </Select>
+                  </Field>
+                  <Button data-testid="admin-user-add" size="sm" onClick={() => addUser(c.id)} disabled={!newUserEmail.trim()}>
+                    Add
+                  </Button>
+                </div>
+                <p class="mt-2 text-xs text-stone-500">
+                  An account that doesn’t exist yet is created and invited by email. A marketer is
+                  granted every workspace in the company — narrow it later in Company settings.
+                </p>
+                {usersErr ? <p data-testid="admin-users-error" class="mt-2 text-sm text-rose-600">{usersErr}</p> : null}
+              </div>
+            ) : null}
+            {c.workspaces.length === 0 ? (
                   <Button
                     data-testid="delete-company"
                     data-id={c.id}

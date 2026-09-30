@@ -572,6 +572,18 @@ function CompanyWorkspacePicker(): JSX.Element {
           >
             <path d="M6 8l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
+          {/* Selecting such a company used to dead-end in silence: the select reads
+              "No workspaces" and nothing else happens, with no hint that the fix
+              lives one screen away. */}
+          {selectedCompany.workspaces.length === 0 ? (
+            <button
+              data-testid="company-no-workspaces"
+              onClick={() => navigate('/admin')}
+              class="mt-1 block w-full text-left text-[11px] text-amber-300/90 underline decoration-dotted underline-offset-2 hover:text-amber-200"
+            >
+              This company has no workspaces — create one in System admin.
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
