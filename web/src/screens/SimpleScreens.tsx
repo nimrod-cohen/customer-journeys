@@ -200,6 +200,8 @@ interface Profile {
   /** Unix epoch ms (UTC) — the API also exposes this numeric form. */
   created_at_unix?: number;
   attributes?: Record<string, unknown>;
+  /** The most recent event, or null for a profile that has never done anything. */
+  last_event?: { type: string; at: string } | null;
 }
 
 /** Render an attribute value for a table cell. */
@@ -219,7 +221,8 @@ function fmtDate(v: number | string | null | undefined): string {
 const STATUS_COL = 'email_status';
 const EXT_COL = 'external_id';
 const CREATED_COL = 'created_at';
-const BUILTIN_COLS = [STATUS_COL, EXT_COL, CREATED_COL];
+const LAST_EVENT_COL = 'last_event';
+const BUILTIN_COLS = [STATUS_COL, EXT_COL, CREATED_COL, LAST_EVENT_COL];
 const ATTR_PREFIX = 'attr:';
 const attrKeyOf = (id: string) => id.slice(ATTR_PREFIX.length);
 const isBuiltinCol = (id: string) => BUILTIN_COLS.includes(id);
@@ -230,7 +233,9 @@ const colLabelFor = (id: string) =>
       ? 'External ID'
       : id === CREATED_COL
         ? 'Created'
-        : attrKeyOf(id);
+        : id === LAST_EVENT_COL
+          ? 'Last event'
+          : attrKeyOf(id);
 
 /** Persisted profile-table column config (per browser): the enabled columns, in order. */
 interface ColumnConfig {
@@ -866,6 +871,20 @@ export function ProfileExplorer() {
                   ) : id === CREATED_COL ? (
                     <td key={id} class="whitespace-nowrap px-4 py-2.5 text-xs text-stone-500">
                       {fmtDate(p.created_at_unix ?? p.created_at)}
+                    </td>
+                  ) : id === LAST_EVENT_COL ? (
+                    // The event NAME is what identifies the activity; the time is
+                    // secondary, so it sits under it rather than competing for the
+                    // column's width.
+                    <td data-testid="last-event-cell" key={id} class="whitespace-nowrap px-4 py-2.5">
+                      {p.last_event ? (
+                        <>
+                          <span class="text-ink-900">{p.last_event.type}</span>
+                          <span class="block text-[11px] text-stone-400">{fmtDate(p.last_event.at)}</span>
+                        </>
+                      ) : (
+                        <span class="text-stone-400">—</span>
+                      )}
                     </td>
                   ) : (
                     <td data-testid="attr-col-cell" key={id} class="px-4 py-2.5 text-stone-700">

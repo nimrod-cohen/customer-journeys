@@ -5123,7 +5123,16 @@ export const listAutomationEnrollments: Handler = async (ctx, pool, req) => {
 /** The profile row shape returned by every profiles list/query path (alias `p`). */
 const PROFILE_COLS = `p.id, p.external_id, p.email, p.phone, p.email_status, p.created_at,
                 floor(extract(epoch from p.created_at) * 1000)::double precision AS created_at_unix, p.attributes,
-                (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed`;
+                (p.attributes ->> 'unsubscribed' = 'true') AS unsubscribed,
+                -- The most recent event, as ONE object so the page costs one extra
+                -- index lookup per row rather than two. Covered by
+                -- events_workspace_id_profile_id_occurred_at_idx, so it is a
+                -- backwards index scan stopping at the first row.
+                (SELECT jsonb_build_object('type', e.type, 'at', e.occurred_at)
+                   FROM events e
+                  WHERE e.workspace_id = p.workspace_id AND e.profile_id = p.id
+                  ORDER BY e.occurred_at DESC
+                  LIMIT 1) AS last_event`;
 
 /** Append a server-side text-search predicate (email/external_id ILIKE) to a profile WHERE,
  *  binding `%q%` as the next param. Returns the new WHERE text (unchanged when q is blank). */

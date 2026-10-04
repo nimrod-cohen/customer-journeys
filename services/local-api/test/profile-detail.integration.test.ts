@@ -101,6 +101,23 @@ describeMaybe('profile detail: read/edit/events/segments (real Postgres)', () =>
     }
   }
 
+  // The profiles list carries the most recent event so "what has this person done
+  // lately" is answerable without opening each profile.
+  it('GET /profiles returns each profile’s LAST event, newest wins', async () => {
+    const r = await call(world.env, 'GET', '/profiles', { token: tokA() });
+    const rows = (r.body as { profiles: Array<{ id: string; last_event: { type: string; at: string } | null }> }).profiles;
+
+    // P_A has a page_view (Jan) and a purchase (Feb) — the LATER one shows.
+    const withEvents = rows.find((x) => x.id === P_A)!;
+    expect(withEvents.last_event?.type).toBe('purchase');
+    expect(withEvents.last_event?.at).toContain('2026-02-01');
+
+    // A profile that has never done anything reports null rather than an empty
+    // object, so the cell can render a dash instead of a blank.
+    const noEvents = rows.find((x) => x.id === P_A2)!;
+    expect(noEvents.last_event).toBeNull();
+  });
+
   it('POST /profiles manually creates a profile (seeds unsubscribed=false, listed)', async () => {
     const c = await call(world.env, 'POST', '/profiles', {
       token: tokA(),
