@@ -91,3 +91,13 @@ export {
   smtpTransportFromEnv,
   type SmtpTransportConfig,
 } from './smtp-transport.js';
+
+export {
+  buildIcs,
+  attachmentsWithCalendar,
+  escapeIcsText,
+  foldIcsLine,
+  icsDateTime,
+  type CalendarEvent,
+  type CalendarPerson,
+} from './icalendar.js';

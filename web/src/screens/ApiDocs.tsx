@@ -314,6 +314,50 @@ export function ApiDocs() {
           over a limit is a <Code>400</Code> naming the file, before the message is sent.
         </p>
 
+        <p class="mt-4 text-sm font-semibold text-ink-900">Meeting invites</p>
+        <p class="mt-1 text-sm text-stone-600">
+          Pass a <Code>calendar</Code> block and the message becomes a real invitation — the kind
+          Gmail and Outlook show <b>Accept / Decline</b> buttons for, not a file to download.{' '}
+          <Code>start</Code> is required, plus either <Code>end</Code> or{' '}
+          <Code>duration_minutes</Code>. The title defaults to the message&rsquo;s subject and the
+          organiser to its From address, so a booking confirmation usually needs nothing more than
+          the times.
+        </p>
+        <Pre>{`curl -X POST ${origin}/v1/send \\
+  -H 'content-type: application/json' \\
+  -H 'authorization: Bearer sk_live_your_secret_key' \\
+  -d '{ "template": "booking-confirmed",
+        "to": "jane@example.com",
+        "data": { "advisor": "Dana" },
+        "calendar": {
+          "uid": "booking-42",
+          "title": "Intro call with {{data.advisor}}",
+          "start": "2026-10-12T13:00:00Z",
+          "duration_minutes": 30,
+          "location": "Zoom",
+          "url": "https://meet.example.com/abc",
+          "description": "Bring last year's statements." } }'
+# → { "sent": true, "message_id": "…" }`}</Pre>
+        <p class="mt-2 text-sm text-stone-600">
+          <b>Times need a timezone</b> — <Code>2026-10-12T13:00:00Z</Code> or{' '}
+          <Code>2026-10-12T16:00:00+03:00</Code>. A bare <Code>13:00</Code> means a different moment
+          to you, to us and to the invitee&rsquo;s calendar, so it is refused rather than guessed.
+        </p>
+        <p class="mt-2 text-sm text-stone-600">
+          <b>To change or call off a meeting, send your own <Code>uid</Code></b> and keep it. Repeat
+          it with a higher <Code>sequence</Code> and the invitee&rsquo;s calendar updates the
+          existing event instead of showing a second one; send{' '}
+          <Code>"method": "cancel"</Code> with that same uid to remove it. A cancellation without
+          the original uid matches nothing, so it is a <Code>400</Code> rather than a 200 that
+          cancels nothing.
+        </p>
+        <p class="mt-2 text-sm text-stone-600">
+          Title, description and location take merge tags like the rest of the message, and each
+          address in a <Code>to</Code> list gets its own invite naming that person. A{' '}
+          <Code>cc</Code> is added to the guest list; a <Code>bcc</Code> never is. Email only — an
+          invite on an SMS or WhatsApp key is a <Code>400</Code>.
+        </p>
+
         <p class="mt-4 text-sm font-semibold text-ink-900">Who does not receive it</p>
         <p class="mt-1 text-sm text-stone-600">
           Addresses that hard-bounced, and people who reported you as spam, are{' '}

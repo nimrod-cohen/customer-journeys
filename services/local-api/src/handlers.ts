@@ -139,8 +139,10 @@ import {
   decideTransactionalText,
   isEmailAddress,
   type TransactionalRequest,
+  type ParsedCalendar,
 } from './transactional-send.js';
-import { createSmtpEmailClient, smtpTransportFromEnv } from '@cdp/email';
+import { createSmtpEmailClient, smtpTransportFromEnv, buildIcs } from '@cdp/email';
+import { renderExpression } from '@cdp/shared';
 import {
   verifySelfHostedDomain,
   nodeDnsResolver,
@@ -7299,6 +7301,12 @@ async function sendTransactionalText(
       400,
     );
   }
+  if (parsed.calendar) {
+    return ok(
+      { error: `'${parsed.template}' is an ${medium.toUpperCase()} message, and a meeting invite can only be emailed` },
+      400,
+    );
+  }
   if (parsed.cc.length > 0 || parsed.bcc.length > 0) {
     return ok(
       { error: `'${parsed.template}' is an ${medium.toUpperCase()} message, and text messages have no cc or bcc` },
@@ -7602,6 +7610,51 @@ interface TransactionalSendResult {
  * unsubscribe or dead mailbox must not touch anyone else's copy. Never throws: a
  * failure is returned as this recipient's result so the loop continues.
  */
+/**
+ * The From header as a calendar ORGANIZER. Gmail and Outlook only offer RSVP when
+ * the organizer matches the address the mail actually came from.
+ */
+function organizerFromHeader(from: string): { email: string; name?: string } {
+  const display = /^(.*)<\s*([^<>\s]+)\s*>$/.exec(from.trim())?.[1]?.trim().replace(/^"|"$/g, '');
+  const email = parseFromAddress(from) ?? from.trim();
+  return display ? { email, name: display } : { email };
+}
+
+/**
+ * The invite for ONE recipient, rendered and encoded.
+ *
+ * Built per recipient rather than once: the ATTENDEE is this person, and the title,
+ * description and location carry merge tags like everything else. Plain-text
+ * rendering — an ICS is not HTML, so escaping would put a literal `&amp;` in the
+ * meeting title.
+ */
+function buildRecipientInvite(
+  cal: ParsedCalendar,
+  args: { to: string; cc: readonly string[]; from: string; subject: string; merge: Record<string, string> },
+): { ics: string; method: 'REQUEST' | 'CANCEL' } {
+  const r = (v: string | undefined): string | undefined => (v === undefined ? undefined : renderExpression(v, args.merge));
+  const organizer = cal.organizer ?? organizerFromHeader(args.from);
+  return {
+    method: cal.method,
+    ics: buildIcs({
+      uid: cal.uid,
+      method: cal.method,
+      sequence: cal.sequence,
+      // The subject is nearly always the right title, and it is already rendered.
+      summary: r(cal.summary) || args.subject,
+      start: cal.start,
+      end: cal.end,
+      description: r(cal.description),
+      location: r(cal.location),
+      url: cal.url,
+      organizer,
+      // The visible recipients only. A bcc named as an ATTENDEE would be printed in
+      // the guest list every invitee can read, which is the opposite of blind.
+      attendees: [{ email: args.to }, ...args.cc.map((email) => ({ email }))],
+    }),
+  };
+}
+
 async function sendOneTransactionalEmail(args: {
   pool: Pool;
   ws: string;
@@ -7670,6 +7723,17 @@ async function sendOneTransactionalEmail(args: {
       html: rendered.html,
       messageId,
       ...(attachments.length > 0 ? { attachments } : {}),
+      ...(parsed.calendar
+        ? {
+            calendar: buildRecipientInvite(parsed.calendar, {
+              to,
+              cc,
+              from,
+              subject: rendered.subject,
+              merge,
+            }),
+          }
+        : {}),
     });
   } catch (e) {
     return { to, sent: false, error: e instanceof Error ? e.message : 'send failed' };

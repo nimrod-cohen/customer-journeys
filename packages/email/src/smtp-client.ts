@@ -125,16 +125,55 @@ function attachmentPart(a: EmailAttachment): string {
  * `to` are merge-rendered per recipient, so a value containing CRLF could append
  * arbitrary headers (a second Bcc:, say). Every header value is flattened.
  */
+/**
+ * The parts INSIDE a multipart/alternative: the HTML body, then the calendar.
+ *
+ * The calendar comes LAST on purpose — in a multipart/alternative the final part is
+ * the one a client is meant to prefer, and that ordering is what makes Outlook treat
+ * the message as a meeting request instead of rendering the HTML and ignoring the
+ * invite. `method=` must appear on the part's own Content-Type; without it Gmail
+ * shows the event but offers no Accept / Decline.
+ */
+function alternativeParts(input: SendEmailInput, altBoundary: string): string {
+  const html = ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', input.html ?? ''].join(
+    '\r\n',
+  );
+  const cal = [
+    `Content-Type: text/calendar; charset=UTF-8; method=${input.calendar!.method}; name="invite.ics"`,
+    'Content-Transfer-Encoding: base64',
+    '',
+    wrapBase64(Buffer.from(input.calendar!.ics, 'utf8').toString('base64')),
+  ].join('\r\n');
+  return `--${altBoundary}\r\n${html}\r\n--${altBoundary}\r\n${cal}\r\n--${altBoundary}--`;
+}
+
+/** The message body: plain HTML, or an alternative container when there is an invite. */
+function bodyPart(input: SendEmailInput, altBoundary: string): string {
+  if (!input.calendar) {
+    return ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', input.html ?? ''].join(
+      '\r\n',
+    );
+  }
+  return [
+    `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+    '',
+    alternativeParts(input, altBoundary),
+  ].join('\r\n');
+}
+
 export function buildMimeMessage(
   input: SendEmailInput,
   messageId: string,
   messageIdDomain: string,
 ): string {
   const attachments = input.attachments ?? [];
+  const safeId = messageId.replace(/[^A-Za-z0-9]/g, '');
   // A message with no attachment stays SINGLE-PART: wrapping every send in a
   // multipart container to serve the few that carry a file would change the shape
-  // of mail that has none.
-  const boundary = attachments.length > 0 ? `----=_cdp_${messageId.replace(/[^A-Za-z0-9]/g, '')}` : '';
+  // of mail that has none. An invite is the exception — it IS a second body part, so
+  // it needs an alternative container even with nothing attached.
+  const boundary = attachments.length > 0 ? `----=_cdp_${safeId}` : '';
+  const altBoundary = `----=_cdpalt_${safeId}`;
   const headers: string[] = [
     `From: ${headerValue(input.from)}`,
     `To: ${headerValue(input.to)}`,
@@ -147,7 +186,9 @@ export function buildMimeMessage(
     'MIME-Version: 1.0',
     ...(boundary
       ? [`Content-Type: multipart/mixed; boundary="${boundary}"`]
-      : ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit']),
+      : input.calendar
+        ? [`Content-Type: multipart/alternative; boundary="${altBoundary}"`]
+        : ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit']),
   ];
   for (const [k, v] of Object.entries(input.headers ?? {})) {
     // Never let a caller-supplied header overwrite one we control.
@@ -158,12 +199,15 @@ export function buildMimeMessage(
     headers.push(`${key}: ${headerValue(v)}`);
   }
   const head = headers.join('\r\n');
-  if (!boundary) return `${head}\r\n\r\n${input.html ?? ''}`;
+  if (!boundary) {
+    // No attachment: the body is the whole message. With an invite the alternative
+    // container's Content-Type is already on the message headers, so only its parts
+    // are emitted here.
+    if (!input.calendar) return `${head}\r\n\r\n${input.html ?? ''}`;
+    return `${head}\r\n\r\n${alternativeParts(input, altBoundary)}\r\n`;
+  }
 
-  const parts = [
-    ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', input.html ?? ''].join('\r\n'),
-    ...attachments.map(attachmentPart),
-  ];
+  const parts = [bodyPart(input, altBoundary), ...attachments.map(attachmentPart)];
   return `${head}\r\n\r\n${parts.map((p) => `--${boundary}\r\n${p}\r\n`).join('')}--${boundary}--\r\n`;
 }
 

@@ -180,6 +180,7 @@ describe('parseTransactionalRequest', () => {
       attachments: [],
       cc: [],
       bcc: [],
+      calendar: null,
     });
   });
 

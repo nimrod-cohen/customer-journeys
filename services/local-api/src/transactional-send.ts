@@ -433,6 +433,8 @@ export interface TransactionalRequest {
   readonly cc: readonly string[];
   /** Blind copies. Email only, and never echoed anywhere a recipient can see. */
   readonly bcc: readonly string[];
+  /** A meeting invite. Email only — a text message cannot carry one. */
+  readonly calendar: ParsedCalendar | null;
 }
 
 /**
@@ -456,6 +458,8 @@ export function parseTransactionalRequest(body: unknown): TransactionalRequest |
   }
   const att = parseAttachments(b.attachments);
   if ('error' in att) return { error: att.error };
+  const cal = parseCalendar(b.calendar);
+  if ('error' in cal) return { error: cal.error };
 
   const cc = parseRecipientList(b.cc, 'cc');
   if ('error' in cc) return { error: cc.error };
@@ -480,6 +484,7 @@ export function parseTransactionalRequest(body: unknown): TransactionalRequest |
     attachments: att.attachments,
     cc,
     bcc,
+    calendar: cal.calendar,
   };
 }
 
@@ -498,4 +503,131 @@ const COPY_BLOCKING_REASONS = new Set(['hard_bounce', 'permanent_soft_bounce', '
 /** Whether a suppression reason blocks a cc/bcc copy. PURE. */
 export function blocksCopy(suppressionReason: string | null | undefined): boolean {
   return !!suppressionReason && COPY_BLOCKING_REASONS.has(suppressionReason);
+}
+
+// ---------------------------------------------------------------------------
+// calendar invites (email only)
+// ---------------------------------------------------------------------------
+
+/** A validated invite request, before merge rendering and before the ICS is built. */
+export interface ParsedCalendar {
+  readonly method: 'REQUEST' | 'CANCEL';
+  readonly uid?: string | undefined;
+  readonly sequence: number;
+  /** Pre-merge; rendered per recipient, so it may hold `{{data.*}}` tokens. */
+  readonly summary: string;
+  readonly start: Date;
+  readonly end: Date;
+  readonly description?: string | undefined;
+  readonly location?: string | undefined;
+  readonly url?: string | undefined;
+  readonly organizer?: { readonly email: string; readonly name?: string | undefined } | undefined;
+}
+
+/** The longest meeting we will encode — a guard against a typo'd year, not a policy. */
+const MAX_EVENT_DAYS = 366;
+
+function parseInstant(raw: unknown, field: string): Date | { error: string } {
+  if (typeof raw !== 'string' || !raw.trim()) return { error: `'calendar.${field}' is required (ISO 8601)` };
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return { error: `'calendar.${field}' is not a valid date: ${raw}` };
+  // A bare wall clock has no zone, so the instant it names depends on whichever
+  // server parses it. Everyone involved — caller, our clock, the invitee's client —
+  // would read a different time, which is the one failure nobody notices until the
+  // meeting is missed.
+  if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(raw.trim())) {
+    return { error: `'calendar.${field}' needs a timezone: use 2026-10-12T13:00:00Z or 2026-10-12T16:00:00+03:00` };
+  }
+  return d;
+}
+
+/**
+ * Validate a `calendar` block from a `/v1/send` body.
+ *
+ * Pure: no clock, no database. The ICS itself is built later, per recipient, because
+ * the attendee differs for each one and the text fields carry merge tags.
+ */
+export function parseCalendar(raw: unknown): { calendar: ParsedCalendar | null } | { error: string } {
+  if (raw === undefined || raw === null) return { calendar: null };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { error: "'calendar' must be an object with 'start' and 'end' or 'duration_minutes'" };
+  }
+  const c = raw as Record<string, unknown>;
+
+  const methodRaw = typeof c.method === 'string' ? c.method.trim().toUpperCase() : 'REQUEST';
+  if (methodRaw !== 'REQUEST' && methodRaw !== 'CANCEL') {
+    return { error: "'calendar.method' must be 'request' or 'cancel'" };
+  }
+  const uid = typeof c.uid === 'string' && c.uid.trim() ? c.uid.trim() : undefined;
+  // A cancellation is matched to the original meeting BY UID. Sent with a fresh one
+  // it is a cancellation of nothing: the invitee's calendar keeps the meeting and the
+  // API still answers 200, so the sender believes it was called off.
+  if (methodRaw === 'CANCEL' && !uid) {
+    return { error: "'calendar.uid' is required to cancel — it must be the uid the original invite was sent with" };
+  }
+
+  const start = parseInstant(c.start, 'start');
+  if ('error' in start) return start;
+
+  let end: Date;
+  if (c.end !== undefined && c.end !== null) {
+    const parsed = parseInstant(c.end, 'end');
+    if ('error' in parsed) return parsed;
+    end = parsed;
+  } else if (c.duration_minutes !== undefined) {
+    const mins = Number(c.duration_minutes);
+    if (!Number.isFinite(mins) || mins <= 0) return { error: "'calendar.duration_minutes' must be a positive number" };
+    end = new Date(start.getTime() + mins * 60_000);
+  } else {
+    // Defaulting a duration would put a meeting of our choosing in someone's
+    // calendar; the caller knows how long it is.
+    return { error: "'calendar' needs an 'end' or a 'duration_minutes'" };
+  }
+  if (end.getTime() <= start.getTime()) return { error: "'calendar.end' must be after 'calendar.start'" };
+  if (end.getTime() - start.getTime() > MAX_EVENT_DAYS * 86_400_000) {
+    return { error: `'calendar' spans more than ${MAX_EVENT_DAYS} days — check the dates` };
+  }
+
+  const str = (k: string): string | undefined => {
+    const v = c[k];
+    return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  };
+  // The title defaults to the message's own subject, which is almost always the
+  // right one and spares the caller repeating it.
+  const summary = str('title') ?? str('summary') ?? '';
+
+  const url = str('url');
+  if (url && !/^https?:\/\//i.test(url)) return { error: "'calendar.url' must be an http(s) URL" };
+
+  let organizer: ParsedCalendar['organizer'];
+  if (c.organizer !== undefined && c.organizer !== null) {
+    if (typeof c.organizer !== 'object' || Array.isArray(c.organizer)) {
+      return { error: "'calendar.organizer' must be an object with an 'email'" };
+    }
+    const o = c.organizer as Record<string, unknown>;
+    const email = typeof o.email === 'string' ? o.email.trim() : '';
+    // An organizer outside the verified domain makes clients distrust the invite, so
+    // the default — the message's own From — is nearly always what should be used.
+    if (!isEmailAddress(email)) return { error: "'calendar.organizer.email' is not a valid email address" };
+    const name = typeof o.name === 'string' && o.name.trim() ? o.name.trim() : undefined;
+    organizer = name ? { email, name } : { email };
+  }
+
+  const seqRaw = c.sequence === undefined ? 0 : Number(c.sequence);
+  if (!Number.isFinite(seqRaw) || seqRaw < 0) return { error: "'calendar.sequence' must be a number of 0 or more" };
+
+  return {
+    calendar: {
+      method: methodRaw,
+      uid,
+      sequence: Math.floor(seqRaw),
+      summary,
+      start,
+      end,
+      description: str('description'),
+      location: str('location'),
+      url,
+      organizer,
+    },
+  };
 }

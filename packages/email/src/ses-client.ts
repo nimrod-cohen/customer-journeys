@@ -11,6 +11,7 @@ import {
   CreateDedicatedIpPoolCommand,
   SendEmailCommand,
 } from '@aws-sdk/client-sesv2';
+import { attachmentsWithCalendar } from './icalendar.js';
 
 /** DKIM verification status as reported by SES (the §10A activate gate). */
 export type DkimStatus =
@@ -99,6 +100,22 @@ export interface SendEmailInput {
    * carrying the same file to a whole segment is a mail-server bill, not a feature.
    */
   readonly attachments?: readonly EmailAttachment[];
+  /**
+   * A meeting invite. NOT an attachment: an invite a mail client offers Accept /
+   * Decline for is a `text/calendar; method=…` part inside a `multipart/alternative`
+   * beside the HTML body, which only the self-hosted SMTP transport can compose
+   * (`buildMimeMessage`). SES's Simple content and Resend's JSON both accept files
+   * only, so there the same bytes ride as an `.ics` attachment — openable, but with
+   * no RSVP buttons.
+   */
+  readonly calendar?: {
+    /** The VCALENDAR body, from `buildIcs`. */
+    readonly ics: string;
+    /** Must match the ICS's own METHOD, or clients disagree with the file. */
+    readonly method: 'REQUEST' | 'CANCEL';
+    /** Attachment filename on the transports that can only attach it. */
+    readonly filename?: string;
+  };
   /**
    * Our own message id (the outbox row id). Only the self-hosted SMTP transport
    * uses it: it becomes both the RFC 5322 Message-ID and the VERP bounce token,
@@ -213,7 +230,9 @@ export class ProdSesEmailClient implements SesEmailClient {
     // SESv2 takes attachments on the SIMPLE content, so there is no need to hand-roll
     // a raw MIME message here. RawContent is BYTES: the SDK base64-encodes it on the
     // way out, so passing our already-encoded string would attach the encoding.
-    const attachments = (input.attachments ?? []).map((a) => ({
+    // An invite rides as a text/calendar FILE here: SES's Simple content has no way
+    // to add an alternative body part, which is what inline RSVP buttons require.
+    const attachments = attachmentsWithCalendar(input).map((a) => ({
       RawContent: new Uint8Array(Buffer.from(a.content, 'base64')),
       FileName: a.filename,
       ContentType: a.contentType,

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createSmtpEmailClient, buildMimeMessage, type SmtpEnvelope } from '../src/smtp-client.js';
+import { buildIcs } from '../src/icalendar.js';
 import { parseVerpRecipient, unpackVerpToken } from '../src/verp.js';
 import type { SendEmailInput } from '../src/ses-client.js';
 
@@ -115,5 +116,96 @@ describe('buildMimeMessage', () => {
     const [head, body] = raw.split('\r\n\r\n');
     expect(head).toContain('Subject: Hello');
     expect(body).toBe('<p>hi</p>');
+  });
+});
+
+// A meeting invite is NOT an attachment. The bytes a client offers "Accept /
+// Decline" for live in a `text/calendar; method=…` part inside a
+// multipart/alternative beside the HTML; the same bytes attached are a file to
+// download. Every assertion here is about that structure, because a message that
+// gets it wrong still arrives, still looks fine, and simply never becomes a meeting.
+describe('buildMimeMessage with a calendar invite', () => {
+  const ics = buildIcs(
+    {
+      summary: 'Intro call',
+      start: new Date('2026-10-12T13:00:00.000Z'),
+      end: new Date('2026-10-12T13:30:00.000Z'),
+      organizer: { email: 'hello@acme.com', name: 'Acme' },
+      attendees: [{ email: 'jane@example.com' }],
+    },
+    new Date('2026-10-08T09:00:00.000Z'),
+  );
+  const base = {
+    from: 'Acme <hello@acme.com>',
+    to: 'jane@example.com',
+    subject: 'Invitation: Intro call',
+    html: '<p>See you then.</p>',
+  };
+  const invite = { ics, method: 'REQUEST' as const };
+
+  it('puts the calendar in a multipart/alternative, not an attachment', () => {
+    const mime = buildMimeMessage({ ...base, calendar: invite }, 'm-1', 'mail.example.com');
+    expect(mime).toMatch(/^Content-Type: multipart\/alternative; boundary="[^"]+"/m);
+    expect(mime).not.toMatch(/multipart\/mixed/);
+    // Content-Disposition: attachment is exactly what turns an invite into a file.
+    expect(mime).not.toMatch(/Content-Disposition: attachment/);
+    expect(mime).toContain('Content-Type: text/html; charset=UTF-8');
+  });
+
+  // Gmail shows the event but NO Accept/Decline without method= on the part itself.
+  it('carries method= on the calendar part’s own Content-Type', () => {
+    const mime = buildMimeMessage({ ...base, calendar: invite }, 'm-1', 'mail.example.com');
+    expect(mime).toMatch(/Content-Type: text\/calendar; charset=UTF-8; method=REQUEST/);
+    expect(buildMimeMessage({ ...base, calendar: { ics, method: 'CANCEL' } }, 'm-1', 'x.com')).toMatch(/method=CANCEL/);
+  });
+
+  // In a multipart/alternative the LAST part is the one a client prefers. HTML last
+  // is what makes Outlook render the mail and ignore the invite.
+  it('orders the calendar part after the HTML', () => {
+    const mime = buildMimeMessage({ ...base, calendar: invite }, 'm-1', 'mail.example.com');
+    expect(mime.indexOf('text/html')).toBeLessThan(mime.indexOf('text/calendar'));
+  });
+
+  it('base64-encodes the ics, decoding back to the exact calendar', () => {
+    const mime = buildMimeMessage({ ...base, calendar: invite }, 'm-1', 'mail.example.com');
+    const part = mime.slice(mime.indexOf('text/calendar'));
+    const b64 = part.slice(part.indexOf('\r\n\r\n') + 4).split(/\r\n--/)[0]!;
+    expect(Buffer.from(b64.replace(/\r\n/g, ''), 'base64').toString('utf8')).toBe(ics);
+  });
+
+  it('closes every boundary it opens', () => {
+    const mime = buildMimeMessage({ ...base, calendar: invite }, 'm-1', 'mail.example.com');
+    const boundary = /boundary="([^"]+)"/.exec(mime)![1]!;
+    expect(mime.split(`--${boundary}`).length - 1).toBe(3); // two parts + the closer
+    expect(mime).toContain(`--${boundary}--`);
+  });
+
+  // An invite that also carries a file needs BOTH containers: the alternative holds
+  // the body and the invite, and sits as one part inside the mixed container.
+  it('nests the alternative inside multipart/mixed when a file rides along', () => {
+    const mime = buildMimeMessage(
+      {
+        ...base,
+        calendar: invite,
+        attachments: [{ filename: 'agenda.pdf', contentType: 'application/pdf', content: 'JVBERi0=' }],
+      },
+      'm-2',
+      'mail.example.com',
+    );
+    const mixed = /Content-Type: multipart\/mixed; boundary="([^"]+)"/.exec(mime)![1]!;
+    const alt = /Content-Type: multipart\/alternative; boundary="([^"]+)"/.exec(mime)![1]!;
+    expect(alt).not.toBe(mixed); // distinct boundaries, or the parser ends both at once
+    expect(mime.indexOf(`--${mixed}`)).toBeLessThan(mime.indexOf(`--${alt}`));
+    expect(mime).toContain(`--${alt}--`);
+    expect(mime).toContain(`--${mixed}--`);
+    expect(mime).toMatch(/Content-Disposition: attachment; filename="agenda.pdf"/);
+    expect(mime).toMatch(/method=REQUEST/);
+  });
+
+  // The shape of ordinary mail must not change just because invites now exist.
+  it('leaves a message with no invite single-part', () => {
+    const mime = buildMimeMessage(base, 'm-3', 'mail.example.com');
+    expect(mime).toMatch(/Content-Type: text\/html; charset=UTF-8/);
+    expect(mime).not.toMatch(/multipart/);
   });
 });

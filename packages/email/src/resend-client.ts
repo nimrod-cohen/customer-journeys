@@ -6,6 +6,7 @@
 // in-app SES verification flow never runs for it. HTTP is injectable so tests
 // assert the exact request without touching the network.
 import type { SendEmailInput, SendEmailResult, SesEmailClient } from './ses-client.js';
+import { attachmentsWithCalendar } from './icalendar.js';
 
 export interface ResendHttpResponse {
   readonly status: number;
@@ -64,8 +65,11 @@ export function createResendEmailClient(
       if (input.headers && Object.keys(input.headers).length > 0) payload.headers = input.headers;
       // Resend takes the file base64-encoded in the JSON body — exactly the form it
       // reached us in, so nothing is decoded on this path.
-      if (input.attachments && input.attachments.length > 0) {
-        payload.attachments = input.attachments.map((a) => ({
+      // Resend takes files only, so an invite arrives as an .ics attachment rather
+      // than the alternative part that yields inline RSVP buttons.
+      const files = attachmentsWithCalendar(input);
+      if (files.length > 0) {
+        payload.attachments = files.map((a) => ({
           filename: a.filename,
           content: a.content,
           content_type: a.contentType,

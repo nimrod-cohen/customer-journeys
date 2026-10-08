@@ -461,6 +461,26 @@ never the body (inv.2).
   only); the SMTP envelope carries every recipient. **Transactional mail sets no
   `List-Unsubscribe` header at all**, which is what stops a cc'd reader's one-click
   unsubscribe from silently opting out the primary — keep it that way.
+- **A meeting invite is a BODY PART, not an attachment.** `calendar` on `/v1/send`
+  (`parseCalendar`, pure → `@cdp/email buildIcs`) emits the ICS as a
+  `text/calendar; method=…` part inside a `multipart/alternative` beside the HTML —
+  that shape, with `method=` on the part's own Content-Type and the calendar part
+  LAST (in an alternative the final part is the preferred one), is what makes clients
+  show Accept/Decline. The same bytes attached are merely a file, which is all SES's
+  Simple content and Resend's JSON can carry (`attachmentsWithCalendar`), so **only
+  self-hosted SMTP produces a true invite**. Two things silently corrupt an ICS and
+  look fine in a diff: unescaped `,`/`;`/`\` (structural — they truncate the value)
+  and lines over **75 OCTETS** (folded with CRLF + a space; measured in bytes, since
+  Hebrew is multi-byte and Outlook drops an overlong property).
+  **A time without a zone is REFUSED, never guessed** — a bare wall clock names a
+  different instant to the caller, to us and to the invitee's client, and nobody
+  notices until the meeting is missed. **A `cancel` REQUIRES the original `uid`**: a
+  cancellation with a fresh uid matches no event, so the invitee keeps the meeting
+  while the API answers 200. Same uid + higher `sequence` = the client REPLACES the
+  invite. The organizer defaults to the message's From (clients distrust a mismatch)
+  and the attendee is this recipient — built per message, so a fan-out names each
+  person, a `cc` joins the guest list and **a `bcc` is never an ATTENDEE** (that line
+  is printed in a guest list everyone can read).
 - **Consent vs deliverability are separate gates** (`decideTransactionalSend`, pure).
   Hard bounce, permanent soft bounce and complaint ALWAYS block — no flag overrides
   them, because mailing a dead box or a complainant damages the shared IP and cannot
