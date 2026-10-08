@@ -113,9 +113,9 @@ describe('buildMimeMessage', () => {
 
   it('separates headers from body with a blank line', () => {
     const raw = buildMimeMessage(input(), MSG, 'acme.com');
-    const [head, body] = raw.split('\r\n\r\n');
+    const [head, ...rest] = raw.split('\r\n\r\n');
     expect(head).toContain('Subject: Hello');
-    expect(body).toBe('<p>hi</p>');
+    expect(rest.join('\r\n\r\n')).toContain('<p>hi</p>');
   });
 });
 
@@ -176,7 +176,7 @@ describe('buildMimeMessage with a calendar invite', () => {
   it('closes every boundary it opens', () => {
     const mime = buildMimeMessage({ ...base, calendar: invite }, 'm-1', 'mail.example.com');
     const boundary = /boundary="([^"]+)"/.exec(mime)![1]!;
-    expect(mime.split(`--${boundary}`).length - 1).toBe(3); // two parts + the closer
+    expect(mime.split(`--${boundary}`).length - 1).toBe(4); // text + html + calendar + the closer
     expect(mime).toContain(`--${boundary}--`);
   });
 
@@ -202,10 +202,12 @@ describe('buildMimeMessage with a calendar invite', () => {
     expect(mime).toMatch(/method=REQUEST/);
   });
 
-  // The shape of ordinary mail must not change just because invites now exist.
-  it('leaves a message with no invite single-part', () => {
+  // Ordinary mail carries no calendar part — but it IS still multipart/alternative,
+  // because every message now has a plain-text alternative.
+  it('leaves a message with no invite free of any calendar part', () => {
     const mime = buildMimeMessage(base, 'm-3', 'mail.example.com');
     expect(mime).toMatch(/Content-Type: text\/html; charset=UTF-8/);
-    expect(mime).not.toMatch(/multipart/);
+    expect(mime).toMatch(/Content-Type: text\/plain; charset=UTF-8/);
+    expect(mime).not.toMatch(/text\/calendar/);
   });
 });

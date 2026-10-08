@@ -150,6 +150,12 @@ export const SYSTEM_HTML_MERGE_KEYS: ReadonlySet<string> = new Set(['unsubscribe
  * transactional path renders nothing (`'empty'`). Unifying them would change mail
  * that is already going out.
  */
+
+/** Preserve a text value's line breaks in an HTML context. Escaped values only. */
+function newlinesToBreaks(s: string): string {
+  return s.replace(/\r\n|\r|\n/g, '<br />');
+}
+
 export function renderExpressionHtml(
   template: string,
   merge: Readonly<Record<string, string>>,
@@ -162,7 +168,15 @@ export function renderExpressionHtml(
       const key = rawKey ?? escKey ?? '';
       const value = merge[expandCustomerToken(key)] ?? merge[key];
       if (value === undefined) return onUnknown === 'keep' ? match : '';
-      return rawKey === undefined && !rawKeys.has(key) ? escapeHtmlValue(value) : value;
+      if (rawKey !== undefined || rawKeys.has(key)) return value;
+      // An ESCAPED value is text by definition, and HTML collapses whitespace — so a
+      // caller passing a multi-line message (`data.text` from an API send, a
+      // multi-line profile trait) would see it arrive as one run-on paragraph with
+      // no way to fix it: `{{{ }}}` does not help, since the newlines are not markup
+      // either. Line breaks are preserved here, where the value is already escaped
+      // and therefore cannot carry anything but text. `{{{ }}}` stays untouched: that
+      // value IS html and controls its own breaks.
+      return newlinesToBreaks(escapeHtmlValue(value));
     },
   );
 }
@@ -184,6 +198,36 @@ const SAFE_HREF_SCHEMES = new Set(['http', 'https', 'mailto', 'tel']);
  * execute. The attribute is REMOVED rather than pointed somewhere harmless, so the
  * anchor text still renders and nothing is clickable.
  */
+
+/**
+ * Absolutize ROOT-RELATIVE URLs (`src`/`href`/`background="/…"` and CSS `url(/…)`)
+ * against the app base. An email client has NO page origin, so a `/assets/<id>`
+ * image or a `/foo` link is unreachable there — this rewrites them to
+ * `https://app/assets/<id>`. Absolute (http/https), protocol-relative (`//`),
+ * anchor (`#`), `data:`, `cid:`, and `mailto:` URLs are left untouched. Idempotent.
+ *
+ * Lives here, beside the other HTML-sink fixups, because BOTH email paths need it:
+ * the dispatcher (broadcasts, automations) and the transactional `/v1/send`. It was
+ * dispatcher-only, which is why an uploaded image reached a broadcast fine and
+ * arrived broken in every transactional message.
+ */
+export function absolutizeUrls(html: string, baseUrl: string): string {
+  // No base → we can't build an absolute URL, so leave root-relative URLs as-is
+  // (rather than throwing). Prod always supplies a base; this guards callers/tests
+  // that don't set one.
+  if (!baseUrl) return html;
+  const base = baseUrl.replace(/\/$/, '');
+  return html
+    .replace(
+      /(\b(?:src|href|background)\s*=\s*)(["'])(\/(?!\/)[^"']*)\2/gi,
+      (_m, pre: string, q: string, path: string) => `${pre}${q}${base}${path}${q}`,
+    )
+    .replace(
+      /(url\(\s*)(["']?)(\/(?!\/)[^"')]*)\2(\s*\))/gi,
+      (_m, pre: string, q: string, path: string, post: string) => `${pre}${q}${base}${path}${q}${post}`,
+    );
+}
+
 export function sanitizeHrefSchemes(html: string): string {
   return html.replace(/\bhref\s*=\s*(["'])([^"']*)\1/gi, (match, _q: string, value: string) => {
     // Clients ignore control characters and whitespace inside a scheme, so

@@ -101,3 +101,5 @@ export {
   type CalendarEvent,
   type CalendarPerson,
 } from './icalendar.js';
+
+export { htmlToPlainText, encodeHeaderWord, encodeAddressHeader, isAsciiHeader } from './mime-text.js';

@@ -337,6 +337,17 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   any TXT record at all, so a domain could verify without publishing anything. Live DNS
   lookups run only when a real SMTP transport is configured, mirroring the SES path's
   `mode === 'real'`.
+- **Every message is `multipart/alternative` with a `text/plain` part** derived from
+  the HTML (`htmlToPlainText`). HTML-only is a long-standing spam signal — every real
+  client sends both, and filters notice when something does not. Text first, HTML
+  second: in an alternative the LAST part is the preferred one.
+- **Non-ASCII headers are RFC 2047 encoded-words** (`encodeHeaderWord` /
+  `encodeAddressHeader`). A header is ASCII by spec, so a Hebrew subject or display
+  name written as raw UTF-8 costs spam points and renders as mojibake. Only the
+  DISPLAY NAME of an address is encoded — encoding the whole value would put an
+  encoded-word where a mailbox belongs and the message would be unroutable. Words are
+  split on CHARACTER boundaries (a multi-byte character cut across two words decodes
+  to replacement characters) and kept under the 75-char limit.
 - **The MTA agent is a thin forwarder** (`services/mail-agent/mail-agent.mjs`): read
   Maildir, post raw, delete on 2xx. It parses nothing, so a parser fix is an app deploy
   rather than an ssh session on a mail server.
@@ -732,6 +743,19 @@ OUR domain. Not XSS (clients strip `<script>`); worse for a sending platform.
   builds from the signed token, and escaping it leaves every marketing email without
   a working unsubscribe link. Trusted because nothing outside our code can set a bare
   key — profile data lands under `customer.*`.
+- **The ESCAPED form also converts newlines to `<br />`.** HTML collapses
+  whitespace, so a multi-line value (an API caller's `data.text`, a multi-line
+  trait) arrived as one run-on paragraph with no way to fix it — `{{{ }}}` does not
+  help, since newlines are not markup either. Safe precisely because the value is
+  escaped first, so it cannot be anything but text. The RAW form is left alone: that
+  value IS html and carries its own breaks, and breaking on its source newlines
+  would double-space it.
+- **`absolutizeUrls` lives in `@cdp/shared` and runs at BOTH email sinks.** An
+  uploaded image is stored as a root-relative `/assets/<id>`, which resolves in the
+  designer's browser and to NOTHING in a mail client. It was dispatcher-only, so
+  images reached broadcasts fine and arrived broken in every transactional message.
+  Applied at the sink, not at upload, so templates already saved are fixed without a
+  migration and the stored design stays host-agnostic.
 - **`sanitizeHrefSchemes` runs on the FINAL rendered HTML**, not on the template:
   escaping does nothing for a value that IS a URL (`javascript:alert(1)` has no
   HTML-significant character), and the tracking rewrite runs before substitution so it

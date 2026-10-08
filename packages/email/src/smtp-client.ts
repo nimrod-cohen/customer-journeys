@@ -18,6 +18,7 @@
 // headers without opening a socket.
 import type { EmailAttachment, SendEmailInput, SendEmailResult, SesEmailClient } from './ses-client.js';
 import { verpReturnPath } from './verp.js';
+import { htmlToPlainText, encodeHeaderWord, encodeAddressHeader } from './mime-text.js';
 
 /** One SMTP submission: envelope plus the already-rendered RFC 5322 message. */
 export interface SmtpEnvelope {
@@ -135,25 +136,38 @@ function attachmentPart(a: EmailAttachment): string {
  * shows the event but offers no Accept / Decline.
  */
 function alternativeParts(input: SendEmailInput, altBoundary: string): string {
-  const html = ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', input.html ?? ''].join(
+  const parts = [textPart(input), htmlPart(input)];
+  if (input.calendar) parts.push(calendarPart(input));
+  return `${parts.map((p) => `--${altBoundary}\r\n${p}\r\n`).join('')}--${altBoundary}--`;
+}
+
+/** The plain-text alternative. Derived from the HTML, so nothing to author twice. */
+function textPart(input: SendEmailInput): string {
+  return [
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    htmlToPlainText(input.html ?? ''),
+  ].join('\r\n');
+}
+
+function htmlPart(input: SendEmailInput): string {
+  return ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', input.html ?? ''].join(
     '\r\n',
   );
-  const cal = [
+}
+
+function calendarPart(input: SendEmailInput): string {
+  return [
     `Content-Type: text/calendar; charset=UTF-8; method=${input.calendar!.method}; name="invite.ics"`,
     'Content-Transfer-Encoding: base64',
     '',
     wrapBase64(Buffer.from(input.calendar!.ics, 'utf8').toString('base64')),
   ].join('\r\n');
-  return `--${altBoundary}\r\n${html}\r\n--${altBoundary}\r\n${cal}\r\n--${altBoundary}--`;
 }
 
-/** The message body: plain HTML, or an alternative container when there is an invite. */
+/** The message body: always a multipart/alternative of text + html (+ invite). */
 function bodyPart(input: SendEmailInput, altBoundary: string): string {
-  if (!input.calendar) {
-    return ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', input.html ?? ''].join(
-      '\r\n',
-    );
-  }
   return [
     `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
     '',
@@ -168,27 +182,30 @@ export function buildMimeMessage(
 ): string {
   const attachments = input.attachments ?? [];
   const safeId = messageId.replace(/[^A-Za-z0-9]/g, '');
-  // A message with no attachment stays SINGLE-PART: wrapping every send in a
-  // multipart container to serve the few that carry a file would change the shape
-  // of mail that has none. An invite is the exception — it IS a second body part, so
-  // it needs an alternative container even with nothing attached.
+  // Attachments add an OUTER multipart/mixed; the body itself is always a
+  // multipart/alternative of text + html, because an HTML-only message is a
+  // long-standing spam signal — every real mail client sends both, and filters
+  // notice when something does not.
   const boundary = attachments.length > 0 ? `----=_cdp_${safeId}` : '';
   const altBoundary = `----=_cdpalt_${safeId}`;
   const headers: string[] = [
-    `From: ${headerValue(input.from)}`,
-    `To: ${headerValue(input.to)}`,
+    // A header is ASCII by spec. A Hebrew subject or display name written as raw
+    // UTF-8 costs spam points and renders as mojibake wherever the client does not
+    // guess the encoding — so non-ASCII is sent as RFC 2047 encoded-words.
+    `From: ${encodeAddressHeader(headerValue(input.from))}`,
+    `To: ${encodeAddressHeader(headerValue(input.to))}`,
     // Cc is visible by definition; Bcc deliberately gets NO header — it travels in
     // the SMTP envelope only, which is the whole meaning of "blind".
-    ...(input.cc && input.cc.length > 0 ? [`Cc: ${input.cc.map(headerValue).join(', ')}`] : []),
-    `Subject: ${headerValue(input.subject)}`,
+    ...(input.cc && input.cc.length > 0
+      ? [`Cc: ${input.cc.map((a) => encodeAddressHeader(headerValue(a))).join(', ')}`]
+      : []),
+    `Subject: ${encodeHeaderWord(headerValue(input.subject))}`,
     `Message-ID: <${messageId}@${messageIdDomain}>`,
     `Date: ${new Date().toUTCString()}`,
     'MIME-Version: 1.0',
-    ...(boundary
-      ? [`Content-Type: multipart/mixed; boundary="${boundary}"`]
-      : input.calendar
-        ? [`Content-Type: multipart/alternative; boundary="${altBoundary}"`]
-        : ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit']),
+    boundary
+      ? `Content-Type: multipart/mixed; boundary="${boundary}"`
+      : `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
   ];
   for (const [k, v] of Object.entries(input.headers ?? {})) {
     // Never let a caller-supplied header overwrite one we control.
@@ -199,13 +216,9 @@ export function buildMimeMessage(
     headers.push(`${key}: ${headerValue(v)}`);
   }
   const head = headers.join('\r\n');
-  if (!boundary) {
-    // No attachment: the body is the whole message. With an invite the alternative
-    // container's Content-Type is already on the message headers, so only its parts
-    // are emitted here.
-    if (!input.calendar) return `${head}\r\n\r\n${input.html ?? ''}`;
-    return `${head}\r\n\r\n${alternativeParts(input, altBoundary)}\r\n`;
-  }
+  // No attachment: the alternative IS the message, and its Content-Type is already
+  // on the headers, so only its parts are emitted.
+  if (!boundary) return `${head}\r\n\r\n${alternativeParts(input, altBoundary)}\r\n`;
 
   const parts = [bodyPart(input, altBoundary), ...attachments.map(attachmentPart)];
   return `${head}\r\n\r\n${parts.map((p) => `--${boundary}\r\n${p}\r\n`).join('')}--${boundary}--\r\n`;

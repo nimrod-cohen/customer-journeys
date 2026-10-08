@@ -204,6 +204,14 @@ export function ApiDocs() {
 {{data.block}}    →  &lt;b&gt;Ready&lt;/b&gt;  shows as:  <b>Ready</b>   (as text)
 {{{data.block}}}  →  <b>Ready</b>          shows as:  Ready        (in bold)`}</Pre>
         <p class="mt-2 text-sm text-stone-600">
+          <b>Two braces also keep your line breaks.</b> HTML collapses whitespace, so a multi-line
+          value — a message body assembled by your own code — would otherwise arrive as one run-on
+          paragraph. Sent with two braces, each newline becomes a line break. Three braces do not
+          do this: that value <i>is</i> markup, so it carries its own{' '}
+          <Code>{'<p>'}</Code> and <Code>{'<br>'}</Code>. If you are passing plain text with
+          newlines, <b>two braces is the one you want</b>.
+        </p>
+        <p class="mt-2 text-sm text-stone-600">
           The default is deliberate. Merge values are not always yours: a broadcast greeting someone
           by <Code>{'{{customer.first_name}}'}</Code> renders a <b>profile attribute</b>, and those
           can be written with the public tracking key from any web page. Rendered as markup, a saved

@@ -15,6 +15,7 @@ import {
   expandCustomerToken,
   renderExpressionHtml,
   sanitizeHrefSchemes,
+  absolutizeUrls,
   zonedComponents,
   type WorkspaceStatus,
 } from '@cdp/shared';
@@ -300,29 +301,9 @@ export function rewriteTrackingLinks(
   return { html: out, links };
 }
 
-/**
- * Absolutize ROOT-RELATIVE URLs (`src`/`href`/`background="/…"` and CSS `url(/…)`)
- * against the app base. An email client has NO page origin, so a `/assets/<id>`
- * image or a `/foo` link is unreachable there — this rewrites them to
- * `https://app/assets/<id>`. Absolute (http/https), protocol-relative (`//`),
- * anchor (`#`), `data:`, `cid:`, and `mailto:` URLs are left untouched. Idempotent.
- */
-export function absolutizeUrls(html: string, baseUrl: string): string {
-  // No base → we can't build an absolute URL, so leave root-relative URLs as-is
-  // (rather than throwing). Prod always supplies a base; this guards callers/tests
-  // that don't set one.
-  if (!baseUrl) return html;
-  const base = baseUrl.replace(/\/$/, '');
-  return html
-    .replace(
-      /(\b(?:src|href|background)\s*=\s*)(["'])(\/(?!\/)[^"']*)\2/gi,
-      (_m, pre: string, q: string, path: string) => `${pre}${q}${base}${path}${q}`,
-    )
-    .replace(
-      /(url\(\s*)(["']?)(\/(?!\/)[^"')]*)\2(\s*\))/gi,
-      (_m, pre: string, q: string, path: string, post: string) => `${pre}${q}${base}${path}${q}${post}`,
-    );
-}
+// `absolutizeUrls` now lives in @cdp/shared — BOTH email paths need it, and the
+// transactional one was missing it. Re-exported so this module's callers are unchanged.
+export { absolutizeUrls };
 
 /**
  * Guarantee an unsubscribe link in an email body. If the design already contains an
