@@ -3774,6 +3774,17 @@ export const listBroadcasts: Handler = async (ctx, pool, req) => {
       GROUP BY broadcast_id`,
     [ctx.workspaceId],
   );
+  // Queued = recipients whose message has not gone out yet (waiting, retrying or
+  // mid-send). The broadcast row flips to 'sent' as soon as it is QUEUED, so without
+  // this a broadcast that delivered nothing looks finished.
+  const { rows: queuedRows } = await pool.query<{ broadcast_id: string; queued: number }>(
+    `SELECT payload->>'broadcast_id' AS broadcast_id, count(*)::int AS queued
+       FROM outbox
+      WHERE workspace_id = $1 AND status IN ('pending','sending') AND payload->>'broadcast_id' IS NOT NULL
+      GROUP BY 1`,
+    [ctx.workspaceId],
+  );
+  const queuedBy = new Map(queuedRows.map((q) => [q.broadcast_id, q.queued]));
   const statBy = new Map(statRows.map((s) => [s.broadcast_id, s]));
   const clickBy = new Map(clickRows.map((c) => [c.broadcast_id, c.clicked]));
   const openBy = new Map(openRows.map((o) => [o.broadcast_id, o.opened]));
@@ -3790,6 +3801,7 @@ export const listBroadcasts: Handler = async (ctx, pool, req) => {
         clicked: clickBy.get(b.id as string) ?? 0,
         opened: openBy.get(b.id as string) ?? 0,
         unsubscribed: unsubBy.get(b.id as string) ?? 0,
+        queued: queuedBy.get(b.id as string) ?? 0,
       },
     };
   });
@@ -6266,6 +6278,24 @@ export const listActivity: Handler = async (ctx, pool, req) => {
                          OR (messages_log.broadcast_id IS NOT NULL AND s.broadcast_id = messages_log.broadcast_id) )
                 )) AS retryable
            FROM messages_log WHERE workspace_id = $1
+         UNION ALL
+         -- Messages still in the outbox that have NOT gone out: retrying after a
+         -- transient failure, parked for quiet hours, or refused by the sending gate.
+         -- None of them writes a messages_log row, so without this a broadcast reads
+         -- "sent" with zero sends and nothing says why. A pending row that has never
+         -- failed (last_error NULL) is merely queued, not news.
+         SELECT created_at, 'send', coalesce(payload->>'medium', 'email'),
+                CASE WHEN status = 'refused' THEN 'failure' ELSE 'info' END,
+                profile_id,
+                CASE WHEN status = 'refused'
+                     THEN 'refused: ' || coalesce(last_error, 'this workspace cannot send yet')
+                     ELSE 'not sent yet — ' || last_error || ' (attempt ' || attempts ||
+                          coalesce(', next try ' || to_char(next_attempt_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC', '') || ')'
+                END,
+                NULL::uuid, false
+           FROM outbox
+          WHERE workspace_id = $1
+            AND ((status IN ('pending', 'sending') AND last_error IS NOT NULL) OR status = 'refused')
          UNION ALL
          SELECT at, source, type, outcome, profile_id, detail, NULL::uuid, false
            FROM activity_log WHERE workspace_id = $1

@@ -33,10 +33,12 @@ describeMaybe('a mail server outage delays sends, it does not lose them (real Po
   let now = new Date('2026-08-31T12:00:00.000Z');
   let failWith: unknown = null;
   let sent = 0;
+  let lastInput: SendEmailInput | null = null;
 
   const ses: SesEmailClient = {
-    async sendEmail(_input: SendEmailInput): Promise<SendEmailResult> {
+    async sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
       if (failWith) throw failWith;
+      lastInput = input;
       sent++;
       return { sesMessageId: `ok-${sent}` };
     },
@@ -129,6 +131,7 @@ describeMaybe('a mail server outage delays sends, it does not lose them (real Po
     now = new Date('2026-08-31T12:00:00.000Z');
     failWith = null;
     sent = 0;
+    lastInput = null;
     await pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM outbox WHERE workspace_id = $1', [WS]);
     await pool.query(
@@ -156,6 +159,13 @@ describeMaybe('a mail server outage delays sends, it does not lose them (real Po
     // Nothing is recorded as sent or failed while it is merely waiting.
     const { rows: logs } = await pool.query('SELECT 1 FROM messages_log WHERE workspace_id = $1', [WS]);
     expect(logs).toHaveLength(0);
+
+    // ...but the row itself says WHY it is waiting, so the activity log can.
+    const { rows: why } = await pool.query<{ last_error: string | null }>(
+      'SELECT last_error FROM outbox WHERE id = $1',
+      [OB],
+    );
+    expect(why[0]?.last_error).toMatch(/ECONNREFUSED/);
   });
 
   it('sends it exactly once when the server comes back', async () => {
@@ -177,6 +187,16 @@ describeMaybe('a mail server outage delays sends, it does not lose them (real Po
       [WS],
     );
     expect(logs.map((l) => l.status)).toEqual(['sent']); // one send, not three
+  });
+
+  // The self-hosted SMTP client REFUSES an input without a message id (it is the
+  // Message-ID and the VERP bounce token). The dispatcher never passed one, so every
+  // broadcast and automation email on that provider threw before reaching the server
+  // — and, being an untyped error, was retried silently for hours.
+  it('hands the transport the outbox row id as the message id', async () => {
+    const r = await dispatchOutbox(deps(), OB);
+    expect(r.result).toBe('send');
+    expect(lastInput?.messageId).toBe(OB);
   });
 
   // The backoff grows, so an outage lasting hours is still ridden out.

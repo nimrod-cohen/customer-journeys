@@ -19,6 +19,7 @@ interface Row {
   type: string;
   outcome: string;
   email: string | null;
+  detail?: string | null;
 }
 
 describeMaybe('activity log (real Postgres)', () => {
@@ -78,6 +79,7 @@ describeMaybe('activity log (real Postgres)', () => {
   async function cleanup(): Promise<void> {
     for (const ws of [WS_A, WS_B]) {
       await world.pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [ws]);
+      await world.pool.query('DELETE FROM outbox WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM email_events WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM events WHERE workspace_id = $1', [ws]);
       await world.pool.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
@@ -137,5 +139,50 @@ describeMaybe('activity log (real Postgres)', () => {
     // instead that A's feed excludes B and that the type filter is scoped.
     const rows = await activity({ type: 'complaint' });
     expect(rows).toHaveLength(0);
+  });
+  // A message that is queued but has not gone out writes no messages_log row. It must
+  // still be visible, with its reason — otherwise a broadcast reads "sent" with zero
+  // sends and nothing anywhere says why.
+  describe('messages still waiting in the outbox', () => {
+    const insert = (status: string, lastError: string | null, attempts = 0) =>
+      world.pool.query(
+        `INSERT INTO outbox (workspace_id, profile_id, status, attempts, last_error, payload)
+         VALUES ($1,$2,$3,$4,$5,'{"medium":"email"}'::jsonb)`,
+        [WS_A, P_A, status, attempts, lastError],
+      );
+    const clear = () => world.pool.query('DELETE FROM outbox WHERE workspace_id = $1', [WS_A]);
+
+    it('shows a retrying send with its reason', async () => {
+      await insert('pending', 'connect ECONNREFUSED 10.0.0.1:587', 3);
+      try {
+        const row = (await activity({ source: 'send' })).find((r) => r.outcome === 'info');
+        expect(row?.type).toBe('email');
+        expect(row?.detail).toContain('connect ECONNREFUSED');
+        expect(row?.detail).toContain('attempt 3');
+        expect(row?.email).toBe('a1@acme.com');
+      } finally {
+        await clear();
+      }
+    });
+
+    it('shows a refused send as a failure', async () => {
+      await insert('refused', 'workspace not verified');
+      try {
+        const row = (await activity({ outcome: 'failure', source: 'send' }))[0];
+        expect(row?.detail).toContain('workspace not verified');
+      } finally {
+        await clear();
+      }
+    });
+
+    // A row that is merely queued and has never failed is not news.
+    it('does not list a pending row that has no reason', async () => {
+      await insert('pending', null);
+      try {
+        expect((await activity({ source: 'send' })).filter((r) => r.outcome === 'info')).toHaveLength(0);
+      } finally {
+        await clear();
+      }
+    });
   });
 });

@@ -144,7 +144,7 @@ test('super admin creates a company (and it has no workspaces yet)', async ({ pa
     .locator('[data-testid="admin-company"]')
     .filter({ has: page.getByTestId('admin-company-name').filter({ hasText: /^Globex$/ }) });
   await expect(globexCard).toHaveCount(1);
-  await expect(globexCard).toContainText('No workspaces in this company.');
+  await expect(globexCard).toContainText('No workspaces in this company');
 });
 
 test('super admin deletes an EMPTY company (button only shows when it has no workspaces)', async ({ page }) => {

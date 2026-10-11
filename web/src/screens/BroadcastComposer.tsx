@@ -41,6 +41,8 @@ interface BroadcastStats {
   clicked: number;
   opened: number;
   unsubscribed: number;
+  /** Recipients whose message has not gone out yet (waiting, retrying, mid-send). */
+  queued?: number;
 }
 /** The sending channel of a broadcast. */
 type Medium = 'email' | 'sms' | 'whatsapp';
@@ -293,15 +295,22 @@ export function BroadcastComposer() {
         <ul data-testid="broadcast-list" class="space-y-2">
           {broadcasts.map((b) => {
             const editable = EDITABLE.has(b.status);
+            const s = b.stats;
+            // The row turns 'sent' the moment it is QUEUED. While any recipient's
+            // message is still waiting it is not sent — say so, or a broadcast that
+            // delivered nothing reads as finished.
+            const queued = b.status === 'sent' ? (s?.queued ?? 0) : 0;
+            const shownStatus = queued > 0 ? 'sending' : b.status;
             const subtitle =
               b.status === 'scheduled' && b.scheduled_at
                 ? `Scheduled to send ${whenLabel(b.scheduled_at, b.scheduled_tz)} · ${untilLabel(b.scheduled_at, nowMs)}`
-                : b.status === 'sent' && b.sent_at
-                  ? `Sent ${whenLabel(b.sent_at)}`
-                  : b.status === 'sending'
-                    ? 'Sending…'
-                    : 'Draft — not scheduled';
-            const s = b.stats;
+                : queued > 0
+                  ? `${queued} not sent yet — see the Activity log for why`
+                  : b.status === 'sent' && b.sent_at
+                    ? `Sent ${whenLabel(b.sent_at)}`
+                    : b.status === 'sending'
+                      ? 'Sending…'
+                      : 'Draft — not scheduled';
             return (
               <li
                 data-testid="broadcast-item"
@@ -334,8 +343,8 @@ export function BroadcastComposer() {
                 {/* Status + channel badges — fixed column → aligned across rows.
                     On mobile they wrap below the name (full row, col 2). */}
                 <span class="col-start-2 flex flex-row flex-wrap items-start gap-1 justify-self-start sm:col-start-auto sm:flex-col">
-                  <Badge data-testid="broadcast-status" tone={toneFor(b.status)}>
-                    {b.status}
+                  <Badge data-testid="broadcast-status" tone={toneFor(shownStatus)}>
+                    {shownStatus}
                   </Badge>
                   <Badge data-testid="broadcast-medium-badge" tone="neutral">
                     {MEDIUM_LABEL[(b.medium ?? 'email') as Medium]}

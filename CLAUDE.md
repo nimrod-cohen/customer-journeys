@@ -537,6 +537,15 @@ time, so rows reset during an outage sat pending forever and those recipients we
 never mailed. (A relay outage downstream of our MTA needs none of this — Postfix
 queues and retries on its own.)
 
+**A message that has NOT gone out must still be visible.** Retrying, quiet-hours
+deferral and a gate refusal write no `messages_log` row, so each keeps its reason on
+`outbox.last_error`; `listActivity` UNIONs those outbox rows (pending/sending with a
+reason → `info`, `refused` → `failure`), and `GET /broadcasts` returns `stats.queued`.
+`broadcasts.status='sent'` only means QUEUED — the list shows `sending` while
+`queued > 0`. **The dispatcher passes `messageId: outboxId` on every email send**:
+self-hosted SMTP throws without it, and an untyped throw is classed as transient, so
+omitting it meant every broadcast and automation email retried silently for hours.
+
 **Missing address is a clean SKIP, never a throw** — checked before `buildSendEmailInput`/SES and before the text provider.
 
 **Routing by medium.** Email → the SES/Resend path (the only email send site), rendering `compiled_html`, `subject`, and `to_address` through `renderTemplateBody`. Text → `dispatchTextChannel`, which renders `text_body` + the To phone (default token `{{customer.phone}}`), normalizes the phone to E.164 with the company `defaultCountry`, calls the injected `ChannelProvider`, and writes `messages_log(medium, provider id)` + `usage_counters` + mark-sent in ONE tx. Text sends do no link/open tracking (no HTML).

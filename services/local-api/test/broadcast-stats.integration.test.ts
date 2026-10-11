@@ -20,7 +20,7 @@ const describeMaybe = hasDatabaseUrl() ? describe : describe.skip;
 interface Row {
   id: string;
   updated_at: string | null;
-  stats: { sent: number; delivered: number; failed: number; clicked: number; opened: number; unsubscribed: number };
+  stats: { sent: number; delivered: number; failed: number; clicked: number; opened: number; unsubscribed: number; queued: number };
 }
 
 describeMaybe('broadcast metrics via GET /broadcasts (real Postgres)', () => {
@@ -82,6 +82,7 @@ describeMaybe('broadcast metrics via GET /broadcasts (real Postgres)', () => {
     await pool.query('DELETE FROM tracked_links WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM email_events WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [WS]);
+    await pool.query('DELETE FROM outbox WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM broadcasts WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM profiles WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [WS]);
@@ -96,7 +97,7 @@ describeMaybe('broadcast metrics via GET /broadcasts (real Postgres)', () => {
     expect(r.status).toBe(200);
     const b = (r.body as { broadcasts: Row[] }).broadcasts.find((x) => x.id === BCAST)!;
     expect(b.updated_at).toBeTruthy();
-    expect(b.stats).toEqual({ sent: 3, delivered: 2, failed: 1, clicked: 5, opened: 2, unsubscribed: 1 });
+    expect(b.stats).toEqual({ sent: 3, delivered: 2, failed: 1, clicked: 5, opened: 2, unsubscribed: 1, queued: 0 });
   });
 
   it('a SKIPPED SMS counts as Failed, not Sent', async () => {
@@ -107,6 +108,27 @@ describeMaybe('broadcast metrics via GET /broadcasts (real Postgres)', () => {
     const b = (r.body as { broadcasts: Row[] }).broadcasts.find((x) => x.id === BCAST2)!;
     expect(b.stats.sent).toBe(0); // a skipped recipient is NOT "sent"
     expect(b.stats.failed).toBe(1); // it shows as a non-delivery (Failed)
+  });
+
+  // "sent" on the broadcast row only means it was QUEUED. A recipient whose message
+  // is still waiting (retrying, deferred) is counted, so the list can say so.
+  it('counts recipients whose message is still queued', async () => {
+    await pool.query(
+      `INSERT INTO outbox (workspace_id, profile_id, status, payload)
+       VALUES ($1,$2,'pending',jsonb_build_object('medium','sms','broadcast_id',$3::text))`,
+      [WS, P2, BCAST2],
+    );
+    try {
+      const r = await dispatch(
+        { method: 'GET', path: '/broadcasts', authorization: tokenFor(OWNER, WS), query: {}, body: {} },
+        e(),
+      );
+      const list = (r.body as { broadcasts: Row[] }).broadcasts;
+      expect(list.find((x) => x.id === BCAST2)!.stats.queued).toBe(1);
+      expect(list.find((x) => x.id === BCAST)!.stats.queued).toBe(0);
+    } finally {
+      await pool.query('DELETE FROM outbox WHERE workspace_id = $1', [WS]);
+    }
   });
 
   it('is cross-workspace isolated (another workspace sees zero for this broadcast)', async () => {

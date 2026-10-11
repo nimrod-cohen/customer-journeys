@@ -98,6 +98,13 @@ describe('buildOutboxRetrySchedule', () => {
   it('refuses to build without a workspace (inv.1)', () => {
     expect(() => buildOutboxRetrySchedule('', 'ob-1', 1, now)).toThrow(/workspaceId/);
   });
+
+  // The reason rides along as a bound value, so a waiting row can say what it waits for.
+  it('records the reason on the row', () => {
+    const s = buildOutboxRetrySchedule('ws-1', 'ob-1', 1, now, 'connect ECONNREFUSED');
+    expect(s.text).toMatch(/last_error = \$4/);
+    expect(s.values[3]).toBe('connect ECONNREFUSED');
+  });
 });
 
 describe('buildDueOutboxQuery', () => {

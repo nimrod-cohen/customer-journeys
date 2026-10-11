@@ -687,14 +687,17 @@ export function buildOutboxRetrySchedule(
   outboxId: string,
   attempts: number,
   now: Date,
+  reason: string | null = null,
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildOutboxRetrySchedule: workspaceId is required');
   const nextAt = new Date(now.getTime() + retryDelayMs(attempts));
   return {
+    // `last_error` keeps WHY: a waiting row writes no messages_log, so without it
+    // nothing anywhere says what the message is waiting for.
     text: `UPDATE outbox
-           SET status = 'pending', next_attempt_at = $3::timestamptz
+           SET status = 'pending', next_attempt_at = $3::timestamptz, last_error = $4
            WHERE workspace_id = $1 AND id = $2 AND status = 'sending'`,
-    values: [workspaceId, outboxId, nextAt.toISOString()],
+    values: [workspaceId, outboxId, nextAt.toISOString(), reason],
   };
 }
 

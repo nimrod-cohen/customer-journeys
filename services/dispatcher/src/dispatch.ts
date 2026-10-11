@@ -606,7 +606,10 @@ export async function dispatchOutbox(
     // mark the outbox row terminally failed. A TRANSIENT error re-throws to the
     // outer catch → reset to pending → bounded retry.
     try {
-      const input: SendEmailInput = buildSendEmailInput(ctx);
+      // The outbox row id is OUR id for this message. Self-hosted SMTP requires it (it
+      // becomes the Message-ID and the VERP bounce token) and throws without it; SES
+      // and Resend assign their own and ignore it. Stable across retries of one row.
+      const input: SendEmailInput = { ...buildSendEmailInput(ctx), messageId: outboxId };
       const { sesMessageId } = await deps.ses.sendEmail(input);
 
       // 7. ONE tx: tracked links (idempotent) + messages_log + usage + mark sent.
@@ -776,7 +779,7 @@ async function finalizeNonSend(
   if (decision.action === 'defer') {
     // Quiet hours are not a failure: park the row until the window opens rather than
     // re-deciding it on every sweep in between.
-    await deferClaim(deps, workspaceId, outboxId, decision.deferUntil ?? deps.now());
+    await deferClaim(deps, workspaceId, outboxId, decision.deferUntil ?? deps.now(), decision.reason);
     return {
       result: 'defer',
       reason: decision.reason,
@@ -805,8 +808,10 @@ async function finalizeNonSend(
         ]
       : []),
     {
-      text: `UPDATE outbox SET status = $3, sent_at = now() WHERE workspace_id = $1 AND id = $2`,
-      values: [workspaceId, outboxId, status],
+      // A refusal writes no messages_log row, so its reason lives on the outbox row —
+      // that is what the activity log reads to show it.
+      text: `UPDATE outbox SET status = $3, sent_at = now(), last_error = $4 WHERE workspace_id = $1 AND id = $2`,
+      values: [workspaceId, outboxId, status, decision.action === 'refuse' ? decision.reason : null],
     },
   ]);
   return decision.action === 'refuse'
@@ -838,7 +843,7 @@ async function releaseOrGiveUp(
 ): Promise<'retry' | 'gave-up'> {
   const { workspaceId, outboxId, attempts } = args;
   if (attempts < MAX_SEND_ATTEMPTS) {
-    await resetClaim(deps, workspaceId, outboxId, attempts);
+    await resetClaim(deps, workspaceId, outboxId, attempts, args.reason);
     return 'retry';
   }
   try {
@@ -866,13 +871,14 @@ async function deferClaim(
   workspaceId: string,
   outboxId: string,
   until: Date,
+  reason: string,
 ): Promise<void> {
   try {
     await deps.runInWorkspaceTx(workspaceId, [
       {
-        text: `UPDATE outbox SET status = 'pending', next_attempt_at = $3::timestamptz
+        text: `UPDATE outbox SET status = 'pending', next_attempt_at = $3::timestamptz, last_error = $4
                 WHERE workspace_id = $1 AND id = $2 AND status = 'sending'`,
-        values: [workspaceId, outboxId, until.toISOString()],
+        values: [workspaceId, outboxId, until.toISOString(), reason],
       },
     ]);
   } catch {
@@ -885,10 +891,11 @@ async function resetClaim(
   workspaceId: string,
   outboxId: string,
   attempts = 1,
+  reason: string | null = null,
 ): Promise<void> {
   try {
     await deps.runInWorkspaceTx(workspaceId, [
-      buildOutboxRetrySchedule(workspaceId, outboxId, attempts, deps.now()),
+      buildOutboxRetrySchedule(workspaceId, outboxId, attempts, deps.now(), reason),
     ]);
   } catch {
     /* best-effort; the row stays 'sending' and the sweep's stale-claim rule recovers it */
