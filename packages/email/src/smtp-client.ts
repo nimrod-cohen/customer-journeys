@@ -141,20 +141,34 @@ function alternativeParts(input: SendEmailInput, altBoundary: string): string {
   return `${parts.map((p) => `--${altBoundary}\r\n${p}\r\n`).join('')}--${altBoundary}--`;
 }
 
-/** The plain-text alternative. Derived from the HTML, so nothing to author twice. */
-function textPart(input: SendEmailInput): string {
+/**
+ * A text body, base64-encoded at 76 columns.
+ *
+ * NOT `8bit`: a body sent raw is only safe if no hop ever has to change it, and two
+ * ordinary things make a hop change it — a line over 998 octets (SMTP's limit, which
+ * a relay enforces by re-wrapping) and 8-bit content offered to a server that does
+ * not advertise 8BITMIME (re-encoded as quoted-printable). Either one alters the
+ * body AFTER it was signed, so the DKIM body hash no longer verifies and DMARC
+ * fails. A caller-supplied `{{{data.body}}}` is routinely one line of several
+ * thousand bytes. Base64 is 7-bit and short by construction, so there is nothing
+ * left for a relay to fix.
+ */
+function encodedTextPart(contentType: string, content: string): string {
   return [
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: 8bit',
+    `Content-Type: ${contentType}; charset=UTF-8`,
+    'Content-Transfer-Encoding: base64',
     '',
-    htmlToPlainText(input.html ?? ''),
+    wrapBase64(Buffer.from(content, 'utf8').toString('base64')),
   ].join('\r\n');
 }
 
+/** The plain-text alternative. Derived from the HTML, so nothing to author twice. */
+function textPart(input: SendEmailInput): string {
+  return encodedTextPart('text/plain', htmlToPlainText(input.html ?? ''));
+}
+
 function htmlPart(input: SendEmailInput): string {
-  return ['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', input.html ?? ''].join(
-    '\r\n',
-  );
+  return encodedTextPart('text/html', input.html ?? '');
 }
 
 function calendarPart(input: SendEmailInput): string {

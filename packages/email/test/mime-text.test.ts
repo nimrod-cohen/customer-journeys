@@ -3,6 +3,14 @@ import { describe, it, expect } from 'vitest';
 import { buildMimeMessage } from '../src/smtp-client.js';
 import { htmlToPlainText, encodeHeaderWord, encodeAddressHeader, isAsciiHeader } from '../src/mime-text.js';
 
+/** The decoded content of the first part of `type` in a built message. */
+function decodedPart(mime: string, type: string): string {
+  const start = mime.indexOf(`Content-Type: ${type}`);
+  const bodyStart = mime.indexOf('\r\n\r\n', start) + 4;
+  const bodyEnd = mime.indexOf('\r\n--', bodyStart);
+  return Buffer.from(mime.slice(bodyStart, bodyEnd).replace(/\s+/g, ''), 'base64').toString('utf8');
+}
+
 describe('htmlToPlainText', () => {
   it('keeps a link’s URL, since "click here" with nothing to click is useless', () => {
     expect(htmlToPlainText('<p>Please <a href="https://x.com/c?t=1">confirm</a> now</p>')).toBe(
@@ -98,6 +106,23 @@ describe('buildMimeMessage deliverability', () => {
     expect(mime).toMatch(/Content-Type: text\/plain; charset=UTF-8/);
     expect(mime).toMatch(/Content-Type: text\/html; charset=UTF-8/);
     expect(mime).toContain('hello');
+  });
+
+  // A body line a relay has to re-wrap or re-encode no longer matches the DKIM body
+  // hash. A caller-supplied `{{{data.body}}}` is routinely ONE line of several
+  // thousand bytes, and Gmail answered "body hash did not verify" for exactly that.
+  // Base64 at 76 columns is 7-bit and short, so no hop has a reason to touch it.
+  it('never emits a body line a relay would have to rewrite', () => {
+    const html = `<p>${'שלום, זה טקסט בדיקה ארוך. '.repeat(80)}</p>`;
+    const mime = buildMimeMessage({ ...base, html }, 'm-1', 'acme.com');
+    for (const line of mime.split('\r\n')) {
+      expect(Buffer.byteLength(line, 'utf8')).toBeLessThanOrEqual(998);
+    }
+    const body = mime.slice(mime.indexOf('\r\n\r\n'));
+    // eslint-disable-next-line no-control-regex
+    expect(/[^\x00-\x7F]/.test(body)).toBe(false); // 7-bit: nothing to transcode
+    expect(mime).not.toMatch(/Content-Transfer-Encoding: 8bit/);
+    expect(decodedPart(mime, 'text/html')).toBe(html);
   });
 
   // In a multipart/alternative the LAST part wins, so text first / html second.

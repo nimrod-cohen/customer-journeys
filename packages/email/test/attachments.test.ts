@@ -110,7 +110,8 @@ describe('self-hosted SMTP transport', () => {
 
     const boundary = /Content-Type: multipart\/mixed; boundary="([^"]+)"/.exec(raw)?.[1];
     expect(boundary).toBeTruthy();
-    expect(raw).toContain('<p>Thanks!</p>');
+    // The body travels base64-encoded (see smtp-client `encodedTextPart`).
+    expect(raw).toContain(Buffer.from('<p>Thanks!</p>', 'utf8').toString('base64'));
     expect(raw).toContain('Content-Type: application/pdf; name="invoice.pdf"');
     expect(raw).toContain('Content-Disposition: attachment; filename="invoice.pdf"');
     expect(raw).toContain('Content-Transfer-Encoding: base64');

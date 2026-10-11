@@ -341,6 +341,11 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   the HTML (`htmlToPlainText`). HTML-only is a long-standing spam signal — every real
   client sends both, and filters notice when something does not. Text first, HTML
   second: in an alternative the LAST part is the preferred one.
+- **Text and HTML parts are base64 at 76 columns, never `8bit`.** A relay re-wraps a
+  line over 998 octets and re-encodes 8-bit content for a server without 8BITMIME;
+  either changes the body AFTER signing, so the DKIM body hash fails and DMARC with
+  it. A caller's `{{{data.body}}}` is routinely one multi-thousand-byte line — Gmail
+  answered `body hash did not verify` for exactly that.
 - **Non-ASCII headers are RFC 2047 encoded-words** (`encodeHeaderWord` /
   `encodeAddressHeader`). A header is ASCII by spec, so a Hebrew subject or display
   name written as raw UTF-8 costs spam points and renders as mojibake. Only the

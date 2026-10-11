@@ -115,7 +115,8 @@ describe('buildMimeMessage', () => {
     const raw = buildMimeMessage(input(), MSG, 'acme.com');
     const [head, ...rest] = raw.split('\r\n\r\n');
     expect(head).toContain('Subject: Hello');
-    expect(rest.join('\r\n\r\n')).toContain('<p>hi</p>');
+    // The body travels base64-encoded (see smtp-client `encodedTextPart`).
+    expect(rest.join('\r\n\r\n')).toContain(Buffer.from('<p>hi</p>', 'utf8').toString('base64'));
   });
 });
 
