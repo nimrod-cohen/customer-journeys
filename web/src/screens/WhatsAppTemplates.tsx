@@ -136,8 +136,8 @@ export function WhatsAppTemplatesPanel() {
           <div data-testid="whatsapp-templates-unconfigured" class="space-y-1">
             <p>Connect WhatsApp to manage templates.</p>
             <p class="text-xs">
-              Add your WhatsApp Business account id (WABA) + access token in <strong>Company settings → Sending →
-              WhatsApp</strong>, then reload.
+              Connect this workspace's WhatsApp number in <strong>Workspace settings → WhatsApp</strong>, then
+              reload.
             </p>
           </div>
         </EmptyState>

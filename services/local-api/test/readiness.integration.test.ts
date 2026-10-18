@@ -105,13 +105,21 @@ describeMaybe('GET /company/readiness (real Postgres)', () => {
     expect(check(r, 'email').status).toBe('ready');
   });
 
-  it('sms + whatsapp connectors enable their channels; R2 config clears the warning', async () => {
+  it('sms connector + the workspace WhatsApp number enable their channels; R2 config clears the warning', async () => {
+    // A company-level WhatsApp connector is dormant now — it must NOT enable WhatsApp.
     await pool.query(
       `INSERT INTO company_connectors (company_id, channel, provider, config, enabled) VALUES
          ($1,'sms','019','{}'::jsonb,true), ($1,'whatsapp','meta_whatsapp','{}'::jsonb,true)`,
       [CO],
     );
     let r = await readiness();
+    expect(r.channels.sms).toBe(true);
+    expect(r.channels.whatsapp).toBe(false);
+    await pool.query(
+      "INSERT INTO workspace_whatsapp_config (workspace_id, phone_number_id, access_token) VALUES ($1, 'readiness-pnid', 'tok')",
+      [WS],
+    );
+    r = await readiness();
     expect(r.channels.sms).toBe(true);
     expect(r.channels.whatsapp).toBe(true);
     expect(r.errorCount).toBe(0); // email (from prior test) + sms + whatsapp all ready

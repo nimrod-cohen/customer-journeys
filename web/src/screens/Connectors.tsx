@@ -1,5 +1,5 @@
 // Connectors (§10) — a company connects PROVIDERS; each powers a messaging CHANNEL
-// (email / sms / whatsapp). A channel is enabled when a provider that can send on it
+// (email / sms). WhatsApp is per WORKSPACE (Workspace settings → WhatsApp). A channel is enabled when a provider that can send on it
 // is connected; broadcasts + automations gate on that (GET /company/channels). A
 // channel with several providers (Email: SES or Resend) shows a LOGO PICKER — you
 // choose one provider and see only its connection details. Secrets are write-only.
@@ -120,22 +120,6 @@ const CHANNELS: ChannelSpec[] = [
           { key: 'default_country', label: 'Default country (ISO-2)', placeholder: 'IL', optional: true },
         ],
         secretLabel: 'Bearer token',
-      },
-    ],
-  },
-  {
-    channel: 'whatsapp',
-    label: 'WhatsApp',
-    providers: [
-      {
-        provider: 'meta_whatsapp',
-        fields: [
-          { key: 'phone_number_id', label: 'Phone number ID' },
-          { key: 'waba_id', label: 'WhatsApp Business Account ID', optional: true },
-          { key: 'api_version', label: 'API version', placeholder: 'v21.0', optional: true },
-          { key: 'default_country', label: 'Default country (ISO-2)', placeholder: 'IL', optional: true },
-        ],
-        secretLabel: 'Access token',
       },
     ],
   },

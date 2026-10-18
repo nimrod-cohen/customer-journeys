@@ -221,28 +221,33 @@ interface TickOutcome {
  * legacy CAS path.
  */
 /**
- * Which messaging channels the workspace's company can SEND on, from its connectors
- * (mirrors local-api's channelsForWorkspace): email needs a `resend` connector OR a
- * `ses` connector WITH a verified sending_domain; sms needs `019`; whatsapp needs
- * `meta_whatsapp`. A automation send node for a DISABLED channel is skipped — no
- * outbox row — while the enrollment still advances (the step is ignored).
+ * Which messaging channels the workspace can SEND on (mirrors local-api's
+ * channelsForWorkspace): email needs a company `resend` connector OR a `ses`
+ * connector WITH a verified sending_domain; sms needs a company `019` connector;
+ * whatsapp needs THIS workspace's own `workspace_whatsapp_config`. A automation send
+ * node for a DISABLED channel is skipped — no outbox row — while the enrollment
+ * still advances (the step is ignored).
  */
 async function resolveChannels(read: Reader, workspaceId: string): Promise<{ email: boolean; sms: boolean; whatsapp: boolean }> {
+  // WhatsApp connector rows are dormant (WhatsApp is per workspace now), so they are
+  // excluded here rather than counted as "this company opted into connectors".
   const { rows } = await read.query<{ channel: string; provider: string }>(
-    'SELECT c.channel, c.provider FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id WHERE w.id = $1 AND c.enabled',
+    "SELECT c.channel, c.provider FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id WHERE w.id = $1 AND c.enabled AND c.channel <> 'whatsapp'",
     [workspaceId],
   );
-  // A company that hasn't opted into connectors at all (legacy / dev / test using
-  // the mock providers) is NOT gated — never skip. Gating kicks in once ≥1
-  // connector exists (then a channel with no connector is disabled → skipped).
-  if (rows.length === 0) return { email: true, sms: true, whatsapp: true };
+  const wa = await read.query('SELECT 1 FROM workspace_whatsapp_config WHERE workspace_id = $1 AND enabled', [workspaceId]);
+  const whatsapp = wa.rows.length > 0;
+  // A workspace that hasn't configured ANY provider (legacy / dev / test using the
+  // mock providers) is NOT gated — never skip. Gating kicks in once ≥1 provider is
+  // configured (then a channel without one is disabled → skipped).
+  if (rows.length === 0 && !whatsapp) return { email: true, sms: true, whatsapp: true };
   const has = (ch: string, pr?: string): boolean => rows.some((r) => r.channel === ch && (!pr || r.provider === pr));
   let email = has('email', 'resend');
   if (!email && has('email', 'ses')) {
     const vd = await read.query('SELECT 1 FROM sending_domains WHERE workspace_id = $1 AND verified LIMIT 1', [workspaceId]);
     email = vd.rows.length > 0;
   }
-  return { email, sms: has('sms', '019'), whatsapp: has('whatsapp', 'meta_whatsapp') };
+  return { email, sms: has('sms', '019'), whatsapp };
 }
 
 async function chainTick(

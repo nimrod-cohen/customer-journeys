@@ -192,10 +192,34 @@ Creating AWS/Supabase accounts, approving SES production access, and adding DNS 
 
 A company connects PROVIDERS; each powers a messaging CHANNEL (`email`/`sms`/`whatsapp`). A channel is **enabled** iff a connector that can actually send on it is connected; broadcasts and automations gate on that.
 
-- **Unified table `company_connectors`** (company-scoped RLS): `channel`, `provider` (`ses`|`resend`|`019`|`meta_whatsapp`), `config` jsonb, encrypted `secret` (write-only, never returned), `enabled`, `UNIQUE(company_id, channel, provider)`. Three legacy per-provider tables (`company_ses_config`/`company_channel_config`/`company_whatsapp_config`) were copied into it and kept dormant; resolution (`channelConfigForWorkspace` in dispatcher `deps.ts`, `sesForWorkspace` in local-api) reads connectors FIRST with a legacy-table fallback.
+- **Unified table `company_connectors`** (company-scoped RLS): `channel`, `provider` (`ses`|`resend`|`smtp`|`019`), `config` jsonb, encrypted `secret` (write-only, never returned), `enabled`, `UNIQUE(company_id, channel, provider)`. Three legacy per-provider tables (`company_ses_config`/`company_channel_config`/`company_whatsapp_config`) were copied into it and kept dormant; resolution (`channelConfigForWorkspace` in dispatcher `deps.ts`, `sesForWorkspace` in local-api) reads connectors FIRST with a legacy-table fallback.
 - **Email can be SES OR Resend.** `@cdp/email createResendEmailClient` is a DROP-IN for the dispatcher's `sendEmail` (POSTs the same rendered input to `api.resend.com/emails`; SES-only identity methods throw; injectable HTTP). `emailSenderForWorkspace` picks Resend when a `resend` connector exists, else SES. A Resend company is `emailTrusted` (inv.7) and its broadcast email gate waives `sender_id` + the verified-domain check.
 - **CRUD:** `GET/PUT /company/connectors`, `DELETE /company/connectors/:id` (`manage_sending_domain`). UI `web/src/screens/Connectors.tsx`: one box per channel; a channel with several providers shows a logo picker and renders ONLY the selected provider's form.
 - **Gating:** the broadcast composer disables a medium with no connector. The automation runner (`run.ts` `resolveChannels`) SKIPS a send node whose channel is disabled — the enrollment still advances, as if the step didn't exist. **Lenient:** a company with ZERO connectors is never gated (legacy/dev/mock behavior); gating kicks in once ≥1 connector exists.
+
+## WhatsApp is per WORKSPACE, not a company connector
+
+Each workspace connects its OWN WhatsApp Business number to our ONE platform Meta app
+(`workspace_whatsapp_config`, workspace RLS; Workspace settings → WhatsApp tab,
+`GET/PUT/DELETE /workspace/whatsapp`, `manage_sending_domain`). Design and later phases
+(inbound webhook, inbox, chat): `docs/plans/2026-10-18-whatsapp-inbox-design.md`.
+
+- **`phone_number_id` is UNIQUE across all workspaces** — it is the routing key for
+  inbound webhooks, so a number shared by two workspaces would make every reply
+  ambiguous. Claiming a number another workspace holds is a 409.
+- **A save proves the setup against Meta BEFORE writing**: the phone-number lookup
+  checks the token + id, and `POST /<waba>/subscribed_apps` routes the account's
+  webhooks to our app. Either failing is a 400 carrying Meta's reason, nothing written.
+  The WABA id is therefore required.
+- **Disconnecting leaves the WABA subscription in place** — one WABA can hold several
+  numbers, possibly connected to other workspaces.
+- **Every reader uses the workspace row, with no company fallback**: the dispatcher's
+  `channelConfigForWorkspace`, the templates API, readiness, and the runner's
+  `resolveChannels`. The old `meta_whatsapp` connector rows and
+  `company_whatsapp_config` are dormant (0073 copied each company's config to its
+  OLDEST workspace); `/company/connectors` neither lists nor accepts WhatsApp.
+- **An empty `access_token` means the MOCK provider** — only the e2e seed writes one, to
+  enable the channel without real credentials. The PUT never writes an empty token.
 
 ## One email provider per company (exclusive)
 
@@ -227,7 +251,7 @@ A company sends email through **exactly one** provider — self-hosted `smtp`, `
 A single source of truth for "is this workspace set up to send?", with a **strict** definition that HARD-DISABLES a channel when unmet.
 
 - **Pure core `services/local-api/src/readiness.ts`:** `computeReadiness(inputs)` (unit-tested) / `gatherReadiness(pool, ws)` (reads then computes) → `{ checks[], channels{email,sms,whatsapp}, errorCount, warningCount }`. Each check is `{ id, severity, status, items[{label, ok, scope, fix?}], summary }`.
-- **Definitions.** EMAIL ready = a `resend` connector WITH `config.from`, OR a `ses` connector **AND** ≥1 verified `sending_domains` row **AND** ≥1 `domain_senders` row — a domain alone or a provider alone is NOT enough. SMS = a `019` connector. WhatsApp = a `meta_whatsapp` connector. STORAGE = a `company_r2_config` row (severity `warning`, never disables — images fall back to DB).
+- **Definitions.** EMAIL ready = a `resend` connector WITH `config.from`, OR a `ses` connector **AND** ≥1 verified `sending_domains` row **AND** ≥1 `domain_senders` row — a domain alone or a provider alone is NOT enough. SMS = a `019` connector. WhatsApp = the workspace's own `workspace_whatsapp_config` row (a WORKSPACE-scope item). STORAGE = a `company_r2_config` row (severity `warning`, never disables — images fall back to DB).
 - **`channelsForWorkspace` DERIVES from `gatherReadiness().channels`**, so broadcast medium gating, the runner's send-node skip, and the builder's inactive-node visual all follow the strict definition automatically. Exposed at `GET /company/channels` and `GET /company/readiness` (both `manage_content`).
 - **Surfacing:** no nav item and no global banner (they nagged about deliberately-unconfigured channels). A small red count **badge** sits on the Company-settings nav item (`companyErrorCount`: provider gaps) and the Workspace-settings nav item (`workspaceErrorCount`: sending-domain gaps); clicking one opens the Setup page (`web/src/screens/Setup.tsx`) deep-linked to that scope (`/setup/company`, `/setup/workspace`, `/setup` = all). Every readiness item carries a `scope`, and a shown check's status pill is recomputed from just the in-scope items. Config screens that stay on their route while mutating readiness inputs must call `refreshReadiness()` (`web/src/store/readiness.ts`) so badges update without a navigation.
 
@@ -559,7 +583,7 @@ omitting it meant every broadcast and automation email retried silently for hour
 
 **For an automation send** (no `broadcast_id`) the `medium` and `text_body` are read FROM THE OUTBOX PAYLOAD (an automation has no broadcast row), and the topic comes from the send node's `topic_id` in that payload.
 
-**`@cdp/channels`** holds `Medium`, the narrow `ChannelProvider` interface (`send({to, body, from?}) → {providerMessageId}`), deterministic offline mock providers, `normalizePhone`, the `MediumGroup` canon, and the `resolveChannelProvider` seam. Email is NOT a channel here (it keeps its dedicated pipeline in `@cdp/email`); `resolveChannelProvider('email')` throws. A `TODO(real-providers)` marks where further HTTP adapters slot in.
+**`@cdp/channels`** holds `Medium`, the narrow `ChannelProvider` interface (`send({to, body, from?}) → {providerMessageId}`), deterministic offline mock providers, `normalizePhone`, the `MediumGroup` canon, the `resolveChannelProvider` seam, and the real `Sms019Provider` / `MetaWhatsAppProvider` adapters plus the Meta Graph helpers (templates, phone-number lookup, webhook subscription). Email is NOT a channel here (it keeps its dedicated pipeline in `@cdp/email`); `resolveChannelProvider('email')` throws.
 
 ## Subscription management (extends §10)
 

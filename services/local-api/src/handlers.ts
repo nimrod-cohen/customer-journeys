@@ -40,6 +40,8 @@ import { scopedQuery, encryptSecret, decryptSecret, isEncryptedSecret } from '@c
 import {
   listWhatsAppTemplates,
   createWhatsAppTemplate,
+  fetchWhatsAppPhoneNumber,
+  subscribeAppToWaba,
   deleteWhatsAppTemplate,
   normalizePhone,
   resolveChannelProvider,
@@ -947,7 +949,7 @@ export interface ChannelAvailability {
  * configuration-readiness computation (see readiness.ts): a channel is enabled ONLY when
  * it is fully READY — EMAIL needs a `resend` connector (with a From) OR a `ses` connector
  * WITH a verified sending domain AND a named sender in THIS workspace; SMS needs `019`;
- * WhatsApp needs `meta_whatsapp`. An incomplete channel is hard-disabled everywhere.
+ * WhatsApp needs the workspace's own number. An incomplete channel is hard-disabled everywhere.
  */
 export async function channelsForWorkspace(pool: Pool, workspaceId: string): Promise<ChannelAvailability> {
   const { channels } = await gatherReadiness(pool, workspaceId);
@@ -1490,7 +1492,8 @@ const CONNECTOR_SPECS: Record<string, { channel: string; configKeys: string[]; s
   // every authorized company shares one mail server — so no per-company secret.
   smtp: { channel: 'email', configKeys: ['from'], secretRequired: false },
   '019': { channel: 'sms', configKeys: ['api_url', 'username', 'source', 'default_country'], secretRequired: true },
-  meta_whatsapp: { channel: 'whatsapp', configKeys: ['phone_number_id', 'waba_id', 'api_version', 'default_country'], secretRequired: true },
+  // WhatsApp is NOT a company connector: each workspace connects its own number
+  // (`/workspace/whatsapp`), since a number is what inbound messages are routed by.
 };
 
 /** GET /company/connectors — every connector for the active company (secrets NEVER returned). */
@@ -1498,7 +1501,8 @@ export const listCompanyConnectors: Handler = async (ctx, pool) => {
   const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
   if (!companyId) return ok({ connectors: [], self_hosted_mail_enabled: false });
   const { rows } = await pool.query<{ id: string; channel: string; provider: string; config: Record<string, unknown>; enabled: boolean; has_secret: boolean }>(
-    "SELECT id, channel, provider, config, enabled, (secret IS NOT NULL AND secret <> '') AS has_secret FROM company_connectors WHERE company_id = $1 ORDER BY channel, provider",
+    // Dormant WhatsApp connector rows (pre per-workspace config) are not shown.
+    "SELECT id, channel, provider, config, enabled, (secret IS NOT NULL AND secret <> '') AS has_secret FROM company_connectors WHERE company_id = $1 AND channel <> 'whatsapp' ORDER BY channel, provider",
     [companyId],
   );
   // The self-hosted mail GRANT rides along so the screen can leave the provider
@@ -1532,7 +1536,6 @@ export const putCompanyConnector: Handler = async (ctx, pool, req) => {
     ses: ['region', 'access_key_id'],
     resend: ['from'],
     '019': ['api_url', 'username', 'source'],
-    meta_whatsapp: ['phone_number_id'],
   };
   for (const k of requiredCfg[provider] ?? []) {
     if (!config[k]) return ok({ error: `${k} is required for ${provider}` }, 400);
@@ -1867,91 +1870,142 @@ export const deleteCompanyChannelConfig: Handler = async (ctx, pool) => {
   return ok({ deleted: rowCount });
 };
 
-/** GET /company/whatsapp-config — Meta WhatsApp settings + whether configured (NEVER the token). */
-export const getCompanyWhatsappConfig: Handler = async (ctx, pool) => {
-  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
-  if (!companyId) return ok({ configured: false });
-  const { rows } = await pool.query<{
-    phone_number_id: string;
-    waba_id: string | null;
-    api_version: string | null;
-    default_country: string | null;
-  }>(
-    'SELECT phone_number_id, waba_id, api_version, default_country FROM company_whatsapp_config WHERE company_id = $1',
-    [companyId],
+// --- WhatsApp (per WORKSPACE) -------------------------------------------------
+// Each workspace connects its own WhatsApp Business number to our platform Meta app.
+// The number is the routing key for inbound webhooks, so it belongs to exactly one
+// workspace (UNIQUE phone_number_id → 409).
+
+interface WorkspaceWhatsappRow {
+  phone_number_id: string;
+  waba_id: string | null;
+  access_token: string;
+  api_version: string | null;
+  default_country: string | null;
+  display_phone_number: string | null;
+  verified_name: string | null;
+  enabled: boolean;
+  webhook_subscribed_at: Date | null;
+}
+
+async function workspaceWhatsappRow(pool: Pool, workspaceId: string): Promise<WorkspaceWhatsappRow | null> {
+  const { rows } = await pool.query<WorkspaceWhatsappRow>(
+    `SELECT phone_number_id, waba_id, access_token, api_version, default_country,
+            display_phone_number, verified_name, enabled, webhook_subscribed_at
+       FROM workspace_whatsapp_config WHERE workspace_id = $1`,
+    [workspaceId],
   );
-  const c = rows[0];
-  return ok(
-    c
-      ? {
-          configured: true,
-          phone_number_id: c.phone_number_id,
-          waba_id: c.waba_id,
-          api_version: c.api_version,
-          default_country: c.default_country,
-        }
-      : { configured: false },
-  );
+  return rows[0] ?? null;
+}
+
+const decryptToken = (t: string): string => (isEncryptedSecret(t) ? decryptSecret(t) : t);
+
+/** GET /workspace/whatsapp — this workspace's WhatsApp settings (NEVER the token). */
+export const getWorkspaceWhatsapp: Handler = async (ctx, pool) => {
+  const c = await workspaceWhatsappRow(pool, ctx.workspaceId);
+  if (!c) return ok({ configured: false });
+  return ok({
+    configured: true,
+    phone_number_id: c.phone_number_id,
+    waba_id: c.waba_id,
+    api_version: c.api_version,
+    default_country: c.default_country,
+    display_phone_number: c.display_phone_number,
+    verified_name: c.verified_name,
+    enabled: c.enabled,
+    webhook_subscribed_at: c.webhook_subscribed_at,
+    has_token: true,
+  });
 };
 
-/** PUT /company/whatsapp-config — set the company's Meta WhatsApp Cloud API credentials.
- *  A blank access_token on update keeps the stored one (so phone-number id / version /
- *  country can change without re-entering the token). The token is envelope-encrypted. */
-export const putCompanyWhatsappConfig: Handler = async (ctx, pool, req) => {
-  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
-  if (!companyId) return ok({ error: 'no company for this workspace' }, 400);
+/**
+ * PUT /workspace/whatsapp — connect (or update) this workspace's WhatsApp number.
+ * Before anything is written it proves the setup against Meta: the phone-number
+ * lookup checks the token + id, and the WABA subscription routes that account's
+ * webhooks to our app (without it no reply or delivery status would ever arrive).
+ * Either failing is a 400 carrying Meta's own reason. A blank access_token keeps
+ * the stored one.
+ */
+export const putWorkspaceWhatsapp: Handler = async (ctx, pool, req, deps) => {
   const b = asObject(req.body);
-  const phoneNumberId = String(b.phone_number_id ?? '').trim();
-  const wabaId = typeof b.waba_id === 'string' && b.waba_id.trim() ? b.waba_id.trim() : null;
-  const apiVersion = typeof b.api_version === 'string' && b.api_version.trim() ? b.api_version.trim() : null;
-  const token = typeof b.access_token === 'string' ? b.access_token.trim() : '';
-  const rawCountry = typeof b.default_country === 'string' ? b.default_country.trim().toUpperCase() : '';
+  const trimmed = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  const phoneNumberId = trimmed(b.phone_number_id);
+  const wabaId = trimmed(b.waba_id);
+  const apiVersion = trimmed(b.api_version) || null;
+  const token = trimmed(b.access_token);
+  const rawCountry = trimmed(b.default_country).toUpperCase();
+  if (!phoneNumberId) return ok({ error: 'A phone number ID is required.' }, 400);
+  if (!wabaId) return ok({ error: 'A WhatsApp Business Account ID is required.' }, 400);
   if (rawCountry && !/^[A-Z]{2}$/.test(rawCountry)) {
-    return ok({ error: 'default_country must be a 2-letter ISO country code' }, 400);
+    return ok({ error: 'Default country must be a 2-letter ISO country code.' }, 400);
   }
-  const defaultCountry = rawCountry || null;
-  if (!phoneNumberId) return ok({ error: 'a phone number id is required' }, 400);
-  const existing = await pool.query<{ access_token: string }>(
-    'SELECT access_token FROM company_whatsapp_config WHERE company_id = $1',
-    [companyId],
+  const existing = await workspaceWhatsappRow(pool, ctx.workspaceId);
+  const plainToken = token || (existing ? decryptToken(existing.access_token) : '');
+  if (!plainToken) return ok({ error: 'An access token is required.' }, 400);
+
+  const owner = await pool.query<{ workspace_id: string }>(
+    'SELECT workspace_id FROM workspace_whatsapp_config WHERE phone_number_id = $1 AND workspace_id <> $2',
+    [phoneNumberId, ctx.workspaceId],
   );
-  const effectiveToken = token ? encryptSecret(token) : existing.rows[0]?.access_token;
-  if (!effectiveToken) return ok({ error: 'an access token is required' }, 400);
-  await pool.query(
-    `INSERT INTO company_whatsapp_config (company_id, phone_number_id, waba_id, access_token, api_version, default_country, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, now())
-     ON CONFLICT (company_id)
-     DO UPDATE SET phone_number_id = $2, waba_id = $3, access_token = $4, api_version = $5, default_country = $6, updated_at = now()`,
-    [companyId, phoneNumberId, wabaId, effectiveToken, apiVersion, defaultCountry],
-  );
-  return ok({ configured: true, phone_number_id: phoneNumberId, waba_id: wabaId, api_version: apiVersion, default_country: defaultCountry });
+  if (owner.rows.length) return ok({ error: 'This phone number is already connected to another workspace.' }, 409);
+
+  const account = { phoneNumberId, wabaId, accessToken: plainToken, apiVersion };
+  let info;
+  try {
+    info = await fetchWhatsAppPhoneNumber(account, deps.graphHttp);
+    await subscribeAppToWaba(account, deps.graphHttp);
+  } catch (e) {
+    return ok({ error: (e as Error).message }, 400);
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO workspace_whatsapp_config
+         (workspace_id, phone_number_id, waba_id, access_token, api_version, default_country,
+          display_phone_number, verified_name, enabled, webhook_subscribed_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,now(),now())
+       ON CONFLICT (workspace_id) DO UPDATE SET
+         phone_number_id = $2, waba_id = $3, access_token = $4, api_version = $5, default_country = $6,
+         display_phone_number = $7, verified_name = $8, enabled = true, webhook_subscribed_at = now(), updated_at = now()`,
+      [
+        ctx.workspaceId,
+        phoneNumberId,
+        wabaId,
+        token ? encryptSecret(token) : existing!.access_token,
+        apiVersion,
+        rawCountry || null,
+        info.displayPhoneNumber,
+        info.verifiedName,
+      ],
+    );
+  } catch (e) {
+    // Lost a race for the same number with another workspace.
+    if ((e as { code?: string }).code === '23505') {
+      return ok({ error: 'This phone number is already connected to another workspace.' }, 409);
+    }
+    throw e;
+  }
+  return getWorkspaceWhatsapp(ctx, pool, req, deps);
 };
 
-/** DELETE /company/whatsapp-config — clear the company's WhatsApp credentials. */
-export const deleteCompanyWhatsappConfig: Handler = async (ctx, pool) => {
-  const companyId = await companyIdForWorkspace(pool, ctx.workspaceId);
-  if (!companyId) return ok({ deleted: 0 });
-  const { rowCount } = await pool.query('DELETE FROM company_whatsapp_config WHERE company_id = $1', [companyId]);
+/**
+ * DELETE /workspace/whatsapp — disconnect this workspace's number. The WABA's app
+ * subscription is deliberately LEFT in place: one WABA can hold several numbers,
+ * possibly connected to other workspaces, and unsubscribing would cut them off.
+ */
+export const deleteWorkspaceWhatsapp: Handler = async (ctx, pool) => {
+  const { rowCount } = await pool.query('DELETE FROM workspace_whatsapp_config WHERE workspace_id = $1', [ctx.workspaceId]);
   return ok({ deleted: rowCount });
 };
 
 /**
- * Resolve the Meta Graph TEMPLATES config for the active workspace's company: the WABA id
- * + the DECRYPTED access token (decrypted at call time only) + api version. Returns null
- * when the company hasn't configured WhatsApp OR has no WABA id (templates are a WABA-level
- * resource). Company resolved from the workspace (never the body — inv.2).
+ * Resolve the Meta Graph TEMPLATES config for the active workspace: the WABA id + the
+ * DECRYPTED access token (decrypted at call time only) + api version. Null when the
+ * workspace hasn't connected WhatsApp OR has no WABA id (templates are WABA-level).
  */
 async function whatsappTemplatesConfig(pool: Pool, workspaceId: string): Promise<WhatsAppTemplatesConfig | null> {
-  const companyId = await companyIdForWorkspace(pool, workspaceId);
-  if (!companyId) return null;
-  const { rows } = await pool.query<{ waba_id: string | null; access_token: string; api_version: string | null }>(
-    'SELECT waba_id, access_token, api_version FROM company_whatsapp_config WHERE company_id = $1',
-    [companyId],
-  );
-  const c = rows[0];
-  if (!c || !c.waba_id) return null;
-  const accessToken = isEncryptedSecret(c.access_token) ? decryptSecret(c.access_token) : c.access_token;
-  return { wabaId: c.waba_id, accessToken, apiVersion: c.api_version };
+  const c = await workspaceWhatsappRow(pool, workspaceId);
+  if (!c || !c.enabled || !c.waba_id) return null;
+  return { wabaId: c.waba_id, accessToken: decryptToken(c.access_token), apiVersion: c.api_version };
 }
 
 /**
@@ -1977,7 +2031,7 @@ export const listWhatsappTemplates: Handler = async (ctx, pool, _req, deps) => {
  */
 export const createWhatsappTemplate: Handler = async (ctx, pool, req, deps) => {
   const cfg = await whatsappTemplatesConfig(pool, ctx.workspaceId);
-  if (!cfg) return ok({ error: 'Add your WhatsApp Business account id (WABA) in Company settings first.' }, 400);
+  if (!cfg) return ok({ error: 'Connect WhatsApp under Workspace settings → WhatsApp first.' }, 400);
   const b = asObject(req.body);
   const name = String(b.name ?? '').trim().toLowerCase();
   const language = String(b.language ?? '').trim();
@@ -7947,9 +8001,9 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'GET /company/channel-config': getCompanyChannelConfig,
   'PUT /company/channel-config': putCompanyChannelConfig,
   'DELETE /company/channel-config': deleteCompanyChannelConfig,
-  'GET /company/whatsapp-config': getCompanyWhatsappConfig,
-  'PUT /company/whatsapp-config': putCompanyWhatsappConfig,
-  'DELETE /company/whatsapp-config': deleteCompanyWhatsappConfig,
+  'GET /workspace/whatsapp': getWorkspaceWhatsapp,
+  'PUT /workspace/whatsapp': putWorkspaceWhatsapp,
+  'DELETE /workspace/whatsapp': deleteWorkspaceWhatsapp,
   'GET /whatsapp/templates': listWhatsappTemplates,
   'POST /whatsapp/templates': createWhatsappTemplate,
   'DELETE /whatsapp/templates/:name': deleteWhatsappTemplate,

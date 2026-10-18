@@ -124,7 +124,7 @@ export async function seed(): Promise<void> {
       [WS_A],
     );
     await pool.query('UPDATE email_templates SET sender_id = $2 WHERE id = $1', [TPL_A, seededSender.rows[0]!.id]);
-    // Connectors so the SMS + WhatsApp channels are ENABLED in the composer/builder
+    // Connectors so the email + SMS channels are ENABLED in the composer/builder
     // (channelsForWorkspace only needs an enabled row per channel). A NULL secret means
     // channelConfigForWorkspace falls through to the local MOCK provider, so text sends
     // deliver deterministically with no real credentials (email keeps its SES/verified-
@@ -132,8 +132,7 @@ export async function seed(): Promise<void> {
     await pool.query(
       `INSERT INTO company_connectors (company_id, channel, provider, config, secret, enabled) VALUES
          ($1,'email','ses',$2::jsonb,NULL,true),
-         ($1,'sms','019',$3::jsonb,NULL,true),
-         ($1,'whatsapp','meta_whatsapp',$4::jsonb,NULL,true)`,
+         ($1,'sms','019',$3::jsonb,NULL,true)`,
       [
         CO_ACME,
         // email/ses connector → email channel READY (the workspace already has a verified
@@ -141,8 +140,15 @@ export async function seed(): Promise<void> {
         // connectors) + honors LOCAL_SES_FORCE_MOCK, so this does NOT flip sends to real SES.
         JSON.stringify({ region: 'il-central-1' }),
         JSON.stringify({ source: 'Acme', default_country: 'IL' }),
-        JSON.stringify({ phone_number_id: '000' }),
       ],
+    );
+    // WhatsApp is per WORKSPACE. An EMPTY token enables the channel while sends still
+    // go through the local MOCK provider (channelConfigForWorkspace).
+    await pool.query(
+      `INSERT INTO workspace_whatsapp_config (workspace_id, phone_number_id, access_token, default_country)
+       VALUES ($1, 'e2e-acme-000', '', 'IL')
+       ON CONFLICT (workspace_id) DO UPDATE SET phone_number_id = 'e2e-acme-000', access_token = '', enabled = true`,
+      [WS_A],
     );
     await pool.query(
       'INSERT INTO segments (id, workspace_id, name, kind) VALUES ($1,$2,$3,$4)',

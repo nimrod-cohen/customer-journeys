@@ -91,12 +91,11 @@ describeMaybe('company connectors + channel availability (real Postgres)', () =>
     expect((await channels()).email).toBe(true); // provider + verified domain + sender
   });
 
-  it('019 → sms, meta → whatsapp; delete disables the channel', async () => {
+  it('019 → sms; delete disables the channel (WhatsApp is per workspace, not a connector)', async () => {
     await dispatch({ method: 'PUT', path: '/company/connectors', authorization: owner(), query: {}, body: { provider: '019', config: { api_url: 'https://019', username: 'u', source: 'SRC' }, secret: 'bearer' } }, env());
-    await dispatch({ method: 'PUT', path: '/company/connectors', authorization: owner(), query: {}, body: { provider: 'meta_whatsapp', config: { phone_number_id: 'PNID' }, secret: 'tok' } }, env());
     const c = await channels();
     expect(c.sms).toBe(true);
-    expect(c.whatsapp).toBe(true);
+    expect(c.whatsapp).toBe(false);
     // delete the sms connector
     const list = await dispatch({ method: 'GET', path: '/company/connectors', authorization: owner(), query: {}, body: {} }, env());
     const smsId = (list.body as { connectors: Array<{ id: string; provider: string }> }).connectors.find((x) => x.provider === '019')!.id;

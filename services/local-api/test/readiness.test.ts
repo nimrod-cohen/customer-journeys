@@ -98,10 +98,17 @@ describe('computeReadiness — storage (warning) + counts', () => {
 });
 
 describe('computeReadiness — company vs workspace error split (settings-nav badges)', () => {
-  it('nothing configured → 3 COMPANY gaps (providers) AND 2 WORKSPACE gaps (domain + sender)', () => {
+  it('nothing configured → 2 COMPANY gaps (providers) AND 3 WORKSPACE gaps (domain + sender + WhatsApp)', () => {
     const r = computeReadiness(BASE);
-    expect(r.companyErrorCount).toBe(3); // email provider + sms + whatsapp
-    expect(r.workspaceErrorCount).toBe(2); // no verified sending domain + no sender (email not on Resend)
+    expect(r.companyErrorCount).toBe(2); // email provider + sms
+    expect(r.workspaceErrorCount).toBe(3); // no verified sending domain + no sender + no WhatsApp number
+  });
+
+  it('WhatsApp is a WORKSPACE item pointing at the WhatsApp settings tab', () => {
+    const item = check(computeReadiness(BASE), 'whatsapp').items[0]!;
+    expect(item.scope).toBe('workspace');
+    expect(item.fix?.route).toBe('/settings/whatsapp');
+    expect(computeReadiness({ ...BASE, hasWhatsappConnector: true }).workspaceErrorCount).toBe(2);
   });
 
   it('SES connected but no domain/sender → company 0 for email, workspace counts the 2 gaps', () => {
@@ -125,8 +132,8 @@ describe('computeReadiness — company vs workspace error split (settings-nav ba
 
   it('Resend (ready) → email needs no sending domain; workspace 0 even without SES', () => {
     const r = computeReadiness({ ...BASE, hasResendConnector: true, resendFromSet: true });
-    expect(r.workspaceErrorCount).toBe(0);
-    expect(r.companyErrorCount).toBe(2); // sms + whatsapp still missing; email ok
+    expect(r.workspaceErrorCount).toBe(1); // whatsapp missing
+    expect(r.companyErrorCount).toBe(1); // sms still missing; email ok
   });
 });
 
