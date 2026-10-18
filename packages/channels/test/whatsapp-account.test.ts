@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   fetchWhatsAppPhoneNumber,
   subscribeAppToWaba,
+  downloadWhatsAppMedia,
   DEFAULT_META_API_VERSION,
   type GraphHttpClient,
 } from '../src/index.js';
@@ -64,5 +65,38 @@ describe('subscribeAppToWaba', () => {
   it("throws Meta's message on an error", async () => {
     const { http } = fakeGraph([{ status: 403, body: JSON.stringify({ error: { message: 'missing permission' } }) }]);
     await expect(subscribeAppToWaba(cfg, http)).rejects.toThrow('missing permission');
+  });
+});
+
+describe('downloadWhatsAppMedia', () => {
+  const bin = (status = 200, body = Buffer.from('JPEGDATA')) => {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    return {
+      calls,
+      http: { async get(url: string, headers: Record<string, string>) { calls.push({ url, headers }); return { status, body, contentType: 'image/jpeg' }; } },
+    };
+  };
+
+  it('looks the media up, then downloads the URL with the bearer token', async () => {
+    const { http: graph, calls } = fakeGraph([{ status: 200, body: JSON.stringify({ url: 'https://lookaside.fb/x', mime_type: 'image/jpeg', file_size: 8 }) }]);
+    const b = bin();
+    const r = await downloadWhatsAppMedia({ accessToken: 'EAAtok' }, 'MEDIA1', graph, b.http);
+    expect(calls[0]!.url).toBe(`https://graph.facebook.com/${DEFAULT_META_API_VERSION}/MEDIA1`);
+    expect(b.calls[0]).toEqual({ url: 'https://lookaside.fb/x', headers: { Authorization: 'Bearer EAAtok' } });
+    expect(r).toEqual({ bytes: Buffer.from('JPEGDATA'), mimeType: 'image/jpeg' });
+  });
+
+  it('refuses media over the cap BEFORE downloading it', async () => {
+    const { http: graph } = fakeGraph([{ status: 200, body: JSON.stringify({ url: 'https://x', file_size: 999 }) }]);
+    const b = bin();
+    await expect(downloadWhatsAppMedia({ accessToken: 't' }, 'M', graph, b.http, 100)).rejects.toThrow(/too large/);
+    expect(b.calls).toHaveLength(0);
+  });
+
+  it("surfaces Meta's error and a failed download", async () => {
+    const bad = fakeGraph([{ status: 404, body: JSON.stringify({ error: { message: 'media not found' } }) }]);
+    await expect(downloadWhatsAppMedia({ accessToken: 't' }, 'M', bad.http, bin().http)).rejects.toThrow('media not found');
+    const ok = fakeGraph([{ status: 200, body: JSON.stringify({ url: 'https://x' }) }]);
+    await expect(downloadWhatsAppMedia({ accessToken: 't' }, 'M', ok.http, bin(403).http)).rejects.toThrow('HTTP 403');
   });
 });

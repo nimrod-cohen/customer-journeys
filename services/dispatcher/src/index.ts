@@ -17,6 +17,7 @@ export {
   buildRecentSendCountQuery,
   buildIsSuppressedQuery,
   buildMessagesLogInsert,
+  buildWhatsAppOutboundRecord,
   buildMessagesLogFailure,
   buildUsageCounterIncrement,
   buildDueOutboxQuery,

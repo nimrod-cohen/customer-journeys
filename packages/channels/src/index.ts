@@ -515,3 +515,6 @@ export * from './whatsapp-templates.js';
 
 // WhatsApp ACCOUNT checks (phone-number lookup + webhook subscription), run on config save.
 export * from './whatsapp-account.js';
+
+// WhatsApp WEBHOOKS (signature check + pure payload parsing).
+export * from './whatsapp-webhook.js';

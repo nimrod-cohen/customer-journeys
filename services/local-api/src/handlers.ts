@@ -24,6 +24,7 @@ import {
   dispatchOutbox,
   buildDueOutboxQuery,
   channelConfigForWorkspace,
+  buildWhatsAppOutboundRecord,
   renderTemplateBody,
   buildUsageCounterIncrement,
   type DispatchDeps,
@@ -5782,6 +5783,8 @@ export const mergeProfiles: Handler = async (ctx, pool, req) => {
     await reassign('outbox');
     await reassign('segment_change_log');
     await reassign('activity_log'); // the merged-away profile's activity follows the survivor
+    await reassign('whatsapp_conversations'); // unique by phone, not profile — a plain move
+    await reassign('whatsapp_messages');
     // Memberships: UNIQUE(segment_id, profile_id) — move missing, drop the rest.
     await client.query(
       `INSERT INTO segment_memberships (segment_id, profile_id, workspace_id, source, entered_at)
@@ -5855,6 +5858,10 @@ const PROFILE_CHILD_TABLES = [
   'tracked_opens',
   'activity_log',
   'profile_features',
+  // Messages before conversations (a message references its conversation). A
+  // message's stored media cascades with it; R2 copies are removed separately.
+  'whatsapp_messages',
+  'whatsapp_conversations',
 ] as const;
 
 /**
@@ -5866,7 +5873,7 @@ const PROFILE_CHILD_TABLES = [
  * the token's workspace in code (workspace_id in EVERY WHERE, NEVER the body,
  * inv.2); a cross-workspace / missing id matches nothing → 404.
  */
-export const deleteProfile: Handler = async (ctx, pool, req) => {
+export const deleteProfile: Handler = async (ctx, pool, req, deps) => {
   const id = req.params.id!;
   const ws = ctx.workspaceId;
   // Confirm the profile is in THIS workspace and capture its email (for the
@@ -5874,6 +5881,13 @@ export const deleteProfile: Handler = async (ctx, pool, req) => {
   const found = await pool.query('SELECT email FROM profiles WHERE workspace_id = $1 AND id = $2', [ws, id]);
   if (!found.rows[0]) return ok({ error: 'not found' }, 404);
   const email = (found.rows[0] as { email: string | null }).email;
+  // WhatsApp media held in the company's bucket must go too (full erasure). The keys
+  // are read BEFORE the rows that name them are deleted.
+  const mediaKeys = await pool.query<{ r2_key: string }>(
+    `SELECT wm.r2_key FROM whatsapp_media wm JOIN whatsapp_messages m ON m.id = wm.message_id
+      WHERE wm.workspace_id = $1 AND m.profile_id = $2 AND wm.storage = 'r2' AND wm.r2_key IS NOT NULL`,
+    [ws, id],
+  );
 
   await withTx(pool, async (client) => {
     for (const table of PROFILE_CHILD_TABLES) {
@@ -5886,6 +5900,10 @@ export const deleteProfile: Handler = async (ctx, pool, req) => {
     }
     await client.query('DELETE FROM profiles WHERE workspace_id = $1 AND id = $2', [ws, id]);
   });
+  if (mediaKeys.rows.length) {
+    const storage = await r2StorageForWorkspace(pool, ws, deps.makeR2Storage);
+    for (const { r2_key } of mediaKeys.rows) await storage?.del(r2_key).catch(() => {});
+  }
 
   return ok({ deleted: 1 });
 };
@@ -5896,7 +5914,7 @@ export const deleteProfile: Handler = async (ctx, pool, req) => {
  * given client so callers compose it into their OWN transaction. Shared by the
  * merge and the manual "send event" paths.
  */
-async function recomputeFeaturesAndSegments(client: PoolClient, ws: string, profileId: string): Promise<void> {
+export async function recomputeFeaturesAndSegments(client: PoolClient, ws: string, profileId: string): Promise<void> {
   await client.query(
     `WITH agg AS (
        SELECT count(*)::int AS total_events,
@@ -5956,7 +5974,7 @@ async function recomputeFeaturesAndSegments(client: PoolClient, ws: string, prof
  * binds workspace_id at $1; the asserted-scope tx runner lives in the automation-
  * runner — here we run on the open client directly).
  */
-function enrollDepsOnClient(client: PoolClient): EnrollDeps {
+export function enrollDepsOnClient(client: PoolClient): EnrollDeps {
   return {
     reader: { query: (text, values) => client.query(text, values as unknown[]) as never },
     runInWorkspaceTx: async (_w, statements) => {
@@ -7261,7 +7279,7 @@ async function resolveIngestWorkspace(pool: Pool, rawKey: string): Promise<strin
  * SAME tx client ONLY when the upsert actually CREATED the profile (never on an
  * update — activity must not be flooded per event).
  */
-async function logProfileCreated(client: PoolClient, ws: string, profileId: string, detail: string): Promise<void> {
+export async function logProfileCreated(client: PoolClient, ws: string, profileId: string, detail: string): Promise<void> {
   await client.query(
     `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
      VALUES ($1, $2, 'profile', 'profile_created', 'info', $3)`,
@@ -7276,7 +7294,7 @@ async function logProfileCreated(client: PoolClient, ws: string, profileId: stri
  * A phone-only identity upserts on (workspace, phone). Reserved keys are stripped from
  * traits (email/phone are core, never dynamic attributes).
  */
-async function upsertProfileByIdentity(
+export async function upsertProfileByIdentity(
   client: PoolClient,
   ws: string,
   identity: { email: string | null; phone: string | null },
@@ -7506,11 +7524,18 @@ async function sendOneTransactionalText(args: {
     return { to, sent: false, error: e instanceof Error ? e.message : 'send failed' };
   }
 
-  await pool.query(
-    `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium)
-     VALUES ($1, $2, $3, 'sent', $4)`,
-    [ws, profileId, providerMessageId, medium],
-  );
+  await withTx(pool, async (c) => {
+    await c.query(
+      `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium)
+       VALUES ($1, $2, $3, 'sent', $4)`,
+      [ws, profileId, providerMessageId, medium],
+    );
+    // WhatsApp is two-way: an API send also lands in the person's conversation.
+    if (medium === 'whatsapp') {
+      const rec = buildWhatsAppOutboundRecord({ workspaceId: ws, profileId, phone: phone!, wamid: providerMessageId, message: { body } });
+      await c.query(rec.text, rec.values as unknown[]);
+    }
+  });
   return { to, sent: true, message_id: providerMessageId };
 }
 

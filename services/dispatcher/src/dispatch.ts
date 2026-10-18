@@ -26,6 +26,7 @@ import {
   buildTopicUnsubscribedQuery,
   buildLastSoftBounceQuery,
   buildMessagesLogInsert,
+  buildWhatsAppOutboundRecord,
   buildMessagesLogFailure,
   buildUsageCounterIncrement,
   buildOutboxMarkSent,
@@ -756,6 +757,10 @@ async function dispatchTextChannel(deps: DispatchDeps, args: TextSendArgs): Prom
     buildMessagesLogInsert(workspaceId, profileId, automationId, providerMessageId, broadcastId, medium),
     buildUsageCounterIncrement(workspaceId, now, `${medium}_sent`),
     buildOutboxMarkSent(workspaceId, outboxId),
+    // WhatsApp is two-way: the send also lands in the person's conversation.
+    ...(medium === 'whatsapp'
+      ? [buildWhatsAppOutboundRecord({ workspaceId, profileId, phone: e164, wamid: providerMessageId, message, broadcastId, automationId })]
+      : []),
   ]);
   return { result: 'send', sesMessageId: providerMessageId };
 }

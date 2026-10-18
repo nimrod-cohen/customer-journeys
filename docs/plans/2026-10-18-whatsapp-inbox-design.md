@@ -63,10 +63,10 @@ Missing:
   - Update `whatsapp_messages.status` **monotonically**: never `read` → `delivered`. `failed` always wins and stores Meta's error code.
   - Order-convergent (inv.3): a status that arrives before our outbound row exists upserts a stub by wamid. The send then fills it in.
   - Also feeds the broadcast funnel for WhatsApp (Delivered / Read / Failed, joined via `messages_log.ses_message_id` = wamid).
-- **Media:**
+- **Media:** (built, v0.139.0)
   - Meta's media URLs expire within minutes, and the media itself is deleted after 30 days.
-  - A worker job downloads each media file (`GET /<media_id>` → URL → fetch with the token) into an asset (R2 or the database fallback) and sets `media.asset_id`.
-  - The UI shows media through the existing `/assets/:id`.
+  - A sweep downloads each file into **`whatsapp_media`** (the company's R2 bucket, else bytea). It deliberately does **not** use `assets`: assets are served publicly by id, and a customer's ID card or invoice must only be served to signed-in users.
+  - Phase 4 adds the authenticated `GET /whatsapp/media/:messageId`.
 - New secrets: `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`. Store them in all 3 locations (password manager, SSM, Fly).
 
 ## Phase 4 — Chat UI + live updates (minor bump)

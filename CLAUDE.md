@@ -221,6 +221,41 @@ Each workspace connects its OWN WhatsApp Business number to our ONE platform Met
 - **An empty `access_token` means the MOCK provider** — only the e2e seed writes one, to
   enable the channel without real credentials. The PUT never writes an empty token.
 
+## Inbound WhatsApp (webhooks → conversations)
+
+Meta has NO history API: a message exists for us only if our webhook stored it.
+`GET /webhooks/whatsapp` answers Meta's handshake (`META_WEBHOOK_VERIFY_TOKEN`);
+`POST` carries messages + delivery statuses (`services/local-api/src/whatsapp-inbound.ts`,
+pure parsing in `@cdp/channels` `whatsapp-webhook.ts`).
+
+- **Signed over the RAW body** (`X-Hub-Signature-256`, `META_APP_SECRET`) — read as
+  text before parsing; a re-serialized body never verifies. Unsigned → 401, nothing stored.
+- **Store first, process second, always 200.** The body goes to `whatsapp_webhook_inbox`
+  before processing; a failure is recorded there and `sweepWhatsAppInbox` re-drives it.
+  Meta's redelivery is not our durability.
+- **Workspace = `metadata.phone_number_id` looked up in OUR table** (inv.2). An unknown
+  number writes nothing.
+- **Idempotent on `wamid`** (`UNIQUE(workspace_id, wamid)`): a redelivered message
+  re-runs NOTHING downstream — no second event, enrollment or unread bump.
+- An inbound message upserts a phone-only profile if needed (`whatsapp_name` trait),
+  bumps the conversation (`last_inbound_at` = the 24h-window clock), and records a
+  **`whatsapp_message_received` event** in the same tx, so segments and event-triggered
+  automations react to replies with no new trigger kind.
+- **Statuses only move UP** (`received<pending<sent<delivered<read<failed`), never touch
+  an inbound row, and a status for a send we haven't recorded yet lands as an outbound
+  STUB that the send's own upsert fills in, keeping the status (inv.3).
+- **Every outbound WhatsApp send is recorded in its conversation** —
+  `buildWhatsAppOutboundRecord` (dispatcher `core.ts`) runs in the dispatcher's success
+  tx and in the transactional send. It never touches `last_inbound_at` or `unread_count`.
+- Every write `pg_notify('wa_events', {workspace_id, conversation_id, message_id})` —
+  ids only, delivered on COMMIT — for the live chat.
+- **Customer media is NOT an `asset`.** Assets are served publicly by id; a customer's ID
+  card must not be. `sweepWhatsAppMedia` copies media (Meta URLs expire in minutes, the
+  media in ~30 days) into `whatsapp_media` (company R2 or bytea), to be served only to
+  signed-in users. Capped at 25 MB; failures are counted on `media.attempts`.
+- Conversation/message `profile_id` FKs are **ON DELETE CASCADE** (erasing a person erases
+  their chat), and `deleteProfile` also removes their R2 media objects.
+
 ## One email provider per company (exclusive)
 
 A company sends email through **exactly one** provider — self-hosted `smtp`, `ses`, or
@@ -851,7 +886,7 @@ The Profile detail header consolidates into one ⋮ `ActionMenu`: **Send event**
 
 **Send event** (`POST /profiles/:id/events`, `manage_content`) records ONE behavioral event on the profile's behalf and, in ONE workspace-scoped tx, recomputes rolling features + re-evaluates `dynamic_realtime` segments via the shared `recomputeFeaturesAndSegments`. A manual event therefore behaves exactly like an ingested one.
 
-**Delete profile** (`DELETE /profiles/:id`, `manage_content`) is a HARD delete + FULL erasure (GDPR right-to-be-forgotten). Because every `profile_id` FK is `ON DELETE NO ACTION` (only `activity_log` is SET NULL), children are deleted FIRST in ONE workspace-scoped tx: the handler loops **`PROFILE_CHILD_TABLES`** (`events, email_events, messages_log, outbox, segment_change_log, segment_memberships, automation_enrollments, topic_subscriptions, channel_optouts, tracked_opens, activity_log, profile_features`), then deletes the suppression keyed by the profile's **email** (`suppressions` has no `profile_id` — full erasure was chosen over retaining the address), then the profile row. **Keep `PROFILE_CHILD_TABLES` in sync whenever a new profile-referencing table is added.**
+**Delete profile** (`DELETE /profiles/:id`, `manage_content`) is a HARD delete + FULL erasure (GDPR right-to-be-forgotten). Because every `profile_id` FK is `ON DELETE NO ACTION` (only `activity_log` is SET NULL), children are deleted FIRST in ONE workspace-scoped tx: the handler loops **`PROFILE_CHILD_TABLES`** (`events, email_events, messages_log, outbox, segment_change_log, segment_memberships, automation_enrollments, topic_subscriptions, channel_optouts, tracked_opens, activity_log, profile_features, whatsapp_messages, whatsapp_conversations`), then deletes the suppression keyed by the profile's **email** (`suppressions` has no `profile_id` — full erasure was chosen over retaining the address), then the profile row. **Keep `PROFILE_CHILD_TABLES` in sync whenever a new profile-referencing table is added.**
 
 ---
 

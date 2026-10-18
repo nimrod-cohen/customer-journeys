@@ -913,6 +913,79 @@ export function buildChannelMessage(ctx: DispatchContext): ChannelMessage {
 }
 
 /**
+ * Record an outbound WhatsApp message in its CONVERSATION, so the chat shows every
+ * message we sent — broadcasts, automations and API sends alike — not only replies
+ * typed in the inbox. One statement (workspace_id at $1): upsert the conversation
+ * by phone (never touching the inbound clock or unread count), upsert the message
+ * by wamid, and notify the live chat.
+ *
+ * A row for this wamid may already exist as a STUB written by a delivery status
+ * that arrived first; the upsert fills it in and KEEPS its status, which is at
+ * least as far along as 'sent'. Only an outbound row is ever updated.
+ */
+export function buildWhatsAppOutboundRecord(args: {
+  workspaceId: string;
+  profileId: string;
+  phone: string;
+  wamid: string;
+  message: Pick<ChannelMessage, 'body' | 'template'>;
+  broadcastId?: string | null;
+  automationId?: string | null;
+  sentByUserId?: string | null;
+}): SqlStatement {
+  if (!args.workspaceId) throw new Error('buildWhatsAppOutboundRecord: workspaceId is required');
+  const tpl = args.message.template;
+  const body = args.message.body && args.message.body.trim() !== '' ? args.message.body : null;
+  const preview = (body ?? (tpl ? `Template: ${tpl.name}` : '')).replace(/\s+/g, ' ').slice(0, 140);
+  return {
+    text: `WITH conv AS (
+             INSERT INTO whatsapp_conversations (workspace_id, profile_id, wa_phone, last_message_at, last_message_preview)
+             VALUES ($1, $2, $3, now(), $4)
+             ON CONFLICT (workspace_id, wa_phone) DO UPDATE SET
+               profile_id = EXCLUDED.profile_id,
+               last_message_at = now(),
+               last_message_preview = EXCLUDED.last_message_preview,
+               updated_at = now()
+             RETURNING id
+           ), msg AS (
+             INSERT INTO whatsapp_messages
+               (workspace_id, conversation_id, profile_id, direction, wamid, type, body, template, status,
+                broadcast_id, automation_id, sent_by_user_id)
+             SELECT $1, conv.id, $2, 'out', $5, $6, $7, $8::jsonb, 'sent', $9, $10, $11 FROM conv
+             ON CONFLICT (workspace_id, wamid) DO UPDATE SET
+               conversation_id = EXCLUDED.conversation_id,
+               profile_id = EXCLUDED.profile_id,
+               type = EXCLUDED.type,
+               body = EXCLUDED.body,
+               template = EXCLUDED.template,
+               broadcast_id = EXCLUDED.broadcast_id,
+               automation_id = EXCLUDED.automation_id,
+               sent_by_user_id = EXCLUDED.sent_by_user_id,
+               updated_at = now()
+             WHERE whatsapp_messages.direction = 'out'
+             RETURNING id, conversation_id
+           )
+           SELECT pg_notify('wa_events', json_build_object(
+                    'workspace_id', $1::text, 'kind', 'message',
+                    'conversation_id', msg.conversation_id, 'message_id', msg.id)::text)
+             FROM msg`,
+    values: [
+      args.workspaceId,
+      args.profileId,
+      args.phone,
+      preview,
+      args.wamid,
+      tpl ? 'template' : 'text',
+      body,
+      tpl ? JSON.stringify({ name: tpl.name, language: tpl.language, params: tpl.bodyParams }) : null,
+      args.broadcastId ?? null,
+      args.automationId ?? null,
+      args.sentByUserId ?? null,
+    ],
+  };
+}
+
+/**
  * Upsert-increment the monthly usage_counters row for `emails_sent` (§20). The
  * period is the first day of the send month (UTC). workspace_id bound at $1; an
  * ON CONFLICT bumps the existing month's value by 1.

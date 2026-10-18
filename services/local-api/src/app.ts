@@ -25,6 +25,8 @@ import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
 import { ingestTrack, ingestIdentify, sendTransactional, r2StorageForWorkspace } from './handlers.js';
 import { decideMailEvent, buildMessageLookup, type MessageRef } from './mail-events.js';
+import { storeWebhook, processInboxRow } from './whatsapp-inbound.js';
+import { verifyMetaSignature } from '@cdp/channels';
 import {
   buildEmailEventInsert,
   buildSuppressionUpsert,
@@ -237,6 +239,43 @@ export function createApp(opts: CreateAppOptions): Hono {
     const v = b.writeKey ?? b.write_key ?? b.api_key;
     return typeof v === 'string' ? v.trim() : '';
   };
+
+  // ── WhatsApp webhooks (Meta Cloud API) ─────────────────────────────────────
+  // ONE platform Meta app serves every workspace, so there is one URL. GET is
+  // Meta's subscription handshake; POST carries messages and delivery statuses.
+  //
+  // The POST is authenticated by `X-Hub-Signature-256` over the RAW body with
+  // META_APP_SECRET — which is why the body is read as text before parsing. The
+  // workspace is resolved later, per change, from our own phone-number table.
+  // The body is stored BEFORE it is processed, and a processing failure is still a
+  // 200: Meta's redelivery is not our durability, the inbox sweep is.
+  app.get('/webhooks/whatsapp', (c) => {
+    const expected = process.env.META_WEBHOOK_VERIFY_TOKEN;
+    if (!expected) return c.text('webhook not configured', 503);
+    const mode = c.req.query('hub.mode');
+    const token = c.req.query('hub.verify_token');
+    const challenge = c.req.query('hub.challenge') ?? '';
+    if (mode !== 'subscribe' || token !== expected) return c.text('forbidden', 403);
+    return c.text(challenge, 200);
+  });
+
+  app.post('/webhooks/whatsapp', async (c) => {
+    const secret = process.env.META_APP_SECRET;
+    if (!secret) return c.json({ error: 'webhook not configured' }, 503);
+    const raw = await c.req.text();
+    if (!verifyMetaSignature(raw, c.req.header('x-hub-signature-256'), secret)) {
+      return c.json({ error: 'invalid signature' }, 401);
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return c.json({ error: 'invalid json' }, 400);
+    }
+    const id = await storeWebhook(opts.pool, payload);
+    await processInboxRow(opts.pool, id, payload);
+    return c.json({ ok: true }, 200);
+  });
 
   // ── Inbound bounce / spam-report ingestion from our own mail server ─────────
   // The mail-agent on the MTA reads raw messages out of the bounce mailbox and

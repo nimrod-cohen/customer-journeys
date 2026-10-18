@@ -63,7 +63,7 @@ describeMaybe('WhatsApp template broadcast → real Meta provider (real Postgres
 
   beforeEach(async () => {
     await pool.query('DELETE FROM workspace_whatsapp_config WHERE workspace_id = $1', [WS]);
-    for (const t of ['messages_log', 'usage_counters', 'outbox', 'broadcasts']) {
+    for (const t of ['whatsapp_messages', 'whatsapp_conversations', 'messages_log', 'usage_counters', 'outbox', 'broadcasts']) {
       await pool.query(`DELETE FROM ${t} WHERE workspace_id = $1`, [WS]);
     }
   });
@@ -76,7 +76,7 @@ describeMaybe('WhatsApp template broadcast → real Meta provider (real Postgres
   });
 
   async function cleanup(): Promise<void> {
-    for (const t of ['messages_log', 'usage_counters', 'outbox', 'broadcasts', 'segment_memberships', 'segments', 'profiles', 'workspace_users']) {
+    for (const t of ['whatsapp_messages', 'whatsapp_conversations', 'messages_log', 'usage_counters', 'outbox', 'broadcasts', 'segment_memberships', 'segments', 'profiles', 'workspace_users']) {
       await pool.query(`DELETE FROM ${t} WHERE workspace_id = $1`, [WS]);
     }
     await pool.query('DELETE FROM workspace_whatsapp_config WHERE workspace_id = $1', [WS]);
@@ -129,6 +129,49 @@ describeMaybe('WhatsApp template broadcast → real Meta provider (real Postgres
     expect(ml.rows).toHaveLength(1);
     expect(ml.rows[0]!.medium).toBe('whatsapp');
     expect(ml.rows[0]!.ses_message_id).toBe('wamid.TEST123');
+
+    // ...and the send lands in the person's WhatsApp conversation, tagged to the broadcast.
+    const wm = await pool.query(
+      `SELECT m.direction, m.type, m.body, m.template, m.status, m.broadcast_id, c.wa_phone, c.last_message_preview, c.unread_count
+         FROM whatsapp_messages m JOIN whatsapp_conversations c ON c.id = m.conversation_id
+        WHERE m.workspace_id = $1 AND m.wamid = 'wamid.TEST123'`,
+      [WS],
+    );
+    expect(wm.rows).toEqual([
+      {
+        direction: 'out',
+        type: 'template',
+        body: null,
+        template: { name: 'order_update', language: 'en_US', params: ['Ada', 'A1B2'] },
+        status: 'sent',
+        broadcast_id: id,
+        wa_phone: '+972529461566',
+        last_message_preview: 'Template: order_update',
+        unread_count: 0,
+      },
+    ]);
+  });
+
+  it('a delivery status that beat the send to us is kept when the send records itself', async () => {
+    const tok = tokenFor(OWNER, WS);
+    const { http } = makeCapturingHttp();
+    const env: DispatchEnv = { pool, lookups: makePgLookups(pool), deps: makeLocalDeps(pool, http) };
+    await seedWorkspaceWhatsapp(pool, WS, { phoneNumberId: '100055512345', accessToken: 'EAAsecret' });
+    // The webhook's stub: Meta said "delivered" before our send's tx committed.
+    await pool.query(
+      "INSERT INTO whatsapp_messages (workspace_id, direction, wamid, status) VALUES ($1, 'out', 'wamid.TEST123', 'delivered')",
+      [WS],
+    );
+    const c = await createBc(tok, { name: 'race', medium: 'whatsapp', whatsapp_template: WA, audience_kind: 'manual', audience_ref: SEG }, env);
+    await sendBc(tok, (c.body as { broadcast: { id: string } }).broadcast.id, env);
+    const row = await pool.query<{ status: string; conversation_id: string | null; type: string }>(
+      "SELECT status, conversation_id, type FROM whatsapp_messages WHERE workspace_id = $1 AND wamid = 'wamid.TEST123'",
+      [WS],
+    );
+    expect(row.rows).toHaveLength(1);
+    expect(row.rows[0]!.status).toBe('delivered'); // not regressed to 'sent'
+    expect(row.rows[0]!.conversation_id).not.toBeNull(); // filled in
+    expect(row.rows[0]!.type).toBe('template');
   });
 
   it('a WhatsApp broadcast for a company with NO Meta config falls back to the MOCK (no HTTP)', async () => {

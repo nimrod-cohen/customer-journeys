@@ -85,3 +85,68 @@ export async function subscribeAppToWaba(
   }
   if (!ok) throw new Error('Meta WhatsApp webhook subscription: Meta did not confirm the subscribe');
 }
+
+// ── Media download ───────────────────────────────────────────────────────────
+// Inbound media arrives as an id. `GET /<media_id>` returns a short-lived URL (it
+// expires within minutes), which must itself be fetched WITH the bearer token.
+
+/** A binary GET, injected so tests never touch Meta. */
+export interface BinaryHttpClient {
+  get(url: string, headers: Record<string, string>, timeoutMs: number): Promise<{ status: number; body: Buffer; contentType: string | null }>;
+}
+
+export function fetchBinaryHttpClient(): BinaryHttpClient {
+  return {
+    async get(url, headers, timeoutMs) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { headers, signal: ctrl.signal });
+        return { status: res.status, body: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get('content-type') };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
+export interface WhatsAppMediaCredentials {
+  readonly accessToken: string;
+  readonly apiUrl?: string | null;
+  readonly apiVersion?: string | null;
+}
+
+/** Refused before download: our cap is below Meta's 100 MB document limit. */
+export const MAX_WHATSAPP_MEDIA_BYTES = 25 * 1024 * 1024;
+
+export async function downloadWhatsAppMedia(
+  cfg: WhatsAppMediaCredentials,
+  mediaId: string,
+  graph: GraphHttpClient = fetchGraphHttpClient(),
+  bin: BinaryHttpClient = fetchBinaryHttpClient(),
+  maxBytes: number = MAX_WHATSAPP_MEDIA_BYTES,
+): Promise<{ bytes: Buffer; mimeType: string }> {
+  const auth = { Authorization: `Bearer ${cfg.accessToken}` };
+  const meta = await graph.request(
+    'GET',
+    `${root({ ...cfg, phoneNumberId: '', wabaId: '' })}/${encodeURIComponent(mediaId)}`,
+    auth,
+    null,
+    TIMEOUT_MS,
+  );
+  if (meta.status < 200 || meta.status >= 300) throw graphError('media lookup', meta.status, meta.body);
+  let info: Record<string, unknown> = {};
+  try {
+    info = JSON.parse(meta.body) as Record<string, unknown>;
+  } catch {
+    /* handled below */
+  }
+  const url = str(info.url);
+  if (!url) throw new Error('Meta WhatsApp media lookup: no download URL');
+  const declared = Number(info.file_size);
+  if (Number.isFinite(declared) && declared > maxBytes) throw new Error(`media too large (${declared} bytes)`);
+  const res = await bin.get(url, auth, 60_000);
+  if (res.status < 200 || res.status >= 300) throw new Error(`Meta WhatsApp media download: HTTP ${res.status}`);
+  if (res.body.length > maxBytes) throw new Error(`media too large (${res.body.length} bytes)`);
+  return { bytes: res.body, mimeType: str(info.mime_type) ?? res.contentType ?? 'application/octet-stream' };
+}

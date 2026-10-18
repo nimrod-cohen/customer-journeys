@@ -26,7 +26,7 @@ import {
   type ProdOnboardingDeps,
 } from '@cdp/service-onboarding';
 import { runStatementsInWorkspaceTx, type BroadcastDeps } from '@cdp/service-broadcast';
-import { fetchChannelHttpClient, fetchGraphHttpClient, type ChannelHttpClient, type GraphHttpClient } from '@cdp/channels';
+import { fetchChannelHttpClient, fetchGraphHttpClient, type ChannelHttpClient, type GraphHttpClient, type BinaryHttpClient } from '@cdp/channels';
 
 /** The full dependency set the handlers consume. */
 export interface LocalApiDeps {
@@ -71,6 +71,11 @@ export interface LocalApiDeps {
    * tests assert the exact Resend request WITHOUT the network; defaults to fetch.
    */
   readonly resendHttp: ResendHttpClient;
+  /**
+   * Binary GET used to download inbound WhatsApp media from Meta. Optional: absent,
+   * a real fetch-based client is used. Tests inject a fake.
+   */
+  readonly mediaHttp?: BinaryHttpClient;
 }
 
 /**

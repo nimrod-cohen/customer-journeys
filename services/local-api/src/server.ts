@@ -7,6 +7,7 @@ import { getPool, runPendingMigrations } from '@cdp/db';
 import { createApp } from './app.js';
 import { makeLocalDeps } from './deps.js';
 import { sweepDueScheduledBroadcasts, sweepDueAutomationEnrollments, sweepDueOutbox } from './handlers.js';
+import { sweepWhatsAppInbox, sweepWhatsAppMedia } from './whatsapp-inbound.js';
 
 const PORT = Number(process.env.PORT ?? process.env.LOCAL_API_PORT ?? 8787);
 // Process role (production runs a `web` service — HTTP, no sweeps — plus ONE
@@ -55,6 +56,7 @@ const AUTOMATION_SWEEP_MS = Number(process.env.LOCAL_AUTOMATION_SWEEP_MS ?? 30_0
 // How often due outbox rows are re-driven — a send that failed transiently (our mail
 // server restarting) waits out its backoff and is picked up here. 0 disables it.
 const OUTBOX_SWEEP_MS = Number(process.env.LOCAL_OUTBOX_SWEEP_MS ?? 60_000);
+const WHATSAPP_SWEEP_MS = Number(process.env.LOCAL_WHATSAPP_SWEEP_MS ?? 30_000);
 
 async function main(): Promise<void> {
   const pool = getPool();
@@ -132,6 +134,25 @@ async function main(): Promise<void> {
     };
     void sweepAutomations(); // catch any already-due enrollment on boot
     setInterval(() => void sweepAutomations(), AUTOMATION_SWEEP_MS);
+  }
+
+  // WhatsApp: re-drive webhook bodies whose processing failed, and copy inbound
+  // media from Meta before its short-lived URLs (and, after ~30 days, the media
+  // itself) are gone. Both claim rows with SKIP LOCKED, so every role may run them.
+  if (RUN_SWEEPS && WHATSAPP_SWEEP_MS > 0) {
+    const sweepWhatsApp = async (): Promise<void> => {
+      try {
+        const redriven = await sweepWhatsAppInbox(pool);
+        const media = await sweepWhatsAppMedia(pool, deps);
+        // eslint-disable-next-line no-console
+        if (redriven + media > 0) console.log(`[local-api] whatsapp: re-drove ${redriven} webhook(s), stored ${media} media file(s)`);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[local-api] whatsapp sweep failed', e);
+      }
+    };
+    void sweepWhatsApp();
+    setInterval(() => void sweepWhatsApp(), WHATSAPP_SWEEP_MS);
   }
 }
 
