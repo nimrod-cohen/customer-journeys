@@ -14,10 +14,10 @@ import type { HandlerDeps } from './handler.js';
 import type { Reader } from './dispatch.js';
 
 /**
- * Resolve the per-COMPANY text-channel provider config for a sending workspace —
- * the channel twin of local-api's `sesForWorkspace`. MEDIUM-AWARE: a WhatsApp send
- * reads `company_whatsapp_config` (→ a real `MetaWhatsAppProvider` config), an SMS
- * send reads `company_channel_config` (→ a real `Sms019Provider` config). The
+ * Resolve the text-channel provider config for a sending workspace — the channel
+ * twin of local-api's `sesForWorkspace`. MEDIUM-AWARE: a WhatsApp send reads the
+ * WORKSPACE's `workspace_whatsapp_config` (→ a real `MetaWhatsAppProvider` config),
+ * an SMS send reads the COMPANY's `019` connector (→ a real `Sms019Provider` config). The
  * secret (bearer / access token) is DECRYPTED at call time only (the wire/log never
  * carry plaintext; the stored value stays an envelope). NO row → the deterministic
  * MOCK config, so dev/tests stay green offline. Service-role scoping: the lookup
@@ -30,38 +30,21 @@ export async function channelConfigForWorkspace(
 ): Promise<ChannelProviderConfig> {
   const dec = (s: string): string => (isEncryptedSecret(s) ? decryptSecret(s) : s);
   if (medium === 'whatsapp') {
-    // Connectors first (the unified registry); fall back to the legacy per-provider
-    // table for rows not yet migrated (transitional — keeps old tests green).
-    const conn = await reader.query<{ config: Record<string, unknown>; secret: string | null }>(
-      `SELECT c.config, c.secret FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id
-        WHERE w.id = $1 AND c.channel = 'whatsapp' AND c.provider = 'meta_whatsapp' AND c.enabled
-        ORDER BY c.updated_at DESC LIMIT 1`,
-      [workspaceId],
-    );
-    const cc = conn.rows[0];
-    if (cc && cc.secret) {
-      const cfg = cc.config;
-      return {
-        kind: 'meta',
-        phoneNumberId: String(cfg.phone_number_id ?? ''),
-        accessToken: dec(cc.secret),
-        apiVersion: (cfg.api_version as string | null) ?? null,
-        defaultCountry: (cfg.default_country as string | null) ?? null,
-      };
-    }
+    // WhatsApp is configured per WORKSPACE (each workspace connects its own number).
     const { rows } = await reader.query<{
       phone_number_id: string;
       access_token: string;
       api_version: string | null;
       default_country: string | null;
     }>(
-      `SELECT c.phone_number_id, c.access_token, c.api_version, c.default_country
-         FROM company_whatsapp_config c JOIN workspaces w ON w.company_id = c.company_id
-        WHERE w.id = $1`,
+      `SELECT phone_number_id, access_token, api_version, default_country
+         FROM workspace_whatsapp_config WHERE workspace_id = $1 AND enabled`,
       [workspaceId],
     );
     const cfg = rows[0];
-    if (cfg) {
+    // An empty token (only ever seeded, e.g. by the e2e suite to enable the channel)
+    // falls through to the MOCK provider, as a secret-less connector used to.
+    if (cfg && cfg.access_token) {
       return {
         kind: 'meta',
         phoneNumberId: cfg.phone_number_id,

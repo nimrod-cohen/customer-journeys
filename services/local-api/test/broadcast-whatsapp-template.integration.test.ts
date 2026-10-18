@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { hasDatabaseUrl, adminPool } from '@cdp/db';
 import type { ChannelHttpClient, ChannelHttpResponse } from '@cdp/channels';
 import { makePgLookups, makeLocalDeps, dispatch, type DispatchEnv } from '../src/index.js';
-import { tokenFor } from './seed.js';
+import { tokenFor, seedWorkspaceWhatsapp } from './seed.js';
 import type { Pool } from 'pg';
 
 const CO = '0c0d0e3a-0000-4000-8000-0000000000c1';
@@ -37,8 +37,6 @@ function makeCapturingHttp(): {
 
 describeMaybe('WhatsApp template broadcast → real Meta provider (real Postgres)', () => {
   let pool: Pool;
-  const put = (tok: string, body: unknown, env: DispatchEnv) =>
-    dispatch({ method: 'PUT', path: '/company/whatsapp-config', authorization: tok, query: {}, body }, env);
   const createBc = (tok: string, body: Record<string, unknown>, env: DispatchEnv) =>
     dispatch({ method: 'POST', path: '/broadcasts', authorization: tok, query: {}, body }, env);
   const sendBc = (tok: string, id: string, env: DispatchEnv) =>
@@ -64,7 +62,7 @@ describeMaybe('WhatsApp template broadcast → real Meta provider (real Postgres
   });
 
   beforeEach(async () => {
-    await pool.query('DELETE FROM company_whatsapp_config WHERE company_id = $1', [CO]);
+    await pool.query('DELETE FROM workspace_whatsapp_config WHERE workspace_id = $1', [WS]);
     for (const t of ['messages_log', 'usage_counters', 'outbox', 'broadcasts']) {
       await pool.query(`DELETE FROM ${t} WHERE workspace_id = $1`, [WS]);
     }
@@ -81,7 +79,7 @@ describeMaybe('WhatsApp template broadcast → real Meta provider (real Postgres
     for (const t of ['messages_log', 'usage_counters', 'outbox', 'broadcasts', 'segment_memberships', 'segments', 'profiles', 'workspace_users']) {
       await pool.query(`DELETE FROM ${t} WHERE workspace_id = $1`, [WS]);
     }
-    await pool.query('DELETE FROM company_whatsapp_config WHERE company_id = $1', [CO]);
+    await pool.query('DELETE FROM workspace_whatsapp_config WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM workspaces WHERE id = $1', [WS]);
     await pool.query('DELETE FROM companies WHERE id = $1', [CO]);
   }
@@ -91,7 +89,7 @@ describeMaybe('WhatsApp template broadcast → real Meta provider (real Postgres
     const { http, calls } = makeCapturingHttp();
     const env: DispatchEnv = { pool, lookups: makePgLookups(pool), deps: makeLocalDeps(pool, http) };
     // Configure Meta WhatsApp for the company.
-    await put(tok, { phone_number_id: '100055512345', access_token: 'EAAsecret', api_version: 'v21.0' }, env);
+    await seedWorkspaceWhatsapp(pool, WS, { phoneNumberId: '100055512345', accessToken: 'EAAsecret', apiVersion: 'v21.0' });
 
     const c = await createBc(
       tok,

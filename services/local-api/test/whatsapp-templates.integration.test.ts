@@ -1,12 +1,12 @@
 // WhatsApp message-template MANAGEMENT via the Graph API (CLAUDE.md). REAL Postgres + an
 // INJECTED fake GraphHttpClient (never touches graph.facebook.com). Proves the handlers
-// resolve the company's WABA id + DECRYPTED token, build the exact Graph request, and map
+// resolve the workspace's WABA id + DECRYPTED token, build the exact Graph request, and map
 // the response; no WABA id → configured:false; validation + company isolation.
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { hasDatabaseUrl, adminPool } from '@cdp/db';
 import type { GraphHttpClient, GraphHttpResponse } from '@cdp/channels';
 import { makePgLookups, makeLocalDeps, dispatch, type DispatchEnv } from '../src/index.js';
-import { tokenFor } from './seed.js';
+import { tokenFor, seedWorkspaceWhatsapp } from './seed.js';
 import type { Pool } from 'pg';
 
 const CO = '0c0d0e4a-0000-4000-8000-0000000000c1';
@@ -41,8 +41,8 @@ describeMaybe('WhatsApp templates management (real Postgres, injected Graph)', (
     lookups: makePgLookups(pool),
     deps: makeLocalDeps(pool, undefined, http),
   });
-  const putConfig = (body: unknown, e: DispatchEnv) =>
-    dispatch({ method: 'PUT', path: '/company/whatsapp-config', authorization: tok(), query: {}, body }, e);
+  const putConfig = (b: { phone_number_id: string; access_token: string; waba_id?: string; api_version?: string }, _e: DispatchEnv) =>
+    seedWorkspaceWhatsapp(pool, WS, { phoneNumberId: b.phone_number_id, accessToken: b.access_token, wabaId: b.waba_id, apiVersion: b.api_version });
 
   beforeAll(async () => {
     pool = adminPool();
@@ -53,7 +53,7 @@ describeMaybe('WhatsApp templates management (real Postgres, injected Graph)', (
   });
 
   beforeEach(async () => {
-    await pool.query('DELETE FROM company_whatsapp_config WHERE company_id = $1', [CO]);
+    await pool.query('DELETE FROM workspace_whatsapp_config WHERE workspace_id = $1', [WS]);
   });
 
   afterAll(async () => {
@@ -64,7 +64,7 @@ describeMaybe('WhatsApp templates management (real Postgres, injected Graph)', (
   });
 
   async function cleanup(): Promise<void> {
-    await pool.query('DELETE FROM company_whatsapp_config WHERE company_id = $1', [CO]);
+    await pool.query('DELETE FROM workspace_whatsapp_config WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM workspace_users WHERE workspace_id = $1', [WS]);
     await pool.query('DELETE FROM workspaces WHERE id = $1', [WS]);
     await pool.query('DELETE FROM companies WHERE id = $1', [CO]);

@@ -71,11 +71,11 @@ extend `ChannelProviderConfig` with the provider's fields, and resolve the confi
 `company_channel_config` instead of `DEFAULT_CHANNEL_CONFIG` (`{kind:'mock'}`). Keep the
 mock as the default for local dev + tests.
 
-## WhatsApp via Meta Cloud API — WIRED (real provider + per-company creds)
+## WhatsApp via Meta Cloud API — WIRED (real provider + per-WORKSPACE creds)
 
 The real WhatsApp adapter is implemented (`MetaWhatsAppProvider` in `@cdp/channels`) and
-per-company credentials are stored + resolved exactly like the 019 SMS path. WhatsApp
-sends route through the real provider when a company has credentials, else the mock.
+each WORKSPACE connects its own number (one number = one workspace). WhatsApp sends
+route through the real provider when the workspace has credentials, else the mock.
 
 **Meta account onboarding (human — the platform can't do these):**
 1. **Meta Business account** (business.facebook.com) → a **Meta App** (developers.facebook.com)
@@ -91,9 +91,10 @@ sends route through the real provider when a company has credentials, else the m
    the template **name** + **language code**.
 5. Add a **payment method** to the WABA.
 
-**Enter credentials:** Company settings → Sending → **WhatsApp (Meta Cloud API)** card
-(`PUT /company/whatsapp-config`: phone number id + access token (write-only, envelope-encrypted)
-+ optional API version + default country). Table: `company_whatsapp_config` (migration `0046`).
+**Enter credentials:** Workspace settings → **WhatsApp** tab (`PUT /workspace/whatsapp`: phone
+number id + WABA id + access token (write-only, envelope-encrypted) + optional API version +
+default country). Saving verifies the number with Meta and subscribes our app to the WABA's
+webhooks. Table: `workspace_whatsapp_config` (migration `0073`).
 
 **How it sends:** the dispatcher resolves `channelConfigForWorkspace(reader, ws, 'whatsapp')`
 → a `{kind:'meta',…}` config (token decrypted at send time), and `resolveChannelProvider`

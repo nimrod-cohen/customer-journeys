@@ -87,11 +87,10 @@ describeMaybe('one email provider per company (real Postgres)', () => {
     expect((res.body as { switchedFrom?: string }).switchedFrom).toBeUndefined();
   });
 
-  it('does not constrain the sms and whatsapp channels', async () => {
+  it('does not constrain the sms channel', async () => {
     expect(
       (await putConnector('019', { api_url: 'https://x', username: 'u', source: 's' })).status,
     ).toBe(200);
-    expect((await putConnector('meta_whatsapp', { phone_number_id: '1' })).status).toBe(200);
   });
 
   // Self-hosted mail spends OUR IP reputation, so it is a platform-admin grant.

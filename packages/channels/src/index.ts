@@ -267,7 +267,7 @@ export type ChannelProviderConfig =
       readonly defaultCountry?: string | null;
     }
   | {
-      /** Real Meta WhatsApp Cloud API (per-company creds from company_whatsapp_config). */
+      /** Real Meta WhatsApp Cloud API (per-workspace creds from workspace_whatsapp_config). */
       readonly kind: 'meta';
       /** API base — defaults to https://graph.facebook.com when omitted. */
       readonly apiUrl?: string | null;
@@ -512,3 +512,6 @@ export function resolveChannelProvider(
 
 // WhatsApp message-template MANAGEMENT (Meta Graph API — list/create/delete).
 export * from './whatsapp-templates.js';
+
+// WhatsApp ACCOUNT checks (phone-number lookup + webhook subscription), run on config save.
+export * from './whatsapp-account.js';

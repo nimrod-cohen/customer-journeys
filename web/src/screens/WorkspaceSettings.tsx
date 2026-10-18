@@ -13,8 +13,9 @@ import { saveWorkspaceTimezone, saveWorkspaceLanguage, type FrontFacingLanguage 
 import { SendingDomainsPanel } from './SendingDomainsList.tsx';
 import { TopicsPanel } from './Topics.tsx';
 import { IngestKeys } from './IngestKeys.tsx';
+import { WhatsAppSettingsPanel } from './WhatsAppSettings.tsx';
 
-type SettingsTab = 'workspace' | 'domains' | 'topics' | 'api-keys';
+type SettingsTab = 'workspace' | 'domains' | 'whatsapp' | 'topics' | 'api-keys';
 
 /** A quiet-hours window (UI shape): from (startDay, startMin) to (endDay, endMin). */
 type QuietWin = { startDay: number; startMin: number; endDay: number; endMin: number };
@@ -164,7 +165,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
 
   return (
     <section data-testid="workspace-settings">
-      <PageHeader title="Workspace settings" subtitle="Sending domains, subscription topics, and delivery settings for this workspace." />
+      <PageHeader title="Workspace settings" subtitle="Sending domains, WhatsApp, subscription topics, and delivery settings for this workspace." />
 
       {/* Tabs */}
       <div class="mb-5 flex gap-1 border-b border-stone-200">
@@ -190,6 +191,16 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
         </button>
         <button
           type="button"
+          data-testid="settings-tab-whatsapp"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'whatsapp' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => navigate('/settings/whatsapp')}
+        >
+          WhatsApp
+        </button>
+        <button
+          type="button"
           data-testid="settings-tab-topics"
           class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
             tab === 'topics' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
@@ -212,6 +223,8 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
 
       {tab === 'domains' ? (
         <SendingDomainsPanel />
+      ) : tab === 'whatsapp' ? (
+        <WhatsAppSettingsPanel />
       ) : tab === 'topics' ? (
         <TopicsPanel />
       ) : tab === 'api-keys' ? (

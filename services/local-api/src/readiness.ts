@@ -86,6 +86,8 @@ const FIX_WORKSPACE_SENDING: ReadinessFix = { label: 'Open Workspace settings', 
 const FIX_DOMAINS: ReadinessFix = { label: 'Open Sending domains', route: ROUTE_DOMAINS };
 const FIX_STORAGE: ReadinessFix = { label: 'Open Storage', route: ROUTE_STORAGE };
 const FIX_POSTMASTER: ReadinessFix = { label: 'Open Sending domains', route: ROUTE_DOMAINS };
+/** WhatsApp is configured per workspace, in its own Workspace settings tab. */
+const FIX_WHATSAPP: ReadinessFix = { label: 'Open WhatsApp settings', route: '/settings/whatsapp' };
 
 /** Pure: turn the DB facts into the readiness report. No I/O. */
 export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
@@ -97,14 +99,18 @@ export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
     'SMS provider (019) connected',
     'Connect an SMS provider (019) under Connectors.',
     'Ready to send SMS.',
+    'company',
+    FIX_CONNECTORS,
   );
   const whatsapp = computeSimpleChannel(
     'whatsapp',
     'WhatsApp',
     i.hasWhatsappConnector,
-    'WhatsApp provider (Meta) connected',
-    'Connect a Meta WhatsApp provider under Connectors.',
+    'WhatsApp number (Meta) connected',
+    "Connect this workspace's WhatsApp number under Workspace settings → WhatsApp.",
     'Ready to send WhatsApp.',
+    'workspace',
+    FIX_WHATSAPP,
   );
   const storage = computeStorage(i.r2Configured);
   const postmaster = computePostmaster(i.sendingDomainCount ?? 0, i.gptVerifiedCount ?? 0, i.postmasterConfigured !== false);
@@ -116,15 +122,15 @@ export function computeReadiness(i: ReadinessInputs): WorkspaceReadiness {
   // Scope split for the settings-nav indicators.
   const resendReady = i.hasResendConnector && i.resendFromSet;
   const emailProviderOk = resendReady || i.hasSesConnector; // a provider is CONNECTED (company-level)
-  const companyErrorCount =
-    (emailProviderOk ? 0 : 1) + (i.hasSmsConnector ? 0 : 1) + (i.hasWhatsappConnector ? 0 : 1);
+  const companyErrorCount = (emailProviderOk ? 0 : 1) + (i.hasSmsConnector ? 0 : 1);
   // Sending-domain gaps (a verified domain + a sender) are shown UNLESS email is already
   // covered by a ready Resend connector (Resend verifies its own domain, so no in-app
   // sending domain is needed). Otherwise — including when NO email provider is connected
   // yet — a missing sending domain / sender is a real workspace-level gap to surface.
-  const workspaceErrorCount = resendReady
-    ? 0
-    : (i.verifiedDomainCount > 0 ? 0 : 1) + (i.senderCount > 0 ? 0 : 1);
+  // WhatsApp is a workspace-level gap: each workspace connects its own number.
+  const workspaceErrorCount =
+    (resendReady ? 0 : (i.verifiedDomainCount > 0 ? 0 : 1) + (i.senderCount > 0 ? 0 : 1)) +
+    (i.hasWhatsappConnector ? 0 : 1);
 
   return {
     checks,
@@ -195,13 +201,15 @@ function computeSimpleChannel(
   itemLabel: string,
   missingSummary: string,
   readySummary: string,
+  scope: 'company' | 'workspace',
+  fix: ReadinessFix,
 ): ReadinessCheck {
   return {
     id,
     label,
     severity: 'error',
     status: connected ? 'ready' : 'not_configured',
-    items: [{ label: itemLabel, ok: connected, scope: 'company', fix: FIX_CONNECTORS }],
+    items: [{ label: itemLabel, ok: connected, scope, fix }],
     summary: connected ? readySummary : missingSummary,
   };
 }
@@ -298,7 +306,8 @@ export async function gatherReadiness(pool: Pool, workspaceId: string): Promise<
   const hasSesConnector = conns.some((c) => c.channel === 'email' && c.provider === 'ses');
   const hasSmtpConnector = conns.some((c) => c.channel === 'email' && c.provider === 'smtp');
   const hasSmsConnector = conns.some((c) => c.channel === 'sms' && c.provider === '019');
-  const hasWhatsappConnector = conns.some((c) => c.channel === 'whatsapp' && c.provider === 'meta_whatsapp');
+  const wa = await pool.query('SELECT 1 FROM workspace_whatsapp_config WHERE workspace_id = $1 AND enabled', [workspaceId]);
+  const hasWhatsappConnector = (wa.rowCount ?? 0) > 0;
 
   const [dom, snd, r2, gpt] = await Promise.all([
     pool.query('SELECT count(*)::int AS n FROM sending_domains WHERE workspace_id = $1 AND verified', [workspaceId]),
