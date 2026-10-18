@@ -98,9 +98,12 @@ export function WhatsAppSettingsPanel() {
         </p>
       ) : null}
       <p class="mt-1 text-sm text-stone-500">
-        This workspace's own WhatsApp Business number. Find the phone number ID and the WhatsApp Business Account ID in
-        Meta's WhatsApp Manager, and create a permanent System User access token for that account. A number can be
-        connected to one workspace only.
+        This workspace's own WhatsApp Business number. A number can be connected to one workspace only.
+      </p>
+      <p class="mt-2 text-sm text-stone-500">
+        To connect: in Meta Business Manager → <strong>Partners</strong>, share your WhatsApp Business Account with our
+        business. We then create the access token for it on our side. A token made in your own Meta app will not
+        work: replies and delivery receipts would go to your app instead of here.
       </p>
 
       <div class="mt-4 grid max-w-xl gap-3">

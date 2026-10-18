@@ -25,6 +25,10 @@ Missing:
 | Config scope | **Workspace-only.** WhatsApp moves out of Company Connectors into a Workspace settings tab. One phone number belongs to exactly one workspace (globally unique) → inbound routing is unambiguous. |
 | Live updates | **SSE + Postgres LISTEN/NOTIFY**, polling as fallback. No extra cost (auto-stop is off in `fly.toml`). |
 | Unknown sender | **Auto-create a phone-only profile**, name from WhatsApp contact. |
+| Shared numbers | **Never.** A number belongs to one workspace system-wide (enforced, v0.138.0). Migrated config went to each company's oldest workspace. |
+| Opt-outs | **SMS and WhatsApp stay ONE opt-out group** (`sms_whatsapp`): opting out of either opts out of both. |
+| Replies vs. opt-out | An agent's reply **inside the 24h window** is sent even to someone opted out of marketing, because they messaged first. |
+| Connecting a number | **Partner sharing now, Embedded Signup later** (see Human prerequisites). |
 
 ## Phase 1 — Per-workspace config (minor bump)
 
@@ -98,6 +102,7 @@ Missing:
   - Free-form text is allowed only within 24h of `last_inbound_at`.
   - Outside the window, **template only**: the composer turns into a template picker with a banner saying why.
   - The server enforces the same rule with a 409, so we don't spend a call on Meta's error 131047.
+- **Consent:** a reply inside the 24h window is sent even if the person opted out of marketing (they messaged first). A template send outside the window respects the `sms_whatsapp` opt-out like any other send.
 - Sends go directly through `MetaWhatsAppProvider` (an interactive send; no outbox delay). The message row is written `pending`, then becomes `sent` with the wamid, or `failed` with a **Retry** action. Metered as `usage_counters.whatsapp_sent`. The send button auto-locks.
 - Later (not v1): sending attachments, emoji reactions, assignment / multiple agents, quick replies.
 
@@ -108,7 +113,7 @@ Sending already works; these close the gaps:
 - **Transactional WhatsApp:** add template support (`text_templates` → a Meta template reference). Today it is free-form only.
 - **New automation trigger:** a "WhatsApp reply received" event, plus an optional "Wait until reply" gate. Both reuse the `whatsapp_message_received` event and the existing `wait_until` condition. No new node type.
 - **Opt-out from WhatsApp:**
-  - An inbound `STOP` / `הסר` writes a `channel_optouts` row. (See open question 2: today that also stops SMS.)
+  - An inbound `STOP` / `הסר` writes the `sms_whatsapp` `channel_optouts` row, which opts the person out of WhatsApp AND SMS (one group, by decision).
   - Meta error 131050 ("user stopped marketing messages") does the same.
 - Fix the stale `TODO(real-providers)` mentions in `CLAUDE.md` and `.a5c/PROVIDERS-SETUP.md`.
 
@@ -137,15 +142,12 @@ Sending already works; these close the gaps:
 
 1. Create the platform **Meta app** (Business type) and add the WhatsApp product.
 2. Set the webhook URL `https://journeys.on-grow.com/webhooks/whatsapp` with the verify token, and subscribe the `messages` field.
-3. Serving OTHER businesses' WABAs from one app requires **Meta App Review** (`whatsapp_business_messaging`, `whatsapp_business_management`) and, for self-serve onboarding, becoming a **Tech Provider** (Embedded Signup). Until then, each workspace pastes a System User token for its WABA.
-4. Set `META_APP_SECRET` and `META_WEBHOOK_VERIFY_TOKEN` in the password manager, SSM and Fly.
-
+3. **Tokens must be issued for OUR app.** `POST /<waba>/subscribed_apps` subscribes the app the token belongs to. A token the customer creates in their own Meta app would route their webhooks to *their* app, and no reply would ever reach us.
+   - **Now: partner sharing.** The customer opens Meta Business Manager → Partners and shares their WhatsApp Business Account with OUR business. We create a System User token on our side, for our app, and paste it into their workspace's WhatsApp tab.
+   - **Later: Embedded Signup.** A "Connect with Facebook" button that does this self-serve. It needs our app approved as a Meta **Tech Provider** (business verification + App Review for `whatsapp_business_messaging` / `whatsapp_business_management`). Start that process in parallel; it takes days to weeks.
 ## Open questions
 
-1. A company that shares one number across several workspaces today: is "oldest workspace keeps it" right?
-2. Should a WhatsApp STOP also stop SMS? Today `sms_whatsapp` is one opt-out group. Splitting it is a migration plus a preference-center change.
-3. Can a 1:1 agent reply go to someone who opted out of marketing? Proposed: **yes, inside the 24h window only**, because they messaged us first.
-4. Embedded Signup (connecting with Facebook in one click instead of pasting a token): v1 or later?
+None. All four were answered on 2026-10-19 and recorded under Decisions.
 
 ## Release order
 
