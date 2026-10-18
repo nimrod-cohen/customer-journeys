@@ -6,6 +6,7 @@
 // Split into a PURE `computeReadiness(inputs)` (unit-tested exhaustively) and a thin
 // `gatherReadiness(pool, workspaceId)` that reads the DB state and calls it.
 import type { Pool } from 'pg';
+import { isEmailChannelReady } from '@cdp/shared';
 import { postmasterFromEnv } from './postmaster.js';
 
 export type ReadinessChannelId = 'email' | 'sms' | 'whatsapp' | 'storage' | 'postmaster';
@@ -150,7 +151,7 @@ function computeEmail(i: ReadinessInputs): ReadinessCheck {
       scope: 'workspace',
       fix: FIX_WORKSPACE_SENDING,
     });
-    const ready = i.resendFromSet;
+    const ready = isEmailChannelReady(i);
     return {
       id: 'email',
       label: 'Email',
@@ -170,7 +171,7 @@ function computeEmail(i: ReadinessInputs): ReadinessCheck {
   items.push({ label: 'A verified sending domain', ok: providerOk && domainOk, scope: 'workspace', fix: FIX_DOMAINS });
   items.push({ label: 'A sender address (From)', ok: providerOk && senderOk, scope: 'workspace', fix: FIX_DOMAINS });
 
-  const ready = providerOk && domainOk && senderOk;
+  const ready = isEmailChannelReady(i);
   let summary: string;
   if (!hasProvider) summary = 'Connect an email provider under Connectors.';
   else if (!domainOk) summary = 'Verify a sending domain under Workspace settings → Sending domains.';

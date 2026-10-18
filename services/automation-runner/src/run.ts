@@ -20,6 +20,7 @@
 // (deps without `withTx`); the real concurrency guarantee comes from `withTx`.
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import {
+  isEmailChannelReady,
   isValidTimeZone,
   isJsSpec,
   resolveValueSpec,
@@ -222,25 +223,44 @@ interface TickOutcome {
  */
 /**
  * Which messaging channels the workspace's company can SEND on, from its connectors
- * (mirrors local-api's channelsForWorkspace): email needs a `resend` connector OR a
- * `ses` connector WITH a verified sending_domain; sms needs `019`; whatsapp needs
- * `meta_whatsapp`. A automation send node for a DISABLED channel is skipped — no
- * outbox row — while the enrollment still advances (the step is ignored).
+ * (mirrors local-api's channelsForWorkspace): email follows the shared
+ * `isEmailChannelReady` rule (Resend + a From, or SES/self-hosted SMTP + a verified
+ * sending domain + a sender); sms needs `019`; whatsapp needs `meta_whatsapp`. An
+ * automation send node for a DISABLED channel is skipped — no outbox row — while the
+ * enrollment still advances (the step is ignored).
  */
 async function resolveChannels(read: Reader, workspaceId: string): Promise<{ email: boolean; sms: boolean; whatsapp: boolean }> {
-  const { rows } = await read.query<{ channel: string; provider: string }>(
-    'SELECT c.channel, c.provider FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id WHERE w.id = $1 AND c.enabled',
+  const { rows } = await read.query<{ channel: string; provider: string; config: Record<string, unknown> | null }>(
+    'SELECT c.channel, c.provider, c.config FROM company_connectors c JOIN workspaces w ON w.company_id = c.company_id WHERE w.id = $1 AND c.enabled',
     [workspaceId],
   );
   // A company that hasn't opted into connectors at all (legacy / dev / test using
   // the mock providers) is NOT gated — never skip. Gating kicks in once ≥1
   // connector exists (then a channel with no connector is disabled → skipped).
   if (rows.length === 0) return { email: true, sms: true, whatsapp: true };
-  const has = (ch: string, pr?: string): boolean => rows.some((r) => r.channel === ch && (!pr || r.provider === pr));
-  let email = has('email', 'resend');
-  if (!email && has('email', 'ses')) {
-    const vd = await read.query('SELECT 1 FROM sending_domains WHERE workspace_id = $1 AND verified LIMIT 1', [workspaceId]);
-    email = vd.rows.length > 0;
+  const find = (ch: string, pr: string) => rows.find((r) => r.channel === ch && r.provider === pr);
+  const has = (ch: string, pr: string): boolean => !!find(ch, pr);
+  const resend = find('email', 'resend');
+  let email = false;
+  if (rows.some((r) => r.channel === 'email')) {
+    // Same facts local-api's gatherReadiness reads, in one round trip.
+    const { rows: f } = await read.query<{ default_from: string | null; domains: number; senders: number }>(
+      `SELECT w.settings->>'default_from' AS default_from,
+              (SELECT count(*)::int FROM sending_domains d WHERE d.workspace_id = $1 AND d.verified) AS domains,
+              (SELECT count(*)::int FROM domain_senders s WHERE s.workspace_id = $1) AS senders
+         FROM workspaces w WHERE w.id = $1`,
+      [workspaceId],
+    );
+    const facts = f[0];
+    const nonBlank = (v: unknown): boolean => typeof v === 'string' && v.trim() !== '';
+    email = isEmailChannelReady({
+      hasResendConnector: !!resend,
+      resendFromSet: !!resend && (nonBlank(facts?.default_from) || nonBlank(resend.config?.['from'])),
+      hasSesConnector: has('email', 'ses'),
+      hasSmtpConnector: has('email', 'smtp'),
+      verifiedDomainCount: facts?.domains ?? 0,
+      senderCount: facts?.senders ?? 0,
+    });
   }
   return { email, sms: has('sms', '019'), whatsapp: has('whatsapp', 'meta_whatsapp') };
 }

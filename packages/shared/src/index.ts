@@ -17,6 +17,9 @@ export * from './expression.js';
 // automation time math share ONE implementation, §9B).
 export * from './timezone.js';
 
+// The single email-channel readiness rule (local-api readiness + automation runner).
+export * from './email-readiness.js';
+
 /** Workspace-scoped roles stored in workspace_users.role (§3A). */
 export type WorkspaceRole = 'owner' | 'marketer' | 'accounting';
 
