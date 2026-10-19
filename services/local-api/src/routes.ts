@@ -60,6 +60,17 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'DELETE /workspace/whatsapp': 'manage_sending_domain',
   // WhatsApp message templates (managed in Asset management by marketers).
   'GET /whatsapp/templates': 'manage_content',
+  // WhatsApp inbox (conversations + replying). The media bytes and the live stream
+  // are raw routes in app.ts, enforcing the same capability through authenticate().
+  'GET /whatsapp/conversations': 'manage_content',
+  'GET /whatsapp/conversations/:id': 'manage_content',
+  'GET /whatsapp/conversations/:id/messages': 'manage_content',
+  'POST /whatsapp/conversations/:id/messages': 'manage_content',
+  'POST /whatsapp/conversations/:id/read': 'manage_content',
+  'POST /whatsapp/messages/:id/retry': 'manage_content',
+  'GET /whatsapp/unread': 'manage_content',
+  'GET /profiles/:id/whatsapp': 'manage_content',
+  'POST /profiles/:id/whatsapp/messages': 'manage_content',
   'POST /whatsapp/templates': 'manage_content',
   'DELETE /whatsapp/templates/:name': 'manage_content',
   'GET /company/logo': 'manage_sending_domain',

@@ -28,6 +28,13 @@ export const ICONS: Record<string, JSX.Element> = {
     </I>
   ),
   broadcasts: <I d="M3 11l18-7-7 18-2.5-7.5L3 11Z" />,
+  // A speech bubble with lines: a two-way conversation.
+  inbox: (
+    <I>
+      <path d="M4 5h16v11H9l-5 4V5Z" />
+      <path d="M8 9h8M8 12h5" />
+    </I>
+  ),
   automations: (
     <I>
       <circle cx="5" cy="6" r="2" />

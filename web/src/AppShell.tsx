@@ -27,6 +27,8 @@ import { Help } from './screens/Help.js';
 import { Activity } from './screens/Activity.js';
 import { TemplateEditor } from './screens/TemplateEditor.tsx';
 import { SetupScreen } from './screens/Setup.tsx';
+import { WhatsAppInbox } from './screens/WhatsAppInbox.tsx';
+import { whatsappUnreadStore } from './store/whatsappUnread.js';
 import { DialogHost } from './ui/dialog.tsx';
 import { ToastHost } from './ui/toast.tsx';
 import { EmailDesignerDrawer } from './components/EmailDesignerDrawer.tsx';
@@ -38,6 +40,9 @@ function underNav(route: string, itemPath: string): boolean {
 }
 
 function screenFor(path: string): JSX.Element {
+  // WhatsApp inbox: the list at /inbox, an open conversation at /inbox/:id.
+  if (path === '/inbox') return <WhatsAppInbox />;
+  if (path.startsWith('/inbox/')) return <WhatsAppInbox conversationId={path.slice('/inbox/'.length)} />;
   // Profile detail is a sub-route of /profiles carrying the id in the path.
   if (path.startsWith('/profiles/')) {
     return <ProfileDetail id={path.slice('/profiles/'.length)} />;
@@ -125,7 +130,12 @@ export function AppShell(): JSX.Element {
   const session = useStore(sessionStore);
   const route = useStore(routeStore);
   const readinessTick = useStore(readinessStore);
-  const nav = buildNav(session.role);
+  // The WhatsApp inbox appears only once this workspace can send WhatsApp — a
+  // workspace that never connected a number has nothing to show there.
+  const [whatsappOn, setWhatsappOn] = useState(false);
+  const [whatsappUnread, setWhatsappUnread] = useState(0);
+  const whatsappUnreadTick = useStore(whatsappUnreadStore);
+  const nav = buildNav(session.role).filter((n) => n.id !== 'inbox' || whatsappOn);
   // Mobile nav drawer: the sidebar slides in over an overlay below md; it stays a
   // fixed in-flow sidebar at md+ (desktop unchanged). Closes on route change.
   const [navOpen, setNavOpen] = useState(false);
@@ -166,6 +176,33 @@ export function AppShell(): JSX.Element {
         setWorkspaceErrors(0);
       });
   }, [canSeeSettings, session.workspaceId, route, readinessTick]);
+  const canSeeContent = buildNav(session.role).some((n) => n.id === 'inbox') && !!session.workspaceId;
+  useEffect(() => {
+    if (!canSeeContent) {
+      setWhatsappOn(false);
+      return;
+    }
+    void api
+      .get<{ channels: { whatsapp: boolean } }>('/company/channels')
+      .then((r) => setWhatsappOn(r.channels.whatsapp === true))
+      .catch(() => setWhatsappOn(false));
+  }, [canSeeContent, session.workspaceId, readinessTick]);
+  // Unread conversations: refreshed on navigation and every minute.
+  useEffect(() => {
+    if (!whatsappOn) {
+      setWhatsappUnread(0);
+      return;
+    }
+    const load = (): void =>
+      void api
+        .get<{ conversations: number }>('/whatsapp/unread')
+        .then((r) => setWhatsappUnread(r.conversations))
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [whatsappOn, session.workspaceId, route, whatsappUnreadTick]);
+
   const setupBadgeFor = (id: string): number =>
     id === 'company' ? companyErrors : id === 'settings' ? workspaceErrors : 0;
 
@@ -180,7 +217,11 @@ export function AppShell(): JSX.Element {
   // The Setup summary page has no nav item — it's reached from the settings-nav badges;
   // permitted for anyone who can see a settings screen.
   const canViewSetup = (route === '/setup' || route.startsWith('/setup/')) && canSeeSettings;
-  const permitted = canEditor || canAccount || canViewSetup || nav.some((n) => underNav(route, n.path));
+  // The inbox is permitted by CAPABILITY, not by its nav item's visibility: whether
+  // WhatsApp is connected arrives asynchronously, and a reload of /inbox/:id must not
+  // bounce to the first screen before it does.
+  const canInbox = (route === '/inbox' || route.startsWith('/inbox/')) && canSeeContent;
+  const permitted = canEditor || canAccount || canViewSetup || canInbox || nav.some((n) => underNav(route, n.path));
   const effectiveRoute = permitted ? route : (nav[0]?.path ?? route);
   useEffect(() => {
     if (!permitted && nav[0] && route !== nav[0].path) navigate(nav[0].path);
@@ -264,6 +305,15 @@ export function AppShell(): JSX.Element {
               >
                 <span class={active ? 'text-brand-300' : 'text-stone-400'}>{ICONS[item.id]}</span>
                 {item.label}
+                {item.id === 'inbox' && whatsappUnread > 0 ? (
+                  <span
+                    data-testid="nav-inbox-unread"
+                    title={`${whatsappUnread} unread conversation${whatsappUnread === 1 ? '' : 's'}`}
+                    class="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-white"
+                  >
+                    {whatsappUnread}
+                  </span>
+                ) : null}
                 {setupBadgeFor(item.id) > 0 ? (
                   <span
                     role="button"

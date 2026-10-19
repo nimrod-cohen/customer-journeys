@@ -101,8 +101,11 @@ const preview = (m: { type: string; body: string | null }): string =>
 
 /** Record one inbound message. Returns false for a duplicate (already stored). */
 export async function recordInboundMessage(pool: Pool, ws: string, m: WhatsAppInboundMessage): Promise<boolean> {
-  const phone = normalizePhone(m.from, null);
-  if (!phone) return false; // Meta always sends a full international number; nothing to key on otherwise
+  // Meta's sender id IS a live WhatsApp account, so it is authoritative: when the
+  // phone library rejects it (new ranges, numbers it considers fictional) we keep
+  // Meta's own digits rather than silently dropping a real customer's message.
+  const phone = normalizePhone(m.from, null) ?? (/^\+\d{6,15}$/.test(m.from) ? m.from : null);
+  if (!phone) return false;
   const at = m.timestamp.getTime() > 0 ? m.timestamp : new Date();
 
   return inTx(pool, async (client) => {

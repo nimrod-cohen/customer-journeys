@@ -13,6 +13,7 @@
 //
 // workspace_id is ALWAYS from the authorizer context (the token), NEVER the body.
 import type { Pool } from 'pg';
+import type { Capability, WorkspaceContext } from '@cdp/shared';
 import {
   contextFromAuthorizer,
   enforceRoute,
@@ -45,21 +46,26 @@ function jsonError(status: number, message: string): HandlerResponse {
   return { status, body: { error: message } };
 }
 
-/**
- * Process one API request end-to-end (auth → route → enforce → handle).
- * Returns a JSON HandlerResponse. Never throws for expected auth/role failures —
- * they map to 401/403/404. Unexpected handler errors become 500.
- */
-export async function dispatch(req: ApiRequest, env: DispatchEnv): Promise<HandlerResponse> {
-  // 1. Authenticate (local authorizer over real PG).
-  const bearer = extractBearer(req.authorization);
-  const auth = await runLocalAuthorizer(bearer, env.lookups);
-  if (!auth.ok) return jsonError(auth.status, auth.reason);
+/** The trusted context for a request, or why there is none. */
+export type AuthResult =
+  | { ok: true; ctx: WorkspaceContext }
+  | { ok: false; status: number; error: string };
 
-  // 2. Match the route → required capability.
-  const matched = matchRoute(req.method, req.path);
-  if (!matched) return jsonError(404, 'route not found');
-  const capability = capabilityForRoute(matched.key);
+/**
+ * Steps 1 + 3 of the pipeline, on their own: authenticate the bearer, build the
+ * TRUSTED context, and enforce `capability` SERVER-SIDE. Shared with the few routes
+ * that cannot be JSON handlers (a byte stream, a server-sent event stream) so they
+ * get exactly the same checks. `null` capability = any authenticated member.
+ */
+export async function authenticate(
+  authorization: string | null,
+  env: Pick<DispatchEnv, 'lookups'>,
+  capability: Capability | null,
+): Promise<AuthResult> {
+  // 1. Authenticate (local authorizer over real PG).
+  const bearer = extractBearer(authorization);
+  const auth = await runLocalAuthorizer(bearer, env.lookups);
+  if (!auth.ok) return { ok: false, status: auth.status, error: auth.reason };
 
   // 3. Build the TRUSTED context from the authorizer-injected string context and
   //    enforce the route's capability SERVER-SIDE.
@@ -71,16 +77,16 @@ export async function dispatch(req: ApiRequest, env: DispatchEnv): Promise<Handl
   // identity-only context so /me and /admin/* work. Regular users (and admins WITH
   // an active workspace) still take the strict path unchanged.
   const isPlatformAdmin = authorizerCtx.is_platform_admin === 'true';
-  const ctx =
+  const ctx: WorkspaceContext =
     !authorizerCtx.workspace_id && isPlatformAdmin
-      ? { workspaceId: '', userId: authorizerCtx.sub ?? '', isPlatformAdmin: true }
+      ? ({ workspaceId: '', userId: authorizerCtx.sub ?? '', isPlatformAdmin: true } as WorkspaceContext)
       : contextFromAuthorizer({ requestContext: { authorizer: authorizerCtx } });
   if (capability !== null) {
     try {
       enforceRoute(ctx, capability);
     } catch (e) {
       if (e instanceof RouteForbiddenError || e instanceof CapabilityError) {
-        return jsonError(403, `forbidden: requires ${capability}`);
+        return { ok: false, status: 403, error: `forbidden: requires ${capability}` };
       }
       throw e;
     }
@@ -96,8 +102,24 @@ export async function dispatch(req: ApiRequest, env: DispatchEnv): Promise<Handl
     capability !== 'view_all_workspaces' &&
     capability !== 'view_billing'
   ) {
-    return jsonError(403, 'no active workspace — switch into a workspace first');
+    return { ok: false, status: 403, error: 'no active workspace — switch into a workspace first' };
   }
+  return { ok: true, ctx };
+}
+
+/**
+ * Process one API request end-to-end (auth → route → enforce → handle).
+ * Returns a JSON HandlerResponse. Never throws for expected auth/role failures —
+ * they map to 401/403/404. Unexpected handler errors become 500.
+ */
+export async function dispatch(req: ApiRequest, env: DispatchEnv): Promise<HandlerResponse> {
+  // 2. Match the route → required capability (auth first, inside authenticate()).
+  const matched = matchRoute(req.method, req.path);
+  const capability = matched ? capabilityForRoute(matched.key) : null;
+  const authed = await authenticate(req.authorization, env, capability);
+  if (!authed.ok) return jsonError(authed.status, authed.error);
+  if (!matched) return jsonError(404, 'route not found');
+  const ctx = authed.ctx;
 
   // 4. Invoke the handler (scopes all DB ops to ctx.workspaceId).
   const handler = HANDLERS[matched.key];

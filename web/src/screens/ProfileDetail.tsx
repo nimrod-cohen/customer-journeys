@@ -16,6 +16,9 @@ import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
 import { MergeProfileDrawer } from './MergeProfileDrawer.js';
 import { SendEventDrawer } from './SendEventDrawer.js';
+import { ChatThread } from '../whatsapp/ChatThread.tsx';
+import { useWhatsAppLive } from '../whatsapp/live.js';
+import type { Conversation } from '../whatsapp/logic.js';
 
 interface Profile {
   id: string;
@@ -59,6 +62,7 @@ const ALL_TABS = [
   { id: 'attributes', label: 'Attributes' },
   { id: 'subscriptions', label: 'Subscriptions' },
   { id: 'delivery', label: 'Delivery' },
+  { id: 'whatsapp', label: 'WhatsApp' },
   { id: 'events', label: 'Events' },
   { id: 'segments', label: 'Segments' },
 ] as const;
@@ -100,7 +104,15 @@ export function ProfileDetail({ id }: { id: string }) {
       .then((r) => setHasTopics(Array.isArray(r.topics) && r.topics.length > 0))
       .catch(() => setHasTopics(false));
   }, []);
-  const TABS = ALL_TABS.filter((t) => t.id !== 'subscriptions' || hasTopics);
+  // The WhatsApp tab only exists once this workspace can send WhatsApp.
+  const [hasWhatsapp, setHasWhatsapp] = useState(false);
+  useEffect(() => {
+    void api
+      .get<{ channels: { whatsapp: boolean } }>('/company/channels')
+      .then((r) => setHasWhatsapp(r.channels.whatsapp === true))
+      .catch(() => setHasWhatsapp(false));
+  }, []);
+  const TABS = ALL_TABS.filter((t) => (t.id !== 'subscriptions' || hasTopics) && (t.id !== 'whatsapp' || hasWhatsapp));
   const [profile, setProfile] = useState<Profile | null>(null);
   const [features, setFeatures] = useState<Features | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -302,12 +314,64 @@ export function ProfileDetail({ id }: { id: string }) {
         <SubscriptionsTab profileId={profile.id} />
       ) : tab === 'delivery' ? (
         <DeliveryTab id={id} />
+      ) : tab === 'whatsapp' ? (
+        <WhatsAppTab id={id} />
       ) : tab === 'events' ? (
         <EventsTab id={id} key={eventsReloadKey} />
       ) : (
         <SegmentsTab id={id} />
       )}
     </section>
+  );
+}
+
+// --- WhatsApp tab: this person's conversation (the inbox's thread, reused) ---
+
+function WhatsAppTab({ id }: { id: string }) {
+  const [state, setState] = useState<{ phone: string | null; conversation: Conversation | null } | null>(null);
+  const [signal, setSignal] = useState(0);
+  const load = async (): Promise<void> => {
+    setState(await api.get<{ phone: string | null; conversation: Conversation | null }>(`/profiles/${id}/whatsapp`));
+  };
+  useEffect(() => void load(), [id]);
+  useWhatsAppLive((e) => {
+    if (!e || !state?.conversation || e.conversation_id === state.conversation.id) {
+      void load();
+      setSignal((n) => n + 1);
+    }
+  });
+
+  if (!state) return <p class="text-sm text-stone-500">Loading…</p>;
+  if (!state.phone) {
+    return <EmptyState>This profile has no phone number, so there is no WhatsApp conversation.</EmptyState>;
+  }
+  return (
+    <Card data-testid="profile-whatsapp" class="overflow-hidden p-0">
+      <div class="flex items-center justify-between gap-3 border-b border-stone-200 px-4 py-2.5">
+        <span class="text-sm font-semibold text-ink-900">{state.phone}</span>
+        {state.conversation ? (
+          <button
+            type="button"
+            data-testid="profile-whatsapp-open-inbox"
+            class="text-xs font-semibold text-brand-700 hover:underline"
+            onClick={() => navigate(`/inbox/${state.conversation!.id}`)}
+          >
+            Open in inbox
+          </button>
+        ) : null}
+      </div>
+      <ChatThread
+        class="h-[560px]"
+        conversation={state.conversation}
+        profileId={id}
+        refreshSignal={signal}
+        onSent={() => {
+          void load();
+          setSignal((n) => n + 1);
+        }}
+        onRead={() => void load()}
+      />
+    </Card>
   );
 }
 

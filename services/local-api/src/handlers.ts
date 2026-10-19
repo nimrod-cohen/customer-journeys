@@ -39,6 +39,17 @@ import {
 } from '@cdp/shared';
 import { scopedQuery, encryptSecret, decryptSecret, isEncryptedSecret } from '@cdp/db';
 import {
+  listWhatsappConversations,
+  getWhatsappConversation,
+  listWhatsappMessages,
+  sendWhatsappConversationMessage,
+  markWhatsappConversationRead,
+  retryWhatsappMessage,
+  getWhatsappUnread,
+  getProfileWhatsapp,
+  sendProfileWhatsappMessage,
+} from './whatsapp-inbox.js';
+import {
   listWhatsAppTemplates,
   createWhatsAppTemplate,
   fetchWhatsAppPhoneNumber,
@@ -8027,6 +8038,15 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /company/channel-config': putCompanyChannelConfig,
   'DELETE /company/channel-config': deleteCompanyChannelConfig,
   'GET /workspace/whatsapp': getWorkspaceWhatsapp,
+  'GET /whatsapp/conversations': listWhatsappConversations,
+  'GET /whatsapp/conversations/:id': getWhatsappConversation,
+  'GET /whatsapp/conversations/:id/messages': listWhatsappMessages,
+  'POST /whatsapp/conversations/:id/messages': sendWhatsappConversationMessage,
+  'POST /whatsapp/conversations/:id/read': markWhatsappConversationRead,
+  'POST /whatsapp/messages/:id/retry': retryWhatsappMessage,
+  'GET /whatsapp/unread': getWhatsappUnread,
+  'GET /profiles/:id/whatsapp': getProfileWhatsapp,
+  'POST /profiles/:id/whatsapp/messages': sendProfileWhatsappMessage,
   'PUT /workspace/whatsapp': putWorkspaceWhatsapp,
   'DELETE /workspace/whatsapp': deleteWorkspaceWhatsapp,
   'GET /whatsapp/templates': listWhatsappTemplates,

@@ -27,6 +27,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // own application over the API.
   { id: 'transactional', label: 'Transactional messages', path: '/transactional', capability: 'manage_content' },
   // Asset management = email templates + image gallery tabs on one screen.
+  // Two-way WhatsApp: every conversation in the workspace. AppShell hides it until
+  // the workspace has connected a number.
+  { id: 'inbox', label: 'WhatsApp inbox', path: '/inbox', capability: 'manage_content' },
   { id: 'templates', label: 'Asset management', path: '/templates', capability: 'manage_content' },
   // The email editor itself (/editor) has no standalone nav item — it is reached
   // from the Templates list and from the "Design email" action on Broadcasts.

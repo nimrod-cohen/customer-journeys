@@ -73,7 +73,7 @@ Missing:
   - Phase 4 adds the authenticated `GET /whatsapp/media/:messageId`.
 - New secrets: `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`. Store them in all 3 locations (password manager, SSM, Fly).
 
-## Phase 4 — Chat UI + live updates (minor bump)
+## Phase 4 — Chat UI + live updates (minor bump) — built v0.140.0
 
 **Read API** (`manage_content`, workspace-scoped):
 - `GET /whatsapp/conversations?q=&cursor=` — the inbox list, newest first.
@@ -82,7 +82,7 @@ Missing:
 - `GET /profiles/:id/whatsapp` — returns the conversation for that profile.
 
 **Live updates:** `GET /whatsapp/stream` (SSE):
-- **Auth:** EventSource can't send headers. The client first gets a short-lived stream ticket from `POST /whatsapp/stream-ticket`, then opens `?ticket=`.
+- **Auth:** EventSource can't send headers, so the SPA reads the stream with an authenticated `fetch` instead (no ticket endpoint needed).
 - **Server side:** each web machine holds ONE `LISTEN wa_events` connection on the direct (non-pooled) `DATABASE_URL`. The Supabase pooler in transaction mode can't LISTEN. The machine fans each notification out to the open streams of that workspace only.
 - **Events:** `message.new`, `message.status`, `conversation.updated`. The client refetches by id, so no message content travels over NOTIFY.
 - **Keep-alive:** a heartbeat every 25 seconds keeps Fly's proxy from closing idle streams.
@@ -95,7 +95,7 @@ Missing:
 - **Profile → "WhatsApp" tab** — the SAME `ChatThread` component, scoped to the profile. It shows a "No conversation yet" state with the template composer.
 - **Shared components** in `web/src/whatsapp/`: `ConversationList`, `ChatThread`, `Composer`, and `useWhatsAppStream()`.
 
-## Phase 5 — Replying from the chat (part of Phase 4 release)
+## Phase 5 — Replying from the chat (part of Phase 4 release) — built v0.140.0
 
 - `POST /whatsapp/conversations/:id/messages` `{text}` | `{template:{name, language, params}}`. Profile-only start: `POST /profiles/:id/whatsapp/messages`.
 - **24h customer-service window** (Meta rule):

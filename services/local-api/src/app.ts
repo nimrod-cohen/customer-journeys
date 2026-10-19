@@ -26,6 +26,9 @@ import { buildHealth, type HealthDeps } from './health.js';
 import { ingestTrack, ingestIdentify, sendTransactional, r2StorageForWorkspace } from './handlers.js';
 import { decideMailEvent, buildMessageLookup, type MessageRef } from './mail-events.js';
 import { storeWebhook, processInboxRow } from './whatsapp-inbound.js';
+import { sharedWhatsAppHub, type WhatsAppEventHub } from './whatsapp-stream.js';
+import { streamSSE } from 'hono/streaming';
+import { authenticate } from './dispatch.js';
 import { verifyMetaSignature } from '@cdp/channels';
 import {
   buildEmailEventInsert,
@@ -53,6 +56,8 @@ export interface CreateAppOptions {
   readonly deps?: LocalApiDeps;
   /** Optional health deps (DB ping + DLQ probe). Defaults to a pool `SELECT 1`. */
   readonly health?: HealthDeps;
+  /** The WhatsApp live-update hub. Defaults to the process-wide one (LISTEN on demand). */
+  readonly whatsappHub?: WhatsAppEventHub;
   /**
    * Absolute path to the built SPA (`web/dist`). When set, this ONE service also
    * serves the admin SPA — `/` → index.html, `/static/*` → the hashed bundles — so
@@ -275,6 +280,68 @@ export function createApp(opts: CreateAppOptions): Hono {
     const id = await storeWebhook(opts.pool, payload);
     await processInboxRow(opts.pool, id, payload);
     return c.json({ ok: true }, 200);
+  });
+
+  // ── WhatsApp inbox: media bytes + the live stream ──────────────────────────
+  // Not JSON handlers, so they live here — but they run the SAME authenticate() +
+  // capability check as every routed request, and scope by the token's workspace.
+
+  // Customer media, ONLY to a signed-in member of the workspace. Never public by
+  // id (unlike /assets/:id): this is what a customer sent, e.g. an ID card.
+  app.get('/whatsapp/media/:id', async (c) => {
+    const authed = await authenticate(c.req.header('authorization') ?? null, env, 'manage_content');
+    if (!authed.ok) return c.json({ error: authed.error }, authed.status as 401);
+    const ws = authed.ctx.workspaceId;
+    const id = c.req.param('id');
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return c.json({ error: 'not found' }, 404);
+    const { rows } = await opts.pool.query<{ mime_type: string; storage: string; r2_key: string | null; data: Buffer | null; filename: string | null }>(
+      `SELECT wm.mime_type, wm.storage, wm.r2_key, wm.data, m.media->>'filename' AS filename
+         FROM whatsapp_media wm JOIN whatsapp_messages m ON m.id = wm.message_id AND m.workspace_id = wm.workspace_id
+        WHERE wm.workspace_id = $1 AND wm.message_id = $2`,
+      [ws, id],
+    );
+    const r = rows[0];
+    if (!r) return c.json({ error: 'not found' }, 404);
+    let bytes: Buffer | null = r.data;
+    if (r.storage === 'r2' && r.r2_key) {
+      const storage = await r2StorageForWorkspace(opts.pool, ws, deps.makeR2Storage);
+      bytes = (await storage?.get(r.r2_key))?.body ?? null;
+    }
+    if (!bytes) return c.json({ error: 'not found' }, 404);
+    const headers: Record<string, string> = {
+      'content-type': r.mime_type,
+      'cache-control': 'private, max-age=3600',
+      'x-content-type-options': 'nosniff',
+    };
+    if (r.filename) headers['content-disposition'] = `inline; filename*=UTF-8''${encodeURIComponent(r.filename)}`;
+    return c.body(new Uint8Array(bytes), 200, headers);
+  });
+
+  // Server-sent events: one line per conversation change in THIS workspace. The SPA
+  // reads it with an authenticated fetch (EventSource cannot send the bearer) and
+  // refetches what changed — no message content travels on the stream.
+  app.get('/whatsapp/stream', async (c) => {
+    const authed = await authenticate(c.req.header('authorization') ?? null, env, 'manage_content');
+    if (!authed.ok) return c.json({ error: authed.error }, authed.status as 401);
+    const hub: WhatsAppEventHub = opts.whatsappHub ?? sharedWhatsAppHub();
+    const ws = authed.ctx.workspaceId;
+    return streamSSE(c, async (stream) => {
+      let closed = false;
+      const unsubscribe = hub.subscribe(ws, (e) => {
+        void stream.writeSSE({ event: e.kind, data: JSON.stringify(e) });
+      });
+      stream.onAbort(() => {
+        closed = true;
+        unsubscribe();
+      });
+      await stream.writeSSE({ event: 'ready', data: '{}' });
+      // A comment line every 25s keeps proxies (Fly's included) from closing an
+      // idle stream.
+      while (!closed) {
+        await stream.sleep(25_000);
+        if (!closed) await stream.write(': keep-alive\n\n');
+      }
+    });
   });
 
   // ── Inbound bounce / spam-report ingestion from our own mail server ─────────

@@ -256,6 +256,36 @@ pure parsing in `@cdp/channels` `whatsapp-webhook.ts`).
 - Conversation/message `profile_id` FKs are **ON DELETE CASCADE** (erasing a person erases
   their chat), and `deleteProfile` also removes their R2 media objects.
 
+## WhatsApp inbox (conversations UI + replying)
+
+`/inbox` (nav "WhatsApp inbox", hidden until the workspace can send WhatsApp) and the
+profile's **WhatsApp** tab render the SAME `web/src/whatsapp/ChatThread.tsx`. API:
+`services/local-api/src/whatsapp-inbox.ts` (`manage_content`, workspace-scoped, foreign
+id → 404).
+
+- **Replying follows Meta's 24h rule**: free text only within 24h of `last_inbound_at`,
+  else an approved template (409 `window_closed`, enforced server-side). **Consent:**
+  inside the window a reply reaches even someone opted out of marketing (they wrote
+  first); outside it, `sms_whatsapp` opt-out blocks (409 `opted_out`). SMS and WhatsApp
+  stay ONE opt-out group by decision.
+- A reply is sent directly (no outbox), then recorded through the SAME
+  `buildWhatsAppOutboundRecord` as broadcasts, plus `messages_log` + `usage_counters`.
+  A failed send is kept in the thread under a local `failed:<uuid>` wamid; Retry
+  replaces it whether it succeeds or fails again.
+- **Live updates = SSE over `pg_notify('wa_events')`** (`whatsapp-stream.ts`): ONE
+  dedicated LISTEN connection per process, started with the first open stream, fanned out
+  per workspace. It needs a direct or session-mode connection (`DATABASE_DIRECT_URL`,
+  falling back to `DATABASE_URL`): a transaction-mode pooler NEVER delivers notifications,
+  silently. That is why the SPA ALSO polls every 30s. The SPA reads the stream with an
+  authenticated `fetch` (EventSource cannot send the bearer).
+- `GET /whatsapp/stream` and `GET /whatsapp/media/:id` are raw Hono routes (bytes / an
+  event stream), so they call the shared `authenticate()` from `dispatch.ts` — same
+  bearer + capability check as every routed request. Never add a raw route without it.
+- **Meta's sender id is authoritative.** When `normalizePhone` rejects a WhatsApp sender
+  (new or "fictional" ranges), keep Meta's `+digits` — dropping it lost real messages.
+- Media is fetched by the browser with the bearer and shown from a blob URL; Meta's media
+  id never reaches the browser.
+
 ## One email provider per company (exclusive)
 
 A company sends email through **exactly one** provider — self-hosted `smtp`, `ses`, or

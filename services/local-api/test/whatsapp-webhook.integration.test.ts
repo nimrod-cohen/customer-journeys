@@ -146,6 +146,15 @@ describeMaybe('WhatsApp webhooks (real Postgres, real app)', () => {
     expect(await count("SELECT count(*) n FROM whatsapp_webhook_inbox WHERE payload::text LIKE '%wamid.1%' AND processed_at IS NOT NULL", [])).toBe(1);
   });
 
+  it("keeps a sender the phone library rejects — Meta's id is a real account", async () => {
+    await post(textMsg(PN_A, '447700900123', 'wamid.uk', 'hello from the UK', 'Oliver'));
+    expect(await one('SELECT wa_phone, contact_name FROM whatsapp_conversations WHERE workspace_id = $1', [WS_A])).toEqual({
+      wa_phone: '+447700900123',
+      contact_name: 'Oliver',
+    });
+    expect((await one<{ phone: string }>('SELECT phone FROM profiles WHERE workspace_id = $1', [WS_A]))!.phone).toBe('+447700900123');
+  });
+
   it('a redelivered webhook changes nothing', async () => {
     const payload = textMsg(PN_A, '972541111111', 'wamid.dup', 'once');
     await post(payload);
