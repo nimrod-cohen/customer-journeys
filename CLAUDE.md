@@ -930,4 +930,4 @@ The Profile detail header consolidates into one ⋮ `ActionMenu`: **Send event**
 
 # Production secrets
 
-Secrets use envelope encryption (`@cdp/db` secret-crypto) with `CDP_MASTER_KEY` as the KEK. **In production the KEK should move to AWS KMS / Secrets Manager**, not a plain env var. `UNSUBSCRIBE_LINK_SECRET` and `CDP_MASTER_KEY` both **fail fast** in production when unset. Live secret locations are recorded in the `reference-prod-secrets-locations` memory; provider setup steps are in `.a5c/PROVIDERS-SETUP.md`.
+Secrets use envelope encryption (`@cdp/db` secret-crypto) with `CDP_MASTER_KEY` as the KEK. **The KEK should eventually move to a managed key store** rather than a plain env var (not AWS — the deployment no longer uses it; provider undecided). Production secrets live in the password manager and as Fly secrets, nowhere else. `UNSUBSCRIBE_LINK_SECRET` and `CDP_MASTER_KEY` both **fail fast** in production when unset. Live secret locations are recorded in the `reference-prod-secrets-locations` memory; provider setup steps are in `.a5c/PROVIDERS-SETUP.md`.

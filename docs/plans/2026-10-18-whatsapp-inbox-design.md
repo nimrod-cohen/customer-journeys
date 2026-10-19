@@ -71,7 +71,7 @@ Missing:
   - Meta's media URLs expire within minutes, and the media itself is deleted after 30 days.
   - A sweep downloads each file into **`whatsapp_media`** (the company's R2 bucket, else bytea). It deliberately does **not** use `assets`: assets are served publicly by id, and a customer's ID card or invoice must only be served to signed-in users.
   - Phase 4 adds the authenticated `GET /whatsapp/media/:messageId`.
-- New secrets: `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`. Store them in all 3 locations (password manager, SSM, Fly).
+- New secrets: `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`. Store them in the password manager and as Fly secrets.
 
 ## Phase 4 — Chat UI + live updates (minor bump) — built v0.140.0
 
