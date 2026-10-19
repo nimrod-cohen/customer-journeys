@@ -16,7 +16,7 @@ test('WhatsApp templates tab renders and prompts to connect WhatsApp when unconf
   await page.getByTestId('assets-tab-whatsapp').click();
   await page.getByTestId('whatsapp-templates-screen').waitFor();
 
-  // No WABA credentials in the e2e workspace → the connect prompt (not a create form).
+  // No WhatsApp config on the e2e workspace → the connect prompt pointing at Workspace settings (not a create form).
   await expect(page.getByTestId('whatsapp-templates-unconfigured')).toBeVisible();
-  await expect(page.getByTestId('whatsapp-templates-unconfigured')).toContainText(/WhatsApp Business account id/i);
+  await expect(page.getByTestId('whatsapp-templates-unconfigured')).toContainText(/Workspace settings → WhatsApp/i);
 });
