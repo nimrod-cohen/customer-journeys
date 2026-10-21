@@ -305,8 +305,11 @@ function Composer({ conversation, profileId, onSent }: { conversation: Conversat
 
   const target = conversation ? `/whatsapp/conversations/${conversation.id}/messages` : profileId ? `/profiles/${profileId}/whatsapp/messages` : null;
 
-  // Enter-to-send bypasses the button's own lock, so guard re-entry here too.
+  // Enter-to-send bypasses the button's own lock, so the composer owns the in-flight
+  // state: the ref guards re-entry synchronously, the state shows the button locked
+  // and spinning however the send was started (click OR Enter).
   const sending = useRef(false);
+  const [busy, setBusy] = useState(false);
   const send = async (): Promise<void> => {
     if (!target || sending.current) return;
     const body = templateMode
@@ -318,6 +321,7 @@ function Composer({ conversation, profileId, onSent }: { conversation: Conversat
         : null;
     if (!body) return;
     sending.current = true;
+    setBusy(true);
     try {
       const r = await api.post<{ conversation_id?: string }>(target, { body });
       setText('');
@@ -329,6 +333,7 @@ function Composer({ conversation, profileId, onSent }: { conversation: Conversat
       await onSent(conversation?.id ?? null); // a failed send is in the thread now
     } finally {
       sending.current = false;
+      setBusy(false);
     }
   };
 
@@ -381,7 +386,7 @@ function Composer({ conversation, profileId, onSent }: { conversation: Conversat
             </>
           )}
           <div class="flex justify-end">
-            <Button data-testid="wa-send" disabled={!canSend} onClick={send}>
+            <Button data-testid="wa-send" disabled={!canSend} loading={busy} onClick={send}>
               Send template
             </Button>
           </div>
@@ -409,7 +414,7 @@ function Composer({ conversation, profileId, onSent }: { conversation: Conversat
               }
             }}
           />
-          <Button data-testid="wa-send" disabled={!canSend} onClick={send}>
+          <Button data-testid="wa-send" disabled={!canSend} loading={busy} onClick={send}>
             Send
           </Button>
         </div>
