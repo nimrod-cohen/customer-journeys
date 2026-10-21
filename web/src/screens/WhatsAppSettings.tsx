@@ -8,6 +8,7 @@ import { Badge, Button, Card, Field, Input } from '../ui/kit.js';
 import { askConfirm } from '../ui/dialog.tsx';
 import { showToast } from '../ui/toast.tsx';
 import { refreshReadiness } from '../store/readiness.js';
+import { NO_AUTOFILL, SECRET_NO_AUTOFILL } from '../ui/autofill.js';
 
 interface WhatsappConfig {
   configured: boolean;
@@ -110,6 +111,7 @@ export function WhatsAppSettingsPanel() {
         <Field label="Phone number ID">
           <Input
             data-testid="wa-phone-number-id"
+            {...NO_AUTOFILL}
             class="font-mono text-sm"
             value={phoneNumberId}
             onInput={(e: Event) => setPhoneNumberId((e.target as HTMLInputElement).value)}
@@ -118,6 +120,7 @@ export function WhatsAppSettingsPanel() {
         <Field label="WhatsApp Business Account ID">
           <Input
             data-testid="wa-waba-id"
+            {...NO_AUTOFILL}
             class="font-mono text-sm"
             value={wabaId}
             onInput={(e: Event) => setWabaId((e.target as HTMLInputElement).value)}
@@ -126,7 +129,7 @@ export function WhatsAppSettingsPanel() {
         <Field label="Access token">
           <Input
             data-testid="wa-access-token"
-            type="password"
+            {...SECRET_NO_AUTOFILL}
             class="font-mono text-sm"
             placeholder={configured ? 'Saved — leave blank to keep it' : ''}
             value={token}
@@ -137,6 +140,7 @@ export function WhatsAppSettingsPanel() {
           <Field label="API version (optional)">
             <Input
               data-testid="wa-api-version"
+              {...NO_AUTOFILL}
               class="font-mono text-sm"
               placeholder="v21.0"
               value={apiVersion}
@@ -146,6 +150,7 @@ export function WhatsAppSettingsPanel() {
           <Field label="Default country (optional)">
             <Input
               data-testid="wa-default-country"
+              {...NO_AUTOFILL}
               class="font-mono text-sm"
               placeholder="IL"
               value={country}

@@ -7,6 +7,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { Button, Card, Field, Input } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
+import { NO_AUTOFILL, SECRET_NO_AUTOFILL } from '../ui/autofill.js';
 
 interface R2Config {
   configured: boolean;
@@ -137,6 +138,7 @@ export function CompanyR2Config() {
         <Field label="S3 endpoint">
           <Input
             data-testid="r2-endpoint"
+            {...NO_AUTOFILL}
             class="font-mono text-sm"
             placeholder="https://<accountid>.r2.cloudflarestorage.com"
             value={endpoint}
@@ -146,6 +148,7 @@ export function CompanyR2Config() {
         <Field label="Bucket">
           <Input
             data-testid="r2-bucket"
+            {...NO_AUTOFILL}
             class="font-mono text-sm"
             placeholder="my-company-assets"
             value={bucket}
@@ -155,6 +158,7 @@ export function CompanyR2Config() {
         <Field label="Access key ID">
           <Input
             data-testid="r2-access-key"
+            {...NO_AUTOFILL}
             class="font-mono text-sm"
             placeholder="R2 token access key id"
             value={accessKey}
@@ -164,7 +168,7 @@ export function CompanyR2Config() {
         <Field label="Secret access key">
           <Input
             data-testid="r2-secret"
-            type="password"
+            {...SECRET_NO_AUTOFILL}
             class="font-mono text-sm"
             placeholder={configured ? '•••••••• (leave blank to keep current)' : 'enter the secret access key'}
             value={secret}

@@ -9,6 +9,7 @@ import { api } from '../store/session.js';
 import { Button, Card, Field, Input } from '../ui/kit.js';
 import { showToast } from '../ui/toast.tsx';
 import { refreshReadiness } from '../store/readiness.js';
+import { NO_AUTOFILL, SECRET_NO_AUTOFILL } from '../ui/autofill.js';
 
 interface ProviderField {
   key: string;
@@ -352,6 +353,7 @@ function ConnectorCard({ spec, existing, onChanged }: { spec: ProviderSpec; exis
           <Field key={f.key} label={f.optional ? `${f.label} (optional)` : f.label}>
             <Input
               data-testid={`connector-${spec.provider}-${f.key}`}
+              {...NO_AUTOFILL}
               class="font-mono text-sm"
               placeholder={f.placeholder}
               value={values[f.key] ?? ''}
@@ -365,7 +367,7 @@ function ConnectorCard({ spec, existing, onChanged }: { spec: ProviderSpec; exis
           <Field label={spec.secretLabel}>
             <Input
               data-testid={`connector-${spec.provider}-secret`}
-              type="password"
+              {...SECRET_NO_AUTOFILL}
               class="font-mono text-sm"
               placeholder={configured ? '•••••••• (leave blank to keep current)' : `enter the ${spec.secretLabel.toLowerCase()}`}
               value={secret}

@@ -64,6 +64,7 @@ import {
   type WebhookForm,
   type WebhookHeaderRow,
 } from '../node-config.js';
+import { SECRET_NO_AUTOFILL } from '../../ui/autofill.js';
 
 interface SegmentLite {
   id: string;
@@ -1430,7 +1431,7 @@ function WebhookEditor(props: NodeEditorProps) {
       <Field label="Secret / auth header" hint="Write-only — never shown again after saving.">
         <div class="flex items-center gap-2">
           <Input data-testid="webhook-secret-header" class="w-48" placeholder="Authorization" value={secretHeader} onInput={(e: Event) => setSecretHeader((e.target as HTMLInputElement).value)} />
-          <Input data-testid="webhook-secret" class="flex-1" type="password" placeholder={init.hasSecret ? '•••••• (saved)' : 'Bearer …'} value={secret} onInput={(e: Event) => setSecret((e.target as HTMLInputElement).value)} />
+          <Input data-testid="webhook-secret" class="flex-1" {...SECRET_NO_AUTOFILL} placeholder={init.hasSecret ? '•••••• (saved)' : 'Bearer …'} value={secret} onInput={(e: Event) => setSecret((e.target as HTMLInputElement).value)} />
         </div>
       </Field>
 
