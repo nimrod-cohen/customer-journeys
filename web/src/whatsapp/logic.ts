@@ -129,6 +129,14 @@ export function sourceLabel(m: ChatMessage): string | null {
   return null;
 }
 
+/**
+ * A template's text as the customer received it: each `{{n}}` replaced by the n-th
+ * value that was sent. A placeholder with no value stays visible, so a gap shows.
+ */
+export function fillTemplateBody(body: string, params: readonly string[]): string {
+  return body.replace(/\{\{\s*(\d+)\s*\}\}/g, (whole, n: string) => params[Number(n) - 1] ?? whole);
+}
+
 /** The text a bubble shows when it has no body of its own. */
 export function fallbackText(m: ChatMessage): string {
   if (m.template) return `Template: ${m.template.name}${m.template.params.length ? ` (${m.template.params.join(', ')})` : ''}`;

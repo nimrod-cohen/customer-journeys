@@ -18,6 +18,7 @@ import {
   ticksFor,
   sourceLabel,
   fallbackText,
+  fillTemplateBody,
   windowLabel,
   windowOpen,
   type ChatMessage,
@@ -133,6 +134,16 @@ export function ChatThread({ conversation, profileId, refreshSignal, onSent, onR
     onSent?.(conversationId);
   };
 
+  // A template send is stored as its name + values; Meta holds the text. Look the
+  // text up once (only when the thread has a template) so the bubble can show the
+  // message as the customer received it.
+  const hasTemplate = messages.some((m) => m.template);
+  const [templateText, setTemplateText] = useState<Map<string, string> | null>(null);
+  useEffect(() => {
+    if (!hasTemplate || templateText) return;
+    void loadTemplates().then((all) => setTemplateText(new Map(all.map((t) => [`${t.name}|${t.language}`, t.body]))));
+  }, [hasTemplate]);
+
   const items = buildThread(messages);
 
   return (
@@ -161,7 +172,12 @@ export function ChatThread({ conversation, profileId, refreshSignal, onSent, onR
                   <span class="rounded-md bg-white/80 px-2.5 py-1 text-xs font-medium text-stone-600 shadow-sm">{it.label}</span>
                 </li>
               ) : (
-                <Bubble key={it.message.id} m={it.message} onRetry={retry} />
+                <Bubble
+                  key={it.message.id}
+                  m={it.message}
+                  templateBody={it.message.template ? templateText?.get(`${it.message.template.name}|${it.message.template.language}`) ?? null : null}
+                  onRetry={retry}
+                />
               ),
             )}
           </ol>
@@ -172,8 +188,13 @@ export function ChatThread({ conversation, profileId, refreshSignal, onSent, onR
   );
 }
 
-function Bubble({ m, onRetry }: { m: ChatMessage; onRetry: (id: string) => Promise<void> }) {
+function Bubble({ m, templateBody, onRetry }: { m: ChatMessage; templateBody: string | null; onRetry: (id: string) => Promise<void> }) {
   const out = m.direction === 'out';
+  // A template message shows its real text; the flip button turns the card over to
+  // the template name and the values that were sent.
+  const filled = m.template && !m.body && templateBody ? fillTemplateBody(templateBody, m.template.params) : null;
+  const [flipped, setFlipped] = useState(false);
+  const showDetails = !!m.template && (!filled || flipped);
   const ticks = out ? ticksFor(m.status) : null;
   const source = sourceLabel(m);
   const text = m.body ?? fallbackText(m);
@@ -188,14 +209,34 @@ function Bubble({ m, onRetry }: { m: ChatMessage; onRetry: (id: string) => Promi
       >
         {source ? <div class="mb-0.5 text-[11px] font-semibold text-emerald-700">{source}</div> : null}
         {m.media ? <MediaView m={m} /> : null}
-        {m.template ? (
-          <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-stone-500">Template · {m.template.name}</div>
+        {filled ? (
+          <button
+            type="button"
+            data-testid="wa-template-flip"
+            title={flipped ? 'Show the message' : 'Show template details'}
+            aria-label={flipped ? 'Show the message' : 'Show template details'}
+            aria-pressed={flipped}
+            class="float-right -mr-1 ml-2 rounded p-0.5 text-stone-400 hover:bg-black/5 hover:text-stone-700"
+            onClick={() => setFlipped(!flipped)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3.5 w-3.5" aria-hidden="true">
+              <path d="M4 4v6h6M20 20v-6h-6" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M5 15a7 7 0 0 0 12 2.5M19 9A7 7 0 0 0 7 6.5" stroke-linecap="round" />
+            </svg>
+          </button>
         ) : null}
-        {text && !(m.template && !m.body) ? (
+        {showDetails ? (
+          <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-stone-500">Template · {m.template!.name}</div>
+        ) : null}
+        {filled && !flipped ? (
+          <p data-testid="wa-template-text" dir="auto" class="whitespace-pre-wrap break-words text-ink-900">
+            {filled}
+          </p>
+        ) : text && !(m.template && !m.body) ? (
           <p dir="auto" class="whitespace-pre-wrap break-words text-ink-900">
             {text}
           </p>
-        ) : m.template ? (
+        ) : showDetails && m.template ? (
           <p class="text-ink-900">{m.template.params.length ? m.template.params.join(' · ') : <em class="text-stone-500">(no variables)</em>}</p>
         ) : null}
         <div class="mt-0.5 flex items-center justify-end gap-1 text-[11px] text-stone-500">
@@ -276,6 +317,20 @@ interface WaTemplate {
   variableCount: number;
 }
 
+// One fetch per page load, shared by every thread and composer: the template list
+// is the same for the whole workspace and rarely changes. A failure is not cached.
+let templatesOnce: Promise<WaTemplate[]> | null = null;
+function loadTemplates(): Promise<WaTemplate[]> {
+  templatesOnce ??= api
+    .get<{ templates: WaTemplate[] }>('/whatsapp/templates')
+    .then((r) => r.templates)
+    .catch(() => {
+      templatesOnce = null;
+      return [];
+    });
+  return templatesOnce;
+}
+
 function Composer({ conversation, profileId, onSent }: { conversation: Conversation | null; profileId: string | null; onSent: (conversationId: string | null) => Promise<void> }) {
   const [text, setText] = useState('');
   const [useTemplate, setUseTemplate] = useState(false);
@@ -294,10 +349,7 @@ function Composer({ conversation, profileId, onSent }: { conversation: Conversat
 
   useEffect(() => {
     if (!templateMode || templates !== null) return;
-    void api
-      .get<{ templates: WaTemplate[] }>('/whatsapp/templates')
-      .then((r) => setTemplates(r.templates.filter((t) => t.status === 'APPROVED')))
-      .catch(() => setTemplates([]));
+    void loadTemplates().then((all) => setTemplates(all.filter((t) => t.status === 'APPROVED')));
   }, [templateMode]);
 
   const tpl = templates?.find((t) => `${t.name}|${t.language}` === chosen) ?? null;

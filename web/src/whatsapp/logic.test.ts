@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSse, buildThread, mergeMessages, ticksFor, sourceLabel, fallbackText, windowLabel, windowOpen, dayLabel, type ChatMessage } from './logic.js';
+import { parseSse, buildThread, mergeMessages, ticksFor, sourceLabel, fallbackText, fillTemplateBody, windowLabel, windowOpen, dayLabel, type ChatMessage } from './logic.js';
 
 const msg = (over: Partial<ChatMessage>): ChatMessage => ({
   id: 'm',
@@ -98,5 +98,24 @@ describe('24h window', () => {
     expect(windowOpen('2026-10-19T12:00:01Z', now)).toBe(true);
     expect(windowOpen('2026-10-19T12:00:00Z', now)).toBe(false);
     expect(windowOpen(null, now)).toBe(false);
+  });
+});
+
+describe('fillTemplateBody', () => {
+  // A template send stores only the template name and its values; the chat should
+  // show what the customer actually received.
+  it('puts each value in its numbered placeholder', () => {
+    expect(fillTemplateBody('Hi {{1}}, order {{2}} ships at {{3}}.', ['nimrod', '123423', '10:40'])).toBe(
+      'Hi nimrod, order 123423 ships at 10:40.',
+    );
+  });
+
+  it('fills a placeholder used twice, and tolerates spaces inside the braces', () => {
+    expect(fillTemplateBody('{{1}} / {{ 1 }}', ['x'])).toBe('x / x');
+  });
+
+  // A missing value is left visible rather than silently dropped.
+  it('leaves a placeholder that has no value as it is', () => {
+    expect(fillTemplateBody('Hi {{1}}, see {{2}}', ['dana'])).toBe('Hi dana, see {{2}}');
   });
 });
