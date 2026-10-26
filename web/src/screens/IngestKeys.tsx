@@ -89,7 +89,7 @@ export function IngestKeys() {
               : 'Your new write key — copy it below (also available in the list anytime)'}
           </p>
           <div class="mt-2 flex items-center gap-2">
-            <code class="flex-1 overflow-x-auto rounded bg-white px-2 py-1.5 font-mono text-sm text-ink-900 ring-1 ring-amber-200">
+            <code class="flex-1 overflow-x-auto rounded bg-surface px-2 py-1.5 font-mono text-sm text-ink-900 ring-1 ring-amber-200">
               {freshKey.key}
             </code>
             <Button data-testid="copy-key" onClick={() => copy(freshKey.key)}>

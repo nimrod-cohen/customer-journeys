@@ -664,7 +664,7 @@ function HourWindowEditor(props: NodeEditorProps) {
               aria-pressed={days.includes(d)}
               onClick={() => toggleDay(d)}
               class={`rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset transition-colors ${
-                days.includes(d) ? 'bg-brand-50 text-brand-700 ring-brand-200' : 'bg-white text-stone-600 ring-stone-200 hover:bg-stone-50'
+                days.includes(d) ? 'bg-brand-50 text-brand-700 ring-brand-200' : 'bg-surface text-stone-600 ring-stone-200 hover:bg-stone-50'
               }`}
             >
               {label}
@@ -948,7 +948,7 @@ function SendEditor(props: NodeEditorProps) {
                 <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Message preview</div>
                 <div class="whitespace-pre-wrap text-sm text-ink-800">{waTplBody}</div>
                 <p class="mt-2 text-[11px] text-stone-500">
-                  Fill each <code class="rounded bg-white px-1">{'{{n}}'}</code> below — its number matches the spot in the message above.
+                  Fill each <code class="rounded bg-surface px-1">{'{{n}}'}</code> below — its number matches the spot in the message above.
                 </p>
               </div>
             ) : null}

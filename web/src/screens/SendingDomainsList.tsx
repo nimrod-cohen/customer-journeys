@@ -40,7 +40,7 @@ export function SendingDomainsPanel() {
             <li
               data-testid="domain-row"
               key={d.id}
-              class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card hover:border-brand-300"
+              class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-stone-200 bg-surface px-4 py-3 shadow-card hover:border-brand-300"
               onClick={() => navigate(`/settings/domains/${d.id}`)}
             >
               <span class="flex min-w-0 items-center gap-2">

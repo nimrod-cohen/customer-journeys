@@ -160,7 +160,7 @@ export function TextTemplatesPanel() {
               data-testid="text-template-item"
               data-text-template-id={t.id}
               key={t.id}
-              class="flex items-start justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+              class="flex items-start justify-between gap-3 rounded-xl border border-stone-200 bg-surface px-4 py-3 shadow-card"
             >
               <span class="flex min-w-0 flex-col">
                 <span class="truncate font-medium text-ink-900">{t.name}</span>

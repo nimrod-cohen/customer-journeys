@@ -264,7 +264,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           }`}
         >
           <span
-            class={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+            class={`inline-block h-5 w-5 transform rounded-full bg-surface shadow transition ${
               lowercaseEmails ? 'translate-x-5' : 'translate-x-0.5'
             }`}
           />
@@ -291,7 +291,7 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
           }`}
         >
           <span
-            class={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+            class={`inline-block h-5 w-5 transform rounded-full bg-surface shadow transition ${
               linkTracking ? 'translate-x-5' : 'translate-x-0.5'
             }`}
           />

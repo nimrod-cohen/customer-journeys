@@ -13,7 +13,7 @@ function Code({ children }: { children: ComponentChildren }) {
 
 function Pre({ children }: { children: ComponentChildren }) {
   return (
-    <pre class="mt-2 overflow-x-auto rounded-lg bg-ink-950 px-4 py-3 text-[12.5px] leading-relaxed text-stone-100">
+    <pre class="theme-fixed mt-2 overflow-x-auto rounded-lg bg-ink-950 px-4 py-3 text-[12.5px] leading-relaxed text-stone-100">
       <code class="font-mono">{children}</code>
     </pre>
   );
@@ -455,7 +455,7 @@ curl -X POST ${origin}/profiles/<profile-id>/events \\
 export function PublicDocs() {
   return (
     <div class="min-h-dvh bg-stone-50 text-ink-900">
-      <header class="border-b border-stone-200 bg-white">
+      <header class="border-b border-stone-200 bg-surface">
         <div class="mx-auto flex max-w-3xl items-center justify-between gap-2.5 px-6 py-4">
           <div class="flex items-center gap-2.5">
             <span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-500 text-ink-950">

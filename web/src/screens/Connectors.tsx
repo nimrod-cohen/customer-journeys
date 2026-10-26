@@ -256,7 +256,7 @@ function ChannelBox({
                   data-testid={`connector-pick-${p.provider}`}
                   onClick={() => setSelected(p.provider)}
                   class={`flex items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition ${
-                    isSel ? 'border-brand-400 bg-brand-50 ring-1 ring-brand-300' : 'border-stone-200 bg-white hover:border-stone-300'
+                    isSel ? 'border-brand-400 bg-brand-50 ring-1 ring-brand-300' : 'border-stone-200 bg-surface hover:border-stone-300'
                   }`}
                 >
                   <ProviderLogo provider={p.provider} />

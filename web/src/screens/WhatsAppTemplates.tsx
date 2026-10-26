@@ -234,7 +234,7 @@ export function WhatsAppTemplatesPanel() {
               data-testid="wa-template-item"
               data-wa-template-name={t.name}
               key={`${t.name}:${t.language}`}
-              class="flex items-start justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+              class="flex items-start justify-between gap-3 rounded-xl border border-stone-200 bg-surface px-4 py-3 shadow-card"
             >
               <span class="flex min-w-0 flex-col">
                 <span class="flex items-center gap-2">

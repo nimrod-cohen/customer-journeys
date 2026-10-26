@@ -325,7 +325,7 @@ export function AutomationCanvas({
       ) : null}
 
       {/* Zoom toolbar — floats over the top-right, outside the scroll viewport. */}
-      <div class="absolute right-2 top-2 z-20 flex items-center gap-0.5 rounded-lg border border-stone-200 bg-white/90 p-1 text-stone-600 shadow-sm backdrop-blur">
+      <div class="absolute right-2 top-2 z-20 flex items-center gap-0.5 rounded-lg border border-stone-200 bg-surface/90 p-1 text-stone-600 shadow-sm backdrop-blur">
         <button
           type="button"
           data-testid="canvas-zoom-out"
@@ -441,7 +441,7 @@ export function AutomationCanvas({
               class={`absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-sm font-bold shadow-sm transition-colors ${
                 placing
                   ? 'animate-pulse border-brand-500 bg-brand-500 text-white ring-2 ring-brand-200 hover:bg-brand-600'
-                  : 'border-stone-300 bg-white text-stone-500 hover:border-brand-400 hover:text-brand-600'
+                  : 'border-stone-300 bg-surface text-stone-500 hover:border-brand-400 hover:text-brand-600'
               }`}
               style={{ left: `${mid.x}px`, top: `${mid.y}px` }}
             >
@@ -478,7 +478,7 @@ export function AutomationCanvas({
                     class={`absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-sm font-bold shadow-sm transition-colors ${
                       asPlacement
                         ? 'animate-pulse border-brand-500 bg-brand-500 text-white ring-2 ring-brand-200 hover:bg-brand-600'
-                        : 'border-violet-300 bg-white text-violet-500 hover:border-violet-500 hover:text-violet-700'
+                        : 'border-violet-300 bg-surface text-violet-500 hover:border-violet-500 hover:text-violet-700'
                     }`}
                     style={{ left: `${anchor.x}px`, top: `${anchor.y}px` }}
                   >
@@ -512,7 +512,7 @@ export function AutomationCanvas({
               data-inactive={inactiveSend ? 'true' : undefined}
               class={`group absolute rounded-xl border shadow-card ${
                 raised || isSelected ? 'z-20' : 'z-10'
-              } ${inactiveSend ? 'bg-stone-100/70' : 'bg-white'} ${
+              } ${inactiveSend ? 'bg-stone-100/70' : 'bg-surface'} ${
                 isSelected
                   ? 'ring-2 ring-inset ring-brand-500 border-brand-400'
                   : publishErr
@@ -542,7 +542,7 @@ export function AutomationCanvas({
                     data-testid="node-inactive-tip"
                     class="pointer-events-none absolute -top-2.5 left-1/2 z-40 hidden w-60 -translate-x-1/2 -translate-y-full group-hover:block"
                   >
-                    <div class="relative rounded-lg bg-ink-900 px-3 py-2 text-[11px] leading-snug text-white shadow-xl ring-1 ring-black/5">
+                    <div class="theme-fixed relative rounded-lg bg-ink-900 px-3 py-2 text-[11px] leading-snug text-white shadow-xl ring-1 ring-black/5">
                       <span class="inline-flex items-center gap-1 font-semibold text-amber-300">
                         <svg viewBox="0 0 24 24" fill="currentColor" class="h-3 w-3" aria-hidden="true">
                           <path d="M14.615 1.595a.75.75 0 0 1 .359.852L12.982 9.75h7.268a.75.75 0 0 1 .548 1.262l-10.5 11.25a.75.75 0 0 1-1.272-.71l1.992-7.302H3.75a.75.75 0 0 1-.548-1.262l10.5-11.25a.75.75 0 0 1 .913-.143Z" />
@@ -633,7 +633,7 @@ function Connector({ edge }: { edge: LayoutEdge }): JSX.Element {
   const labelPoint = edge.label ? { x: edge.laneX, y: edge.fromPoint.y + 16 } : null;
   return (
     <g>
-      <path d={d} fill="none" stroke="#cbd5e1" stroke-width={2} />
+      <path d={d} fill="none" class="stroke-slate-300" stroke-width={2} />
       {labelPoint ? (
         <text
           x={labelPoint.x}

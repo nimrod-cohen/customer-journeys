@@ -700,7 +700,7 @@ export function ProfileExplorer() {
           {colsOpen ? (
               <div
                 data-testid="columns-menu"
-                class="absolute right-0 z-40 mt-2 w-80 rounded-xl border border-stone-200 bg-white p-3 shadow-soft"
+                class="absolute right-0 z-40 mt-2 w-80 rounded-xl border border-stone-200 bg-surface p-3 shadow-soft"
               >
                 <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Columns</p>
                 <Input
@@ -932,7 +932,7 @@ export function SuppressionList() {
             <li
               data-testid="suppression-row"
               key={i}
-              class="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-4 py-2.5 text-sm shadow-card"
+              class="flex items-center justify-between rounded-lg border border-stone-200 bg-surface px-4 py-2.5 text-sm shadow-card"
             >
               <span class="font-mono text-xs text-ink-900">{s.email}</span>
               <Badge tone={toneFor(s.reason)}>{s.reason}</Badge>

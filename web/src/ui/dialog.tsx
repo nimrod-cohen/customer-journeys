@@ -84,7 +84,7 @@ export function DialogHost(): JSX.Element | null {
     >
       <div
         data-testid="app-dialog"
-        class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
+        class="w-full max-w-md rounded-2xl bg-surface p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 class="text-base font-bold text-ink-950">{d.title}</h3>

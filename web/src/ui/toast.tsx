@@ -40,7 +40,7 @@ export function dismissToast(id: number): void {
 
 const TONE: Record<ToastTone, { box: string; icon: JSX.Element }> = {
   success: {
-    box: 'border-emerald-200 bg-white text-ink-900',
+    box: 'border-emerald-200 bg-surface text-ink-900',
     icon: (
       <svg viewBox="0 0 20 20" fill="none" class="h-5 w-5 shrink-0 text-emerald-600" stroke="currentColor" stroke-width="2">
         <circle cx="10" cy="10" r="8" />
@@ -49,7 +49,7 @@ const TONE: Record<ToastTone, { box: string; icon: JSX.Element }> = {
     ),
   },
   error: {
-    box: 'border-rose-200 bg-white text-ink-900',
+    box: 'border-rose-200 bg-surface text-ink-900',
     icon: (
       <svg viewBox="0 0 20 20" fill="none" class="h-5 w-5 shrink-0 text-rose-600" stroke="currentColor" stroke-width="2">
         <circle cx="10" cy="10" r="8" />
@@ -58,7 +58,7 @@ const TONE: Record<ToastTone, { box: string; icon: JSX.Element }> = {
     ),
   },
   info: {
-    box: 'border-stone-200 bg-white text-ink-900',
+    box: 'border-stone-200 bg-surface text-ink-900',
     icon: (
       <svg viewBox="0 0 20 20" fill="none" class="h-5 w-5 shrink-0 text-stone-500" stroke="currentColor" stroke-width="2">
         <circle cx="10" cy="10" r="8" />

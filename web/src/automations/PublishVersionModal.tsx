@@ -43,7 +43,7 @@ export function PublishVersionModal({
     <div class="fixed inset-0 z-[200] flex items-center justify-center bg-black/45 p-6" onClick={onClose}>
       <div
         data-testid="publish-modal"
-        class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
+        class="w-full max-w-md rounded-2xl bg-surface p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 class="text-base font-bold text-ink-950">Save &amp; publish a version</h3>

@@ -263,7 +263,7 @@ export function AutomationsList() {
                 key={c.id}
                 // Mobile: name + kebab on row 1, status + counts wrapping below.
                 // At sm+ the original four-track grid (name · status · counts · actions).
-                class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card sm:grid-cols-[minmax(0,1fr)_8rem_minmax(0,auto)_auto] sm:gap-4"
+                class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-surface px-4 py-3 shadow-card sm:grid-cols-[minmax(0,1fr)_8rem_minmax(0,auto)_auto] sm:gap-4"
               >
                 {/* Name */}
                 <a
@@ -1041,7 +1041,7 @@ export function AutomationDetail({ id }: { id?: string }) {
                 data-testid={p.testId}
                 disabled={disabled}
                 onClick={() => insert(p.type)}
-                class="flex flex-col items-start rounded-xl border border-stone-200 bg-white px-4 py-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-stone-200 disabled:hover:bg-white"
+                class="flex flex-col items-start rounded-xl border border-stone-200 bg-surface px-4 py-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-stone-200 disabled:hover:bg-surface"
               >
                 <span class="text-sm font-semibold text-ink-900">{p.label}</span>
                 <span class="text-xs text-stone-400">{p.hint}</span>
@@ -1129,7 +1129,7 @@ function AutomationHistory({
             <li
               key={v.id}
               data-testid="version-row"
-              class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-stone-200 bg-white px-4 py-3"
+              class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-stone-200 bg-surface px-4 py-3"
             >
               <span class="font-semibold tabular-nums text-ink-900">v{v.version}</span>
               <span class="min-w-0">
@@ -1185,7 +1185,7 @@ function AutomationJourneys({
             <li
               key={e.profile_id}
               data-testid="journey-row"
-              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 rounded-xl border border-stone-200 bg-white px-4 py-3 sm:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_auto_auto] sm:gap-4"
+              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 rounded-xl border border-stone-200 bg-surface px-4 py-3 sm:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_auto_auto] sm:gap-4"
             >
               {/* Profile (email, falling back to the profile id). */}
               <span class="min-w-0">

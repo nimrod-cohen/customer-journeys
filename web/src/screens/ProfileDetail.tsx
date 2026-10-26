@@ -683,7 +683,7 @@ function AttributesTab({ profile, onSaved }: { profile: Profile; onSaved: () => 
                   data-key={k}
                   onClick={() => addKey(k)}
                   aria-label={`Add attribute ${k}`}
-                  class="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-white px-2.5 py-1 font-mono text-xs text-ink-800 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-400/40"
+                  class="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-surface px-2.5 py-1 font-mono text-xs text-ink-800 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-400/40"
                 >
                   <span class="text-stone-400">+</span>
                   {k}
@@ -829,7 +829,7 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
                 key={c.group}
                 data-testid="channel-subscription-row"
                 data-channel-group={c.group}
-                class="flex items-center justify-between gap-3 rounded-md border border-stone-200 bg-white px-3 py-2"
+                class="flex items-center justify-between gap-3 rounded-md border border-stone-200 bg-surface px-3 py-2"
               >
                 <p class="text-sm font-medium text-ink-900">{c.label}</p>
                 <Switch
@@ -862,7 +862,7 @@ function SubscriptionsTab({ profileId }: { profileId: string }) {
                 key={t.id}
                 data-testid="topic-subscription-row"
                 data-topic-id={t.id}
-                class="flex items-start justify-between gap-3 rounded-md border border-stone-200 bg-white px-3 py-2"
+                class="flex items-start justify-between gap-3 rounded-md border border-stone-200 bg-surface px-3 py-2"
               >
                 <div class="min-w-0">
                   <p class="text-sm font-medium text-ink-900">{t.name}</p>
