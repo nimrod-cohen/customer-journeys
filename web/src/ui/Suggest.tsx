@@ -76,7 +76,7 @@ export function Suggest({
       {open ? (
         <div
           data-testid="value-suggestions"
-          class="absolute left-0 z-30 mt-1 max-h-48 w-56 overflow-y-auto rounded-lg border border-stone-200 bg-white p-1 shadow-soft"
+          class="absolute left-0 z-30 mt-1 max-h-48 w-56 overflow-y-auto rounded-lg border border-stone-200 bg-surface p-1 shadow-soft"
         >
           {suggestions.map((s) => (
             <button

@@ -238,7 +238,7 @@ export function Transactional() {
             <li
               data-testid="transactional-item"
               key={`${it.medium}:${it.id}`}
-              class="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+              class="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-surface px-4 py-3 shadow-card"
             >
               <span class="flex min-w-0 flex-col">
                 <span class="flex min-w-0 items-center gap-2">

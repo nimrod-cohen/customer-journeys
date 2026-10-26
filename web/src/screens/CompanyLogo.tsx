@@ -86,7 +86,7 @@ export function CompanyLogo() {
             data-testid="company-logo-img"
             src={`${apiBaseUrl()}${logoUrl}`}
             alt="Company logo"
-            class="max-h-16 rounded border border-stone-200 bg-white p-1"
+            class="max-h-16 rounded border border-stone-200 bg-surface p-1"
           />
         ) : (
           <div class="grid h-16 w-32 place-items-center rounded border border-dashed border-stone-300 text-xs text-stone-400">

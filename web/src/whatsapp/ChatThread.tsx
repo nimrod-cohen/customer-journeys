@@ -148,7 +148,7 @@ export function ChatThread({ conversation, profileId, refreshSignal, onSent, onR
 
   return (
     <div data-testid="wa-thread" class={`flex min-h-0 flex-col ${cls}`}>
-      <div ref={scroller} class="min-h-0 flex-1 overflow-y-auto bg-[#efeae2] px-3 py-4 sm:px-6">
+      <div ref={scroller} class="min-h-0 flex-1 overflow-y-auto bg-[#efeae2] dark:bg-[#0b141a] px-3 py-4 sm:px-6">
         {hasMore ? (
           <div class="mb-3 text-center">
             <Button data-testid="wa-load-earlier" variant="secondary" size="sm" onClick={loadEarlier}>
@@ -169,7 +169,7 @@ export function ChatThread({ conversation, profileId, refreshSignal, onSent, onR
             {items.map((it) =>
               it.kind === 'day' ? (
                 <li key={`d-${it.key}`} class="my-3 text-center">
-                  <span class="rounded-md bg-white/80 px-2.5 py-1 text-xs font-medium text-stone-600 shadow-sm">{it.label}</span>
+                  <span class="rounded-md bg-surface/80 px-2.5 py-1 text-xs font-medium text-stone-600 shadow-sm">{it.label}</span>
                 </li>
               ) : (
                 <Bubble
@@ -203,7 +203,7 @@ function Bubble({ m, templateBody, onRetry }: { m: ChatMessage; templateBody: st
     <li data-testid="wa-message" data-direction={m.direction} data-status={m.status} class={`flex ${out ? 'justify-end' : 'justify-start'}`}>
       <div
         class={`max-w-[85%] rounded-lg px-3 py-1.5 text-sm shadow-sm sm:max-w-[70%] ${
-          out ? (m.status === 'failed' ? 'bg-rose-50 ring-1 ring-rose-200' : 'bg-[#d9fdd3]') : 'bg-white'
+          out ? (m.status === 'failed' ? 'bg-rose-50 ring-1 ring-rose-200' : 'bg-[#d9fdd3] dark:bg-[#005c4b]') : 'bg-surface'
         }`}
         title={formatDateTime(m.created_at)}
       >
@@ -424,7 +424,7 @@ function Composer({ conversation, profileId, onSent }: { conversation: Conversat
                   </option>
                 ))}
               </Select>
-              {tpl ? <p dir="auto" class="whitespace-pre-wrap rounded-md bg-white px-3 py-2 text-xs text-stone-700 ring-1 ring-stone-200">{tpl.body}</p> : null}
+              {tpl ? <p dir="auto" class="whitespace-pre-wrap rounded-md bg-surface px-3 py-2 text-xs text-stone-700 ring-1 ring-stone-200">{tpl.body}</p> : null}
               {params.map((p, i) => (
                 <Input
                   key={i}

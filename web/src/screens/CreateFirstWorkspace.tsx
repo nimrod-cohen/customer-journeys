@@ -44,7 +44,7 @@ export function CreateFirstWorkspace(): JSX.Element {
           <span class="font-display text-lg font-bold text-ink-950">Customer Journeys</span>
         </div>
 
-        <div class="rounded-2xl bg-white p-8 shadow-card ring-1 ring-stone-200">
+        <div class="rounded-2xl bg-surface p-8 shadow-card ring-1 ring-stone-200">
           <h2 class="font-display text-2xl font-bold text-ink-950">Create your first workspace</h2>
           <p class="mt-1 text-sm text-stone-500">
             {session.companyName ? (

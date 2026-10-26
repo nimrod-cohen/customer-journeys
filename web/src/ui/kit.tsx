@@ -170,7 +170,7 @@ export function ActionMenu({
       {open ? (
         <div
           role="menu"
-          class="absolute right-0 z-30 mt-1 min-w-[11rem] overflow-hidden rounded-xl border border-stone-200 bg-white py-1 shadow-lg"
+          class="absolute right-0 z-30 mt-1 min-w-[11rem] overflow-hidden rounded-xl border border-stone-200 bg-surface py-1 shadow-lg"
         >
           {items.map((item) => (
             <button
@@ -241,7 +241,7 @@ export function DirectionalTextarea({
       aria-pressed={dir === d}
       onClick={() => choose(d)}
       class={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
-        dir === d ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'
+        dir === d ? 'bg-surface text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'
       }`}
     >
       {label}
@@ -390,7 +390,7 @@ export function Switch({
         {...rest}
       />
       <span class={`${track} rounded-full bg-stone-300 transition-colors peer-focus:ring-2 peer-focus:ring-brand-400/40 ${on}`} />
-      <span class={`absolute left-0.5 top-0.5 ${knob} rounded-full bg-white shadow transition-transform`} />
+      <span class={`absolute left-0.5 top-0.5 ${knob} rounded-full bg-surface shadow transition-transform`} />
     </label>
   );
 }
@@ -514,14 +514,14 @@ export function Drawer({
   return createPortal(
     <div class="fixed inset-0 z-50 flex justify-end" data-testid={testId}>
       <div
-        class={`absolute inset-0 bg-ink-950/40 transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}
+        class={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}
         onClick={onClose}
         aria-hidden="true"
       />
       <aside
         role="dialog"
         aria-modal="true"
-        class={`relative z-10 flex h-full w-full max-w-4xl flex-col bg-white shadow-soft transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        class={`relative z-10 flex h-full w-full max-w-4xl flex-col bg-surface shadow-soft transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
           visible ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
@@ -556,7 +556,7 @@ export function Drawer({
 
 export function EmptyState({ children }: { children: ComponentChildren }): JSX.Element {
   return (
-    <div class="rounded-xl border border-dashed border-stone-300 bg-white/50 px-6 py-10 text-center text-sm text-stone-400">
+    <div class="rounded-xl border border-dashed border-stone-300 bg-surface/50 px-6 py-10 text-center text-sm text-stone-400">
       {children}
     </div>
   );

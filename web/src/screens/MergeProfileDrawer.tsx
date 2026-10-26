@@ -126,7 +126,7 @@ export function MergeProfileDrawer({
         class={`min-w-0 flex-1 rounded-lg border px-3 py-1.5 text-left transition focus:outline-none focus:ring-2 focus:ring-brand-400/40 ${
           sel
             ? 'border-brand-600 bg-brand-600 text-white shadow-glow'
-            : 'border-stone-200 bg-white text-stone-500 hover:border-stone-300'
+            : 'border-stone-200 bg-surface text-stone-500 hover:border-stone-300'
         }`}
         title={fmt(value)}
       >

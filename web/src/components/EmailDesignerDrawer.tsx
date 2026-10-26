@@ -60,7 +60,7 @@ export function EmailDesignerDrawer(): JSX.Element | null {
   return createPortal(
     <div class="fixed inset-0 z-[60] flex justify-end" data-testid="email-designer-drawer">
       <div
-        class={`absolute inset-0 bg-ink-950/40 transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}
+        class={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}
         aria-hidden="true"
       />
       <aside
@@ -70,7 +70,7 @@ export function EmailDesignerDrawer(): JSX.Element | null {
           visible ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
-        <header class="flex items-center justify-between gap-3 border-b border-stone-200 bg-white px-5 py-3">
+        <header class="flex items-center justify-between gap-3 border-b border-stone-200 bg-surface px-5 py-3">
           <h2 class="text-base font-bold text-ink-900">{shown.title ?? 'Design email'}</h2>
           <button
             type="button"

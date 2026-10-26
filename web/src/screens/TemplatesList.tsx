@@ -172,7 +172,7 @@ export function TemplatesList() {
             <li
               data-testid="template-item"
               key={t.id}
-              class="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card"
+              class="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-surface px-4 py-3 shadow-card"
             >
               <span class="flex min-w-0 flex-col">
                 <span class="flex min-w-0 items-center gap-2">
@@ -258,7 +258,7 @@ export function TemplatesList() {
         {keyDraft.trim() ? (
           <div class="mt-5">
             <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-stone-500">Send it like this</p>
-            <pre class="overflow-x-auto rounded-lg bg-stone-900 p-3 text-xs leading-relaxed text-stone-100">
+            <pre class="theme-fixed overflow-x-auto rounded-lg bg-stone-900 p-3 text-xs leading-relaxed text-stone-100">
 {`POST /v1/send
 Authorization: Bearer <your API key>
 

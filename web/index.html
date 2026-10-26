@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Customer Journeys</title>
+    <script>
+      // Apply the saved theme + text size before first paint (mirrors store/appearance.ts).
+      try {
+        var t = localStorage.getItem('cdp.theme');
+        if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches))
+          document.documentElement.classList.add('dark');
+        var f = Number(localStorage.getItem('cdp.fontScale'));
+        if ([87.5, 112.5, 125, 137.5].indexOf(f) >= 0) document.documentElement.style.fontSize = f + '%';
+      } catch (e) {}
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

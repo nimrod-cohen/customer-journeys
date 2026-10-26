@@ -66,7 +66,7 @@ export function WhatsAppInbox({ conversationId = null }: { conversationId?: stri
   return (
     <section data-testid="whatsapp-inbox" class="flex h-[calc(100dvh-7rem)] min-h-[480px] flex-col md:h-[calc(100dvh-4rem)]">
       <PageHeader title="WhatsApp inbox" subtitle="Every WhatsApp conversation in this workspace." />
-      <div class="grid min-h-0 flex-1 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-card md:grid-cols-[minmax(260px,340px)_1fr]">
+      <div class="grid min-h-0 flex-1 overflow-hidden rounded-xl border border-stone-200 bg-surface shadow-card md:grid-cols-[minmax(260px,340px)_1fr]">
         <div class={`min-h-0 border-stone-200 md:flex md:flex-col md:border-r ${conversationId ? 'hidden' : 'flex flex-col'}`}>
           <ConversationList
             conversations={conversations}

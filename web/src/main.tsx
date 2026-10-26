@@ -1,4 +1,5 @@
 import './index.css';
+import './store/appearance.js'; // applies the saved theme + text size
 // SPA entry (§12). Mounts the role-aware App (Login → AppShell with capability
 // nav + workspace switcher + routed screens). The §11 EmailEditor is reused as
 // the /editor screen.

@@ -134,7 +134,7 @@ export function SetupScreen({ scope = 'all' }: { scope?: ScopeFilter }) {
       <PageHeader title="Setup" subtitle={subtitle} />
 
       {/* Scope filter — All / Company connectors / Sending domains. */}
-      <div class="mb-5 inline-flex rounded-lg border border-stone-200 bg-white p-0.5">
+      <div class="mb-5 inline-flex rounded-lg border border-stone-200 bg-surface p-0.5">
         {FILTER_TABS.map((t) => (
           <button
             key={t.id}

@@ -1,6 +1,11 @@
+import { appearanceColors, appearancePlugin } from './tailwind.appearance.js';
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
+  // Dark mode is a class on <html> (set by store/appearance.ts), not the OS query
+  // alone, so the user's explicit choice wins.
+  darkMode: 'class',
   theme: {
     extend: {
       fontFamily: {
@@ -10,28 +15,9 @@ export default {
         sans: ['"Hanken Grotesk"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
-      colors: {
-        // Warm-neutral canvas (stone) + a confident teal accent. Semantic tokens
-        // map to CSS variables so the whole app stays cohesive.
-        ink: {
-          950: '#0c0a09',
-          900: '#1c1917',
-          800: '#292524',
-          700: '#44403c',
-        },
-        brand: {
-          50: '#f0fdfa',
-          100: '#ccfbf1',
-          200: '#99f6e4',
-          300: '#5eead4',
-          400: '#2dd4bf',
-          500: '#14b8a6',
-          600: '#0d9488',
-          700: '#0f766e',
-          800: '#115e59',
-          900: '#134e4a',
-        },
-      },
+      // Every neutral + tint is a CSS variable (see tailwind.appearance.js) so ONE
+      // class list renders in both light and dark — no dark: variant per element.
+      colors: appearanceColors,
       boxShadow: {
         card: '0 1px 2px 0 rgb(12 10 9 / 0.04), 0 1px 3px 0 rgb(12 10 9 / 0.06)',
         soft: '0 4px 16px -4px rgb(12 10 9 / 0.10)',
@@ -58,5 +44,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [appearancePlugin],
 };

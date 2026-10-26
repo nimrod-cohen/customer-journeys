@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useStore } from './store/store.js';
 import { sessionStore, switchWorkspace, logout, api } from './store/session.js';
+import { AppearanceControls } from './ui/AppearanceControls.js';
 import { readinessStore } from './store/readiness.js';
 import { routeStore, navigate } from './router.js';
 import { buildNav } from './nav/nav.js';
@@ -233,14 +234,14 @@ export function AppShell(): JSX.Element {
       {navOpen ? (
         <div
           data-testid="nav-overlay"
-          class="fixed inset-0 z-40 bg-ink-950/50 md:hidden"
+          class="fixed inset-0 z-40 bg-black/50 md:hidden"
           onClick={() => setNavOpen(false)}
           aria-hidden="true"
         />
       ) : null}
       <aside
         data-testid="app-nav"
-        class={`fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 transform flex-col gap-1 bg-gradient-to-b from-ink-950 to-ink-900 px-0 py-4 text-stone-300 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] md:sticky md:top-0 md:z-auto md:translate-x-0 md:transition-none ${
+        class={`theme-fixed fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 transform flex-col gap-1 bg-gradient-to-b from-ink-950 to-ink-900 px-0 py-4 text-stone-300 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] md:sticky md:top-0 md:z-auto md:translate-x-0 md:transition-none ${
           navOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -264,7 +265,7 @@ export function AppShell(): JSX.Element {
         {session.companyLogoUrl ? (
           <div
             data-testid="company-logo"
-            class="mx-2 mb-2 flex items-center justify-center rounded-lg bg-white/95 px-3 py-2 ring-1 ring-white/10"
+            class="mx-2 mb-2 flex items-center justify-center rounded-lg bg-surface/95 px-3 py-2 ring-1 ring-white/10"
           >
             <img
               src={session.companyLogoUrl}
@@ -342,10 +343,10 @@ export function AppShell(): JSX.Element {
             data-testid="account-link"
             type="button"
             onClick={() => navigate('/account')}
-            class="mb-2 flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left transition hover:bg-white/5"
+            class="mb-2 flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left transition hover:bg-surface/5"
             title="Edit my account"
           >
-            <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/10 text-xs font-bold uppercase text-brand-300">
+            <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface/10 text-xs font-bold uppercase text-brand-300">
               {(session.name ?? session.email ?? session.role ?? '?').slice(0, 2)}
             </span>
             <div class="min-w-0 leading-tight">
@@ -357,11 +358,12 @@ export function AppShell(): JSX.Element {
               </div>
             </div>
           </button>
+          <AppearanceControls />
           <button
             data-testid="logout"
             type="button"
             onClick={logout}
-            class="w-full rounded-lg border border-white/10 px-3 py-2 text-sm font-medium text-stone-300 transition hover:bg-white/5 hover:text-white"
+            class="w-full rounded-lg border border-white/10 px-3 py-2 text-sm font-medium text-stone-300 transition hover:bg-surface/5 hover:text-white"
           >
             Log out
           </button>
@@ -382,7 +384,7 @@ export function AppShell(): JSX.Element {
       <main data-testid="app-body" class="flex min-w-0 flex-1 flex-col overflow-x-hidden">
         {/* Mobile topbar with the hamburger (below md only); the sidebar is the nav
             at md+. Sticky so the menu toggle is always reachable while scrolling. */}
-        <div class="sticky top-0 z-30 flex items-center gap-2 border-b border-stone-200 bg-white/90 px-4 py-2.5 backdrop-blur md:hidden">
+        <div class="sticky top-0 z-30 flex items-center gap-2 border-b border-stone-200 bg-surface/90 px-4 py-2.5 backdrop-blur md:hidden">
           <button
             data-testid="nav-menu-toggle"
             type="button"
@@ -444,7 +446,7 @@ function WorkspaceSwitcher(): JSX.Element {
           data-testid="workspace-select"
           value={session.workspaceId ?? ''}
           onChange={(e) => void switchWorkspace((e.target as HTMLSelectElement).value)}
-          class="w-full appearance-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 pr-8 text-sm font-medium text-white outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-400/30"
+          class="w-full appearance-none rounded-lg border border-white/10 bg-surface/5 px-3 py-2 pr-8 text-sm font-medium text-white outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-400/30"
         >
           {session.memberships.map((m) => (
             <option key={m.workspaceId} value={m.workspaceId} class="text-ink-900">
@@ -552,7 +554,7 @@ function CompanyWorkspacePicker(): JSX.Element {
         <button
           data-testid="company-current"
           onClick={() => setOpen((v) => !v)}
-          class="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-left text-sm font-medium text-white outline-none transition hover:bg-white/10 focus:border-brand-400 focus:ring-2 focus:ring-brand-400/30"
+          class="flex w-full items-center justify-between rounded-lg border border-white/10 bg-surface/5 px-3 py-2 text-left text-sm font-medium text-white outline-none transition hover:bg-surface/10 focus:border-brand-400 focus:ring-2 focus:ring-brand-400/30"
         >
           <span class="truncate">{selectedCompany?.name ?? session.companyName ?? 'Select a company…'}</span>
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" class="ml-2 h-4 w-4 shrink-0 text-stone-400">
@@ -562,7 +564,7 @@ function CompanyWorkspacePicker(): JSX.Element {
         {open ? (
           <div
             data-testid="company-menu"
-            class="absolute left-0 right-0 z-40 mt-1 rounded-lg border border-stone-200 bg-white p-2 shadow-soft"
+            class="absolute left-0 right-0 z-40 mt-1 rounded-lg border border-stone-200 bg-surface p-2 shadow-soft"
           >
             <input
               data-testid="company-search"
@@ -603,7 +605,7 @@ function CompanyWorkspacePicker(): JSX.Element {
             data-testid="admin-workspace-select"
             value={selectedCompany.workspaces.some((w) => w.id === session.workspaceId) ? session.workspaceId ?? '' : ''}
             onChange={(e) => pickWorkspace((e.target as HTMLSelectElement).value)}
-            class="w-full appearance-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 pr-8 text-sm font-medium text-white outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-400/30"
+            class="w-full appearance-none rounded-lg border border-white/10 bg-surface/5 px-3 py-2 pr-8 text-sm font-medium text-white outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-400/30"
           >
             <option value="" class="text-ink-900">
               {selectedCompany.workspaces.length ? 'Choose a workspace…' : 'No workspaces'}

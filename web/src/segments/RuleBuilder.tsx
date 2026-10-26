@@ -434,7 +434,7 @@ function RuleListEditor({
                   </Select>
                   <span class="text-sm text-stone-500">of these event-data filters</span>
                 </div>
-                <div class="rounded-lg border border-stone-200 bg-white p-2.5">
+                <div class="rounded-lg border border-stone-200 bg-surface p-2.5">
                   {(row.conditions ?? []).length === 0 ? (
                     <p class="text-xs text-stone-400">No event-data filters — matches any time this event triggered.</p>
                   ) : null}
@@ -534,7 +534,7 @@ function RuleListEditor({
                   ) : null}
                 </div>
 
-                <div class="rounded-lg border border-stone-200 bg-white p-2.5">
+                <div class="rounded-lg border border-stone-200 bg-surface p-2.5">
                   <p class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
                     with all of these event attributes
                   </p>

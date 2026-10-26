@@ -436,11 +436,11 @@ export function CompanySettings({ tab = 'company' }: { tab?: CompanyTab }) {
         ? createPortal(
             <div
               data-testid="delete-workspace-modal"
-              class="fixed inset-0 z-50 grid place-items-center bg-ink-950/50 p-4"
+              class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
               onClick={() => setDelTarget(null)}
             >
               <div
-                class="w-full max-w-md rounded-xl bg-white p-5 shadow-soft"
+                class="w-full max-w-md rounded-xl bg-surface p-5 shadow-soft"
                 onClick={(e: Event) => e.stopPropagation()}
               >
                 <h3 class="text-lg font-bold text-ink-950">Delete workspace</h3>

@@ -22,6 +22,13 @@
     background-attachment: fixed;
   }
 
+  html.dark body {
+    background-color: rgb(20 18 17);
+    background-image:
+      radial-gradient(60rem 60rem at 110% -10%, rgb(13 148 136 / 0.10), transparent 60%),
+      radial-gradient(48rem 48rem at -10% 110%, rgb(180 83 9 / 0.06), transparent 55%);
+  }
+
   h1,
   h2,
   h3 {
@@ -36,7 +43,7 @@
 @layer components {
   /* Form controls — shared look so native inputs/selects/textarea match. */
   .input {
-    @apply h-10 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm text-ink-900
+    @apply h-10 w-full rounded-lg border border-stone-300 bg-surface px-3 text-sm text-ink-900
       shadow-sm placeholder:text-stone-400 transition
       focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30
       disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400;
@@ -48,7 +55,7 @@
     background-size: 1.1rem;
   }
   .textarea {
-    @apply w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-ink-900
+    @apply w-full rounded-lg border border-stone-300 bg-surface px-3 py-2 text-sm text-ink-900
       shadow-sm placeholder:text-stone-400 transition
       focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30;
   }
@@ -69,7 +76,7 @@
     @apply btn bg-brand-600 text-white shadow-glow hover:bg-brand-500;
   }
   .btn-secondary {
-    @apply btn border border-stone-300 bg-white text-ink-800 shadow-sm hover:bg-stone-50;
+    @apply btn border border-stone-300 bg-surface text-ink-800 shadow-sm hover:bg-stone-50;
   }
   .btn-ghost {
     @apply btn text-ink-700 hover:bg-stone-200/70;
@@ -80,7 +87,7 @@
 
   /* Surfaces */
   .card {
-    @apply rounded-xl border border-stone-200/80 bg-white/90 shadow-card backdrop-blur-sm;
+    @apply rounded-xl border border-stone-200/80 bg-surface/90 shadow-card backdrop-blur-sm;
   }
 
   /* Status pills */
@@ -103,9 +110,9 @@
   /* Sidebar nav link — full-width, flush to the sidebar edges (no rounded corners). */
   .nav-link {
     @apply flex items-center gap-3 px-3 py-2 text-sm font-medium text-stone-300
-      transition hover:bg-white/5 hover:text-white;
+      transition hover:bg-surface/5 hover:text-white;
   }
   .nav-link-active {
-    @apply bg-white/10 text-white shadow-[inset_2px_0_0_0_theme(colors.brand.400)];
+    @apply bg-surface/10 text-white shadow-[inset_2px_0_0_0_theme(colors.brand.400)];
   }
 }

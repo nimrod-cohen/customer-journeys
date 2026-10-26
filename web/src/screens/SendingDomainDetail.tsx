@@ -452,7 +452,7 @@ function DomainEditor({ id }: { id: string }) {
                   value={sName}
                   onInput={(e: Event) => setSName((e.target as HTMLInputElement).value)}
                 />
-                <span class="flex min-w-[12rem] flex-1 items-center rounded-lg border border-stone-300 bg-white pr-2 focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-400/30">
+                <span class="flex min-w-[12rem] flex-1 items-center rounded-lg border border-stone-300 bg-surface pr-2 focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-400/30">
                   <input
                     data-testid="sender-local-input"
                     class="w-full bg-transparent px-3 py-2 font-mono text-sm outline-none"

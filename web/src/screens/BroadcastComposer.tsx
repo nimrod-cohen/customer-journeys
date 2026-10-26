@@ -319,7 +319,7 @@ export function BroadcastComposer() {
                 // line up across rows (icon · name/1fr · status · right slot). On
                 // mobile it collapses to two columns (icon · name) with the status
                 // and right slot wrapping onto their own full-width rows.
-                class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-card sm:grid-cols-[auto_minmax(0,1fr)_7rem_auto] sm:gap-4"
+                class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-surface px-4 py-3 shadow-card sm:grid-cols-[auto_minmax(0,1fr)_7rem_auto] sm:gap-4"
               >
                 {/* Icon */}
                 <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5 shrink-0 self-start text-stone-400" stroke="currentColor" stroke-width="1.8">
@@ -1082,7 +1082,7 @@ export function BroadcastWizard({ id }: { id?: string }) {
                     <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Message preview</div>
                     <div class="whitespace-pre-wrap text-sm text-ink-800">{waTplBody}</div>
                     <p class="mt-2 text-[11px] text-stone-500">
-                      Fill each <code class="rounded bg-white px-1">{'{{n}}'}</code> below — its number matches the spot in the message above.
+                      Fill each <code class="rounded bg-surface px-1">{'{{n}}'}</code> below — its number matches the spot in the message above.
                     </p>
                   </div>
                 ) : null}
@@ -1513,7 +1513,7 @@ function BroadcastPreview({ id }: { id: string }) {
             title="Email preview"
             sandbox=""
             srcdoc={data.html}
-            class="h-[600px] w-full bg-white"
+            class="h-[600px] w-full bg-surface"
           />
         </Card>
       )}

@@ -216,7 +216,7 @@ export function Login() {
               server also refuses the fixture there (devAuthEnabled), so these
               public creds can neither be shown nor used in prod. */}
           {!isRegister && IS_DEV ? (
-          <div class="mt-8 rounded-lg border border-stone-200 bg-white/60 p-3">
+          <div class="mt-8 rounded-lg border border-stone-200 bg-surface/60 p-3">
             <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
               Dev credentials
             </p>
