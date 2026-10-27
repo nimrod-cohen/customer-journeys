@@ -1,44 +1,46 @@
 // Sidebar-footer controls for the per-browser display preferences:
-// smaller / larger text and a light/dark toggle (store/appearance.ts).
+// a text-size slider and a light/dark toggle (store/appearance.ts).
 import type { JSX } from 'preact';
 import { useStore } from '../store/store.js';
-import { FONT_SCALES, appearanceStore, changeFontScale, toggleTheme } from '../store/appearance.js';
-
-const BTN =
-  'grid h-8 flex-1 place-items-center rounded-md text-stone-300 transition hover:bg-white/5 hover:text-white disabled:pointer-events-none disabled:opacity-40';
+import {
+  TEXT_SIZE_MAX,
+  TEXT_SIZE_MIN,
+  TEXT_SIZE_STEP,
+  appearanceStore,
+  setTextSize,
+  toggleTheme,
+} from '../store/appearance.js';
 
 export function AppearanceControls(): JSX.Element {
-  const { theme, fontScale } = useStore(appearanceStore);
+  const { theme, textSize } = useStore(appearanceStore);
   const dark = theme === 'dark';
   return (
-    <div class="mb-2 flex items-center gap-1 rounded-lg border border-white/10 p-0.5" role="group" aria-label="Display">
-      <button
-        type="button"
-        data-testid="font-smaller"
-        class={BTN}
-        onClick={() => changeFontScale(-1)}
-        disabled={fontScale === FONT_SCALES[0]}
-        title="Smaller text"
-        aria-label="Smaller text"
-      >
-        <span class="text-xs font-bold">A−</span>
-      </button>
-      <button
-        type="button"
-        data-testid="font-larger"
-        class={BTN}
-        onClick={() => changeFontScale(1)}
-        disabled={fontScale === FONT_SCALES[FONT_SCALES.length - 1]}
-        title="Larger text"
-        aria-label="Larger text"
-      >
-        <span class="text-base font-bold leading-none">A+</span>
-      </button>
+    <div class="mb-2 flex items-center gap-2 rounded-lg border border-white/10 py-1 pl-2.5 pr-0.5" role="group" aria-label="Display">
+      <span class="text-[11px] font-bold text-stone-400" aria-hidden="true">
+        A
+      </span>
+      <input
+        type="range"
+        data-testid="text-size"
+        min={TEXT_SIZE_MIN}
+        max={TEXT_SIZE_MAX}
+        step={TEXT_SIZE_STEP}
+        value={textSize}
+        onInput={(e) => setTextSize(Number((e.target as HTMLInputElement).value))}
+        onDblClick={() => setTextSize(100)}
+        class="h-1 min-w-0 flex-1 cursor-pointer accent-brand-400"
+        title={`Text size ${textSize}% (double-click to reset)`}
+        aria-label="Text size"
+        aria-valuetext={`${textSize}%`}
+      />
+      <span class="text-base font-bold leading-none text-stone-400" aria-hidden="true">
+        A
+      </span>
       <span class="h-5 w-px bg-white/10" aria-hidden="true" />
       <button
         type="button"
         data-testid="theme-toggle"
-        class={BTN}
+        class="grid h-8 w-8 shrink-0 place-items-center rounded-md text-stone-300 transition hover:bg-white/5 hover:text-white"
         onClick={toggleTheme}
         title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
         aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}

@@ -7,6 +7,8 @@
 import type { JSX } from 'preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { ActionMenu } from '../ui/kit.js';
+import { useStore } from '../store/store.js';
+import { appearanceStore } from '../store/appearance.js';
 import { layoutDefinition, conditionMergeAnchors, LAYOUT, type LayoutEdge } from './layout.js';
 import { orthogonalPath, verticalAnchor } from './orthogonal-path.js';
 import { buildDefinition, displayType, type CanvasModel, type CanvasEdge, type CanvasNode } from './model.js';
@@ -155,6 +157,11 @@ export function AutomationCanvas({
   // spacer below derives from layout.width/height × scale + 2·pad, so it recomputes
   // automatically on every node addition and at every zoom level.
   const [pad, setPad] = useState({ x: 0, y: 0 });
+  // Layout geometry is computed in px at the 16px design size but RENDERED in rem
+  // (`rem()`), so cards, connectors and (+)s scale together with the user's text size.
+  // `unit` = rendered px per layout px, for the numeric scroll/spacer math.
+  useStore(appearanceStore); // re-render when the text size changes
+  const unit = rootRemPx() / 16;
   const padRef = useRef(pad);
   padRef.current = pad;
 
@@ -269,8 +276,8 @@ export function AutomationCanvas({
     const el = viewportRef.current;
     const pos = layout.positions.get(nodeId);
     if (!el || !pos || padRef.current.x === 0) return false;
-    const cx = padRef.current.x + pos.x * scale;
-    const cy = padRef.current.y + (pos.y + LAYOUT.cardHeight / 2) * scale;
+    const cx = padRef.current.x + pos.x * scale * unit;
+    const cy = padRef.current.y + (pos.y + LAYOUT.cardHeight / 2) * scale * unit;
     el.scrollLeft = cx - el.clientWidth / 2;
     el.scrollTop = cy - el.clientHeight / 2;
     return true;
@@ -389,8 +396,8 @@ export function AutomationCanvas({
         <div
           style={{
             position: 'relative',
-            width: `${layout.width * scale + pad.x * 2}px`,
-            height: `${layout.height * scale + pad.y * 2}px`,
+            width: `${layout.width * scale * unit + pad.x * 2}px`,
+            height: `${layout.height * scale * unit + pad.y * 2}px`,
           }}
         >
           <div
@@ -398,8 +405,8 @@ export function AutomationCanvas({
               position: 'absolute',
               top: 0,
               left: 0,
-              width: `${layout.width}px`,
-              height: `${layout.height}px`,
+              width: rem(layout.width),
+              height: rem(layout.height),
               transform: `translate(${pad.x}px, ${pad.y}px) scale(${scale})`,
               transformOrigin: 'top left',
             }}
@@ -408,8 +415,9 @@ export function AutomationCanvas({
         <svg
           data-testid="automation-connectors"
           class="pointer-events-none absolute inset-0"
-          width={layout.width}
-          height={layout.height}
+          width={rem(layout.width)}
+          height={rem(layout.height)}
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
         >
           {layout.edges.map((e) => (
             <Connector key={`${e.from}-${e.slot}-${e.to}`} edge={e} />
@@ -443,7 +451,7 @@ export function AutomationCanvas({
                   ? 'animate-pulse border-brand-500 bg-brand-500 text-white ring-2 ring-brand-200 hover:bg-brand-600'
                   : 'border-stone-300 bg-surface text-stone-500 hover:border-brand-400 hover:text-brand-600'
               }`}
-              style={{ left: `${mid.x}px`, top: `${mid.y}px` }}
+              style={{ left: rem(mid.x), top: rem(mid.y) }}
             >
               +
             </button>
@@ -480,7 +488,7 @@ export function AutomationCanvas({
                         ? 'animate-pulse border-brand-500 bg-brand-500 text-white ring-2 ring-brand-200 hover:bg-brand-600'
                         : 'border-violet-300 bg-surface text-violet-500 hover:border-violet-500 hover:text-violet-700'
                     }`}
-                    style={{ left: `${anchor.x}px`, top: `${anchor.y}px` }}
+                    style={{ left: rem(anchor.x), top: rem(anchor.y) }}
                   >
                     +
                   </button>
@@ -522,9 +530,9 @@ export function AutomationCanvas({
                       : 'ring-1 ring-inset ring-stone-200 border-stone-200'
               }`}
               style={{
-                left: `${pos.x - LAYOUT.cardWidth / 2}px`,
-                top: `${pos.y}px`,
-                width: `${LAYOUT.cardWidth}px`,
+                left: rem(pos.x - LAYOUT.cardWidth / 2),
+                top: rem(pos.y),
+                width: rem(LAYOUT.cardWidth),
               }}
             >
               {inactiveSend ? (
@@ -647,4 +655,15 @@ function Connector({ edge }: { edge: LayoutEdge }): JSX.Element {
       ) : null}
     </g>
   );
+}
+
+/** A layout length (px at the 16px design size) as rem, so it follows the text size. */
+function rem(px: number): string {
+  return `${px / 16}rem`;
+}
+
+/** The root font size in px (the size of 1rem right now). */
+function rootRemPx(): number {
+  if (typeof document === 'undefined') return 16;
+  return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 }
