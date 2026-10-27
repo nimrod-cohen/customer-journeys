@@ -248,9 +248,11 @@ test('the merge + sits on a VISIBLE vertical line: ABOVE it the arms close, BELO
   }, closingD!);
 
   // The merge (+)'s LOCAL y (its inline style top — same frame as the path coords).
-  const mergeTop = await page.getByTestId('automation-merge-insert').first().evaluate((el) =>
-    parseFloat((el as HTMLElement).style.top),
-  );
+  // Positions are rendered in rem (layout px ÷ 16) so the canvas follows the text size.
+  const mergeTop = await page.getByTestId('automation-merge-insert').first().evaluate((el) => {
+    const top = (el as HTMLElement).style.top;
+    return parseFloat(top) * (top.endsWith('rem') ? 16 : 1);
+  });
 
   // The visible line: closure corner ABOVE the (+), the join card top BELOW it.
   expect(mergeTop).toBeGreaterThan(closureCornerY + 8); // a real line ABOVE the +
@@ -497,8 +499,10 @@ test('branch arm spacing is FIXED & depth-consistent: a ~40px gap between the tw
   const topGap = topArmCenters[1]! - topArmCenters[0]!;
   expect(topGap, `top arm gap ${topGap}`).toBeGreaterThan(0);
   expect(topGap).toBeLessThan(OLD_WIDE_GAP + 120); // well under the old wide spread
+  // The canvas is drawn in rem, so on screen its layout px are scaled by rootFontSize/16.
+  const unit = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize) / 16);
   const cardW = 200;
-  expect(Math.abs(topGap - cardW - FIXED_CARD_GAP)).toBeLessThanOrEqual(GAP_TOL); // ~40px edge gap
+  expect(Math.abs(topGap - (cardW + FIXED_CARD_GAP) * unit)).toBeLessThanOrEqual(GAP_TOL); // ~40px edge gap
 
   // NEST an If inside the LEFT arm: click the arm insert nearest the left wait's column.
   const leftWaitX = topArmCenters[0]!;

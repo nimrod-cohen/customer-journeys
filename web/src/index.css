@@ -8,6 +8,12 @@
     --ring: 13 148 136; /* brand-600 */
   }
 
+  /* The default text size (store/appearance.ts BASE_FONT_PERCENT); the text-size
+     slider sets an inline size relative to it. */
+  html {
+    font-size: 125%;
+  }
+
   html,
   body,
   #app {
