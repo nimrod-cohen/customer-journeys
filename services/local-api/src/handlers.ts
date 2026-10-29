@@ -256,13 +256,20 @@ async function cloneEmailTemplate(
   workspaceId: string,
   sourceId: string,
   nameOverride?: string | null,
+  asLibrary = false,
 ): Promise<{ id: string; name: string } | null> {
+  // asLibrary: a standalone library DUPLICATE (listed, no link back to the source)
+  // rather than a hidden working copy. The transactional key is never copied — it
+  // is unique per workspace.
   const q = scopedQuery(
     workspaceId,
     `INSERT INTO email_templates (workspace_id, name, mjml, compiled_html, design, kind, source_template_id, subject, sender_id, to_address, from_selected)
-     SELECT workspace_id, COALESCE($2, name), mjml, compiled_html, design, 'copy', id, subject, sender_id, to_address, from_selected
+     SELECT workspace_id, COALESCE($2, name), mjml, compiled_html, design,
+            CASE WHEN $3::boolean THEN 'library' ELSE 'copy' END,
+            CASE WHEN $3::boolean THEN NULL ELSE id END,
+            subject, sender_id, to_address, from_selected
      FROM email_templates WHERE id = $1`,
-    [sourceId, nameOverride ?? null],
+    [sourceId, nameOverride ?? null, asLibrary],
   );
   const { rows } = await pool.query<{ id: string; name: string }>(`${q.text} RETURNING id, name`, q.values);
   return rows[0] ?? null;
@@ -3485,6 +3492,21 @@ export const cloneTemplate: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
   const copy = await cloneEmailTemplate(pool, ctx.workspaceId, id, b.name !== undefined ? String(b.name) : null);
+  if (!copy) return ok({ error: 'not found' }, 404);
+  return ok({ template: copy }, 201);
+};
+
+/**
+ * POST /templates/:id/duplicate — a new LIBRARY template with the same design and
+ * envelope, named "<name> (copy)". Unlike /clone it is listed and independent.
+ * Scoped: a foreign id duplicates nothing → 404.
+ */
+export const duplicateTemplate: Handler = async (ctx, pool, req) => {
+  const id = req.params.id!;
+  const q = scopedQuery(ctx.workspaceId, 'SELECT name FROM email_templates WHERE id = $1', [id]);
+  const { rows } = await pool.query<{ name: string }>(q.text, q.values);
+  if (!rows[0]) return ok({ error: 'not found' }, 404);
+  const copy = await cloneEmailTemplate(pool, ctx.workspaceId, id, `${rows[0].name} (copy)`, true);
   if (!copy) return ok({ error: 'not found' }, 404);
   return ok({ template: copy }, 201);
 };
@@ -8093,6 +8115,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /templates/:id': updateTemplate,
   'DELETE /templates/:id': deleteTemplate,
   'POST /templates/:id/clone': cloneTemplate,
+  'POST /templates/:id/duplicate': duplicateTemplate,
   'PUT /templates/:id/transactional-key': setTemplateTransactionalKey,
   'POST /assets': uploadAsset,
   'POST /assets/backfill-r2': backfillAssetsR2,

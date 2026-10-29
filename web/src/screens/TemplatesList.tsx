@@ -60,6 +60,18 @@ export function TemplatesList() {
     }
   };
 
+  const duplicateTemplate = async (t: Template): Promise<void> => {
+    setError('');
+    try {
+      const res = await api.post<{ template: { id: string; name: string } }>(`/templates/${t.id}/duplicate`, {});
+      const copy: Template = { ...res.template, transactional_key: null, updated_at: new Date().toISOString() };
+      setTemplates((list) => [copy, ...(list ?? [])]);
+      showToast(`Duplicated as “${copy.name}”.`);
+    } catch (e) {
+      setError((e as { error?: string })?.error ?? 'Could not duplicate the template.');
+    }
+  };
+
   const openKeyDrawer = (t: Template): void => {
     setKeyTarget(t);
     setKeyDraft(t.transactional_key ?? '');
@@ -197,6 +209,11 @@ export function TemplatesList() {
                         clearEditorReturn();
                         navigate(`/editor/${t.id}`);
                       },
+                    },
+                    {
+                      label: 'Duplicate',
+                      'data-testid': 'template-duplicate',
+                      onSelect: () => duplicateTemplate(t),
                     },
                     {
                       label: t.transactional_key ? 'Transactional API key…' : 'Use for transactional API…',
