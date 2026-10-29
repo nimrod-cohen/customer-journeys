@@ -66,6 +66,51 @@ describeMaybe('email template CRUD (real Postgres)', () => {
     expect((list.body as { templates: Array<{ id: string }> }).templates.some((x) => x.id === id)).toBe(true);
   });
 
+  it('duplicate makes a new LIBRARY template with the same design, named "(copy)", without the API key', async () => {
+    const c = await call(world.env, 'POST', '/templates', {
+      token: tok(),
+      body: { name: 'Promo', mjml: MJML, design: { rows: [1] }, subject: 'Hi there' },
+    });
+    const id = (c.body as { template: { id: string } }).template.id;
+    await call(world.env, 'PUT', `/templates/${id}/transactional-key`, {
+      token: tok(),
+      body: { transactional_key: 'dup-src' },
+    });
+
+    const d = await call(world.env, 'POST', `/templates/${id}/duplicate`, { token: tok() });
+    expect(d.status).toBe(201);
+    const dup = (d.body as { template: { id: string; name: string } }).template;
+    expect(dup.id).not.toBe(id);
+    expect(dup.name).toBe('Promo (copy)');
+
+    const row = await world.pool.query(
+      'SELECT kind, source_template_id, design, subject, transactional_key, compiled_html FROM email_templates WHERE id = $1',
+      [dup.id],
+    );
+    const r = row.rows[0]!;
+    expect(r.kind).toBe('library');
+    expect(r.source_template_id).toBeNull();
+    expect(r.design).toEqual({ rows: [1] });
+    expect(r.subject).toBe('Hi there');
+    // The key is unique per workspace — the copy must not take it.
+    expect(r.transactional_key).toBeNull();
+    expect(r.compiled_html).toContain('hi');
+
+    const list = await call(world.env, 'GET', '/templates', { token: tok() });
+    expect((list.body as { templates: Array<{ id: string }> }).templates.some((x) => x.id === dup.id)).toBe(true);
+  });
+
+  it('duplicating a foreign or unknown template is 404', async () => {
+    const foreign = await world.pool.query<{ id: string }>(
+      "INSERT INTO email_templates (workspace_id, name, mjml, compiled_html) VALUES ($1,'F',$2,'') RETURNING id",
+      [OTHER, MJML],
+    );
+    const d = await call(world.env, 'POST', `/templates/${foreign.rows[0]!.id}/duplicate`, { token: tok() });
+    expect(d.status).toBe(404);
+    const count = await world.pool.query("SELECT count(*)::int AS n FROM email_templates WHERE workspace_id = $1 AND name = 'F (copy)'", [WS]);
+    expect(count.rows[0]!.n).toBe(0);
+  });
+
   it('cross-workspace GET is 404 (never another tenant)', async () => {
     const c = await call(world.env, 'POST', '/templates', { token: tok(), body: { name: 'X', mjml: MJML } });
     const id = (c.body as { template: { id: string } }).template.id;
