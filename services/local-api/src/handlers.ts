@@ -3117,6 +3117,25 @@ export const deleteTextTemplate: Handler = async (ctx, pool, req) => {
   return ok({ deleted: rowCount });
 };
 
+/** Max length of a segment/automation `description` (free text, optional). */
+export const MAX_DESCRIPTION_LENGTH = 2000;
+
+/**
+ * Parse an optional `description` from a request body. `undefined` = not supplied
+ * (leave the column as-is); `null` = clear it; a string is trimmed, and blank
+ * clears it. Over MAX_DESCRIPTION_LENGTH (or a non-string) is an error string.
+ */
+export function parseDescription(raw: unknown): { value: string | null | undefined } | { error: string } {
+  if (raw === undefined) return { value: undefined };
+  if (raw === null) return { value: null };
+  if (typeof raw !== 'string') return { error: 'description must be a string' };
+  const v = raw.trim();
+  if (v.length > MAX_DESCRIPTION_LENGTH) {
+    return { error: `description must be at most ${MAX_DESCRIPTION_LENGTH} characters` };
+  }
+  return { value: v === '' ? null : v };
+}
+
 export const listSegments: Handler = async (ctx, pool, req) => {
   // Paging is OPT-IN (the Segments LIST screen passes ?limit&page&q). When `limit` is
   // absent the WHOLE list is returned — the segment dropdowns (broadcast audience,
@@ -3130,7 +3149,7 @@ export const listSegments: Handler = async (ctx, pool, req) => {
   }
   const pc = pageClause(p, params.length + 1);
   const { rows } = await pool.query(
-    `SELECT id, name, kind, status, definition FROM segments WHERE ${where} ORDER BY name${pc.text}`,
+    `SELECT id, name, description, kind, status, definition FROM segments WHERE ${where} ORDER BY name${pc.text}`,
     [...params, ...pc.values],
   );
   // Total = a count when paged (so the UI can render "1–50 of N"); else just the row count.
@@ -3147,7 +3166,7 @@ export const getSegment: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const q = scopedQuery(
     ctx.workspaceId,
-    'SELECT id, name, kind, status, definition FROM segments WHERE id = $1',
+    'SELECT id, name, description, kind, status, definition FROM segments WHERE id = $1',
     [id],
   );
   const { rows } = await pool.query(q.text, q.values);
@@ -3161,14 +3180,16 @@ export const createSegment: Handler = async (ctx, pool, req) => {
   const kind = String(b.kind ?? 'dynamic_realtime');
   const definition = (b.definition ?? null) as AstNode | null;
   if (!name) return ok({ error: 'name required' }, 400);
+  const desc = parseDescription(b.description);
+  if ('error' in desc) return ok({ error: desc.error }, 400);
   if (definition !== null) validateAst(definition); // reject garbage AST early
   // A dynamic segment with NO rules is an inactive DRAFT (never evaluated, so it
   // never accidentally matches everyone). Manual lists are always active.
   const status = kind === 'dynamic_realtime' && definition === null ? 'draft' : 'active';
-  const { rows } = await pool.query<{ id: string; name: string; kind: string; status: string }>(
-    `INSERT INTO segments (workspace_id, name, kind, status, definition)
-     VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id, name, kind, status`,
-    [ctx.workspaceId, name, kind, status, definition === null ? null : JSON.stringify(definition)],
+  const { rows } = await pool.query<{ id: string; name: string; description: string | null; kind: string; status: string }>(
+    `INSERT INTO segments (workspace_id, name, kind, status, definition, description)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING id, name, description, kind, status`,
+    [ctx.workspaceId, name, kind, status, definition === null ? null : JSON.stringify(definition), desc.value ?? null],
   );
   // Dynamic membership is NOT materialized on save (it doesn't scale and a
   // time-windowed rule drifts with the clock). Reads resolve the rule LIVE
@@ -3183,10 +3204,13 @@ export const updateSegment: Handler = async (ctx, pool, req) => {
   const name = b.name !== undefined ? String(b.name) : null;
   const definition = b.definition !== undefined ? (b.definition as AstNode | null) : undefined;
   if (definition !== undefined && definition !== null) validateAst(definition);
+  const desc = parseDescription(b.description);
+  if ('error' in desc) return ok({ error: desc.error }, 400);
   const q = scopedQuery(
     ctx.workspaceId,
     `UPDATE segments SET
        name = COALESCE($1, name),
+       description = CASE WHEN $5::boolean THEN $6 ELSE description END,
        definition = CASE WHEN $3::boolean THEN $2::jsonb ELSE definition END,
        -- When the rules are (re)set: empty → inactive draft, non-empty → active.
        -- A rename-only update ($3 false) leaves status untouched.
@@ -3198,6 +3222,8 @@ export const updateSegment: Handler = async (ctx, pool, req) => {
       definition === undefined || definition === null ? null : JSON.stringify(definition),
       definition !== undefined,
       id,
+      desc.value !== undefined,
+      desc.value ?? null,
     ],
   );
   const { rowCount } = await pool.query(q.text, q.values);
@@ -4462,11 +4488,12 @@ export const listAutomations: Handler = async (ctx, pool, req) => {
   const { rows } = await pool.query<{
     id: string;
     name: string;
+    description: string | null;
     status: string;
     published: boolean;
     hasDraft: boolean;
   }>(
-    `SELECT id, name, status, (active_version_id IS NOT NULL) AS published,
+    `SELECT id, name, description, status, (active_version_id IS NOT NULL) AS published,
             (draft_definition IS NOT NULL AND draft_definition::text IS DISTINCT FROM definition::text) AS "hasDraft"
        FROM automations WHERE ${where} ORDER BY created_at DESC${pc.text}`,
     [...params, ...pc.values],
@@ -4581,6 +4608,7 @@ export const getAutomation: Handler = async (ctx, pool, req) => {
   const { rows } = await pool.query<{
     id: string;
     name: string;
+    description: string | null;
     status: string;
     definition: AutomationDefinition;
     draft_definition: AutomationDefinition | null;
@@ -4593,7 +4621,7 @@ export const getAutomation: Handler = async (ctx, pool, req) => {
     active_version: number | null;
     active_version_name: string | null;
   }>(
-    `SELECT c.id, c.name, c.status, c.definition, c.draft_definition, c.trigger_segment_id,
+    `SELECT c.id, c.name, c.description, c.status, c.definition, c.draft_definition, c.trigger_segment_id,
             c.draft_trigger_segment_id, c.trigger_on, c.draft_trigger_on, c.keep_while_in_segment,
             c.active_version_id,
             av.version AS active_version, av.name AS active_version_name
@@ -4633,6 +4661,7 @@ export const getAutomation: Handler = async (ctx, pool, req) => {
   const automation = {
     id: r.id,
     name: r.name,
+    description: r.description,
     status: r.status,
     definition, // the draft to EDIT (draft ?? live)
     liveDefinition: r.definition, // the active definition the runner reads
@@ -4667,6 +4696,8 @@ export const createAutomation: Handler = async (ctx, pool, req) => {
   const name = String(b.name ?? '');
   const definition = b.definition;
   if (!name) return ok({ error: 'name required' }, 400);
+  const desc = parseDescription(b.description);
+  if ('error' in desc) return ok({ error: desc.error }, 400);
   const invalid = validateDefinitionOr400(definition); // reject malformed graphs (§9B) as a TYPED 400
   if (invalid) return invalid;
   // A client-supplied trigger_segment_id must resolve INSIDE the token's workspace
@@ -4677,8 +4708,8 @@ export const createAutomation: Handler = async (ctx, pool, req) => {
   // optional gate that exits the enrollment when the profile leaves that segment.
   const triggerOn = b.trigger_on === 'exit' ? 'exit' : 'enter';
   const { rows } = await pool.query(
-    `INSERT INTO automations (workspace_id, name, definition, trigger_segment_id, trigger_on, keep_while_in_segment)
-     VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id, name, status, trigger_on, keep_while_in_segment`,
+    `INSERT INTO automations (workspace_id, name, definition, trigger_segment_id, trigger_on, keep_while_in_segment, description)
+     VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING id, name, description, status, trigger_on, keep_while_in_segment`,
     [
       ctx.workspaceId,
       name,
@@ -4686,6 +4717,7 @@ export const createAutomation: Handler = async (ctx, pool, req) => {
       triggerSegmentId,
       triggerOn,
       b.keep_while_in_segment ?? null,
+      desc.value ?? null,
     ],
   );
   return ok({ automation: rows[0] }, 201);
@@ -4719,6 +4751,8 @@ export const updateAutomation: Handler = async (ctx, pool, req) => {
     const invalid = validateDefinitionOr400(b.definition); // typed 400, never a 500
     if (invalid) return invalid;
   }
+  const desc = parseDescription(b.description);
+  if ('error' in desc) return ok({ error: desc.error }, 400);
   // The segment_entry trigger's segment is a AUTOMATION-ROW field. When the body
   // supplies trigger_segment_id it MUST resolve inside the token's workspace (inv.2)
   // — a foreign id is a 400, never silently stored. Absent → leave the column as-is.
@@ -4740,7 +4774,8 @@ export const updateAutomation: Handler = async (ctx, pool, req) => {
        status = COALESCE($4, status),
        trigger_on = COALESCE($6, trigger_on),
        keep_while_in_segment = CASE WHEN $7::boolean THEN $8 ELSE keep_while_in_segment END,
-       trigger_segment_id = CASE WHEN $9::boolean THEN $10 ELSE trigger_segment_id END
+       trigger_segment_id = CASE WHEN $9::boolean THEN $10 ELSE trigger_segment_id END,
+       description = CASE WHEN $11::boolean THEN $12 ELSE description END
      WHERE id = $5`,
     [
       b.name !== undefined ? String(b.name) : null,
@@ -4753,6 +4788,8 @@ export const updateAutomation: Handler = async (ctx, pool, req) => {
       (b.keep_while_in_segment ?? null) as string | null,
       setTriggerSegment,
       triggerSegmentId,
+      desc.value !== undefined,
+      desc.value ?? null,
     ],
   );
   const { rowCount } = await pool.query(q.text, q.values);

@@ -12,6 +12,7 @@ import { usePagedList } from '../ui/usePagedList.js';
 interface Segment {
   id: string;
   name: string;
+  description?: string | null;
   kind: string;
   status: string;
 }
@@ -83,7 +84,14 @@ export function SegmentsList() {
                 onClick={() => navigate(`/segments/${s.id}`)}
                 class="cursor-pointer hover:bg-stone-50/70"
               >
-                <td class="px-4 py-2.5 font-medium text-ink-900">{s.name}</td>
+                <td class="px-4 py-2.5">
+                  <div class="font-medium text-ink-900">{s.name}</div>
+                  {s.description ? (
+                    <div data-testid="segment-list-description" class="max-w-md truncate text-xs text-stone-500" title={s.description}>
+                      {s.description}
+                    </div>
+                  ) : null}
+                </td>
                 <td class="px-4 py-2.5">
                   <Badge tone={s.kind === 'manual' ? 'neutral' : 'success'}>{s.kind}</Badge>
                 </td>
