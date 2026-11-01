@@ -47,6 +47,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
   const [previewError, setPreviewError] = useState('');
   const PAGE = 50;
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   // A segment is EITHER dynamic (rule-based) OR manual (uploaded list) — never
   // both. Chosen on create; fixed thereafter.
   const [segmentKind, setSegmentKind] = useState<'dynamic_realtime' | 'manual'>('dynamic_realtime');
@@ -58,9 +59,12 @@ export function SegmentBuilder({ id }: { id?: string }) {
   useEffect(() => {
     if (!id) return;
     void api
-      .get<{ segment: { name: string; kind: string; definition: AstNode | null } }>(`/segments/${id}`)
+      .get<{ segment: { name: string; description: string | null; kind: string; definition: AstNode | null } }>(
+        `/segments/${id}`,
+      )
       .then((res) => {
         setName(res.segment.name);
+        setDescription(res.segment.description ?? '');
         setSegmentKind(res.segment.kind === 'manual' ? 'manual' : 'dynamic_realtime');
         const g = groupFromAst(res.segment.definition);
         setRows(g.rows);
@@ -144,7 +148,7 @@ export function SegmentBuilder({ id }: { id?: string }) {
     }
     setDirty(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, combinator, groups, csv, name]);
+  }, [rows, combinator, groups, csv, name, description]);
 
   // Block leaving the screen with unsaved changes. `dirtyRef` mirrors `dirty` so
   // the guard/beforeunload closures aren't stale. The nav guard (in-app links,
@@ -194,10 +198,10 @@ export function SegmentBuilder({ id }: { id?: string }) {
           .filter(Boolean);
         let sid = savedId;
         if (sid) {
-          await api.put(`/segments/${sid}`, { body: { name: segName } });
+          await api.put(`/segments/${sid}`, { body: { name: segName, description } });
         } else {
           const res = await api.post<{ segment: { id: string } }>('/segments', {
-            body: { name: segName, kind: 'manual', definition: null },
+            body: { name: segName, description, kind: 'manual', definition: null },
           });
           sid = res.segment.id;
           setSavedId(sid);
@@ -213,10 +217,10 @@ export function SegmentBuilder({ id }: { id?: string }) {
       // Dynamic: compile the rule group into the §8 AST.
       const ast = buildAstFromGroup(rootGroup());
       if (savedId) {
-        await api.put(`/segments/${savedId}`, { body: { name: segName, definition: ast } });
+        await api.put(`/segments/${savedId}`, { body: { name: segName, description, definition: ast } });
       } else {
         const res = await api.post<{ segment: { id: string } }>('/segments', {
-          body: { name: segName, kind: 'dynamic_realtime', definition: ast },
+          body: { name: segName, description, kind: 'dynamic_realtime', definition: ast },
         });
         setSavedId(res.segment.id);
       }
@@ -279,6 +283,16 @@ export function SegmentBuilder({ id }: { id?: string }) {
                 )}
               </Field>
             </div>
+            <Field label="Description (optional)" class="mt-3">
+              <Textarea
+                data-testid="segment-description"
+                rows={2}
+                maxLength={2000}
+                placeholder="What is this audience for?"
+                value={description}
+                onInput={(e: Event) => setDescription((e.target as HTMLTextAreaElement).value)}
+              />
+            </Field>
 
             {segmentKind === 'dynamic_realtime' ? (
             <div class="mt-5 space-y-3">

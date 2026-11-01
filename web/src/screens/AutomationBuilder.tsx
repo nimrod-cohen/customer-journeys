@@ -16,7 +16,7 @@
 // Active) through the send-node envelope + verified-domain gate. Returning from a
 // send node's "Design email" lands here (the editor's setEditorReturn targets
 // /automations/:id). Server-calling buttons RETURN the promise; no native dialogs.
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate, replaceRoute } from '../router.js';
 import { Badge, Button, Card, Input, PageHeader, Pagination, EmptyState, toneFor, Drawer, ActionMenu } from '../ui/kit.js';
@@ -63,6 +63,7 @@ interface EnrollmentCounts {
 interface AutomationListItem {
   id: string;
   name: string;
+  description?: string | null;
   status: string;
   counts: EnrollmentCounts;
   // True once the automation has had at least one publish (active_version_id set).
@@ -266,13 +267,20 @@ export function AutomationsList() {
                 class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-surface px-4 py-3 shadow-card sm:grid-cols-[minmax(0,1fr)_8rem_minmax(0,auto)_auto] sm:gap-4"
               >
                 {/* Name */}
-                <a
-                  data-testid="automation-open"
-                  class="min-w-0 cursor-pointer truncate font-semibold text-ink-900 hover:text-brand-700"
-                  onClick={() => navigate(`/automations/${c.id}`)}
-                >
-                  {c.name}
-                </a>
+                <div class="min-w-0">
+                  <a
+                    data-testid="automation-open"
+                    class="block cursor-pointer truncate font-semibold text-ink-900 hover:text-brand-700"
+                    onClick={() => navigate(`/automations/${c.id}`)}
+                  >
+                    {c.name}
+                  </a>
+                  {c.description ? (
+                    <p data-testid="automation-list-description" class="truncate text-xs text-stone-500" title={c.description}>
+                      {c.description}
+                    </p>
+                  ) : null}
+                </div>
 
                 {/* Status badge — order so the kebab stays on row 1 at mobile. */}
                 <span class="order-3 col-start-1 justify-self-start sm:order-none sm:col-start-auto">
@@ -413,6 +421,9 @@ export function AutomationDetail({ id }: { id?: string }) {
   const existingId = id && id !== 'new' ? id : null;
   const [automations, setAutomations] = useState<AutomationListItem[]>([]);
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  // The description as last saved, so a blur with no change doesn't re-save.
+  const savedDescription = useRef('');
   const [model, setModel] = useState<CanvasModel>(() => starterModel());
   const [editingId, setEditingId] = useState<string | null>(existingId);
   const [status, setStatus] = useState<string>('draft');
@@ -501,6 +512,7 @@ export function AutomationDetail({ id }: { id?: string }) {
       automation: {
         id: string;
         name: string;
+        description: string | null;
         status: string;
         definition: AutomationDefinition;
         liveDefinition: AutomationDefinition;
@@ -512,6 +524,8 @@ export function AutomationDetail({ id }: { id?: string }) {
     }>(`/automations/${cid}`);
     setEditingId(res.automation.id);
     setName(res.automation.name);
+    setDescription(res.automation.description ?? '');
+    savedDescription.current = res.automation.description ?? '';
     setStatus(res.automation.status);
     setModel(parseDefinition(res.automation.definition));
     setTriggerSegmentId(res.automation.trigger_segment_id ?? null);
@@ -691,12 +705,14 @@ export function AutomationDetail({ id }: { id?: string }) {
     const r = await api.post<{ automation: { id: string } }>('/automations', {
       body: {
         name: name || 'Untitled automation',
+        description,
         definition,
         trigger_on: to,
         ...(triggerSeg !== null ? { trigger_segment_id: triggerSeg } : {}),
       },
     });
     setEditingId(r.automation.id);
+    savedDescription.current = description;
     // Point the URL at the new automation so a REFRESH reloads it instead of a blank
     // /automations/new (which orphaned the draft + minted a new "Untitled" each retry).
     // Silent (no remount) so an in-flight edit / open node editor isn't disrupted.
@@ -705,6 +721,20 @@ export function AutomationDetail({ id }: { id?: string }) {
     setLiveDefinition(definition);
     setLiveTriggerSegmentId(triggerSeg ?? null);
     return r.automation.id;
+  };
+
+  // The description is automation METADATA (not part of the versioned graph), so it
+  // saves straight to the row on blur — no draft/publish. A new automation carries
+  // it on its first persist instead.
+  const saveDescription = async (value: string): Promise<void> => {
+    if (!editingId || value.trim() === savedDescription.current.trim()) return;
+    try {
+      await api.put(`/automations/${editingId}`, { body: { description: value } });
+      savedDescription.current = value;
+      await reloadList();
+    } catch (err) {
+      showToast((err as { error?: string })?.error ?? String(err), { tone: 'error' });
+    }
   };
 
   // Save: persist the definition to the DRAFT; surface an invalid graph inline +
@@ -916,6 +946,15 @@ export function AutomationDetail({ id }: { id?: string }) {
           </button>
         </div>
       </header>
+      <Input
+        data-testid="automation-description"
+        placeholder="Description (optional) — what is this automation for?"
+        maxLength={2000}
+        value={description}
+        onInput={(e: Event) => setDescription((e.target as HTMLInputElement).value)}
+        onBlur={(e: Event) => saveDescription((e.target as HTMLInputElement).value)}
+        class="mb-3 w-full max-w-2xl"
+      />
 
       {/* Builder / History tabs — the canvas is the default. Status badges
           (draft indicator + automation status) sit on the right of this row, so
