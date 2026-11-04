@@ -29,6 +29,10 @@ interface Candidate {
   attributes?: Record<string, unknown>;
 }
 
+type Side = 'lead' | 'secondary';
+type IdField = 'email' | 'phone';
+const ID_FIELDS: IdField[] = ['email', 'phone'];
+
 function fmt(v: unknown): string {
   if (v === undefined) return '—';
   return typeof v === 'string' ? v : JSON.stringify(v);
@@ -55,6 +59,8 @@ export function MergeProfileDrawer({
   const [swapped, setSwapped] = useState(false);
   // For attribute keys present in BOTH, which side's value wins ('lead'|'secondary').
   const [choice, setChoice] = useState<Record<string, 'lead' | 'secondary'>>({});
+  // Email/phone are core fields, not attributes: picked per field, sent as `identity`.
+  const [idPick, setIdPick] = useState<Partial<Record<IdField, Side>>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -63,6 +69,7 @@ export function MergeProfileDrawer({
     setOther(null);
     setSwapped(false);
     setChoice({});
+    setIdPick({});
     setError('');
   }, [open, profile.id]);
 
@@ -77,8 +84,14 @@ export function MergeProfileDrawer({
     [leadAttrs, secAttrs],
   );
 
+  // Default pick: the lead's value when it has one, else the secondary's — shown,
+  // and changeable, in the Contact rows.
+  const pickFor = (f: IdField): Side => idPick[f] ?? (lead[f] ? 'lead' : secondary?.[f] ? 'secondary' : 'lead');
+  const keptValue = (f: IdField) => (pickFor(f) === 'lead' ? lead[f] : secondary?.[f]) ?? null;
+  const noIdentifier = !!secondary && !keptValue('email') && !keptValue('phone');
+
   const merge = async () => {
-    if (!secondary) return;
+    if (!secondary || noIdentifier) return;
     setBusy(true);
     setError('');
     // Build the resolved attribute object: conflicts use the chosen side; keys
@@ -91,7 +104,9 @@ export function MergeProfileDrawer({
       else attributes[k] = inSec ? secAttrs[k] : leadAttrs[k];
     }
     try {
-      await api.post(`/profiles/${lead.id}/merge`, { body: { secondary_id: secondary.id, attributes } });
+      await api.post(`/profiles/${lead.id}/merge`, {
+        body: { secondary_id: secondary.id, attributes, identity: { email: pickFor('email'), phone: pickFor('phone') } },
+      });
       onMerged(lead.id);
     } catch (e) {
       setError((e as { error?: string })?.error ?? 'merge failed');
@@ -112,7 +127,13 @@ export function MergeProfileDrawer({
   // One value option in the conflict toggle. Selected = the value that flows into
   // the survivor (brand-filled + arrow points to it). Colour is NOT the only cue:
   // each chip is labelled lead/secondary and the selected one carries a ✓.
-  const chip = (k: string, side: 'lead' | 'secondary', value: unknown, pick: 'lead' | 'secondary') => {
+  const chip = (
+    k: string,
+    side: Side,
+    value: unknown,
+    pick: Side,
+    onPick: (side: Side) => void = (sd) => setChoice((c) => ({ ...c, [k]: sd })),
+  ) => {
     const sel = pick === side;
     return (
       <button
@@ -120,7 +141,7 @@ export function MergeProfileDrawer({
         role="radio"
         aria-checked={sel}
         data-testid={side === 'lead' ? 'merge-pick-lead' : 'merge-pick-secondary'}
-        onClick={() => setChoice((c) => ({ ...c, [k]: side }))}
+        onClick={() => onPick(side)}
         class={`min-w-0 flex-1 rounded-lg border px-3 py-1.5 text-left transition focus:outline-none focus:ring-2 focus:ring-brand-400/40 ${
           sel
             ? 'border-brand-600 bg-brand-600 text-white shadow-glow'
@@ -134,7 +155,7 @@ export function MergeProfileDrawer({
               <path d="M4 10l4 4 8-9" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           ) : null}
-          <span class="truncate text-sm font-medium">{fmt(value)}</span>
+          <span class="truncate text-sm font-medium">{value === null || value === undefined ? '—' : fmt(value)}</span>
         </span>
         <span class={`block text-[10px] uppercase tracking-wide ${sel ? 'text-white/70' : 'text-stone-400'}`}>
           {side}
@@ -155,7 +176,7 @@ export function MergeProfileDrawer({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button data-testid="merge-confirm" variant="danger" onClick={merge} disabled={!secondary || busy}>
+          <Button data-testid="merge-confirm" variant="danger" onClick={merge} disabled={!secondary || busy || noIdentifier}>
             {busy ? 'Merging…' : 'Merge profiles'}
           </Button>
         </>
@@ -184,11 +205,49 @@ export function MergeProfileDrawer({
                 variant="ghost"
                 size="sm"
                 aria-label="Swap lead and secondary"
-                onClick={() => setSwapped((v) => !v)}
+                onClick={() => {
+                  setSwapped((v) => !v);
+                  setIdPick({});
+                }}
               >
                 ⇄
               </Button>
               {panel(secondary, 'Secondary (deleted)', 'neutral')}
+            </div>
+
+            <div>
+              <span class="label">Contact</span>
+              <p class="mb-2 text-xs text-stone-400">Pick which email and phone the survivor keeps.</p>
+              <div class="divide-y divide-stone-100 overflow-hidden rounded-lg border border-stone-200">
+                {ID_FIELDS.map((f) => {
+                  const lv = lead[f] ?? null;
+                  const sv = secondary[f] ?? null;
+                  const pick = pickFor(f);
+                  return (
+                    <div data-testid="merge-identity-row" data-key={f} key={f} class="flex items-center gap-3 px-3 py-2.5">
+                      <span class="w-20 shrink-0 font-mono text-xs text-stone-500">{f}</span>
+                      {lv === sv ? (
+                        <span class="flex-1 truncate text-right text-sm text-stone-700">{lv ?? '—'}</span>
+                      ) : (
+                        <div role="radiogroup" aria-label={`Choose the ${f} to keep`} class="flex min-w-0 flex-1 items-center gap-2">
+                          {chip(f, 'lead', lv, pick, (sd) => setIdPick((c) => ({ ...c, [f]: sd })))}
+                          <span class="grid h-8 w-8 shrink-0 place-items-center text-stone-300">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class={`h-4 w-4 transition-transform duration-200 ${pick === 'lead' ? 'rotate-180' : ''}`}>
+                              <path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                          </span>
+                          {chip(f, 'secondary', sv, pick, (sd) => setIdPick((c) => ({ ...c, [f]: sd })))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {noIdentifier ? (
+                <p data-testid="merge-identity-error" class="mt-2 text-sm text-rose-600">
+                  The merged profile needs an email or a phone.
+                </p>
+              ) : null}
             </div>
 
             <div>
