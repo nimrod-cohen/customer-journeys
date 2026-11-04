@@ -6,12 +6,14 @@
 // the surviving profile.
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
-import { Badge, Button, Drawer, Field, Select } from '../ui/kit.js';
+import { Badge, Button, Drawer, Field } from '../ui/kit.js';
+import { ProfilePicker } from '../ui/ProfilePicker.js';
 import { formatDateTime } from '../ui/datetime.js';
 
 interface P {
   id: string;
   email: string | null;
+  phone?: string | null;
   external_id: string | null;
   created_at?: string;
   created_at_unix?: number;
@@ -20,6 +22,7 @@ interface P {
 interface Candidate {
   id: string;
   email: string | null;
+  phone?: string | null;
   external_id: string | null;
   created_at?: string;
   created_at_unix?: number;
@@ -47,8 +50,7 @@ export function MergeProfileDrawer({
   onClose: () => void;
   onMerged: (survivingId: string) => void;
 }) {
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [otherId, setOtherId] = useState('');
+  const [other, setOther] = useState<Candidate | null>(null);
   // `swapped` flips which of {profile, other} is the lead (survivor).
   const [swapped, setSwapped] = useState(false);
   // For attribute keys present in BOTH, which side's value wins ('lead'|'secondary').
@@ -58,19 +60,15 @@ export function MergeProfileDrawer({
 
   useEffect(() => {
     if (!open) return;
-    setOtherId('');
+    setOther(null);
     setSwapped(false);
     setChoice({});
     setError('');
-    void api
-      .get<{ profiles: Candidate[] }>('/profiles')
-      .then((r) => setCandidates(r.profiles.filter((c) => c.id !== profile.id)));
   }, [open, profile.id]);
 
-  const other = candidates.find((c) => c.id === otherId);
   // Resolve lead/secondary from the swap toggle.
   const lead: Candidate = swapped && other ? other : profile;
-  const secondary: Candidate | undefined = swapped ? profile : other;
+  const secondary: Candidate | undefined = swapped ? profile : (other ?? undefined);
 
   const leadAttrs = (lead.attributes ?? {}) as Record<string, unknown>;
   const secAttrs = (secondary?.attributes ?? {}) as Record<string, unknown>;
@@ -105,7 +103,7 @@ export function MergeProfileDrawer({
   const panel = (p: Candidate | undefined, label: string, tone: 'success' | 'neutral') => (
     <div class="flex-1 rounded-lg border border-stone-200 p-3">
       <Badge tone={tone}>{label}</Badge>
-      <p class="mt-2 truncate font-semibold text-ink-900">{p?.email ?? '—'}</p>
+      <p class="mt-2 truncate font-semibold text-ink-900">{p?.email ?? p?.phone ?? '—'}</p>
       <p class="font-mono text-xs text-stone-500">{p?.external_id ? `ext: ${p.external_id}` : 'no external id'}</p>
       <p class="mt-1 text-xs text-stone-400">Created {fmtDate(p?.created_at_unix ?? p?.created_at)}</p>
     </div>
@@ -165,18 +163,16 @@ export function MergeProfileDrawer({
     >
       <div class="space-y-4">
         <Field label="Merge with">
-          <Select
-            data-testid="merge-secondary-select"
-            value={otherId}
-            onChange={(e: Event) => setOtherId((e.target as HTMLSelectElement).value)}
-          >
-            <option value="">Choose a profile…</option>
-            {candidates.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.email ?? c.external_id ?? c.id}
-              </option>
-            ))}
-          </Select>
+          <ProfilePicker
+            testId="merge-secondary-select"
+            value={other}
+            excludeId={profile.id}
+            onChange={(p) => {
+              setOther(p);
+              setSwapped(false);
+              setChoice({});
+            }}
+          />
         </Field>
 
         {secondary ? (

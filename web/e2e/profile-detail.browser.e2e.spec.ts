@@ -224,7 +224,8 @@ test('merge a secondary profile into the lead (survivor remains, secondary delet
   await page.getByTestId('profile-actions').click();
   await page.getByTestId('merge-button').click();
   await page.getByTestId('merge-drawer').waitFor();
-  await page.getByTestId('merge-secondary-select').selectOption({ label: secondary });
+  await page.getByTestId('merge-secondary-select').fill(secondary);
+  await page.getByTestId('merge-secondary-select-option').filter({ hasText: secondary }).first().click();
   await page.getByTestId('merge-confirm').click();
 
   // The survivor (primary) remains; the drawer closes.
