@@ -5811,6 +5811,10 @@ export const updateProfile: Handler = async (ctx, pool, req) => {
  *   - move segment memberships to the lead (manual memberships now point at the
  *     survivor; conflicts dropped),
  *   - set the lead's attributes to the caller-resolved merged object,
+ *   - set the lead's email and phone from the side the caller PICKED per field
+ *     (`identity: {email, phone}`, each 'lead'|'secondary', default 'lead'). The
+ *     values are read from the two rows, never taken from the body; the email
+ *     carries its own email_status (a bounce belongs to the address),
  *   - RECOMPUTE the lead's rolling features from the merged events,
  *   - RE-EVALUATE the lead's dynamic_realtime segments (enter/exit + change_log),
  *   - delete the secondary profile.
@@ -5825,18 +5829,35 @@ export const mergeProfiles: Handler = async (ctx, pool, req) => {
     b.attributes && typeof b.attributes === 'object' && !Array.isArray(b.attributes)
       ? (b.attributes as Record<string, unknown>)
       : null;
+  const identity = asObject(b.identity);
+  const pickOf = (field: 'email' | 'phone'): 'lead' | 'secondary' | null => {
+    const v = identity[field];
+    if (v === undefined) return 'lead';
+    return v === 'lead' || v === 'secondary' ? v : null;
+  };
+  const emailFrom = pickOf('email');
+  const phoneFrom = pickOf('phone');
+  if (!emailFrom || !phoneFrom) return ok({ error: "identity.email/phone must be 'lead' or 'secondary'" }, 400);
 
   const ws = ctx.workspaceId;
   const client = await pool.connect();
   try {
     // Both profiles must exist in THIS workspace.
     const { rows: present } = await client.query(
-      'SELECT id FROM profiles WHERE workspace_id = $1 AND id = ANY($2::uuid[])',
+      'SELECT id, email, phone, email_status FROM profiles WHERE workspace_id = $1 AND id = ANY($2::uuid[])',
       [ws, [lead, secondary]],
     );
     if (present.length !== 2) {
       client.release();
       return ok({ error: 'not found' }, 404);
+    }
+    type IdRow = { id: string; email: string | null; phone: string | null; email_status: string };
+    const rowOf = (id: string) => (present as IdRow[]).find((r) => r.id === id)!;
+    const emailRow = rowOf(emailFrom === 'lead' ? lead : secondary);
+    const phoneRow = rowOf(phoneFrom === 'lead' ? lead : secondary);
+    if (!emailRow.email && !phoneRow.phone) {
+      client.release();
+      return ok({ error: 'the merged profile needs an email or a phone' }, 400);
     }
 
     await client.query('BEGIN');
@@ -5893,6 +5914,13 @@ export const mergeProfiles: Handler = async (ctx, pool, req) => {
     await client.query('DELETE FROM profile_features WHERE workspace_id = $1 AND profile_id = $2', [ws, secondary]);
     await client.query('DELETE FROM profiles WHERE workspace_id = $1 AND id = $2', [ws, secondary]);
 
+    // Identity AFTER the secondary is gone: email and phone are unique per
+    // workspace, so taking the secondary's value would collide while it existed.
+    await client.query(
+      'UPDATE profiles SET email = $3, email_status = $4, phone = $5, updated_at = now() WHERE workspace_id = $1 AND id = $2',
+      [ws, lead, emailRow.email, emailRow.email ? emailRow.email_status : 'active', phoneRow.phone],
+    );
+
     // Recompute the lead's rolling features from ALL its (now-merged) events and
     // re-evaluate its realtime segments, in the SAME tx.
     await recomputeFeaturesAndSegments(client, ws, lead);
@@ -5906,7 +5934,7 @@ export const mergeProfiles: Handler = async (ctx, pool, req) => {
   client.release();
 
   const { rows } = await pool.query(
-    'SELECT id, external_id, email, email_status, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
+    'SELECT id, external_id, email, phone, email_status, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
     [ws, lead],
   );
   return ok({ profile: rows[0] });

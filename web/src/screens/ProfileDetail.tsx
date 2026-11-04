@@ -219,6 +219,7 @@ export function ProfileDetail({ id }: { id: string }) {
           profile={{
             id: profile.id,
             email: profile.email,
+            phone: profile.phone,
             external_id: profile.external_id,
             ...(profile.created_at ? { created_at: profile.created_at } : {}),
             ...(profile.created_at_unix ? { created_at_unix: profile.created_at_unix } : {}),
