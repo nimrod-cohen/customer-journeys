@@ -832,12 +832,13 @@ export function buildMessagesLogInsert(
   sesMessageId: string,
   broadcastId: string | null = null,
   medium: Medium = 'email',
+  subject: string | null = null,
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildMessagesLogInsert: workspaceId is required');
   return {
-    text: `INSERT INTO messages_log (workspace_id, profile_id, automation_id, broadcast_id, ses_message_id, status, medium)
-           VALUES ($1, $2, $3, $4, $5, 'sent', $6)`,
-    values: [workspaceId, profileId, automationId, broadcastId, sesMessageId, medium],
+    text: `INSERT INTO messages_log (workspace_id, profile_id, automation_id, broadcast_id, ses_message_id, status, medium, subject)
+           VALUES ($1, $2, $3, $4, $5, 'sent', $6, $7)`,
+    values: [workspaceId, profileId, automationId, broadcastId, sesMessageId, medium, subject],
   };
 }
 

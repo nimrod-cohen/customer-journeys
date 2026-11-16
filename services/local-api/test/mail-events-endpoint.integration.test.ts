@@ -111,8 +111,11 @@ describeMaybe('POST /internal/mail-events (real Postgres)', () => {
     expect((await res.json()).action).toBe('suppress');
 
     expect(await suppressionReason()).toBe('hard_bounce');
-    const ev = await pool.query('SELECT type FROM email_events WHERE workspace_id=$1', [WS]);
+    const ev = await pool.query('SELECT type, profile_id, raw FROM email_events WHERE workspace_id=$1', [WS]);
     expect(ev.rows[0]?.type).toBe('bounce');
+    // Attributed to the person the message went to, with the failed address kept.
+    expect(ev.rows[0]?.profile_id).toBe(PROFILE);
+    expect(ev.rows[0]?.raw.recipient).toBe(EMAIL);
     // An invalid mailbox is invalid everywhere — the deliberate cross-workspace list.
     const g = await pool.query('SELECT 1 FROM global_hard_bounces WHERE email=$1', [EMAIL]);
     expect(g.rowCount).toBe(1);

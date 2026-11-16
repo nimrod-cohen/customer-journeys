@@ -36,12 +36,18 @@ export interface MailEventDecision {
   readonly workspaceId: string | null;
   readonly messageId: string | null;
   readonly recipient: string | null;
+  /** The profile the message was sent to, so the report links back to a person. */
+  readonly profileId: string | null;
+  /** The remote server's own words, kept so a person can see WHY it failed. */
+  readonly diagnostic: string | null;
   readonly classified: ClassifiedEvent | null;
 }
 
 /** The message row we resolve from a verified VERP token. */
 export interface MessageRef {
   readonly workspaceId: string;
+  /** The profile the message was rendered for. */
+  readonly profileId?: string | null;
   /** The primary recipient (the profile the message was rendered for). */
   readonly recipient: string | null;
   /** Visible copies this message carried, if any. */
@@ -114,6 +120,8 @@ export async function decideMailEvent(
     workspaceId: ref.workspaceId,
     messageId,
     recipient,
+    profileId: ref.profileId ?? null,
+    diagnostic: parsed.dsn?.diagnostic ?? null,
     classified,
   };
 }
@@ -124,7 +132,16 @@ function recipientsOf(ref: MessageRef): string[] {
 }
 
 function none(reason: string): MailEventDecision {
-  return { action: 'ignored', reason, workspaceId: null, messageId: null, recipient: null, classified: null };
+  return {
+    action: 'ignored',
+    reason,
+    workspaceId: null,
+    messageId: null,
+    recipient: null,
+    profileId: null,
+    diagnostic: null,
+    classified: null,
+  };
 }
 
 function extractToken(recipient: string | null): string | null {
@@ -146,7 +163,7 @@ function extractToken(recipient: string | null): string | null {
  */
 export function buildMessageLookup(messageId: string): { text: string; values: unknown[] } {
   return {
-    text: `SELECT m.workspace_id, p.email AS recipient_email,
+    text: `SELECT m.workspace_id, m.profile_id, p.email AS recipient_email,
                   COALESCE(m.cc_addresses, '{}') AS cc_addresses,
                   COALESCE(m.bcc_addresses, '{}') AS bcc_addresses
              FROM messages_log m

@@ -2,7 +2,7 @@
 // the workspace — behavioural events, email/delivery events, and sends. Filters
 // (datetime range, source, outcome, type) are applied SERVER-SIDE (scoped to the
 // token's workspace). Read-only.
-import { Fragment } from 'preact';
+import { Fragment, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../store/session.js';
 import { useStore } from '../store/store.js';
@@ -24,6 +24,69 @@ interface ActivityRow {
   ref_id: string | null;
   /** True for a FAILED send that can be re-queued. */
   retryable: boolean;
+  /** Which message a send/report is about, and — for a bounce — what went wrong. */
+  context: ActivityContext | null;
+}
+
+interface ActivityContext {
+  message: {
+    kind: 'broadcast' | 'automation' | 'transactional';
+    id: string | null;
+    name: string;
+    sent_at: string | null;
+    status: string | null;
+    /** The subject line as the recipient got it; null for text sends. */
+    subject: string | null;
+  } | null;
+  failure: {
+    address?: string;
+    code?: string | null;
+    permanent?: boolean | null;
+    meaning?: string | null;
+    server_said?: string | null;
+  } | null;
+}
+
+/** The readable part of an expanded row: what failed, why, and which send it was. */
+function ContextView({ ctx }: { ctx: ActivityContext }) {
+  const { message, failure } = ctx;
+  const items: Array<[string, ComponentChildren]> = [];
+  if (failure?.meaning) items.push(['What happened', failure.meaning]);
+  if (failure?.address) items.push(['Failed address', <span class="font-mono">{failure.address}</span>]);
+  if (failure?.code) items.push(['Code', <span class="font-mono">{failure.code}</span>]);
+  if (failure?.server_said) items.push(['Server said', <span class="font-mono text-xs">{failure.server_said}</span>]);
+  if (message) {
+    const label = message.kind === 'broadcast' ? 'Broadcast' : message.kind === 'automation' ? 'Automation' : 'Sent by';
+    const href = message.id ? `/${message.kind === 'broadcast' ? 'broadcasts' : 'automations'}/${message.id}` : null;
+    items.push([
+      label,
+      href ? (
+        <button
+          type="button"
+          data-testid="activity-message-link"
+          class="text-brand-600 hover:text-brand-700 hover:underline"
+          onClick={() => navigate(href)}
+        >
+          {message.name}
+        </button>
+      ) : (
+        message.name
+      ),
+    ]);
+    if (message.subject) items.push(['Subject', message.subject]);
+    if (message.sent_at) items.push(['Sent at', fmt(message.sent_at)]);
+  }
+  if (items.length === 0) return null;
+  return (
+    <dl data-testid="activity-context" class="mb-3 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
+      {items.map(([k, v]) => (
+        <Fragment key={k}>
+          <dt class="text-stone-500">{k}</dt>
+          <dd class="text-ink-900">{v}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
 }
 
 interface Filters {
@@ -290,7 +353,7 @@ export function Activity() {
             </thead>
             <tbody class="divide-y divide-stone-100">
               {rows.map((r, i) => {
-                const expandable = !!r.detail;
+                const expandable = !!r.detail || !!r.context;
                 const isOpen = open.has(i);
                 return (
                   <Fragment key={i}>
@@ -319,7 +382,18 @@ export function Activity() {
                       <td class="px-4 py-2.5">
                         <Badge tone="neutral">{r.source}</Badge>
                       </td>
-                      <td class="px-4 py-2.5 font-medium text-ink-900">{r.type}</td>
+                      <td class="px-4 py-2.5">
+                        <div class="font-medium text-ink-900">{r.type}</div>
+                        {r.context?.message?.subject ? (
+                          <div
+                            data-testid="activity-subject"
+                            class="max-w-xs truncate text-xs text-stone-500"
+                            title={r.context.message.subject}
+                          >
+                            {r.context.message.subject}
+                          </div>
+                        ) : null}
+                      </td>
                       <td class="px-4 py-2.5">
                         <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
                       </td>
@@ -342,7 +416,8 @@ export function Activity() {
                       <tr data-testid="activity-detail-row" class="bg-stone-50/40">
                         <td colSpan={2} />
                         <td colSpan={5} class="px-4 pb-4 pt-1">
-                          <JsonView value={r.detail} bare />
+                          {r.context ? <ContextView ctx={r.context} /> : null}
+                          {r.detail && !r.context?.failure ? <JsonView value={r.detail} bare /> : null}
                           {r.retryable && r.ref_id ? (
                             <div class="mt-3">
                               <Button
