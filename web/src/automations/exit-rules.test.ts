@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { blankExitRule, readExitRules, writeExitRules, summarizeExitRule, type ExitRuleDsl } from './exit-rules.js';
+import { blankExitRule, readExitRules, writeExitRules, summarizeExitRule, summarizeExitForm, type ExitRuleDsl } from './exit-rules.js';
 
 const STORED: ExitRuleDsl[] = [
   { id: 'a', action: 'exit', label: 'Bought', when: { kind: 'event', eventType: 'purchase', filter: { op: 'and', conditions: [{ field: 'payload.total', operator: '>', value: 10 }] } } },
@@ -44,5 +44,17 @@ describe('exit-rule forms', () => {
       'Leaves a segment → exit',
       'Profile matches a condition → exit',
     ]);
+  });
+});
+
+describe('summarizeExitForm', () => {
+  const seg = (id: string): string | undefined => (id === 's1' ? 'VIPs' : undefined);
+  it('reads like a sentence, with the event filter inline', () => {
+    const f = { ...blankExitRule(), eventType: 'meeting_scheduled', filter: { match: 'and' as const, rows: [{ field: 'type', operator: '=' as const, value: 'checkup' }] } };
+    expect(summarizeExitForm(f, seg)).toBe('When meeting_scheduled (type = checkup) → take them out');
+  });
+  it('covers segments, restart, labels and unfinished rules', () => {
+    expect(summarizeExitForm({ ...blankExitRule(), kind: 'segment_exit', segmentId: 's1', action: 'restart' }, seg)).toBe('When they leave VIPs → start them over');
+    expect(summarizeExitForm({ ...blankExitRule(), label: 'Bought' }, seg)).toBe('Bought: When … → take them out');
   });
 });

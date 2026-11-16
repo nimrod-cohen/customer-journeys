@@ -104,3 +104,26 @@ export function summarizeExitRule(r: ExitRuleDsl, segmentName: (id: string) => s
       return `Profile matches a condition → ${then}`;
   }
 }
+
+/**
+ * A short plain-text summary of a rule being edited (folded rules show this), e.g.
+ * `When meeting_scheduled (topic = x) → take them out`. Unfinished parts read as "…".
+ */
+export function summarizeExitForm(f: ExitRuleForm, segmentName: (id: string) => string | undefined): string {
+  const then = f.action === 'exit' ? 'take them out' : 'start them over';
+  let when: string;
+  if (f.kind === 'event') {
+    const rows = f.filter.rows.filter((r) => r.field.trim());
+    const cond = rows
+      .map((r) => (r.operator === 'exists' || r.operator === 'not exists' ? `${r.field} ${r.operator}` : `${r.field} ${r.operator} ${r.value}`.trim()))
+      .join(f.filter.match === 'or' ? ' or ' : ' and ');
+    when = `When ${f.eventType.trim() || '…'}${cond ? ` (${cond})` : ''}`;
+  } else if (f.kind === 'profile_match') {
+    when = 'When they match a condition';
+  } else {
+    const seg = f.segmentId ? (segmentName(f.segmentId) ?? 'a segment') : '…';
+    when = `When they ${f.kind === 'segment_exit' ? 'leave' : 'enter'} ${seg}`;
+  }
+  const text = `${when} → ${then}`;
+  return f.label.trim() ? `${f.label.trim()}: ${text}` : text;
+}
