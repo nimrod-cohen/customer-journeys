@@ -17,10 +17,13 @@ import {
   navDragId,
   navDropTargetId,
   mutate,
+  componentsHost,
+  unlinkComponent,
 } from './state.js';
 import { ArrowUp, ArrowDown } from './icons.tsx';
-import { NodeActionsMenu } from './NodeActionsMenu.tsx';
-import type { DesignElement } from './model.js';
+import { NodeActionsMenu, type NodeMenuItem } from './NodeActionsMenu.tsx';
+import { saveRowAsComponent } from './component-actions.js';
+import type { DesignElement, DesignRow } from './model.js';
 
 /** Where a dragged element should land. */
 type DropTarget = { rowId?: string; cellId?: string; beforeElementId?: string | null };
@@ -96,6 +99,7 @@ export function Navigator(): JSX.Element {
               </button>
               <NodeActionsMenu
                 label="Row actions"
+                extra={rowMenuExtras(row)}
                 onDuplicate={() => mutate('Duplicate row', () => duplicateRow(row.id))}
                 onDelete={() => mutate('Remove row', () => removeRow(row.id))}
               />
@@ -207,4 +211,16 @@ function NavElement({
         : null}
     </>
   );
+}
+
+/** Row menu entries for saved components: save a plain row; edit or unlink a linked one. */
+function rowMenuExtras(row: DesignRow): NodeMenuItem[] {
+  const host = componentsHost.value;
+  if (!host) return [];
+  if (!row.component) return [{ label: '◆ Save as component', testId: 'menu-save-as-component', onSelect: () => void saveRowAsComponent(row.id) }];
+  const id = row.component.id;
+  return [
+    { label: 'Edit component', testId: 'menu-edit-component', onSelect: () => host.edit(id) },
+    { label: 'Unlink (this email only)', testId: 'menu-unlink-component', onSelect: () => unlinkComponent(row.id) },
+  ];
 }
