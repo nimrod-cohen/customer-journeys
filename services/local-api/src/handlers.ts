@@ -9,6 +9,7 @@
 //     writeAuditEntry.
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
+import { listMcpTokens, createMcpToken, revokeMcpToken } from './mcp/tokens.js';
 import type { Pool, PoolClient } from 'pg';
 import { promises as dns } from 'node:dns';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -8197,6 +8198,9 @@ export const revokeIngestKey: Handler = async (ctx, pool, req) => {
 
 /** Map a route key → its handler. */
 export const HANDLERS: Readonly<Record<string, Handler>> = {
+  'GET /workspace/mcp-tokens': listMcpTokens,
+  'POST /workspace/mcp-tokens': createMcpToken,
+  'DELETE /workspace/mcp-tokens/:id': revokeMcpToken,
   'GET /me': getMe,
   'GET /ingest-keys': listIngestKeys,
   'POST /ingest-keys': createIngestKey,

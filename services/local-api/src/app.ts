@@ -30,6 +30,7 @@ import { sharedWhatsAppHub, type WhatsAppEventHub } from './whatsapp-stream.js';
 import { streamSSE } from 'hono/streaming';
 import { authenticate } from './dispatch.js';
 import { verifyMetaSignature } from '@cdp/channels';
+import { handleMcpHttp, PARSE_ERROR } from './mcp/http.js';
 import {
   buildEmailEventInsert,
   buildSuppressionUpsert,
@@ -570,6 +571,24 @@ export function createApp(opts: CreateAppOptions): Hono {
     }
   }
 
+  // ── MCP server (Claude and other assistants) ────────────────────────────────
+  // Stateless Streamable-HTTP endpoint answered with JSON; authenticated by a
+  // workspace MCP token (Workspace settings → AI access). Drafts only.
+  app.post('/mcp', async (c) => {
+    let body: unknown;
+    try {
+      body = JSON.parse(await c.req.text());
+    } catch {
+      body = PARSE_ERROR;
+    }
+    const r = await handleMcpHttp(env.pool, env.deps, c.req.header('authorization') ?? null, body, appVersion());
+    if (r.status === 202) return c.body(null, 202);
+    return c.json(r.body as object, r.status as 200, r.headers);
+  });
+  // No server-initiated stream and no sessions: GET (SSE) and DELETE are not offered.
+  app.get('/mcp', (c) => c.json({ error: 'method not allowed' }, 405, { allow: 'POST' }));
+  app.delete('/mcp', (c) => c.json({ error: 'method not allowed' }, 405, { allow: 'POST' }));
+
   // --- everything else flows through the dispatch pipeline ---
   app.all('*', async (c) => {
     const url = new URL(c.req.url);
@@ -599,4 +618,23 @@ async function safeJson(c: { req: { json: () => Promise<unknown> } }): Promise<u
   } catch {
     return undefined;
   }
+}
+
+let cachedVersion: string | null = null;
+/** The product version (root package.json), for the MCP serverInfo. */
+function appVersion(): string {
+  if (cachedVersion) return cachedVersion;
+  cachedVersion = '0.0.0';
+  for (const p of [join(process.cwd(), 'package.json'), join(process.cwd(), '..', '..', 'package.json')]) {
+    try {
+      const v = (JSON.parse(readFileSync(p, 'utf8')) as { name?: string; version?: string });
+      if (v.version && (v.name === undefined || !v.name.startsWith('@cdp/service'))) {
+        cachedVersion = v.version;
+        break;
+      }
+    } catch {
+      /* try the next */
+    }
+  }
+  return cachedVersion;
 }

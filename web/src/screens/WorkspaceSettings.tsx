@@ -2,6 +2,7 @@
 // (members + roles + lowercase-emails policy) and "Sending domains" (per-workspace
 // domains, §10). Company-level workspace management lives on the Company settings
 // page. Scoped to the token.
+import { McpTokens } from './McpTokens.js';
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../store/session.js';
 import { navigate } from '../router.js';
@@ -15,7 +16,7 @@ import { TopicsPanel } from './Topics.tsx';
 import { IngestKeys } from './IngestKeys.tsx';
 import { WhatsAppSettingsPanel } from './WhatsAppSettings.tsx';
 
-type SettingsTab = 'workspace' | 'domains' | 'whatsapp' | 'topics' | 'api-keys';
+type SettingsTab = 'workspace' | 'domains' | 'whatsapp' | 'topics' | 'api-keys' | 'ai-access';
 
 /** A quiet-hours window (UI shape): from (startDay, startMin) to (endDay, endMin). */
 type QuietWin = { startDay: number; startMin: number; endDay: number; endMin: number };
@@ -219,6 +220,16 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
         >
           API keys
         </button>
+        <button
+          type="button"
+          data-testid="settings-tab-ai-access"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'ai-access' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => navigate('/settings/ai-access')}
+        >
+          AI access
+        </button>
       </div>
 
       {tab === 'domains' ? (
@@ -229,6 +240,8 @@ export function WorkspaceSettings({ tab = 'workspace' }: { tab?: SettingsTab }) 
         <TopicsPanel />
       ) : tab === 'api-keys' ? (
         <IngestKeys />
+      ) : tab === 'ai-access' ? (
+        <McpTokens />
       ) : (
       <>
       {/* Users + roles moved to COMPANY level (company-centric RBAC). */}

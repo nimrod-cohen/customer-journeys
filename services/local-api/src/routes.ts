@@ -113,6 +113,10 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   // Ingest (tracking) write keys — session-authed management, owner-gated (they
   // live under Workspace settings → API keys). The keys themselves drive the
   // PUBLIC /v1/track + /v1/identify endpoints (no session, key-authed).
+  // MCP tokens (AI assistant access) — owner-only, like ingest keys.
+  'GET /workspace/mcp-tokens': 'manage_workspace_users',
+  'POST /workspace/mcp-tokens': 'manage_workspace_users',
+  'DELETE /workspace/mcp-tokens/:id': 'manage_workspace_users',
   'GET /ingest-keys': 'manage_workspace_users',
   'POST /ingest-keys': 'manage_workspace_users',
   'DELETE /ingest-keys/:id': 'manage_workspace_users',
