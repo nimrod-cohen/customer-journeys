@@ -88,6 +88,10 @@ export interface NodeEditorProps {
   readonly triggerNode?: { kind?: string; eventType?: string } | null | undefined;
   /** Topics list (GET /topics) — feeds the per-send-node Topic picker. */
   readonly topics: readonly { id: string; name: string }[];
+  /** How many exit rules the journey has — shown on the trigger editor's entry point. */
+  readonly exitRuleCount?: number;
+  /** Open the exit-rules drawer (the trigger editor links to it: "how do people leave?"). */
+  readonly onOpenExitRules?: () => void;
   /** Persist a node config patch into the model (applyNodeConfig + PUT). */
   readonly onSaveNode: (patch: DslNode) => Promise<void>;
   /** Persist the trigger segment + direction into the DRAFT (PUT /automations/:id/draft). */
@@ -216,6 +220,20 @@ function TriggerEditor(props: NodeEditorProps) {
       ) : null}
 
       {kind === 'manual' ? <p data-testid="trigger-manual-note" class="text-sm text-stone-500">Profiles are enrolled manually (or by the API). No extra config.</p> : null}
+
+      {props.onOpenExitRules ? (
+        <div data-testid="trigger-exit-rules" class="rounded-lg bg-stone-50 px-4 py-3 ring-1 ring-inset ring-stone-200">
+          <p class="text-sm font-semibold text-ink-900">Exit rules</p>
+          <p class="mt-0.5 text-sm text-stone-600">
+            {props.exitRuleCount
+              ? `${props.exitRuleCount === 1 ? '1 rule takes' : `${props.exitRuleCount} rules take`} people out of this journey, or start them over, mid-way.`
+              : 'Take people out of this journey, or start them over, when an event happens or they leave a segment.'}
+          </p>
+          <Button data-testid="trigger-exit-rules-open" variant="secondary" class="mt-2" onClick={props.onOpenExitRules}>
+            {props.exitRuleCount ? 'Edit exit rules' : 'Add exit rules'}
+          </Button>
+        </div>
+      ) : null}
 
       <div class="flex justify-end">
         <Button data-testid="node-save" onClick={save}>
