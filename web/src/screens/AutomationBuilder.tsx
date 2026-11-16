@@ -52,7 +52,7 @@ import {
 } from '../automations/mutate.js';
 import { NodeEditorBody, nodeEditorTestId, nodeEditorTitle } from '../automations/editors/NodeEditor.js';
 import { ExitRulesEditor } from '../automations/ExitRulesEditor.js';
-import { summarizeExitRule, type ExitRuleDsl } from '../automations/exit-rules.js';
+import type { ExitRuleDsl } from '../automations/exit-rules.js';
 
 /** Enrollment-status buckets surfaced per automation on the list. */
 interface EnrollmentCounts {
@@ -439,7 +439,6 @@ export function AutomationDetail({ id }: { id?: string }) {
   // Exit / restart rules live in the definition JSON but OUTSIDE the canvas model
   // (the graph mutations rebuild {startNode, nodes} and must not drop them).
   const [exitRules, setExitRules] = useState<ExitRuleDsl[]>([]);
-  const [exitRulesOpen, setExitRulesOpen] = useState(false);
   const [segments, setSegments] = useState<SegmentLite[]>([]);
   // Topics list — fed into the per-send-node Topic picker in the node editor.
   // The dispatcher gates each send on its own node's topic_id (no automation-level
@@ -486,7 +485,7 @@ export function AutomationDetail({ id }: { id?: string }) {
   // VERSIONING. The builder edits the DRAFT; live is the last published definition.
   // `live*` snapshot what was published (for the unsaved-draft diff); a fresh new
   // automation has no live baseline (so any edit reads as an unsaved draft).
-  const [tab, setTab] = useState<'builder' | 'history' | 'journeys'>('builder');
+  const [tab, setTab] = useState<'builder' | 'history' | 'journeys' | 'settings'>('builder');
   const [liveDefinition, setLiveDefinition] = useState<AutomationDefinition | null>(null);
   const [liveTriggerSegmentId, setLiveTriggerSegmentId] = useState<string | null>(null);
   const [liveTriggerOn, setLiveTriggerOn] = useState<'enter' | 'exit'>('enter');
@@ -993,6 +992,7 @@ export function AutomationDetail({ id }: { id?: string }) {
                 { key: 'builder', label: 'Builder', testId: 'automation-tab-builder', onSelect: () => setTab('builder') },
                 { key: 'journeys', label: 'Journeys', testId: 'automation-tab-journeys', onSelect: openJourneys },
                 { key: 'history', label: 'History', testId: 'automation-tab-history', onSelect: openHistory },
+                { key: 'settings', label: 'Settings', testId: 'automation-tab-settings', onSelect: () => setTab('settings') },
               ] as const
             ).map((t) => (
               <button
@@ -1030,7 +1030,33 @@ export function AutomationDetail({ id }: { id?: string }) {
         // surrounding controls (action buttons, errors) keep their own spacing
         // so they don't visually collapse against the page chrome.
         <div data-testid="automation-builder-panel">
-          <span class="label">Workflow</span>
+          <div class="mb-2 flex flex-wrap items-center gap-3">
+            <span class="label mb-0">Workflow</span>
+            <div class="ml-auto flex flex-wrap items-center gap-3">
+              <Button data-testid="save-automation" variant="secondary" onClick={save}>
+                Save draft
+              </Button>
+              <Button data-testid="publish-version" onClick={openPublish}>
+                Save &amp; publish
+              </Button>
+            </div>
+          </div>
+          {publishReason ? (
+            <p
+              data-testid="publish-reason"
+              class="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200"
+            >
+              {publishReason}
+            </p>
+          ) : null}
+          {error ? (
+            <p
+              data-testid="automation-error"
+              class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-inset ring-rose-200"
+            >
+              {error}
+            </p>
+          ) : null}
           <AutomationCanvas
             model={model}
             onInsert={(edge) => setPaletteEdge(edge)}
@@ -1048,41 +1074,18 @@ export function AutomationDetail({ id }: { id?: string }) {
             channels={channels}
           />
 
-          <div class="mt-4 flex flex-wrap items-center gap-3">
-            <Button data-testid="save-automation" variant="secondary" onClick={save}>
-              Save draft
-            </Button>
-            <Button data-testid="publish-version" onClick={openPublish}>
-              Save &amp; publish
-            </Button>
-            <Button data-testid="exit-rules-open" variant="secondary" onClick={() => setExitRulesOpen(true)}>
-              Exit rules{exitRules.length ? ` (${exitRules.length})` : ''}
-            </Button>
-          </div>
-          {exitRules.length ? (
-            <ul data-testid="exit-rules-summary" class="mt-2 space-y-1 text-sm text-stone-600">
-              {exitRules.map((r) => (
-                <li key={r.id}>• {summarizeExitRule(r, (sid) => segments.find((sg) => sg.id === sid)?.name)}</li>
-              ))}
-            </ul>
-          ) : null}
-          {publishReason ? (
-            <p
-              data-testid="publish-reason"
-              class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200"
-            >
-              {publishReason}
-            </p>
-          ) : null}
-          {error ? (
-            <p
-              data-testid="automation-error"
-              class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-inset ring-rose-200"
-            >
-              {error}
-            </p>
-          ) : null}
         </div>
+      ) : tab === 'settings' ? (
+        <Card class="max-w-3xl p-6" data-testid="automation-settings-panel">
+          <h2 class="mb-2 font-bold text-ink-900">Exit rules</h2>
+          <ExitRulesEditor
+            rules={exitRules}
+            segments={segments}
+            triggerNode={model.nodes.find((n) => n.node.type === 'trigger')?.node as { kind?: string; eventType?: string } | null ?? null}
+            onSave={saveExitRules}
+            onDone={() => undefined}
+          />
+        </Card>
       ) : tab === 'journeys' ? (
         <AutomationJourneys enrollments={enrollments} nodeLabel={nodeLabel} />
       ) : (
@@ -1152,7 +1155,7 @@ export function AutomationDetail({ id }: { id?: string }) {
             exitRuleCount={exitRules.length}
             onOpenExitRules={() => {
               setOpenNode(null);
-              setExitRulesOpen(true);
+              setTab('settings');
             }}
             onReloadAutomation={async () => {
               if (editingId) await openById(editingId);
@@ -1161,23 +1164,6 @@ export function AutomationDetail({ id }: { id?: string }) {
               setOpenNode(null);
               setCenterTick((t) => t + 1); // returning from the drawer → re-center the selected node
             }}
-          />
-        ) : null}
-      </Drawer>
-      <Drawer
-        open={exitRulesOpen}
-        onClose={() => setExitRulesOpen(false)}
-        title="Exit rules"
-        subtitle="Take people out of this journey, or start them over, when something happens."
-        testId="exit-rules-drawer"
-      >
-        {exitRulesOpen ? (
-          <ExitRulesEditor
-            rules={exitRules}
-            segments={segments}
-            triggerNode={model.nodes.find((n) => n.node.type === 'trigger')?.node as { kind?: string; eventType?: string } | null ?? null}
-            onSave={saveExitRules}
-            onDone={() => setExitRulesOpen(false)}
           />
         ) : null}
       </Drawer>
