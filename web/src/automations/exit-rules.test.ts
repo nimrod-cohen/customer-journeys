@@ -22,13 +22,13 @@ describe('exit-rule forms', () => {
   it('reports the first incomplete rule', () => {
     expect(writeExitRules([blankExitRule()])).toEqual({ error: 'Rule 1: choose the event type.' });
     expect(writeExitRules([{ ...blankExitRule(), kind: 'segment_exit' }])).toEqual({ error: 'Rule 1: choose a segment.' });
-    expect(writeExitRules([{ ...blankExitRule(), eventType: 'x' }, { ...blankExitRule(), kind: 'profile_match' }])).toEqual({
+    expect(writeExitRules([{ ...blankExitRule(), eventTypes: ['x'] }, { ...blankExitRule(), kind: 'profile_match' }])).toEqual({
       error: 'Rule 2: add at least one condition.',
     });
   });
 
   it('omits an empty filter and a blank label', () => {
-    const out = writeExitRules([{ ...blankExitRule(), id: 'z', eventType: ' purchase ', label: '  ' }]) as { rules: ExitRuleDsl[] };
+    const out = writeExitRules([{ ...blankExitRule(), id: 'z', eventTypes: [' purchase '], label: '  ' }]) as { rules: ExitRuleDsl[] };
     expect(out.rules).toEqual([{ id: 'z', action: 'exit', when: { kind: 'event', eventType: 'purchase' } }]);
   });
 
@@ -50,11 +50,24 @@ describe('exit-rule forms', () => {
 describe('summarizeExitForm', () => {
   const seg = (id: string): string | undefined => (id === 's1' ? 'VIPs' : undefined);
   it('reads like a sentence, with the event filter inline', () => {
-    const f = { ...blankExitRule(), eventType: 'meeting_scheduled', filter: { match: 'and' as const, rows: [{ field: 'type', operator: '=' as const, value: 'checkup' }] } };
+    const f = { ...blankExitRule(), eventTypes: ['meeting_scheduled'], filter: { match: 'and' as const, rows: [{ field: 'type', operator: '=' as const, value: 'checkup' }] } };
     expect(summarizeExitForm(f, seg)).toBe('When meeting_scheduled (type = checkup) → take them out');
   });
   it('covers segments, restart, labels and unfinished rules', () => {
     expect(summarizeExitForm({ ...blankExitRule(), kind: 'segment_exit', segmentId: 's1', action: 'restart' }, seg)).toBe('When they leave VIPs → start them over');
     expect(summarizeExitForm({ ...blankExitRule(), label: 'Bought' }, seg)).toBe('Bought: When … → take them out');
+  });
+});
+
+describe('exit rules with several event types', () => {
+  it('round-trips a list; the first stays eventType', () => {
+    const out = writeExitRules([{ ...blankExitRule(), id: 'm', eventTypes: ['meeting_scheduled', ' meeting_booked ', 'meeting_scheduled', ''] }]) as { rules: ExitRuleDsl[] };
+    expect(out.rules[0]!.when).toEqual({ kind: 'event', eventType: 'meeting_scheduled', eventTypes: ['meeting_scheduled', 'meeting_booked'] });
+    expect(readExitRules(out.rules)[0]!.eventTypes).toEqual(['meeting_scheduled', 'meeting_booked']);
+    expect(summarizeExitForm(readExitRules(out.rules)[0]!, () => undefined)).toBe('When meeting_scheduled or meeting_booked → take them out');
+  });
+  it('a single type is stored the old way', () => {
+    const out = writeExitRules([{ ...blankExitRule(), id: 's', eventTypes: ['purchase'] }]) as { rules: ExitRuleDsl[] };
+    expect(out.rules[0]!.when).toEqual({ kind: 'event', eventType: 'purchase' });
   });
 });

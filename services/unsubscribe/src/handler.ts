@@ -12,6 +12,7 @@ import {
   buildUnsubscribeSuppression,
   buildUnsubscribeChannelOptOuts,
   buildUnsubscribedAttribute,
+  buildUnsubscribeExitAutomations,
   buildUnsubscribeActivity,
   buildUnsubscribeEvent,
   FAVICON_LINK,
@@ -189,6 +190,8 @@ export function simpleUnsubscribeStatements(
     // Consent is recorded against the PROFILE too, so it survives an address change.
     buildUnsubscribeChannelOptOuts(workspaceId, email),
     buildUnsubscribedAttribute(workspaceId, email),
+    // …and out of every automation they are in.
+    ...buildUnsubscribeExitAutomations(workspaceId, email),
     buildUnsubscribeActivity(workspaceId, email),
     ...(attribution ? [attribution] : []),
   ];

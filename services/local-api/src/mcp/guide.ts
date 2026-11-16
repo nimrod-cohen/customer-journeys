@@ -43,12 +43,14 @@ Tell the user which step is left for them.
 
 ### Exit rules (optional) — leave or restart while enrolled
 {"id":"bought","label"?:"Bought","action":"exit"|"restart","when": When}
-When = {"kind":"event","eventType":"purchase","filter"?:Rule}
+When = {"kind":"event","eventType":"purchase","eventTypes"?:["purchase","refund"],"filter"?:Rule}
      | {"kind":"segment_exit","segmentId":"<id>"} | {"kind":"segment_entry","segmentId":"<id>"}
      | {"kind":"profile_match","ast":Rule}
 "exit" ends the journey and cancels its pending messages; "restart" sends the person back to
 the start (journey variables cleared). A profile_match restart fires only when the condition
-BECOMES true. Rules take effect when the automation is published.
+BECOMES true. Rules take effect when the automation is published. With "eventTypes", ANY of
+those events fires the rule ("eventType" must be the first of them). Someone who unsubscribes
+from everything leaves every automation automatically — no rule needed.
 
 ## Rules (segments, If/else, waits, broadcast audiences)
 Leaf: {"field":"<field>","operator":"=","value":…}

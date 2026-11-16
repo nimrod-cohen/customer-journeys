@@ -233,6 +233,29 @@ describe.skipIf(!RUN)('automation exit rules (real Postgres)', () => {
     expect(await outbox(a, p)).toEqual([]);
   });
 
+  it('an event rule with several types exits on ANY of them', async () => {
+    const rule: ExitRule = { id: 'met', action: 'exit', when: { kind: 'event', eventType: 'meeting_scheduled', eventTypes: ['meeting_scheduled', 'meeting_booked'] } };
+    const a = await automation(flow([rule]));
+    const p = await profile();
+    await event(p, 'cart');
+    await event(p, 'something_else');
+    expect((await enrollment(a, p)).status).toBe('active');
+    expect((await event(p, 'meeting_booked')).exited).toBe(1);
+    expect((await enrollment(a, p)).exit_reason).toBe('Exit rule: event "meeting_scheduled" or "meeting_booked"');
+  });
+
+  it('someone who unsubscribed leaves at the next step — even an automation with no exit rules', async () => {
+    const a = await automation(flow([]));
+    const p = await profile();
+    await event(p, 'cart');
+    await tick(a, p); // s1 sent, parks at the wait
+    await admin.query(`UPDATE profiles SET attributes = attributes || '{"unsubscribed": true}'::jsonb WHERE id = $1`, [p]);
+    expect((await tick(a, p, new Date(NOW.getTime() + 2 * 86_400_000))).result).toBe('exited');
+    const e = await enrollment(a, p);
+    expect(e.exit_reason).toBe('Exit rule: Unsubscribed');
+    expect((await outbox(a, p)).map((o) => o.dedupe_key).some((k) => k.includes('s2'))).toBe(false);
+  });
+
   it('profile_match exit also fires on a profile update', async () => {
     const rule: ExitRule = { id: 'paid', action: 'exit', when: { kind: 'profile_match', ast: { field: 'attributes.plan', operator: '=', value: 'paid' } as never } };
     const a = await automation(flow([rule]));

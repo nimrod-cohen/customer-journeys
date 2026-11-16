@@ -46,6 +46,10 @@ async function cleanup(admin: Pool): Promise<void> {
     await admin.query('DELETE FROM broadcasts WHERE workspace_id = $1', [ws]);
     // a full opt-out now records consent against the PROFILE too
     await admin.query('DELETE FROM channel_optouts WHERE workspace_id = $1', [ws]);
+    await admin.query('DELETE FROM outbox WHERE workspace_id = $1', [ws]);
+    await admin.query('DELETE FROM automation_enrollments WHERE workspace_id = $1', [ws]);
+    await admin.query('DELETE FROM automations WHERE workspace_id = $1', [ws]);
+    await admin.query('DELETE FROM activity_log WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM profiles WHERE workspace_id = $1', [ws]);
     await admin.query('DELETE FROM workspaces WHERE id = $1', [ws]);
   }
@@ -69,6 +73,24 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
       "INSERT INTO profiles (workspace_id, external_id, email, attributes) VALUES ($1,'p-b',$2,'{}'::jsonb)",
       [wsB, email],
     );
+    // Each profile is mid-journey in an automation of its own workspace.
+    for (const ws of [wsA, wsB]) {
+      const a = await admin.query<{ id: string }>(
+        `INSERT INTO automations (workspace_id, name, definition, status)
+         VALUES ($1, 'Journey', '{"startNode":"x","nodes":{"x":{"type":"exit"}}}'::jsonb, 'active') RETURNING id`,
+        [ws],
+      );
+      await admin.query(
+        `INSERT INTO automation_enrollments (workspace_id, automation_id, profile_id, current_node, status)
+         SELECT $1, $2, id, 'x', 'active' FROM profiles WHERE workspace_id = $1 AND email = $3`,
+        [ws, a.rows[0]!.id, email],
+      );
+      await admin.query(
+        `INSERT INTO outbox (workspace_id, profile_id, automation_id, dedupe_key, payload, status)
+         SELECT $1, id, $2, $4, '{}'::jsonb, 'pending' FROM profiles WHERE workspace_id = $1 AND email = $3`,
+        [ws, a.rows[0]!.id, email, `pending-send-${ws}`],
+      );
+    }
   });
 
   afterAll(async () => {
@@ -115,6 +137,16 @@ describe.skipIf(!RUN)('unsubscribe scoping (real Postgres)', () => {
     expect(await unsubAttr(admin, wsA)).toBe('true');
     // Workspace B's same-email profile is untouched (tenant isolation).
     expect(await unsubAttr(admin, wsB)).toBe(null);
+  });
+
+  it('takes the person out of their automations in A (pending sends cancelled), not in B', async () => {
+    const enr = async (ws: string) =>
+      (await admin.query<{ status: string; exit_reason: string | null }>('SELECT status, exit_reason FROM automation_enrollments WHERE workspace_id = $1', [ws])).rows[0];
+    const ob = async (ws: string) => (await admin.query<{ status: string }>('SELECT status FROM outbox WHERE workspace_id = $1', [ws])).rows[0]?.status;
+    expect(await enr(wsA)).toEqual({ status: 'exited', exit_reason: 'unsubscribed' });
+    expect(await ob(wsA)).toBe('cancelled');
+    expect(await enr(wsB)).toEqual({ status: 'active', exit_reason: null });
+    expect(await ob(wsB)).toBe('pending');
   });
 
   it('a replayed unsubscribe is idempotent (ON CONFLICT DO NOTHING → one row)', async () => {

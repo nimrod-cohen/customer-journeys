@@ -8,6 +8,7 @@ export {
   buildUnsubscribeSuppression,
   buildUnsubscribeChannelOptOuts,
   buildUnsubscribedAttribute,
+  buildUnsubscribeExitAutomations,
   buildUnsubscribeActivity,
   buildUnsubscribeEvent,
   buildGlobalUnsubscribedQuery,

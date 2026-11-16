@@ -19,7 +19,7 @@ export interface ExitRuleDsl {
   label?: string;
   action: ExitAction;
   when:
-    | { kind: 'event'; eventType: string; filter?: AstNode }
+    | { kind: 'event'; eventType: string; eventTypes?: string[]; filter?: AstNode }
     | { kind: 'segment_exit' | 'segment_entry'; segmentId: string }
     | { kind: 'profile_match'; ast: AstNode };
 }
@@ -30,7 +30,8 @@ export interface ExitRuleForm {
   label: string;
   action: ExitAction;
   kind: ExitWhenKind;
-  eventType: string;
+  /** One or more event types; ANY of them fires the rule. */
+  eventTypes: string[];
   filter: EventFilterForm;
   segmentId: string;
   condition: RuleGroup;
@@ -49,7 +50,7 @@ export function blankExitRule(): ExitRuleForm {
     label: '',
     action: 'exit',
     kind: 'event',
-    eventType: '',
+    eventTypes: [''],
     filter: readEventPayloadFilter(null),
     segmentId: '',
     // Start with NO condition rows (a blank row would default to a real field and
@@ -61,7 +62,7 @@ export function blankExitRule(): ExitRuleForm {
 export function readExitRules(rules: readonly ExitRuleDsl[] | undefined | null): ExitRuleForm[] {
   return (rules ?? []).map((r) => {
     const f = { ...blankExitRule(), id: r.id, label: r.label ?? '', action: r.action, kind: r.when.kind };
-    if (r.when.kind === 'event') return { ...f, eventType: r.when.eventType, filter: readEventPayloadFilter(r.when.filter ?? null) };
+    if (r.when.kind === 'event') return { ...f, eventTypes: [...new Set([r.when.eventType, ...(r.when.eventTypes ?? [])])], filter: readEventPayloadFilter(r.when.filter ?? null) };
     if (r.when.kind === 'profile_match') return { ...f, condition: conditionAstToRows(r.when.ast) };
     return { ...f, segmentId: r.when.segmentId };
   });
@@ -74,9 +75,13 @@ export function writeExitRules(forms: readonly ExitRuleForm[]): { rules: ExitRul
     const n = i + 1;
     const base = { id: f.id, action: f.action, ...(f.label.trim() ? { label: f.label.trim() } : {}) };
     if (f.kind === 'event') {
-      if (!f.eventType.trim()) return { error: `Rule ${n}: choose the event type.` };
+      const types = [...new Set(f.eventTypes.map((t) => t.trim()).filter(Boolean))];
+      if (!types.length) return { error: `Rule ${n}: choose the event type.` };
       const filter = writeEventPayloadFilter(f.filter);
-      rules.push({ ...base, when: { kind: 'event', eventType: f.eventType.trim(), ...(filter ? { filter } : {}) } });
+      rules.push({
+        ...base,
+        when: { kind: 'event', eventType: types[0]!, ...(types.length > 1 ? { eventTypes: types } : {}), ...(filter ? { filter } : {}) },
+      });
     } else if (f.kind === 'profile_match') {
       const ast = editorRowsToConditionAst(f.condition);
       if (!ast) return { error: `Rule ${n}: add at least one condition.` };
@@ -95,7 +100,7 @@ export function summarizeExitRule(r: ExitRuleDsl, segmentName: (id: string) => s
   if (r.label) return `${r.label} → ${then}`;
   switch (r.when.kind) {
     case 'event':
-      return `Event "${r.when.eventType}" → ${then}`;
+      return `Event ${[...new Set([r.when.eventType, ...(r.when.eventTypes ?? [])])].map((t) => `"${t}"`).join(' or ')} → ${then}`;
     case 'segment_exit':
       return `Leaves ${segmentName(r.when.segmentId) ?? 'a segment'} → ${then}`;
     case 'segment_entry':
@@ -117,7 +122,8 @@ export function summarizeExitForm(f: ExitRuleForm, segmentName: (id: string) => 
     const cond = rows
       .map((r) => (r.operator === 'exists' || r.operator === 'not exists' ? `${r.field} ${r.operator}` : `${r.field} ${r.operator} ${r.value}`.trim()))
       .join(f.filter.match === 'or' ? ' or ' : ' and ');
-    when = `When ${f.eventType.trim() || '…'}${cond ? ` (${cond})` : ''}`;
+    const types = f.eventTypes.map((t) => t.trim()).filter(Boolean);
+    when = `When ${types.length ? types.join(' or ') : '…'}${cond ? ` (${cond})` : ''}`;
   } else if (f.kind === 'profile_match') {
     when = 'When they match a condition';
   } else {

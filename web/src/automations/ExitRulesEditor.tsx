@@ -105,17 +105,44 @@ export function ExitRulesEditor(props: {
 
           {f.kind === 'event' ? (
             <>
-              <Field label="Event type" hint="e.g. purchase.">
-                <Suggest
-                  testId="exit-rule-event-type"
-                  placeholder="purchase"
-                  value={f.eventType}
-                  onChange={(v) => patch(i, { eventType: v })}
-                  fetcher={(q) => api.get<{ values: string[] }>('/events/types', { query: { q } }).then((r) => r.values)}
-                />
+              <Field label={f.eventTypes.length > 1 ? 'Event types (any of them)' : 'Event type'} hint="e.g. purchase.">
+                <div class="space-y-2">
+                  {f.eventTypes.map((t, ti) => (
+                    <div key={ti} class="flex items-center gap-2" data-testid="exit-rule-event-type-row">
+                      <div class="min-w-0 flex-1">
+                        <Suggest
+                          testId="exit-rule-event-type"
+                          placeholder="purchase"
+                          value={t}
+                          onChange={(v) => patch(i, { eventTypes: f.eventTypes.map((x, xi) => (xi === ti ? v : x)) })}
+                          fetcher={(q) => api.get<{ values: string[] }>('/events/types', { query: { q } }).then((r) => r.values)}
+                        />
+                      </div>
+                      {f.eventTypes.length > 1 ? (
+                        <button
+                          type="button"
+                          data-testid="exit-rule-event-type-remove"
+                          class="shrink-0 rounded-md px-2 py-1 text-stone-500 hover:bg-stone-100 hover:text-ink-900"
+                          aria-label="Remove this event type"
+                          onClick={() => patch(i, { eventTypes: f.eventTypes.filter((_, xi) => xi !== ti) })}
+                        >
+                          ✕
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    data-testid="exit-rule-event-type-add"
+                    class="text-sm font-medium text-brand-700 hover:underline"
+                    onClick={() => patch(i, { eventTypes: [...f.eventTypes, ''] })}
+                  >
+                    + or another event
+                  </button>
+                </div>
               </Field>
               <Field label="Only when the event matches (optional)">
-                <EventPayloadFilter form={f.filter} eventType={f.eventType} onChange={(filter) => patch(i, { filter })} />
+                <EventPayloadFilter form={f.filter} eventType={f.eventTypes[0] ?? ''} onChange={(filter) => patch(i, { filter })} />
               </Field>
             </>
           ) : null}
