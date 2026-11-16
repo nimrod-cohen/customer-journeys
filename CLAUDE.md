@@ -910,6 +910,15 @@ An `assets` row records WHERE the bytes live: `storage='r2'` keeps only the obje
 - `POST /assets/backfill-r2` (`manage_sending_domain`, workspace-scoped, idempotent — only `storage='db'` rows) migrates existing images into the company bucket.
 - **`POST /company/r2-config/test` proves the credentials with a real ROUND TRIP** (write → read back → delete, under a `connection-test/` prefix, cleaned up even when a later step fails). Anything less proves nothing: credentials can be well-formed and the bucket can exist while the token is scoped to a DIFFERENT bucket, which R2 reports as 403 for every bucket alike. Without it the first proof is a 500 on someone's first upload — `POST /assets` calls `put` unguarded, and a config row that exists disables the base64-in-Postgres fallback. `explainStorageError` turns the SDK's error name into the actual cause (wrong scope / missing bucket / wrong key id vs wrong secret / unreachable endpoint).
 
+## Saved email components (shared footer, header…)
+
+`email_components` (workspace-scoped + RLS) holds reusable rows; API `GET/POST /email-components`, `GET/PUT/DELETE /email-components/:id` (`manage_content`), code in `services/local-api/src/email-components.ts`. The design model + MJML serializer live in **`@cdp/shared/email-design`** (isomorphic) so the server can serialize too; `web/src/email-designer/model.ts` / `mjml-serializer.ts` just re-export it.
+
+- **An email LINKS to a component**: a `DesignRow` with `component: {id, name, rows}` and empty `elements`. The `rows` are a SNAPSHOT, which is what renders and sends — serializing stays pure (`expandComponents`).
+- **The server owns freshness.** Template create/update re-reads every linked component and re-derives the MJML itself (`withFreshComponents`), so a stale editor tab can't save an old footer. `PUT /email-components/:id` refreshes + recompiles EVERY email linking to it in one tx — that is how one edit reaches scheduled broadcasts, automations and transactional mail (the dispatcher only ever reads `compiled_html`).
+- **Unlink** turns a link into an editable copy for that one email (fresh ids). **Deleting** a component unlinks it everywhere, keeping each email's last snapshot — nothing that sends loses its footer.
+- Components don't nest (a link inside a component is flattened). In the designer a linked row is read-only on the canvas; Edit opens `/components/:id` in a new tab, and the library is the "Email components" tab of `/templates`.
+
 ## Text-template library
 
 A workspace-defined library of reusable PLAIN-TEXT messages, **medium-agnostic** (one body serves SMS or WhatsApp). `text_templates` (workspace-scoped + RLS). CRUD `GET/POST /text-templates`, `GET/PUT/DELETE /text-templates/:id` (`manage_content`; blank name or body → 400).

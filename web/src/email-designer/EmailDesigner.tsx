@@ -14,6 +14,9 @@ import {
   redo,
   undoStack,
   redoStack,
+  componentsHost,
+  refreshLinkedSnapshots,
+  type ComponentsHost,
 } from './state.js';
 import { Toolbox } from './Toolbox.tsx';
 import { Canvas } from './Canvas.tsx';
@@ -35,9 +38,15 @@ export interface EmailDesignerProps {
    * re-renders (the design prop is only read on key change).
    */
   readonly documentKey: string;
+  /** Saved components (a shared footer…). Omit to hide the feature. */
+  readonly components?: ComponentsHost | null;
 }
 
-export function EmailDesigner({ design, onChange, documentKey }: EmailDesignerProps): JSX.Element {
+export function EmailDesigner({ design, onChange, documentKey, components = null }: EmailDesignerProps): JSX.Element {
+  useEffect(() => {
+    componentsHost.value = components;
+    if (components) refreshLinkedSnapshots(components.list);
+  }, [components]);
   // (Re)load when the edited document changes. onChange is registered with the
   // loaded document so every committed mutation reaches the host.
   useEffect(() => {

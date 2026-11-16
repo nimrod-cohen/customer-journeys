@@ -10,6 +10,14 @@
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
 import { listMcpTokens, createMcpToken, revokeMcpToken } from './mcp/tokens.js';
+import {
+  listEmailComponents,
+  getEmailComponent,
+  createEmailComponent,
+  updateEmailComponent,
+  deleteEmailComponent,
+  withFreshComponents,
+} from './email-components.js';
 import type { Pool, PoolClient } from 'pg';
 import { promises as dns } from 'node:dns';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -3357,7 +3365,11 @@ export const listTemplates: Handler = async (ctx, pool) => {
 export const createTemplate: Handler = async (ctx, pool, req, deps) => {
   const b = asObject(req.body);
   const name = String(b.name ?? 'Untitled');
-  const mjml = String(b.mjml ?? '');
+  // Linked components (a shared footer…) are refreshed to their CURRENT content
+  // and the MJML re-derived here, so a stale editor can't save an old footer.
+  const fresh = await withFreshComponents(pool, ctx.workspaceId, b.design);
+  if (fresh) b.design = fresh.design;
+  const mjml = fresh ? fresh.mjml : String(b.mjml ?? '');
   // Compile MJML→HTML server-side (reuse @cdp/email compileMjml via deps). The
   // designer's editable source (design JSON) is stored alongside the derived MJML.
   const compiled = deps.compileMjml(mjml);
@@ -3405,7 +3417,10 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
   const id = req.params.id!;
   const b = asObject(req.body);
   const name = b.name !== undefined ? String(b.name) : null;
-  const mjml = b.mjml !== undefined ? String(b.mjml) : null;
+  // Linked components are refreshed + the MJML re-derived (see createTemplate).
+  const fresh = await withFreshComponents(pool, ctx.workspaceId, b.design);
+  if (fresh) b.design = fresh.design;
+  const mjml = fresh ? fresh.mjml : b.mjml !== undefined ? String(b.mjml) : null;
   const compiled = mjml !== null ? deps.compileMjml(mjml) : null;
   // Envelope fields use present-flags (like design) so the editor can set/clear
   // them — including unsetting the named sender back to the no-reply fallback.
@@ -8286,6 +8301,11 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /segments/:id/members': addSegmentMembers,
   'DELETE /segments/:id/members': removeSegmentMembers,
   'POST /segments/:id/import-csv': importCsvMembers,
+  'GET /email-components': listEmailComponents,
+  'GET /email-components/:id': getEmailComponent,
+  'POST /email-components': createEmailComponent,
+  'PUT /email-components/:id': updateEmailComponent,
+  'DELETE /email-components/:id': deleteEmailComponent,
   'GET /templates': listTemplates,
   'POST /templates': createTemplate,
   'GET /templates/:id': getTemplate,

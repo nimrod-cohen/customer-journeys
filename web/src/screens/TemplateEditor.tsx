@@ -23,6 +23,7 @@ import { Card, Field, Input, PageHeader, Select } from '../ui/kit.js';
 import { EmailDesigner } from '../email-designer/EmailDesigner.tsx';
 import { designToMjml } from '../email-designer/mjml-serializer.js';
 import { emptyDesign, isEmailDesign, type EmailDesign } from '../email-designer/model.js';
+import { useComponentsHost } from '../store/emailComponents.js';
 
 interface TemplateRow {
   readonly name: string;
@@ -96,6 +97,7 @@ export function TemplateEditor({
   const queuedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mjml, setMjml] = useState('');
+  const components = useComponentsHost(() => liveDesign.current.settings);
 
   // Load an existing template; a design-less (old-editor) template opens empty
   // with a replace-on-save notice, inheriting RTL from its stored MJML marker.
@@ -435,7 +437,7 @@ export function TemplateEditor({
       ) : null}
       {error ? <p class="mb-3 text-sm text-rose-600">{error}</p> : null}
 
-      {loadedKey ? <EmailDesigner design={design} onChange={onDesignChange} documentKey={loadedKey} /> : null}
+      {loadedKey ? <EmailDesigner design={design} onChange={onDesignChange} documentKey={loadedKey} components={components} /> : null}
 
       {/* The emitted MJML is an implementation detail — not shown to users. Kept in
           the DOM (hidden) so the e2e suite can still assert the serializer output. */}

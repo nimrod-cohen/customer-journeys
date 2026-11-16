@@ -27,6 +27,7 @@ import { Transactional } from './screens/Transactional.js';
 import { Help } from './screens/Help.js';
 import { Activity } from './screens/Activity.js';
 import { TemplateEditor } from './screens/TemplateEditor.tsx';
+import { EmailComponentEditor } from './screens/EmailComponents.tsx';
 import { SetupScreen } from './screens/Setup.tsx';
 import { WhatsAppInbox } from './screens/WhatsAppInbox.tsx';
 import { whatsappUnreadStore } from './store/whatsappUnread.js';
@@ -65,6 +66,9 @@ function screenFor(path: string): JSX.Element {
   if (path.startsWith('/editor/')) {
     return <TemplateEditor id={path.slice('/editor/'.length)} />;
   }
+  // Saved email components: the library is a tab of /templates; one is edited at /components/:id.
+  if (path === '/templates/components') return <TemplatesList initialTab="components" />;
+  if (path.startsWith('/components/')) return <EmailComponentEditor id={path.slice('/components/'.length)} />;
   // Automations: the LIST at /automations; the canvas builder at /automations/new and
   // /automations/:id (mirrors the broadcasts list/wizard split). Returning from a
   // send node's "Design email" navigates to /automations/:id → AutomationDetail
@@ -213,7 +217,8 @@ export function AppShell(): JSX.Element {
   // fall back to the first permitted item (the System Admin console for them).
   // The email editor has no nav item (reached from Broadcasts/Automations), but is
   // still permitted for anyone who can manage content (i.e. has those screens).
-  const canEditor = (route === '/editor' || route.startsWith('/editor/')) && nav.some((n) => n.id === 'broadcasts');
+  const canEditor =
+    (route === '/editor' || route.startsWith('/editor/') || route.startsWith('/components/')) && nav.some((n) => n.id === 'broadcasts');
   // The account screen has no nav item — any signed-in user may edit their own details.
   const canAccount = route === '/account';
   // The Setup summary page has no nav item — it's reached from the settings-nav badges;

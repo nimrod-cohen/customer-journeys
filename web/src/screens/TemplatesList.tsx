@@ -13,6 +13,7 @@ import { showToast } from '../ui/toast.js';
 import { AssetManagerPanel } from '../email-designer/AssetManager.tsx';
 import { TextTemplatesPanel } from './TextTemplates.tsx';
 import { WhatsAppTemplatesPanel } from './WhatsAppTemplates.tsx';
+import { EmailComponentsPanel } from './EmailComponents.tsx';
 
 interface Template {
   id: string;
@@ -28,8 +29,10 @@ function fmtDate(ts: string | null): string {
   return Number.isNaN(d.getTime()) ? '' : formatDateTime(d);
 }
 
-export function TemplatesList() {
-  const [tab, setTab] = useState<'templates' | 'text' | 'whatsapp' | 'gallery'>('templates');
+type AssetsTab = 'templates' | 'components' | 'text' | 'whatsapp' | 'gallery';
+
+export function TemplatesList({ initialTab = 'templates' }: { initialTab?: AssetsTab } = {}) {
+  const [tab, setTab] = useState<AssetsTab>(initialTab);
   const [templates, setTemplates] = useState<Template[] | null>(null);
   const [error, setError] = useState('');
   // The template whose transactional key is being edited, plus the draft value.
@@ -132,6 +135,16 @@ export function TemplatesList() {
         </button>
         <button
           type="button"
+          data-testid="assets-tab-components"
+          class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            tab === 'components' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
+          }`}
+          onClick={() => setTab('components')}
+        >
+          Email components
+        </button>
+        <button
+          type="button"
           data-testid="assets-tab-text"
           class={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
             tab === 'text' ? 'border-brand-500 text-ink-900' : 'border-transparent text-stone-500 hover:text-ink-800'
@@ -168,7 +181,9 @@ export function TemplatesList() {
         </p>
       ) : null}
 
-      {tab === 'text' ? (
+      {tab === 'components' ? (
+        <EmailComponentsPanel />
+      ) : tab === 'text' ? (
         <TextTemplatesPanel />
       ) : tab === 'whatsapp' ? (
         <WhatsAppTemplatesPanel />
