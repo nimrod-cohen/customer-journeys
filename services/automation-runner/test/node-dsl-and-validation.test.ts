@@ -141,7 +141,7 @@ describe('validateAutomationDefinition', () => {
         x: { type: 'exit' },
       },
     };
-    expect(() => validateAutomationDefinition(badWait)).toThrow(/needs a delay, until, untilOffset, waitCondition or maxWait/);
+    expect(() => validateAutomationDefinition(badWait)).toThrow(/needs a delay, until, untilOffset, untilTimeOfDay, waitCondition or maxWait/);
   });
 
   it('accepts a RICH wait-until: untilOffset + waitCondition + maxWait combined', () => {

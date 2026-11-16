@@ -109,8 +109,14 @@ function edgeIf(
  *  max-wait gate — vs a SIMPLE relative `delay` wait. */
 export function isWaitUntil(node: DslNode): boolean {
   if (node.type !== 'wait') return false;
-  const n = node as { until?: unknown; untilOffset?: unknown; waitCondition?: unknown; maxWait?: unknown };
-  return n.until !== undefined || n.untilOffset !== undefined || n.waitCondition !== undefined || n.maxWait !== undefined;
+  const n = node as { until?: unknown; untilOffset?: unknown; untilTimeOfDay?: unknown; waitCondition?: unknown; maxWait?: unknown };
+  return (
+    n.until !== undefined ||
+    n.untilOffset !== undefined ||
+    n.untilTimeOfDay !== undefined ||
+    n.waitCondition !== undefined ||
+    n.maxWait !== undefined
+  );
 }
 
 /** The display type of a DSL node (refines actions to send/set_attribute/set_journey/webhook). */

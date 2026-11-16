@@ -84,6 +84,13 @@ export interface WaitMax {
   readonly unit: WaitDurationUnit;
 }
 
+/** "N days later at HH:MM" (workspace timezone) — see WaitNode.untilTimeOfDay. */
+export interface WaitTimeOfDay {
+  readonly days: number;
+  readonly hour: number;
+  readonly minute: number;
+}
+
 /**
  * A wait node — defers the journey via next_run_at (§9B "waits").
  *
@@ -103,6 +110,12 @@ export interface WaitNode {
   readonly until?: string | Date;
   /** Relative time gate: `amount unit` from `now` or a {{timestamp}} expression. */
   readonly untilOffset?: WaitOffset;
+  /**
+   * Time-of-day gate, in the WORKSPACE timezone: `days` calendar days after the
+   * arrival day, at `hour:minute`. `days: 0` = the next time it is that time
+   * (today if still ahead, else tomorrow); `days: 1` = tomorrow at that time.
+   */
+  readonly untilTimeOfDay?: WaitTimeOfDay;
   /** Condition gate — proceed only once the profile MATCHES this AST (§8). */
   readonly waitCondition?: AstNode;
   /** How the TIME and CONDITION gates combine (default 'and'). 'and' = both must
@@ -419,10 +432,25 @@ function validateNodeFields(id: string, node: Node, nodes: Record<string, unknow
       const hasDelay = node.delay !== undefined;
       const hasUntil = node.until !== undefined;
       const hasOffset = node.untilOffset !== undefined;
+      const hasTimeOfDay = node.untilTimeOfDay !== undefined;
       const hasCondition = node.waitCondition !== undefined;
       const hasMax = node.maxWait !== undefined;
-      if (!hasDelay && !hasUntil && !hasOffset && !hasCondition && !hasMax) {
-        throw new Error(`validateAutomationDefinition: wait "${id}" needs a delay, until, untilOffset, waitCondition or maxWait`);
+      if (!hasDelay && !hasUntil && !hasOffset && !hasTimeOfDay && !hasCondition && !hasMax) {
+        throw new Error(
+          `validateAutomationDefinition: wait "${id}" needs a delay, until, untilOffset, untilTimeOfDay, waitCondition or maxWait`,
+        );
+      }
+      if ([hasUntil, hasOffset, hasTimeOfDay].filter(Boolean).length > 1) {
+        throw new Error(`validateAutomationDefinition: wait "${id}" can have only one of until, untilOffset, untilTimeOfDay`);
+      }
+      if (hasTimeOfDay) {
+        const t = node.untilTimeOfDay as Partial<WaitTimeOfDay> | null;
+        const int = (v: unknown, lo: number, hi: number): boolean => Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi;
+        if (!t || typeof t !== 'object' || !int(t.days, 0, 365) || !int(t.hour, 0, 23) || !int(t.minute, 0, 59)) {
+          throw new Error(
+            `validateAutomationDefinition: wait "${id}" untilTimeOfDay needs days (0-365), hour (0-23) and minute (0-59)`,
+          );
+        }
       }
       if (hasOffset) {
         validateWaitDuration(id, 'untilOffset', node.untilOffset!, true);
