@@ -31,6 +31,8 @@ import {
   type CustomerProfile,
 } from '@cdp/shared';
 import { evaluateJsValue } from './js-value.js';
+import { evaluateTickExitRules } from './exit-rules.js';
+import { describeExitRule } from './exit-rules-dsl.js';
 import { executeWebhook, type WebhookHttpClient } from '@cdp/runner-webhook';
 import {
   processNode,
@@ -132,7 +134,9 @@ export type RunEnrollmentResult =
   | { readonly result: 'advanced'; readonly endNode: string; readonly steps: number }
   | { readonly result: 'parked'; readonly node: string; readonly nextRunAt: Date }
   | { readonly result: 'completed'; readonly steps: number }
-  | { readonly result: 'skipped'; readonly reason: string };
+  | { readonly result: 'skipped'; readonly reason: string }
+  /** An exit rule ended (exit) or rewound (restart) the enrollment this tick. */
+  | { readonly result: 'exited' | 'restarted'; readonly reason: string };
 
 /** Max nodes processed in a single tick (loop guard, CLAUDE.md). */
 export const MAX_STEPS_PER_TICK = 50;
@@ -146,6 +150,8 @@ interface EnrollmentRow {
   readonly status: string;
   readonly next_run_at: Date | string | null;
   readonly updated_at: Date | string;
+  /** How many times exit rules sent this enrollment back to the start (dedupe run no.). */
+  readonly restarts?: number | null;
   /** The persisted enrollment state jsonb — carries the trigger event (event.*). */
   readonly state?: {
     event?: { payload?: Record<string, unknown> };
@@ -153,6 +159,8 @@ interface EnrollmentRow {
     journey?: Record<string, unknown>;
     /** Per-rich-wait pins, keyed by node id (state.wait.<nodeId> = {target,deadline}). */
     wait?: Record<string, WaitPin>;
+    /** Exit-rule latches (edge-triggered profile_match restarts). */
+    exit_latch?: Record<string, boolean>;
   } | null;
 }
 
@@ -417,6 +425,7 @@ async function chainTick(
             eff.templateId,
             currentNodeId,
             payload,
+            row.restarts ?? 0,
           ),
         );
       } else if (eff.kind === 'webhook') {
@@ -551,14 +560,14 @@ async function runEnrollmentInTx(
   const now = deps.now();
   const committed = await withTx(async (tx): Promise<{
     result: RunEnrollmentResult;
-    enqueue: { automationId: string; profileId: string; workspaceId: string; sends: SideEffect[] } | null;
-    webhooks: { automationId: string; profileId: string; workspaceId: string; list: readonly Extract<SideEffect, { kind: 'webhook' }>[] } | null;
+    enqueue: { automationId: string; profileId: string; workspaceId: string; sends: SideEffect[]; restarts?: number } | null;
+    webhooks: { automationId: string; profileId: string; workspaceId: string; list: readonly Extract<SideEffect, { kind: 'webhook' }>[]; restarts?: number } | null;
   }> => {
     // 1. Lock the enrollment row for the whole tick. A concurrent run blocks here
     //    until we commit, then sees the advanced status and skips below.
     const { rows } = await tx.query<EnrollmentRow>(
       `SELECT id, workspace_id, automation_id, profile_id, current_node, status,
-              next_run_at, updated_at::text AS updated_at, state
+              next_run_at, updated_at::text AS updated_at, state, restarts
        FROM automation_enrollments WHERE id = $1 FOR UPDATE`,
       [enrollmentId],
     );
@@ -583,8 +592,8 @@ async function runEnrollmentInTx(
     //    reversible halt, not a data mutation. Resuming (status→'active') lets the
     //    next sweep advance it normally. The FOR UPDATE lock + idempotency are
     //    unchanged: we simply decline to advance while paused.
-    const { rows: campRows } = await tx.query<{ definition: unknown; status: string }>(
-      `SELECT definition, status FROM automations WHERE workspace_id = $1 AND id = $2`,
+    const { rows: campRows } = await tx.query<{ definition: unknown; status: string; name?: string | null }>(
+      `SELECT definition, status, name FROM automations WHERE workspace_id = $1 AND id = $2`,
       [workspaceId, row.automation_id],
     );
     const def = campRows[0]?.definition;
@@ -610,6 +619,22 @@ async function runEnrollmentInTx(
       };
     }
     const tz = await loadWorkspaceTz(tx, workspaceId);
+
+    // 2b. Exit rules (profile_match) are re-checked on every tick, so a condition
+    //     that turns true with time (rolling features) is still caught. A fired
+    //     rule ends or rewinds the enrollment instead of advancing it.
+    const ex = await evaluateTickExitRules(tx, workspaceId, definition, row, campRows[0]?.name ?? null);
+    for (const s of ex.statements) await tx.query(s.text, s.values);
+    if (ex.decision.action && ex.decision.rule) {
+      return {
+        result: {
+          result: ex.decision.action === 'exit' ? 'exited' : 'restarted',
+          reason: describeExitRule(ex.decision.rule),
+        },
+        enqueue: null,
+        webhooks: null,
+      };
+    }
 
     // 3. Chain nodes. The guard token is the current updated_at — but under the
     //    row lock the advance is unconditional in practice; we keep the guard for
@@ -645,6 +670,7 @@ async function runEnrollmentInTx(
             profileId: row.profile_id,
             workspaceId,
             sends: [...outcome.sends],
+            restarts: row.restarts ?? 0,
           };
     const webhooks =
       b.kind === 'maxSteps' || outcome.webhooks.length === 0
@@ -654,6 +680,7 @@ async function runEnrollmentInTx(
             profileId: row.profile_id,
             workspaceId,
             list: outcome.webhooks,
+            restarts: row.restarts ?? 0,
           };
     return { result, enqueue, webhooks };
   });
@@ -670,6 +697,7 @@ async function runEnrollmentInTx(
       committed.webhooks.automationId,
       committed.webhooks.profileId,
       committed.webhooks.list,
+      committed.webhooks.restarts ?? 0,
     );
   }
 
@@ -682,6 +710,7 @@ async function runEnrollmentInTx(
       committed.enqueue.automationId,
       committed.enqueue.profileId,
       committed.enqueue.sends,
+      committed.enqueue.restarts ?? 0,
     );
   }
   return committed.result;
@@ -700,7 +729,7 @@ async function runEnrollmentLegacy(
   // 1. Load the enrollment row. workspace_id comes FROM the row.
   const { rows } = await deps.reader.query<EnrollmentRow>(
     `SELECT id, workspace_id, automation_id, profile_id, current_node, status,
-            next_run_at, updated_at::text AS updated_at, state
+            next_run_at, updated_at::text AS updated_at, state, restarts
      FROM automation_enrollments WHERE id = $1`,
     [enrollmentId],
   );
@@ -731,6 +760,16 @@ async function runEnrollmentLegacy(
     return { result: 'skipped', reason: `invalid definition: ${(err as Error).message}` };
   }
 
+  // 2b. Exit rules (profile_match) — see the tx path.
+  const ex = await evaluateTickExitRules(deps.reader, workspaceId, definition, row, null);
+  if (ex.statements.length > 0) await deps.runInWorkspaceTx(workspaceId, ex.statements);
+  if (ex.decision.action && ex.decision.rule) {
+    return {
+      result: ex.decision.action === 'exit' ? 'exited' : 'restarted',
+      reason: describeExitRule(ex.decision.rule),
+    };
+  }
+
   // 3. CLAIM via CAS on updated_at — only the winner proceeds.
   const claim = buildEnrollmentClaim(workspaceId, enrollmentId, row.updated_at);
   const { rows: claimed } = await deps.reader.query<EnrollmentRow>(claim.text, claim.values);
@@ -754,8 +793,8 @@ async function runEnrollmentLegacy(
   }
   // Post-commit side effects (mirror enqueueSends): the webhook HTTP call + the
   // outbox enqueue run AFTER the write tx, never under any lock.
-  await runWebhooks(deps, workspaceId, row.automation_id, row.profile_id, outcome.webhooks);
-  await enqueueSends(deps, workspaceId, row.automation_id, row.profile_id, outcome.sends);
+  await runWebhooks(deps, workspaceId, row.automation_id, row.profile_id, outcome.webhooks, row.restarts ?? 0);
+  await enqueueSends(deps, workspaceId, row.automation_id, row.profile_id, outcome.sends, row.restarts ?? 0);
   if (b.kind === 'park') return { result: 'parked', node: b.node, nextRunAt: b.nextRunAt };
   return { result: 'completed', steps: outcome.steps };
 }
@@ -822,6 +861,7 @@ async function runWebhooks(
   automationId: string,
   profileId: string,
   webhooks: readonly Extract<SideEffect, { kind: 'webhook' }>[],
+  restarts = 0,
 ): Promise<void> {
   if (webhooks.length === 0) return;
 
@@ -845,7 +885,7 @@ async function runWebhooks(
         ok: false,
         attempts: 0,
         error: 'no webhook client configured',
-      });
+      }, restarts);
     } else {
       const outcome = await executeWebhook(deps.webhookClient, wh.node, profile, {
         allowlist,
@@ -854,8 +894,8 @@ async function runWebhooks(
       });
       activity =
         outcome.error === 'blocked' && outcome.attempts === 0
-          ? buildWebhookActivityInsert(workspaceId, profileId, automationId, wh.nodeId, { blocked: true })
-          : buildWebhookActivityInsert(workspaceId, profileId, automationId, wh.nodeId, outcome);
+          ? buildWebhookActivityInsert(workspaceId, profileId, automationId, wh.nodeId, { blocked: true }, restarts)
+          : buildWebhookActivityInsert(workspaceId, profileId, automationId, wh.nodeId, outcome, restarts);
     }
     try {
       await deps.runInWorkspaceTx(workspaceId, [activity]);
@@ -893,6 +933,7 @@ async function enqueueSends(
   automationId: string,
   profileId: string,
   sends: readonly SideEffect[],
+  restarts = 0,
 ): Promise<void> {
   const sendEffects = sends.filter(
     (s): s is Extract<SideEffect, { kind: 'send' }> => s.kind === 'send',
@@ -900,7 +941,7 @@ async function enqueueSends(
   if (sendEffects.length === 0) return;
 
   const dedupeKeys = sendEffects.map((e) =>
-    buildAutomationDedupeKey(automationId, profileId, e.nodeId),
+    buildAutomationDedupeKey(automationId, profileId, e.nodeId, restarts),
   );
   const { rows } = await deps.reader.query<{ id: string }>(
     `SELECT id FROM outbox WHERE workspace_id = $1 AND dedupe_key = ANY($2::text[])`,

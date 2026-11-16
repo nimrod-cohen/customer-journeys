@@ -722,6 +722,18 @@ Three independent state layers. The hard `suppressions` list is untouched and re
 
 Only an `active` automation enrolls (archived/paused never do). The trigger event is persisted onto `automation_enrollments.state.event` at enroll time — **only** in `enrollFromEvent`, the sole path holding the event.
 
+## Exit rules (leave or restart mid-journey)
+
+`definition.exitRules` (validated with the graph, so drafted/published/versioned with it): each rule is `{id, label?, when, action}` with `when` ∈ `event` (type + optional payload filter) | `segment_exit` | `segment_entry` | `profile_match` (a §8 AST) and `action` ∈ `exit` | `restart`. Types/validation in `automation-runner/src/exit-rules-dsl.ts`; runtime in `exit-rules.ts` (`applyExitRules`).
+
+- **Evaluated where things happen, not by polling:** inside `enrollFromEvent` / `enrollFromSegmentChange` / `enrollFromProfileChange` (so every ingest path gets it), plus `profile_match` on every runner tick (time-based features). Rules run BEFORE that call's enrollment inserts, in the same tx — **the event that enrolls someone never exits/restarts its own fresh enrollment**.
+- **LIVE definition only** (a draft rule is inert until publish). Applies to `active` AND `paused` automations, never archived. **Exit beats restart** when both fire.
+- **`profile_match` exit is LEVEL** (already matching → exits at the first tick, before any send); **restart is EDGE** — a per-rule latch on `state.exit_latch` fires only on an observed false→true, else a still-true condition would restart every tick. The latch survives a restart and its write never touches `updated_at` (the runner's guard).
+- **Exit/restart cancels the enrollment's `pending` outbox rows** (`status='cancelled'`, reason on `last_error`); a row already `sending` finishes.
+- **Restart** = back to `startNode`, journey vars + wait pins cleared, an event-triggered restart swaps in the new `{{event.*}}`, `automation_enrollments.restarts + 1`. **`restarts` is part of every send/webhook dedupe key from 1 on** (`…:<node>:r<n>`) — without it the per-node at-most-once guard would swallow every send of the second run. Run 0 keeps the original key shape. Capped at `MAX_RESTARTS` (100) so a chatty producer can't spam someone.
+- An exit writes `exit_reason` (shown on the Journeys tab) and an `activity_log` row (`source='automation'`). Exit-rule segment ids must belong to the workspace (400 at save, inv.2).
+- **Rules live OUTSIDE the canvas model** in the builder (`exitRules` state, merged in `persist`), because graph mutations rebuild `{startNode, nodes}`. The legacy `automations.keep_while_in_segment` column still works but has no UI — use a `segment_exit` rule.
+
 ## Node DSL
 
 Eight palette types: `wait`, `wait_until`, `hour_window`, `if`, `send`, `update_profile`, `webhook`, `exit`.

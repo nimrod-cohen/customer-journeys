@@ -10,6 +10,7 @@
 import { validateAst, type AstNode } from '@cdp/segments';
 import { isExpressionSpec, isLiteralSpec, isJsSpec, type ValueSpec } from '@cdp/shared';
 import { isMedium, isTextMedium, type Medium } from '@cdp/channels';
+import { validateExitRules, type ExitRule } from './exit-rules-dsl.js';
 
 // Re-export the sending medium so consumers importing from the runner's DSL get it.
 export type { Medium } from '@cdp/channels';
@@ -260,6 +261,8 @@ export type Node =
 export interface AutomationDefinition {
   readonly startNode: string;
   readonly nodes: Readonly<Record<string, Node>>;
+  /** Optional exit / restart rules evaluated while a person is enrolled. */
+  readonly exitRules?: readonly ExitRule[];
 }
 
 const NODE_TYPES = new Set(['trigger', 'wait', 'condition', 'action', 'hour_of_day_window', 'exit']);
@@ -345,6 +348,10 @@ export function validateAutomationDefinition(def: unknown): asserts def is Autom
   if (!hasReachableExit(d.startNode, nodes as Record<string, Node>)) {
     throw new Error('validateAutomationDefinition: no exit node is reachable from startNode');
   }
+
+  // Exit / restart rules (optional) — validated with the graph so a bad rule is a
+  // typed 400 at draft-save rather than a runtime surprise.
+  validateExitRules((def as { exitRules?: unknown }).exitRules);
 
   // No orphans — every defined node must be reachable from startNode.
   const orphans = findOrphans(d.startNode, nodes as Record<string, Node>);

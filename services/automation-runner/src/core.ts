@@ -1138,8 +1138,13 @@ export function buildAutomationDedupeKey(
   automationId: string,
   profileId: string,
   nodeId: string,
+  restarts = 0,
 ): string {
-  return `automation:${automationId}:${profileId}:${nodeId}`;
+  // A RESTARTED enrollment (exit rules) walks the same nodes again; its run number
+  // joins the key so those sends are new. Run 0 keeps the original key shape, so
+  // every pre-existing row still dedupes exactly as before.
+  const base = `automation:${automationId}:${profileId}:${nodeId}`;
+  return restarts > 0 ? `${base}:r${restarts}` : base;
 }
 
 /**
@@ -1155,9 +1160,10 @@ export function buildAutomationOutboxInsert(
   templateId: string | null,
   nodeId: string,
   payload: Record<string, unknown> = {},
+  restarts = 0,
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildAutomationOutboxInsert: workspaceId is required');
-  const dedupeKey = buildAutomationDedupeKey(automationId, profileId, nodeId);
+  const dedupeKey = buildAutomationDedupeKey(automationId, profileId, nodeId, restarts);
   return {
     text: `INSERT INTO outbox
              (workspace_id, profile_id, automation_id, template_id, dedupe_key, payload, status)
@@ -1193,9 +1199,10 @@ export function buildWebhookActivityInsert(
   automationId: string,
   nodeId: string,
   outcome: WebhookActivityOutcome | { readonly blocked: true },
+  restarts = 0,
 ): SqlStatement {
   if (!workspaceId) throw new Error('buildWebhookActivityInsert: workspaceId is required');
-  const dedupeKey = buildAutomationDedupeKey(automationId, profileId, nodeId);
+  const dedupeKey = buildAutomationDedupeKey(automationId, profileId, nodeId, restarts);
   let result: 'success' | 'failed' | 'blocked';
   let detail: string;
   if ('blocked' in outcome) {

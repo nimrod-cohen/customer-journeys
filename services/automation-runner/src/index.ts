@@ -100,6 +100,27 @@ export {
   type RunEnrollmentResult,
 } from './run.js';
 
+export {
+  validateExitRules,
+  exitRulesOf,
+  exitRuleSegmentIds,
+  describeExitRule,
+  MAX_EXIT_RULES,
+  type ExitRule,
+  type ExitRuleWhen,
+  type ExitRuleAction,
+} from './exit-rules-dsl.js';
+export {
+  applyExitRules,
+  evaluateTickExitRules,
+  decideProfileMatch,
+  resolveExitDecision,
+  ruleFiresOnSignal,
+  MAX_RESTARTS,
+  type ExitSignal,
+  type ApplyExitRulesResult,
+} from './exit-rules.js';
+
 export { makeScheduledSweepHandler } from './handler.js';
 export {
   runStatementsInWorkspaceTx,

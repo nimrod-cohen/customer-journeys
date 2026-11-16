@@ -103,6 +103,8 @@ import {
 } from '@cdp/segments';
 import {
   validateAutomationDefinition,
+  exitRulesOf,
+  exitRuleSegmentIds,
   enrollFromEvent,
   enrollFromProfileChange,
   enrollFromSegmentChange,
@@ -4683,13 +4685,27 @@ export const getAutomation: Handler = async (ctx, pool, req) => {
  * the 400 HandlerResponse on a validation error, or null when the definition is
  * structurally valid (the caller proceeds). §9B phase-6 follow-up.
  */
-function validateDefinitionOr400(definition: unknown): HandlerResponse | null {
+async function validateDefinitionOr400(
+  pool: Pool,
+  workspaceId: string,
+  definition: unknown,
+): Promise<HandlerResponse | null> {
   try {
     validateAutomationDefinition(definition);
-    return null;
   } catch (e) {
     return ok({ error: e instanceof Error ? e.message : 'invalid automation definition' }, 400);
   }
+  // Exit rules may name segments — each must belong to THIS workspace (inv.2: a
+  // cross-workspace id in a body is a 400, never silently stored).
+  const segIds = exitRuleSegmentIds(exitRulesOf(definition));
+  if (segIds.length > 0) {
+    const q = scopedQuery(workspaceId, 'SELECT id::text AS id FROM segments WHERE id::text = ANY($1::text[])', [segIds]);
+    const found = new Set((await pool.query<{ id: string }>(q.text, q.values)).rows.map((r) => r.id));
+    if (segIds.some((sid) => !found.has(sid))) {
+      return ok({ error: 'exit rule segment not found in this workspace' }, 400);
+    }
+  }
+  return null;
 }
 
 export const createAutomation: Handler = async (ctx, pool, req) => {
@@ -4699,7 +4715,7 @@ export const createAutomation: Handler = async (ctx, pool, req) => {
   if (!name) return ok({ error: 'name required' }, 400);
   const desc = parseDescription(b.description);
   if ('error' in desc) return ok({ error: desc.error }, 400);
-  const invalid = validateDefinitionOr400(definition); // reject malformed graphs (§9B) as a TYPED 400
+  const invalid = await validateDefinitionOr400(pool, ctx.workspaceId, definition); // reject malformed graphs (§9B) as a TYPED 400
   if (invalid) return invalid;
   // A client-supplied trigger_segment_id must resolve INSIDE the token's workspace
   // (inv.2) — a foreign segment id is rejected, never silently stored.
@@ -4749,7 +4765,7 @@ export const updateAutomation: Handler = async (ctx, pool, req) => {
   const b = asObject(req.body);
   const id = req.params.id!;
   if (b.definition !== undefined) {
-    const invalid = validateDefinitionOr400(b.definition); // typed 400, never a 500
+    const invalid = await validateDefinitionOr400(pool, ctx.workspaceId, b.definition); // typed 400, never a 500
     if (invalid) return invalid;
   }
   const desc = parseDescription(b.description);
@@ -4874,7 +4890,7 @@ async function runAutomationPublishGate(
   // The stored/draft definition must be structurally valid (and the trigger
   // complete — an event trigger missing eventType is rejected here) BEFORE the
   // envelope gate. A malformed graph is a TYPED 400 (never a 500).
-  const invalid = validateDefinitionOr400(def);
+  const invalid = await validateDefinitionOr400(pool, workspaceId, def);
   if (invalid) return invalid;
 
   // Load each send node's copy envelope (scoped) → compute the ordered gaps. A copy
@@ -4960,7 +4976,7 @@ export const activateAutomation: Handler = async (ctx, pool, req) => {
 export const saveAutomationDraft: Handler = async (ctx, pool, req) => {
   const id = req.params.id!;
   const b = asObject(req.body);
-  const invalid = validateDefinitionOr400(b.definition); // a malformed draft is a TYPED 400
+  const invalid = await validateDefinitionOr400(pool, ctx.workspaceId, b.definition); // a malformed draft is a TYPED 400
   if (invalid) return invalid;
 
   // A supplied draft trigger segment MUST resolve in the workspace (inv.2). Absent
@@ -5244,8 +5260,11 @@ export const listAutomationEnrollments: Handler = async (ctx, pool, req) => {
     current_node: string;
     enrolled_at: string;
     updated_at: string;
+    exit_reason: string | null;
+    restarts: number;
   }>(
-    `SELECT e.profile_id, p.email, e.status, e.current_node, e.enrolled_at, e.updated_at
+    `SELECT e.profile_id, p.email, e.status, e.current_node, e.enrolled_at, e.updated_at,
+            e.exit_reason, e.restarts
      FROM automation_enrollments e
      JOIN profiles p ON p.id = e.profile_id AND p.workspace_id = e.workspace_id
      WHERE e.workspace_id = $1 AND e.automation_id = $2

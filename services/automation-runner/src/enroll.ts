@@ -35,6 +35,7 @@ import {
 } from './core.js';
 import { buildResolveAudience, type AstNode } from '@cdp/segments';
 import { resolveStartNode, validateAutomationDefinition, type TriggerNode } from './dsl.js';
+import { applyExitRules } from './exit-rules.js';
 
 /** A minimal query reader (returns rows). The orchestrator never opens a tx. */
 export interface Reader {
@@ -58,6 +59,10 @@ export interface EnrollResult {
   readonly intents: readonly EnrollmentIntent[];
   /** Active enrollments ended because the profile left a keep_while_in_segment. */
   readonly cancelled: number;
+  /** Active enrollments ended by an exit rule. */
+  readonly exited?: number;
+  /** Active enrollments sent back to the start by an exit rule. */
+  readonly restarted?: number;
 }
 
 interface AutomationRow {
@@ -126,20 +131,40 @@ export async function enrollFromSegmentChange(
     cancelIntents = parseKeepWhileInCancellations(row, keepRows);
   }
 
+  // Exit rules watching this segment run FIRST (on the person's existing active
+  // enrollments), so the entry that enrolls someone never exits/restarts that same
+  // fresh enrollment.
+  const rules = await applyExitRules(deps.reader, row.workspace_id, row.profile_id, {
+    kind: 'segment',
+    segmentId: row.segment_id,
+    action: row.action,
+  });
+
   // Apply enrollments (ON CONFLICT DO NOTHING) + cancellations in ONE workspace tx.
   const statements: SqlStatement[] = [
+    ...rules.statements,
     ...intents.map((i) => buildEnrollmentInsert(i.workspaceId, i.automationId, i.profileId, i.startNode)),
     ...cancelIntents.map((c) => buildEnrollmentCancel(c.workspaceId, c.automationId, c.profileId)),
   ];
   if (statements.length > 0) await deps.runInWorkspaceTx(row.workspace_id, statements);
 
-  return { enrolled: intents.length, intents, cancelled: cancelIntents.length };
+  return {
+    enrolled: intents.length,
+    intents,
+    cancelled: cancelIntents.length,
+    exited: rules.exited,
+    restarted: rules.restarted,
+  };
 }
 
 /** The outcome of an event/manual enroll call. */
 export interface SimpleEnrollResult {
   readonly enrolled: number;
   readonly intents: readonly EnrollmentIntent[];
+  /** Active enrollments ended by an exit rule (event / profile paths). */
+  readonly exited?: number;
+  /** Active enrollments sent back to the start by an exit rule. */
+  readonly restarted?: number;
 }
 
 /**
@@ -191,17 +216,26 @@ export async function enrollFromEvent(deps: EnrollDeps, row: EventRow): Promise<
   }
 
   const intents = parseEventEnrollmentTrigger(row, triggerRows);
+  // Exit rules on the person's EXISTING active enrollments run first (same tx, ahead
+  // of the inserts) — the enrolling event never exits/restarts its own enrollment.
+  const rules = await applyExitRules(deps.reader, row.workspace_id, row.profile_id, {
+    kind: 'event',
+    type: row.type,
+    payload: row.payload,
+    eventId: row.event_id,
+  });
   // Persist the trigger event onto enrollment.state.event (so a later set_attribute
   // step can read {{event.*}}). Each intent carries the event (event-trigger path).
-  const statements: SqlStatement[] = intents.map((i) =>
+  const enrollStatements: SqlStatement[] = intents.map((i) =>
     i.event
       ? buildEnrollmentInsertWithState(i.workspaceId, i.automationId, i.profileId, i.startNode, {
           event: i.event,
         })
       : buildEnrollmentInsert(i.workspaceId, i.automationId, i.profileId, i.startNode),
   );
+  const statements = [...rules.statements, ...enrollStatements];
   if (statements.length > 0) await deps.runInWorkspaceTx(row.workspace_id, statements);
-  return { enrolled: intents.length, intents };
+  return { enrolled: intents.length, intents, exited: rules.exited, restarted: rules.restarted };
 }
 
 /**
@@ -254,11 +288,14 @@ export async function enrollFromProfileChange(
   }
 
   const intents = parseProfileEnrollmentTrigger(row, triggerRows);
-  const statements: SqlStatement[] = intents.map((i) =>
-    buildEnrollmentInsert(i.workspaceId, i.automationId, i.profileId, i.startNode),
-  );
+  // profile_match exit rules on the person's EXISTING active enrollments (first).
+  const rules = await applyExitRules(deps.reader, row.workspace_id, row.profile_id, { kind: 'profile' });
+  const statements: SqlStatement[] = [
+    ...rules.statements,
+    ...intents.map((i) => buildEnrollmentInsert(i.workspaceId, i.automationId, i.profileId, i.startNode)),
+  ];
   if (statements.length > 0) await deps.runInWorkspaceTx(row.workspace_id, statements);
-  return { enrolled: intents.length, intents };
+  return { enrolled: intents.length, intents, exited: rules.exited, restarted: rules.restarted };
 }
 
 /**
