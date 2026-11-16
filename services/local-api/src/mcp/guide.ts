@@ -26,6 +26,7 @@ Tell the user which step is left for them.
 - Wait: {"type":"wait","delay":{"seconds":86400},"next":"<id>"}
   Rich wait-until (any of): "until" (ISO date-time; no offset = workspace timezone),
   "untilOffset": {"amount":1,"unit":"minutes"|"hours"|"days","anchor":"now"|"{{event.appointment_at}}","direction":"after"|"before"},
+  "untilTimeOfDay": {"days":1,"hour":9,"minute":0},   (workspace timezone; days 0 = the next 09:00, 1 = tomorrow at 09:00; use ONE of until / untilOffset / untilTimeOfDay)
   "waitCondition": Rule, "combine":"and"|"or", "maxWait":{"amount":3,"unit":"days"}.
 - Time window: {"type":"hour_of_day_window","startHour":9,"endHour":17,"daysOfWeek"?:[1,2,3,4,5],"next":"<id>"}
   (hours 0-23, workspace timezone; start > end wraps overnight).

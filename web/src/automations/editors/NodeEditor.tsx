@@ -459,20 +459,62 @@ function WaitUntilEditor(props: NodeEditorProps) {
       {/* TIME gate */}
       <GateSection
         title="Wait for a time"
-        hint="A specific date, or a relative offset from now or a timestamp."
+        hint="A time of day (e.g. tomorrow at 09:00), a relative offset, or a specific date."
         enabled={timeEnabled}
-        onToggle={(on) => patch({ timeMode: on ? 'relative' : 'none' })}
+        onToggle={(on) => patch({ timeMode: on ? 'timeOfDay' : 'none' })}
         testid="wait-time-enabled"
       >
         <Select
           data-testid="wait-time-mode"
-          value={form.timeMode === 'date' ? 'date' : 'relative'}
-          onChange={(e: Event) => patch({ timeMode: (e.target as HTMLSelectElement).value as 'date' | 'relative' })}
+          value={form.timeMode === 'none' ? 'timeOfDay' : form.timeMode}
+          onChange={(e: Event) => patch({ timeMode: (e.target as HTMLSelectElement).value as 'date' | 'relative' | 'timeOfDay' })}
         >
+          <option value="timeOfDay">A time of day (e.g. tomorrow at 09:00)</option>
           <option value="relative">A relative time from now / a timestamp</option>
           <option value="date">A specific date &amp; time</option>
         </Select>
-        {form.timeMode === 'date' ? (
+        {form.timeMode === 'timeOfDay' ? (
+          <>
+            <div class="flex flex-wrap items-center gap-2">
+              <Select
+                data-testid="wait-tod-days"
+                class="w-56"
+                value={form.todDays <= 2 ? String(form.todDays) : 'n'}
+                onChange={(e: Event) => {
+                  const v = (e.target as HTMLSelectElement).value;
+                  patch({ todDays: v === 'n' ? Math.max(3, form.todDays) : Number(v) });
+                }}
+              >
+                <option value="1">Tomorrow</option>
+                <option value="2">The day after tomorrow</option>
+                <option value="0">Today (or tomorrow, if past)</option>
+                <option value="n">In a number of days…</option>
+              </Select>
+              {form.todDays > 2 ? (
+                <Input
+                  data-testid="wait-tod-days-n"
+                  type="number"
+                  min={3}
+                  max={365}
+                  class="w-24"
+                  value={String(form.todDays)}
+                  onInput={(e: Event) => patch({ todDays: Math.max(3, Math.min(365, Math.floor(Number((e.target as HTMLInputElement).value) || 3))) })}
+                />
+              ) : null}
+              <span class="text-sm text-stone-500">at</span>
+              <Input
+                data-testid="wait-tod-time"
+                type="time"
+                class="w-32"
+                value={form.todTime}
+                onInput={(e: Event) => patch({ todTime: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+            <p class="text-xs text-stone-400">
+              In the workspace timezone ({props.timeZone}). "Tomorrow" is the calendar day after the person reaches this step.
+            </p>
+          </>
+        ) : form.timeMode === 'date' ? (
           <>
             <Input
               data-testid="wait-until-input"

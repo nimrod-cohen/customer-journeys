@@ -12,7 +12,7 @@
 //     then the Dispatcher's atomic claim sends once.
 import { buildSegmentMatch, resolveOperator } from '@cdp/segments';
 import type { AstNode } from '@cdp/segments';
-import { isWindowOpen, nextWindowOpening, zonedInputToUtcIso, resolveEventPath } from '@cdp/shared';
+import { isWindowOpen, nextWindowOpening, zonedComponents, zonedInputToUtcIso, resolveEventPath } from '@cdp/shared';
 import { isTextMedium, type Medium } from '@cdp/channels';
 import {
   type Node,
@@ -239,7 +239,12 @@ const WAIT_UNIT_MS: Record<'minutes' | 'hours' | 'days', number> = {
 
 /** A node is a RICH wait-until when it carries any gate beyond a simple delay/until. */
 export function isRichWait(node: WaitNode): boolean {
-  return node.untilOffset !== undefined || node.waitCondition !== undefined || node.maxWait !== undefined;
+  return (
+    node.untilOffset !== undefined ||
+    node.untilTimeOfDay !== undefined ||
+    node.waitCondition !== undefined ||
+    node.maxWait !== undefined
+  );
 }
 
 /** The pinned time-target / max-wait deadline for a rich wait (ISO strings or null),
@@ -263,6 +268,7 @@ export interface RichWaitInputs {
 /** The absolute time gate of a rich wait (or null = no time gate), pinned on first arrival. */
 function richWaitTimeTarget(node: WaitNode, now: Date, tz: string, resolvedAnchor: Date | null): Date | null {
   if (node.until !== undefined) return resolveUntilInstant(node.until, tz);
+  if (node.untilTimeOfDay !== undefined) return timeOfDayTarget(node.untilTimeOfDay, now, tz);
   if (node.untilOffset !== undefined) {
     // 'before' subtracts the offset from the anchor (e.g. 1 day BEFORE the
     // appointment); 'after' (default) adds it.
@@ -275,6 +281,24 @@ function richWaitTimeTarget(node: WaitNode, now: Date, tz: string, resolvedAncho
     return new Date(resolvedAnchor.getTime() + ms);
   }
   return null;
+}
+
+/**
+ * "`days` days after today at hour:minute", read in `tz` (DST-correct). With
+ * `days: 0` a time already passed today rolls to tomorrow, so it always means
+ * "the next HH:MM". The calendar step uses UTC date math on the LOCAL date, so a
+ * DST change between the two days never shifts the wall-clock time.
+ */
+export function timeOfDayTarget(t: { days: number; hour: number; minute: number }, now: Date, tz: string): Date {
+  const c = zonedComponents(now, tz);
+  const at = (addDays: number): Date => {
+    const d = new Date(Date.UTC(c.year, c.month - 1, c.day + addDays));
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    const local = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(t.hour)}:${pad(t.minute)}`;
+    return new Date(zonedInputToUtcIso(local, tz));
+  };
+  const target = at(t.days);
+  return t.days === 0 && target.getTime() <= now.getTime() ? at(1) : target;
 }
 
 /** The decision for a rich wait: advance now, or stay-and-park (+ a pin to persist). */

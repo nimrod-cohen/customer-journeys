@@ -24,7 +24,7 @@ import {
   type DslNode,
   type PaletteType,
 } from './model.js';
-import { fmtMinuteOfDay } from './node-config.js';
+import { describeTimeOfDay, fmtMinuteOfDay } from './node-config.js';
 
 /** A thrown mutation error the builder surfaces as a toast (never a native dialog). */
 export class MutationError extends Error {}
@@ -942,7 +942,9 @@ export function nodeSummary(canvasNode: CanvasNode): string {
       if (isWaitUntil(node)) {
         const nn = node as typeof n & { combine?: string };
         const parts: string[] = [];
-        if (typeof n.until === 'string') parts.push('a date');
+        const tod = (node as { untilTimeOfDay?: { days: number; hour: number; minute: number } }).untilTimeOfDay;
+        if (tod) parts.push(describeTimeOfDay(tod));
+        else if (typeof n.until === 'string') parts.push('a date');
         else if (n.untilOffset) {
           const a = n.untilOffset.amount ?? 1;
           const u = n.untilOffset.unit ?? 'days';

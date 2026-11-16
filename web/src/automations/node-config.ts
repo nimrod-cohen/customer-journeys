@@ -169,7 +169,10 @@ const asAmount = (n: unknown, dflt = 1): number => (typeof n === 'number' && Num
  * At least one gate must be enabled to save (waitUntilFormHasGate).
  */
 export interface WaitUntilForm {
-  readonly timeMode: 'none' | 'date' | 'relative';
+  readonly timeMode: 'none' | 'date' | 'relative' | 'timeOfDay';
+  /** timeMode 'timeOfDay': `todDays` days after today at `todTime` (HH:MM, workspace zone). */
+  readonly todDays: number;
+  readonly todTime: string;
   readonly dateInput: string; // datetime-local (workspace-zoned) for timeMode 'date'
   readonly amount: number;
   readonly unit: WaitDurationUnit;
@@ -191,6 +194,7 @@ export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilFor
   const n = node as {
     until?: unknown;
     untilOffset?: { amount?: unknown; unit?: unknown; anchor?: unknown; direction?: unknown };
+    untilTimeOfDay?: { days?: unknown; hour?: unknown; minute?: unknown };
     waitCondition?: AstNode | null;
     combine?: unknown;
     maxWait?: { amount?: unknown; unit?: unknown };
@@ -202,7 +206,15 @@ export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilFor
   let direction: 'before' | 'after' = 'after';
   let anchorKind: 'now' | 'expression' = 'now';
   let anchorExpr = '';
-  if (typeof n.until === 'string' && n.until.length > 0) {
+  let todDays = 1;
+  let todTime = '09:00';
+  if (n.untilTimeOfDay && typeof n.untilTimeOfDay === 'object') {
+    timeMode = 'timeOfDay';
+    const t = n.untilTimeOfDay;
+    todDays = typeof t.days === 'number' && t.days >= 0 ? Math.floor(t.days) : 1;
+    const pad = (v: unknown): string => String(typeof v === 'number' ? v : 0).padStart(2, '0');
+    todTime = `${pad(t.hour)}:${pad(t.minute)}`;
+  } else if (typeof n.until === 'string' && n.until.length > 0) {
     timeMode = 'date';
     dateInput = readWaitUntilInput(node, timeZone);
   } else if (n.untilOffset && typeof n.untilOffset === 'object') {
@@ -221,6 +233,8 @@ export function readWaitUntilForm(node: DslNode, timeZone: string): WaitUntilFor
   const hasMaxWait = n.maxWait !== undefined && n.maxWait !== null;
   return {
     timeMode,
+    todDays,
+    todTime,
     dateInput,
     amount,
     unit,
@@ -245,7 +259,9 @@ export function waitUntilFormHasGate(form: WaitUntilForm): boolean {
   const timeOk =
     form.timeMode === 'date'
       ? form.dateInput.length > 0
-      : form.timeMode === 'relative' && (form.anchorKind === 'now' || form.anchorExpr.trim().length > 0);
+      : form.timeMode === 'timeOfDay'
+        ? parseHhMm(form.todTime) !== null
+        : form.timeMode === 'relative' && (form.anchorKind === 'now' || form.anchorExpr.trim().length > 0);
   const condOk = form.hasCondition && !conditionGroupIsEmpty(form.condition);
   return timeOk || condOk || form.hasMaxWait;
 }
@@ -262,7 +278,11 @@ export function writeWaitUntilForm(form: WaitUntilForm, timeZone: string): DslNo
   // dropped on the JSON round-trip; the read path treats them as absent.)
   let until: string | undefined;
   let untilOffset: { amount: number; unit: WaitDurationUnit; anchor: string; direction?: 'before' | 'after' } | undefined;
-  if (form.timeMode === 'date' && form.dateInput.length > 0) {
+  let untilTimeOfDay: { days: number; hour: number; minute: number } | undefined;
+  const tod = parseHhMm(form.todTime);
+  if (form.timeMode === 'timeOfDay' && tod) {
+    untilTimeOfDay = { days: Math.max(0, Math.min(365, Math.floor(form.todDays) || 0)), ...tod };
+  } else if (form.timeMode === 'date' && form.dateInput.length > 0) {
     until = zonedInputToUtcIso(form.dateInput, timeZone);
   } else if (form.timeMode === 'relative') {
     const anchor = form.anchorKind === 'now' ? 'now' : form.anchorExpr.trim();
@@ -275,17 +295,35 @@ export function writeWaitUntilForm(form: WaitUntilForm, timeZone: string): DslNo
   const ast = form.hasCondition && !conditionGroupIsEmpty(form.condition) ? editorRowsToConditionAst(form.condition) : null;
   const maxWait = form.hasMaxWait ? { amount: asAmount(form.maxAmount), unit: form.maxUnit } : undefined;
   // `combine` only matters when BOTH a time gate and a condition gate are present.
-  const hasTimeGate = until !== undefined || untilOffset !== undefined;
+  const hasTimeGate = until !== undefined || untilOffset !== undefined || untilTimeOfDay !== undefined;
   const combine = hasTimeGate && ast ? form.combine : undefined;
   return {
     type: 'wait',
     delay: undefined,
     until,
     untilOffset,
+    untilTimeOfDay,
     waitCondition: ast ?? undefined,
     combine,
     maxWait,
   } as unknown as DslNode;
+}
+
+/** "HH:MM" → {hour, minute}, or null when not a valid 24h time. */
+export function parseHhMm(v: string): { hour: number; minute: number } | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+  if (!m) return null;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  return hour <= 23 && minute <= 59 ? { hour, minute } : null;
+}
+
+/** A short label: "tomorrow at 09:00", "the next 09:00", "in 3 days at 18:30". */
+export function describeTimeOfDay(t: { days: number; hour: number; minute: number }): string {
+  const hhmm = `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`;
+  if (t.days === 0) return `the next ${hhmm}`;
+  if (t.days === 1) return `tomorrow at ${hhmm}`;
+  return `in ${t.days} days at ${hhmm}`;
 }
 
 // ── HOUR-OF-DAY WINDOW ──────────────────────────────────────────────────────────
