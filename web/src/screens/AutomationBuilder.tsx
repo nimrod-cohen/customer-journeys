@@ -1014,8 +1014,10 @@ export function AutomationDetail({ id }: { id?: string }) {
           </div>
           <div class="mb-1.5 flex items-center gap-2">
             {isDirty ? (
-              <Badge data-testid="draft-indicator" tone="warn">
-                Unsaved draft — not yet published
+              // Compared with the PUBLISHED version, not the saved draft: drafts save
+              // fine, they just don't run until published.
+              <Badge data-testid="draft-indicator" tone="warn" title="Saved as a draft. It doesn't run until you publish.">
+                {status === 'draft' ? 'Not published yet' : 'Changes not published yet'}
               </Badge>
             ) : null}
             <Badge data-testid="automation-status" tone={toneFor(status)}>
