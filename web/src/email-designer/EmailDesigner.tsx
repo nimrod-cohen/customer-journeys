@@ -17,6 +17,7 @@ import {
   componentsHost,
   refreshLinkedSnapshots,
   type ComponentsHost,
+  type HistoryEntry,
 } from './state.js';
 import { Toolbox } from './Toolbox.tsx';
 import { Canvas } from './Canvas.tsx';
@@ -40,9 +41,11 @@ export interface EmailDesignerProps {
   readonly documentKey: string;
   /** Saved components (a shared footer…). Omit to hide the feature. */
   readonly components?: ComponentsHost | null;
+  /** Edit history saved by the host in earlier sessions (oldest first). */
+  readonly history?: readonly HistoryEntry[];
 }
 
-export function EmailDesigner({ design, onChange, documentKey, components = null }: EmailDesignerProps): JSX.Element {
+export function EmailDesigner({ design, onChange, documentKey, components = null, history = [] }: EmailDesignerProps): JSX.Element {
   useEffect(() => {
     componentsHost.value = components;
     if (components) refreshLinkedSnapshots(components.list);
@@ -50,7 +53,7 @@ export function EmailDesigner({ design, onChange, documentKey, components = null
   // (Re)load when the edited document changes. onChange is registered with the
   // loaded document so every committed mutation reaches the host.
   useEffect(() => {
-    loadDesign(design, onChange);
+    loadDesign(design, onChange, history);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentKey]);
 

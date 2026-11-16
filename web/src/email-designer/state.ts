@@ -84,7 +84,31 @@ export interface HistoryEntry {
 }
 export const undoStack = signal<HistoryEntry[]>([]);
 export const redoStack = signal<HistoryEntry[]>([]);
-const MAX_HISTORY = 100;
+export const MAX_HISTORY = 100;
+
+// The history the HOST persists, so it survives leaving the editor. Every document
+// transition — a change, an undo, a redo — appends its BEFORE-state here, which
+// keeps the stored log a consistent chain (each entry's after-state is the next
+// entry's before-state) even across undos. The host drains it with
+// takePendingHistory() on each save.
+let _pendingHistory: HistoryEntry[] = [];
+
+/** Drain the history entries recorded since the last call (for the host to save). */
+export function takePendingHistory(): HistoryEntry[] {
+  const out = _pendingHistory;
+  _pendingHistory = [];
+  return out;
+}
+
+/** Put back entries whose save failed, ahead of anything recorded since. */
+export function restorePendingHistory(entries: readonly HistoryEntry[]): void {
+  _pendingHistory = [...entries, ..._pendingHistory];
+}
+
+function record(entry: HistoryEntry): void {
+  _pendingHistory.push(entry);
+  if (_pendingHistory.length > MAX_HISTORY) _pendingHistory.shift();
+}
 
 function snapshot(): string {
   return JSON.stringify(currentDesign());
@@ -105,10 +129,12 @@ export function mutate(action: string, fn: () => void): void {
   fn();
   const after = snapshot();
   if (after === before) return;
-  const list = [...undoStack.value, { snapshot: before, action, timestamp: Date.now() }];
+  const entry = { snapshot: before, action, timestamp: Date.now() };
+  const list = [...undoStack.value, entry];
   while (list.length > MAX_HISTORY) list.shift();
   undoStack.value = list;
   redoStack.value = [];
+  record(entry);
   notify();
 }
 
@@ -116,8 +142,10 @@ export function undo(): void {
   const list = [...undoStack.value];
   const entry = list.pop();
   if (!entry) return;
-  redoStack.value = [...redoStack.value, { snapshot: snapshot(), action: entry.action, timestamp: Date.now() }];
+  const before = snapshot();
+  redoStack.value = [...redoStack.value, { snapshot: before, action: entry.action, timestamp: Date.now() }];
   undoStack.value = list;
+  record({ snapshot: before, action: `Undo ${entry.action}`, timestamp: Date.now() });
   applySnapshot(entry.snapshot);
 }
 
@@ -125,8 +153,10 @@ export function redo(): void {
   const list = [...redoStack.value];
   const entry = list.pop();
   if (!entry) return;
-  undoStack.value = [...undoStack.value, { snapshot: snapshot(), action: entry.action, timestamp: Date.now() }];
+  const before = snapshot();
+  undoStack.value = [...undoStack.value, { snapshot: before, action: entry.action, timestamp: Date.now() }];
   redoStack.value = list;
+  record({ snapshot: before, action: `Redo ${entry.action}`, timestamp: Date.now() });
   applySnapshot(entry.snapshot);
 }
 
@@ -193,14 +223,20 @@ function applySnapshot(s: string): void {
 }
 
 /** Host entry point: load a design (or start empty) and register the listener. */
-export function loadDesign(design: EmailDesign | null, onChange: DesignListener | null): void {
+export function loadDesign(
+  design: EmailDesign | null,
+  onChange: DesignListener | null,
+  /** Saved history from earlier sessions (oldest first) — restores the panel and undo. */
+  history: readonly HistoryEntry[] = [],
+): void {
   const d = design ?? emptyDesign();
   rows.value = [...d.rows] as DesignRow[];
   settings.value = d.settings ?? {};
   selectedId.value = null;
   sidebarMode.value = 'toolbox';
-  undoStack.value = [];
+  undoStack.value = history.slice(-MAX_HISTORY);
   redoStack.value = [];
+  _pendingHistory = [];
   dragging.value = null;
   dropTargetId.value = null;
   viewportMode.value = 'desktop';

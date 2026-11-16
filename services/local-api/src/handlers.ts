@@ -18,6 +18,7 @@ import {
   deleteEmailComponent,
   withFreshComponents,
 } from './email-components.js';
+import { appendTemplateHistory, getTemplateHistory, parseHistoryAppend } from './template-history.js';
 import type { Pool, PoolClient } from 'pg';
 import { promises as dns } from 'node:dns';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -3396,6 +3397,7 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
       b.from_selected === true,
     ],
   );
+  await appendTemplateHistory(pool, ctx.workspaceId, rows[0].id, parseHistoryAppend(b.history_append));
   return ok({ template: rows[0] }, 201);
 };
 
@@ -3458,6 +3460,7 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
   );
   const { rowCount } = await pool.query(q.text, q.values);
   if (!rowCount) return ok({ error: 'not found' }, 404);
+  await appendTemplateHistory(pool, ctx.workspaceId, id, parseHistoryAppend(b.history_append));
   return ok({ updated: rowCount });
 };
 
@@ -5004,15 +5007,76 @@ export const saveAutomationDraft: Handler = async (ctx, pool, req) => {
   // 'enter' unless the builder explicitly stages 'exit' (fire on LEAVING the segment).
   const draftTriggerOn = b.trigger_on === 'exit' ? 'exit' : 'enter';
 
+  // Each email step owns its OWN email copy. A duplicated step arrives pointing at
+  // the original's copy, so editing one would silently edit both — split them here.
+  const cur = await pool.query<{ definition: AutomationDefinition; draft_definition: AutomationDefinition | null }>(
+    'SELECT definition, draft_definition FROM automations WHERE workspace_id = $1 AND id = $2',
+    [ctx.workspaceId, id],
+  );
+  if (!cur.rows[0]) return ok({ error: 'not found' }, 404); // foreign / missing id (inv.2)
+  const split = await separateSharedEmailCopies(
+    pool,
+    ctx.workspaceId,
+    b.definition as AutomationDefinition,
+    cur.rows[0].draft_definition ?? cur.rows[0].definition,
+  );
+
   const q = scopedQuery(
     ctx.workspaceId,
     `UPDATE automations SET draft_definition = $1::jsonb, draft_trigger_segment_id = $2, draft_trigger_on = $3 WHERE id = $4`,
-    [JSON.stringify(b.definition), resolved, draftTriggerOn, id],
+    [JSON.stringify(split.definition), resolved, draftTriggerOn, id],
   );
   const { rowCount } = await pool.query(q.text, q.values);
   if (!rowCount) return ok({ error: 'not found' }, 404); // foreign / missing id (inv.2)
-  return ok({ updated: rowCount });
+  // `repointed` tells the builder to reload so its model carries the new copy ids.
+  return ok({ updated: rowCount, ...(split.changed ? { repointed: true, definition: split.definition } : {}) });
 };
+
+/**
+ * Give every email send step its OWN working copy. When several send nodes point
+ * at the same copy (a duplicated step), the node that already held it in the
+ * stored definition keeps it; each other node keeps the separate copy it held
+ * before (if any), else gets a fresh clone of the shared one. Library templates
+ * (kind 'library') are left alone — only working copies are split.
+ */
+async function separateSharedEmailCopies(
+  pool: Pool,
+  workspaceId: string,
+  def: AutomationDefinition,
+  stored: AutomationDefinition | null,
+): Promise<{ definition: AutomationDefinition; changed: boolean }> {
+  const tplOf = (d: AutomationDefinition | null, nodeId: string): string | undefined => {
+    const n = d?.nodes?.[nodeId] as { type?: string; kind?: string; template_id?: unknown } | undefined;
+    return n && n.type === 'action' && n.kind === 'send' && typeof n.template_id === 'string' ? n.template_id : undefined;
+  };
+  const groups = new Map<string, string[]>();
+  for (const nodeId of Object.keys(def.nodes ?? {}).sort()) {
+    const t = tplOf(def, nodeId);
+    if (t) groups.set(t, [...(groups.get(t) ?? []), nodeId]);
+  }
+  const shared = [...groups.entries()].filter(([, ids]) => ids.length > 1);
+  if (!shared.length) return { definition: def, changed: false };
+  const { rows } = await pool.query<{ id: string }>(
+    "SELECT id FROM email_templates WHERE workspace_id = $1 AND id = ANY($2::uuid[]) AND kind = 'copy'",
+    [workspaceId, shared.map(([t]) => t)],
+  );
+  const copies = new Set(rows.map((r) => r.id));
+  const nodes = { ...def.nodes };
+  let changed = false;
+  for (const [tpl, ids] of shared) {
+    if (!copies.has(tpl)) continue;
+    const owner = ids.find((n) => tplOf(stored, n) === tpl) ?? ids[0]!;
+    for (const nodeId of ids) {
+      if (nodeId === owner) continue;
+      const own = tplOf(stored, nodeId);
+      const target = own && own !== tpl ? own : (await cloneEmailTemplate(pool, workspaceId, tpl))?.id;
+      if (!target) continue;
+      nodes[nodeId] = { ...nodes[nodeId], template_id: target } as never;
+      changed = true;
+    }
+  }
+  return { definition: changed ? { ...def, nodes } : def, changed };
+}
 
 /**
  * POST /automations/:id/publish — promote the DRAFT to LIVE as an append-only
@@ -8307,6 +8371,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /email-components/:id': updateEmailComponent,
   'DELETE /email-components/:id': deleteEmailComponent,
   'GET /templates': listTemplates,
+  'GET /templates/:id/history': getTemplateHistory,
   'POST /templates': createTemplate,
   'GET /templates/:id': getTemplate,
   'PUT /templates/:id': updateTemplate,

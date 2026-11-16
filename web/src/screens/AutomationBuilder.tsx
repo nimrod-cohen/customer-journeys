@@ -708,9 +708,12 @@ export function AutomationDetail({ id }: { id?: string }) {
     const triggerSeg = overrideTriggerSeg !== undefined ? overrideTriggerSeg : triggerSegmentId;
     const to = overrideTriggerOn !== undefined ? overrideTriggerOn : triggerOn;
     if (editingId) {
-      await api.put(`/automations/${editingId}/draft`, {
+      const r = await api.put<{ repointed?: boolean }>(`/automations/${editingId}/draft`, {
         body: { definition, trigger_on: to, ...(triggerSeg !== null ? { trigger_segment_id: triggerSeg } : {}) },
       });
+      // The server gave a duplicated email step its own copy: reload so the model
+      // carries the new id (a later save would otherwise point it back).
+      if (r?.repointed) await openById(editingId);
       return editingId;
     }
     // First persist of a NEW automation: create the row (definition is its initial

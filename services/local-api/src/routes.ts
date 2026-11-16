@@ -139,6 +139,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'PUT /email-components/:id': 'manage_content',
   'DELETE /email-components/:id': 'manage_content',
   'GET /templates': 'manage_content',
+  'GET /templates/:id/history': 'manage_content',
   'POST /templates': 'manage_content',
   'GET /templates/:id': 'manage_content',
   'PUT /templates/:id': 'manage_content',
