@@ -109,13 +109,7 @@ export function Canvas(): JSX.Element {
 function CanvasRow({ row }: { row: DesignRow }): JSX.Element {
   const isSelected = selectedId.value === row.id;
   const isDropTarget = dropTargetId.value === row.id;
-  const p = row.props ?? {};
-  const s: Style = { padding: paddingCss(p.padding, '0') };
-  if (p.bgColor) s.backgroundColor = p.bgColor;
-  const b = borderCss(p.border);
-  if (b) s.border = b;
-  const r = radiusCss(p.radius);
-  if (r) s.borderRadius = r;
+  const s = rowStyle(row);
 
   return (
     <>
@@ -143,12 +137,48 @@ function CanvasRow({ row }: { row: DesignRow }): JSX.Element {
           dropTargetId.value = null;
         }}
       >
-        <div class="nm-row-label">row</div>
-        {row.elements.length === 0 ? <div class="nm-row-empty">Empty row — drop a component here</div> : null}
-        {row.elements.map((el) => (
-          <ElementRenderer key={el.id} element={el} />
-        ))}
+        {row.component ? (
+          // A linked saved component: shown as it will send, edited in its own editor.
+          <>
+            <div class="nm-row-label nm-component-label">◆ {row.component.name}</div>
+            <div class="nm-component-body" data-testid="canvas-component">
+              {row.component.rows.map((r) => (
+                <ComponentRowView key={r.id} row={r} />
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <div class="nm-row-label">row</div>
+            {row.elements.length === 0 ? <div class="nm-row-empty">Empty row — drop a component here</div> : null}
+            {row.elements.map((el) => (
+              <ElementRenderer key={el.id} element={el} />
+            ))}
+          </>
+        )}
       </div>
     </>
+  );
+}
+
+function rowStyle(row: DesignRow): Style {
+  const p = row.props ?? {};
+  const s: Style = { padding: paddingCss(p.padding, '0') };
+  if (p.bgColor) s.backgroundColor = p.bgColor;
+  const b = borderCss(p.border);
+  if (b) s.border = b;
+  const r = radiusCss(p.radius);
+  if (r) s.borderRadius = r;
+  return s;
+}
+
+/** One row of a linked component — rendered, never editable in place. */
+function ComponentRowView({ row }: { row: DesignRow }): JSX.Element {
+  return (
+    <div style={rowStyle(row)}>
+      {row.elements.map((el) => (
+        <ElementRenderer key={el.id} element={el} />
+      ))}
+    </div>
   );
 }

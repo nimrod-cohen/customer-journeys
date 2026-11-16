@@ -5,6 +5,7 @@
 // there is no fetching or persistence in here.
 import { signal } from '@preact/signals';
 import {
+  cloneRowsWithFreshIds,
   emptyDesign,
   type DesignElement,
   type DesignRow,
@@ -508,6 +509,7 @@ export function duplicateRow(rowId: string): void {
     id: nextId('row'),
     ...(original.props ? { props: { ...original.props } } : {}),
     elements: original.elements.map(cloneElement),
+    ...(original.component ? { component: original.component } : {}),
   };
   const list = [...rows.value];
   list.splice(list.findIndex((r) => r.id === rowId) + 1, 0, clone);
@@ -522,6 +524,7 @@ export function moveElement(id: string, target: { rowId?: string; cellId?: strin
   if (!el) return;
   const moved = JSON.parse(JSON.stringify(el)) as DesignElement;
   if (target.cellId && moved.type === 'grid') return; // grids cannot enter cells
+  if (target.rowId && findRow(target.rowId)?.component) return; // a linked component is read-only here
 
   let next = rows.value.map((row) => ({ ...row, elements: filterElements(row.elements, id) }));
   if (target.cellId) {
@@ -566,8 +569,14 @@ export function dropOnCanvas(type: DesignElement['type'], beforeRowId: string | 
   });
 }
 
-/** Drop on an existing row: append the element to it. */
+/** Drop on an existing row: append the element to it (a linked component row is
+ *  read-only here, so the element lands in a new row after it instead). */
 export function dropOnRow(type: DesignElement['type'], rowId: string): void {
+  if (findRow(rowId)?.component) {
+    const next = rows.value[rows.value.findIndex((r) => r.id === rowId) + 1];
+    dropOnCanvas(type, next?.id ?? null);
+    return;
+  }
   mutate(`Add ${type}`, () => {
     addElementToRow(rowId, type);
   });
@@ -616,4 +625,79 @@ export function parentGridOfCell(cellId: string): GridElement | null {
     }
   }
   return null;
+}
+
+// ── Saved components (a shared footer, header…) ─────────────────────────────
+
+/** A saved component as the host supplies it. */
+export interface ComponentItem {
+  readonly id: string;
+  readonly name: string;
+  readonly rows: readonly DesignRow[];
+}
+
+/**
+ * What the HOST provides for saved components (the designer never fetches). Null
+ * hides the feature — e.g. while editing a component itself, which can't nest.
+ */
+export interface ComponentsHost {
+  readonly list: readonly ComponentItem[];
+  /** Save rows as a new component; resolves with the stored component. */
+  save(name: string, rows: readonly DesignRow[]): Promise<ComponentItem>;
+  /** Open a component for editing (it updates every email that uses it). */
+  edit(id: string): void;
+}
+export const componentsHost = signal<ComponentsHost | null>(null);
+
+/** Insert a LINKED component row after the selected row (else at the end). */
+export function insertComponent(c: ComponentItem): void {
+  mutate(`Add ${c.name}`, () => {
+    const row: DesignRow = { id: nextId('row'), props: {}, elements: [], component: { id: c.id, name: c.name, rows: c.rows } };
+    const list = [...rows.value];
+    const sel = selectedId.value ? list.findIndex((r) => r.id === selectedId.value) : -1;
+    if (sel >= 0) list.splice(sel + 1, 0, row);
+    else list.push(row);
+    rows.value = list;
+    selectedId.value = row.id;
+  });
+}
+
+/** Unlink a component row: its rows become an ordinary, editable copy here. */
+export function unlinkComponent(rowId: string): void {
+  const row = findRow(rowId);
+  if (!row?.component) return;
+  const comp = row.component;
+  mutate(`Unlink ${comp.name}`, () => {
+    const copies = cloneRowsWithFreshIds(comp.rows, nextId);
+    const list = [...rows.value];
+    list.splice(list.findIndex((r) => r.id === rowId), 1, ...copies);
+    rows.value = list;
+    selectedId.value = copies[0]?.id ?? null;
+  });
+}
+
+/** Turn an ordinary row into a linked row pointing at a just-saved component. */
+export function linkRow(rowId: string, c: ComponentItem): void {
+  mutate(`Save as ${c.name}`, () => {
+    rows.value = rows.value.map((r) =>
+      r.id === rowId ? { id: r.id, props: {}, elements: [], component: { id: c.id, name: c.name, rows: c.rows } } : r,
+    );
+  });
+}
+
+/**
+ * Show the CURRENT content of linked components (after one was edited in another
+ * tab). Display only — no history entry, no save: the server refreshes the stored
+ * snapshot on every save anyway.
+ */
+export function refreshLinkedSnapshots(list: readonly ComponentItem[]): void {
+  const byId = new Map(list.map((c) => [c.id, c]));
+  let changed = false;
+  const next = rows.value.map((r) => {
+    const c = r.component ? byId.get(r.component.id) : undefined;
+    if (!r.component || !c || (c.name === r.component.name && JSON.stringify(c.rows) === JSON.stringify(r.component.rows))) return r;
+    changed = true;
+    return { ...r, component: { id: c.id, name: c.name, rows: c.rows } };
+  });
+  if (changed) rows.value = next;
 }

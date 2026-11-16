@@ -17,7 +17,12 @@ import {
   addGridCell,
   removeGridCell,
   mutate,
+  componentsHost,
+  linkRow,
+  unlinkComponent,
 } from './state.js';
+import { askText } from '../ui/dialog.js';
+import { showToast } from '../ui/toast.js';
 import { FONT_SIZE_EMS, type Align, type Border, type Radius, type Spacing } from './model.js';
 import { AssetPicker } from './AssetPicker.tsx';
 import { ImageEditor } from './ImageEditor.tsx';
@@ -237,6 +242,7 @@ export function Properties(): JSX.Element {
 
 function RowPanel({ id }: { id: string }): JSX.Element {
   const row = findRow(id)!;
+  if (row.component) return <ComponentPanel id={id} />;
   const p = row.props ?? {};
   const commit = (patch: Patch): void => mutate('Edit row', () => updateRowProps(id, patch));
   return (
@@ -246,6 +252,68 @@ function RowPanel({ id }: { id: string }): JSX.Element {
       <PaddingField value={p.padding} onCommit={(v) => commit({ padding: v })} />
       <BorderField value={p.border} onCommit={(v) => commit({ border: v })} />
       <RadiusField value={p.radius} onCommit={(v) => commit({ radius: v })} />
+      <SaveAsComponent id={id} />
+    </div>
+  );
+}
+
+/** "Save as component": store this row in the library and link it here. */
+function SaveAsComponent({ id }: { id: string }): JSX.Element | null {
+  const host = componentsHost.value;
+  const [busy, setBusy] = useState(false);
+  if (!host) return null;
+  const save = async (): Promise<void> => {
+    const name = await askText({
+      title: 'Save as component',
+      label: 'Name',
+      placeholder: 'e.g. Footer',
+      confirmLabel: 'Save',
+    });
+    if (!name?.trim()) return;
+    const row = findRow(id);
+    if (!row) return;
+    setBusy(true);
+    try {
+      const c = await host.save(name.trim(), [row]);
+      linkRow(id, c);
+      showToast(`Saved “${c.name}” — find it under Add → Saved components`, { tone: 'success' });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not save the component', { tone: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div class="nm-component-panel" style={{ marginTop: '16px' }}>
+      <button type="button" class="nm-panel-btn" data-testid="save-as-component" disabled={busy} onClick={() => void save()}>
+        {busy ? 'Saving…' : '◆ Save as component'}
+      </button>
+    </div>
+  );
+}
+
+/** A linked component row: explain, and offer Edit (everywhere) or Unlink (here). */
+function ComponentPanel({ id }: { id: string }): JSX.Element {
+  const row = findRow(id)!;
+  const comp = row.component!;
+  const host = componentsHost.value;
+  return (
+    <div data-testid="designer-properties" class="nm-props nm-component-panel">
+      <div class="nm-panel-title">◆ {comp.name}</div>
+      <p>
+        A saved component. Its content is shared: editing it updates <b>every email</b> that uses it, including scheduled
+        broadcasts and automations.
+      </p>
+      <div class="nm-btn-row">
+        {host ? (
+          <button type="button" class="nm-panel-btn nm-primary" data-testid="edit-component" onClick={() => host.edit(comp.id)}>
+            Edit component
+          </button>
+        ) : null}
+        <button type="button" class="nm-panel-btn" data-testid="unlink-component" onClick={() => unlinkComponent(id)}>
+          Unlink — edit only in this email
+        </button>
+      </div>
     </div>
   );
 }

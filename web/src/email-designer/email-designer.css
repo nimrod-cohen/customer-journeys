@@ -691,3 +691,28 @@
 .nm-imgedit-group { display: flex; flex-direction: column; gap: 6px; }
 .nm-imgedit-aspects { display: flex; flex-wrap: wrap; gap: 6px; }
 .nm-imgedit-actions { margin-top: auto; display: flex; justify-content: flex-end; gap: 8px; }
+
+/* A linked saved component: rendered as it sends, but read-only in place — clicks
+   fall through to the row (select it, then Edit or Unlink in the side panel). */
+.nm-component-body { pointer-events: none; user-select: none; }
+.nm-component-body [contenteditable] { -webkit-user-modify: read-only; }
+.nm-canvas-row .nm-component-label { background: #7c3aed; opacity: 0.85; }
+.nm-canvas-row:hover > .nm-component-label { opacity: 1; }
+.nm-canvas-row:has(> .nm-component-body) { outline: 1px dashed #c4b5fd; outline-offset: -1px; }
+.nm-toolbox-saved { margin-top: 16px; }
+.nm-toolbox-saved-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: start;
+  padding: 8px 10px; margin-top: 6px; border: 1px solid #e7e5e4; border-radius: 8px;
+  background: #fff; font-size: 13px; color: #1c1917; cursor: pointer;
+}
+.nm-toolbox-saved-item:hover { border-color: #7c3aed; color: #6d28d9; }
+.nm-component-panel p { font-size: 12px; color: #57534e; margin: 6px 0 12px; line-height: 1.5; }
+.nm-component-panel .nm-btn-row { display: flex; flex-direction: column; gap: 8px; }
+.nm-panel-btn {
+  padding: 7px 10px; border-radius: 8px; border: 1px solid #d6d3d1; background: #fff;
+  font-size: 13px; color: #1c1917; cursor: pointer; text-align: center;
+}
+.nm-panel-btn:hover { border-color: #7c3aed; color: #6d28d9; }
+.nm-panel-btn.nm-primary { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+.nm-panel-btn.nm-primary:hover { background: #6d28d9; color: #fff; }
+.nm-panel-btn:disabled { opacity: 0.6; cursor: default; }

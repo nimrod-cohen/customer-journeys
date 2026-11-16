@@ -68,7 +68,7 @@ export function Navigator(): JSX.Element {
               drop({ rowId: row.id });
             }}
           >
-            <span>▦ row</span>
+            <span>{row.component ? `◆ ${row.component.name}` : '▦ row'}</span>
             <span class="nm-nav-actions">
               <button
                 type="button"

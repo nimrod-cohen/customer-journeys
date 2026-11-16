@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./email-design": {
+      "types": "./dist/email-design/index.d.ts",
+      "default": "./dist/email-design/index.js"
     }
   },
   "scripts": {

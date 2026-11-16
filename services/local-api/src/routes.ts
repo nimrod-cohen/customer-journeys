@@ -133,6 +133,11 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /segments/:id/import-csv': 'manage_content',
 
   // --- templates (manage_content) ---
+  'GET /email-components': 'manage_content',
+  'GET /email-components/:id': 'manage_content',
+  'POST /email-components': 'manage_content',
+  'PUT /email-components/:id': 'manage_content',
+  'DELETE /email-components/:id': 'manage_content',
   'GET /templates': 'manage_content',
   'POST /templates': 'manage_content',
   'GET /templates/:id': 'manage_content',

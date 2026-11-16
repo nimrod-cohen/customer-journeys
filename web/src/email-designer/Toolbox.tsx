@@ -3,7 +3,7 @@
 // (click-to-add into the selected row/cell, else a new row) so the designer is
 // fully usable — and e2e-testable — without drag-and-drop.
 import type { JSX } from 'preact';
-import { clickToAdd, dragging } from './state.js';
+import { clickToAdd, componentsHost, dragging, insertComponent } from './state.js';
 import { AlignLeft, Grid, Heading, Image, List, MousePointerClick, UnfoldVertical } from './icons.tsx';
 import type { DesignElement } from './model.js';
 
@@ -52,6 +52,36 @@ export function Toolbox(): JSX.Element {
         ))}
       </div>
       <p class="nm-toolbox-hint">Drag onto the canvas, or click to add to the selected row.</p>
+      <SavedComponents />
+    </div>
+  );
+}
+
+/** Saved components (a shared footer…) — click to insert, linked. */
+function SavedComponents(): JSX.Element | null {
+  const host = componentsHost.value;
+  if (!host) return null;
+  return (
+    <div class="nm-toolbox-saved" data-testid="toolbox-saved-components">
+      <div class="nm-panel-title">Saved components</div>
+      {host.list.length === 0 ? (
+        <p class="nm-toolbox-hint">
+          None yet. Select a row (a footer, say) and choose <b>Save as component</b> to reuse it in every email.
+        </p>
+      ) : (
+        host.list.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            class="nm-toolbox-saved-item"
+            data-testid="toolbox-saved-component"
+            onClick={() => insertComponent(c)}
+            title={`Add ${c.name} (linked — edits to it update every email)`}
+          >
+            <span aria-hidden="true">◆</span> {c.name}
+          </button>
+        ))
+      )}
     </div>
   );
 }
