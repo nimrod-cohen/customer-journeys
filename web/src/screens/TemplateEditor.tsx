@@ -24,6 +24,7 @@ import { EmailDesigner } from '../email-designer/EmailDesigner.tsx';
 import { designToMjml } from '../email-designer/mjml-serializer.js';
 import { emptyDesign, isEmailDesign, type EmailDesign } from '../email-designer/model.js';
 import { useComponentsHost } from '../store/emailComponents.js';
+import { restorePendingHistory, takePendingHistory, type HistoryEntry } from '../email-designer/state.js';
 
 interface TemplateRow {
   readonly name: string;
@@ -97,6 +98,8 @@ export function TemplateEditor({
   const queuedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mjml, setMjml] = useState('');
+  // Edit history from earlier sessions, so the History panel survives leaving.
+  const [savedHistory, setSavedHistory] = useState<HistoryEntry[]>([]);
   const components = useComponentsHost(() => liveDesign.current.settings);
 
   // Load an existing template; a design-less (old-editor) template opens empty
@@ -106,9 +109,12 @@ export function TemplateEditor({
       liveDesign.current = emptyDesign();
       return;
     }
-    void api
-      .get<{ template: TemplateRow }>(`/templates/${id}`)
-      .then((r) => {
+    void Promise.all([
+      api.get<{ template: TemplateRow }>(`/templates/${id}`),
+      api.get<{ history: HistoryEntry[] }>(`/templates/${id}/history`).catch(() => ({ history: [] as HistoryEntry[] })),
+    ])
+      .then(([r, h]) => {
+        setSavedHistory(h.history ?? []);
         setName(r.template.name);
         nameRef.current = r.template.name;
         setKind(r.template.kind);
@@ -172,9 +178,11 @@ export function TemplateEditor({
     dirtyRef.current = false;
     setStatus('saving');
     setError('');
+    const historyAppend = takePendingHistory();
     try {
       const d = liveDesign.current;
       const body: Record<string, unknown> = {
+        history_append: historyAppend,
         name: nameRef.current || 'Untitled',
         design: d,
         mjml: designToMjml(d),
@@ -197,6 +205,7 @@ export function TemplateEditor({
       setStatus(dirtyRef.current ? 'dirty' : 'saved');
       return true;
     } catch (e) {
+      restorePendingHistory(historyAppend); // resend with the next save
       setStatus('error');
       setError(e instanceof Error ? e.message : 'Save failed');
       dirtyRef.current = true;
@@ -437,7 +446,7 @@ export function TemplateEditor({
       ) : null}
       {error ? <p class="mb-3 text-sm text-rose-600">{error}</p> : null}
 
-      {loadedKey ? <EmailDesigner design={design} onChange={onDesignChange} documentKey={loadedKey} components={components} /> : null}
+      {loadedKey ? <EmailDesigner design={design} onChange={onDesignChange} documentKey={loadedKey} components={components} history={savedHistory} /> : null}
 
       {/* The emitted MJML is an implementation detail — not shown to users. Kept in
           the DOM (hidden) so the e2e suite can still assert the serializer output. */}

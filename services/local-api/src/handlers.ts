@@ -18,6 +18,7 @@ import {
   deleteEmailComponent,
   withFreshComponents,
 } from './email-components.js';
+import { appendTemplateHistory, getTemplateHistory, parseHistoryAppend } from './template-history.js';
 import type { Pool, PoolClient } from 'pg';
 import { promises as dns } from 'node:dns';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -3396,6 +3397,7 @@ export const createTemplate: Handler = async (ctx, pool, req, deps) => {
       b.from_selected === true,
     ],
   );
+  await appendTemplateHistory(pool, ctx.workspaceId, rows[0].id, parseHistoryAppend(b.history_append));
   return ok({ template: rows[0] }, 201);
 };
 
@@ -3458,6 +3460,7 @@ export const updateTemplate: Handler = async (ctx, pool, req, deps) => {
   );
   const { rowCount } = await pool.query(q.text, q.values);
   if (!rowCount) return ok({ error: 'not found' }, 404);
+  await appendTemplateHistory(pool, ctx.workspaceId, id, parseHistoryAppend(b.history_append));
   return ok({ updated: rowCount });
 };
 
@@ -8368,6 +8371,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'PUT /email-components/:id': updateEmailComponent,
   'DELETE /email-components/:id': deleteEmailComponent,
   'GET /templates': listTemplates,
+  'GET /templates/:id/history': getTemplateHistory,
   'POST /templates': createTemplate,
   'GET /templates/:id': getTemplate,
   'PUT /templates/:id': updateTemplate,
