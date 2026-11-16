@@ -9,13 +9,23 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { Copy, Trash2, MoreVertical } from './icons.tsx';
 
-const MENU_WIDTH = 160;
+const MENU_WIDTH = 190;
+
+/** An extra menu entry shown above Duplicate/Delete. */
+export interface NodeMenuItem {
+  readonly label: string;
+  readonly testId: string;
+  readonly onSelect: () => void;
+}
 
 export function NodeActionsMenu({
   onDuplicate,
   onDelete,
   label = 'Actions',
+  extra = [],
 }: {
+  /** Extra entries (e.g. "Save as component" on a row). */
+  extra?: readonly NodeMenuItem[];
   /** Omit to show a delete-only menu (e.g. grid columns, which can't duplicate). */
   onDuplicate?: () => void;
   onDelete: () => void;
@@ -80,6 +90,21 @@ export function NodeActionsMenu({
               style={{ top: `${pos.top}px`, left: `${pos.left}px`, width: `${MENU_WIDTH}px` }}
               onClick={(e) => e.stopPropagation()}
             >
+              {extra.map((item) => (
+                <button
+                  key={item.testId}
+                  type="button"
+                  role="menuitem"
+                  class="nm-menu-item"
+                  data-testid={item.testId}
+                  onClick={() => {
+                    setOpen(false);
+                    item.onSelect();
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
               {onDuplicate ? (
                 <button
                   type="button"

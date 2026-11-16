@@ -18,11 +18,9 @@ import {
   removeGridCell,
   mutate,
   componentsHost,
-  linkRow,
   unlinkComponent,
 } from './state.js';
-import { askText } from '../ui/dialog.js';
-import { showToast } from '../ui/toast.js';
+import { saveRowAsComponent } from './component-actions.js';
 import { FONT_SIZE_EMS, type Align, type Border, type Radius, type Spacing } from './model.js';
 import { AssetPicker } from './AssetPicker.tsx';
 import { ImageEditor } from './ImageEditor.tsx';
@@ -263,22 +261,9 @@ function SaveAsComponent({ id }: { id: string }): JSX.Element | null {
   const [busy, setBusy] = useState(false);
   if (!host) return null;
   const save = async (): Promise<void> => {
-    const name = await askText({
-      title: 'Save as component',
-      label: 'Name',
-      placeholder: 'e.g. Footer',
-      confirmLabel: 'Save',
-    });
-    if (!name?.trim()) return;
-    const row = findRow(id);
-    if (!row) return;
     setBusy(true);
     try {
-      const c = await host.save(name.trim(), [row]);
-      linkRow(id, c);
-      showToast(`Saved “${c.name}” — find it under Add → Saved components`, { tone: 'success' });
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : 'Could not save the component', { tone: 'error' });
+      await saveRowAsComponent(id);
     } finally {
       setBusy(false);
     }
