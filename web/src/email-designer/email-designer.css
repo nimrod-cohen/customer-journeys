@@ -382,7 +382,8 @@
 .nm-icon-menu-btn:hover { border-color: #14b8a6; color: #0f766e; background: #f0fdfa; }
 .nm-icon-menu-btn[aria-expanded='true'] { background: #ccfbf1; border-color: #14b8a6; color: #0f766e; }
 /* The dropdown is portaled to <body> so the scrolling navigator can't clip it. */
-.nm-menu-fixed { position: fixed; top: auto; left: auto; }
+/* Portaled to <body>: must sit above the designer drawer (z-[60]) it opens from. */
+.nm-menu-fixed { position: fixed; top: auto; left: auto; z-index: 1000; }
 /* Draggable elements in the structure tree + the drop-target highlight. */
 .nm-nav-item.nm-draggable { cursor: grab; }
 .nm-nav-item.nm-draggable:active { cursor: grabbing; }
