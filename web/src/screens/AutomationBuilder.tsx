@@ -430,6 +430,7 @@ export function AutomationDetail({ id }: { id?: string }) {
   const [description, setDescription] = useState('');
   // The description as last saved, so a blur with no change doesn't re-save.
   const savedDescription = useRef('');
+  const savedName = useRef('');
   const [model, setModel] = useState<CanvasModel>(() => starterModel());
   const [editingId, setEditingId] = useState<string | null>(existingId);
   const [status, setStatus] = useState<string>('draft');
@@ -533,6 +534,7 @@ export function AutomationDetail({ id }: { id?: string }) {
     }>(`/automations/${cid}`);
     setEditingId(res.automation.id);
     setName(res.automation.name);
+    savedName.current = res.automation.name;
     setDescription(res.automation.description ?? '');
     savedDescription.current = res.automation.description ?? '';
     setStatus(res.automation.status);
@@ -724,6 +726,7 @@ export function AutomationDetail({ id }: { id?: string }) {
     });
     setEditingId(r.automation.id);
     savedDescription.current = description;
+    savedName.current = (name || 'Untitled automation').trim();
     // Point the URL at the new automation so a REFRESH reloads it instead of a blank
     // /automations/new (which orphaned the draft + minted a new "Untitled" each retry).
     // Silent (no remount) so an in-flight edit / open node editor isn't disrupted.
@@ -748,11 +751,22 @@ export function AutomationDetail({ id }: { id?: string }) {
     }
   };
 
+  // The NAME is metadata too: saved on blur and on Save draft. (It used to travel
+  // only with create/publish, so a rename before publishing was silently lost.)
+  const saveName = async (value: string): Promise<void> => {
+    const v = value.trim();
+    if (!editingId || !v || v === savedName.current) return;
+    await api.put(`/automations/${editingId}`, { body: { name: v } });
+    savedName.current = v;
+    await reloadList();
+  };
+
   // Save: persist the definition to the DRAFT; surface an invalid graph inline +
   // via toast. (Publishing is a separate, explicit action.)
   const save = async (): Promise<void> => {
     setError('');
     try {
+      await saveName(name);
       await persist();
       await reloadList();
       showToast('Draft saved', { tone: 'success' });
@@ -953,6 +967,11 @@ export function AutomationDetail({ id }: { id?: string }) {
           placeholder="Welcome series"
           value={name}
           onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
+          onBlur={(e: Event) =>
+            void saveName((e.target as HTMLInputElement).value).catch((err: unknown) =>
+              showToast((err as { error?: string })?.error ?? String(err), { tone: 'error' }),
+            )
+          }
           class="max-w-sm flex-1"
         />
         <div class="ml-auto flex items-center gap-2">
