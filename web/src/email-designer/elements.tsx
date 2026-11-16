@@ -2,6 +2,7 @@
 // model). Each leaf renders an approximation of its compiled MJML output; the
 // text element is contenteditable with a floating formatting toolbar (bold/
 // italic/underline/lists/link/size) producing inline HTML that mj-text accepts.
+import { cleanPastedHtml } from './paste-html.js';
 import { useRef, useState, useCallback, useEffect } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import type { JSX } from 'preact';
@@ -55,6 +56,42 @@ const RTE_BUTTONS: readonly RteButton[] = [
 ];
 
 const RTE_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48];
+
+/**
+ * Insert cleaned HTML at the caret. Not execCommand('insertHTML'): Chrome re-adds
+ * the surrounding computed styles (font-size, colour) to what it inserts, and
+ * leaves a placeholder <br> when the paste replaces the whole block — the very
+ * spacing the cleaning removed.
+ */
+function pasteCleanHtml(box: HTMLElement, html: string): void {
+  const sel = window.getSelection();
+  const all = box.textContent?.trim() ?? '';
+  if (!sel || sel.rangeCount === 0 || !all || sel.toString().trim() === all) {
+    box.innerHTML = html;
+    placeCaret(box, null);
+    return;
+  }
+  const range = sel.getRangeAt(0);
+  if (!box.contains(range.commonAncestorContainer)) return;
+  range.deleteContents();
+  const frag = range.createContextualFragment(html);
+  const last = frag.lastChild;
+  range.insertNode(frag);
+  placeCaret(box, last);
+}
+
+function placeCaret(box: HTMLElement, after: ChildNode | null): void {
+  const sel = window.getSelection();
+  const r = document.createRange();
+  if (after) r.setStartAfter(after);
+  else {
+    r.selectNodeContents(box);
+    r.collapse(false);
+  }
+  r.collapse(true);
+  sel?.removeAllRanges();
+  sel?.addRange(r);
+}
 
 function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
@@ -316,6 +353,14 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
         contentEditable
         style={s}
         onFocus={position}
+        onPaste={(e: ClipboardEvent) => {
+          // Pasted rich text carries its source's layout (margins, padding,
+          // line-height) — keep the words and basic formatting only.
+          const html = e.clipboardData?.getData('text/html');
+          if (!html) return; // plain text pastes as plain text
+          e.preventDefault();
+          pasteCleanHtml(e.currentTarget as HTMLDivElement, cleanPastedHtml(html, document));
+        }}
         onBlur={(e) => {
           if (linkDialogActive.current) return; // blurring INTO the link dialog
           if (toolbarRef.current?.contains(e.relatedTarget as Node)) return;

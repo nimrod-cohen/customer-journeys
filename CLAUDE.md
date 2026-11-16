@@ -20,7 +20,7 @@ The system is well past scaffolding: ingestion, profiles, segments, broadcasts, 
 - **Queue:** SQS **FIFO** (+ DLQ), `MessageGroupId = profile_id`.
 - **Email:** Amazon SES or Resend, per company. **Text:** 019 (SMS), Meta (WhatsApp).
 - **Auth:** Supabase Auth, validated at the gateway by a **Lambda authorizer** (REST API has no native JWT authorizer).
-- **Email editor:** a CUSTOM in-house designer (`web/src/email-designer/`, ported from the owner's nomentor builder; Preact + @preact/signals) — deliberately OVERRIDES the spec's GrapesJS choice. The surviving invariant: the editor **emits MJML, never hand-rolled HTML** (design JSON → `mjml-serializer.ts` → server `compileMjml`, strict).
+- **Email editor:** a CUSTOM in-house designer (`web/src/email-designer/`, ported from the owner's nomentor builder; Preact + @preact/signals) — deliberately OVERRIDES the spec's GrapesJS choice. The surviving invariant: the editor **emits MJML, never hand-rolled HTML** (design JSON → `mjml-serializer.ts` → server `compileMjml`, strict). Rich text PASTED into a text block is cleaned (`paste-html.ts`): words + basic formatting survive, the source's layout (margins, padding, line-height, fonts) does not. Menus portaled to `<body>` must out-stack the designer drawer (`z-[60]`).
 - **IaC:** AWS CDK (TypeScript). **Frontend:** Preact/React SPA, Vite, static on S3 + CloudFront. **Testing:** Vitest; real Postgres for the integration tier; `aws-sdk-client-mock`; Playwright for browser e2e.
 
 ## Non-negotiable invariants
