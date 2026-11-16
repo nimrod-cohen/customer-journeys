@@ -51,6 +51,8 @@ import {
   MutationError,
 } from '../automations/mutate.js';
 import { NodeEditorBody, nodeEditorTestId, nodeEditorTitle } from '../automations/editors/NodeEditor.js';
+import { ExitRulesEditor } from '../automations/ExitRulesEditor.js';
+import { summarizeExitRule, type ExitRuleDsl } from '../automations/exit-rules.js';
 
 /** Enrollment-status buckets surfaced per automation on the list. */
 interface EnrollmentCounts {
@@ -98,6 +100,10 @@ interface AutomationEnrollment {
   current_node: string;
   enrolled_at: string;
   updated_at: string;
+  /** Why an exit rule ended it early (null otherwise). */
+  exit_reason?: string | null;
+  /** How many times an exit rule sent it back to the start. */
+  restarts?: number;
 }
 
 /** Format a version's created_at for the History list (locale, fail-soft). */
@@ -430,6 +436,10 @@ export function AutomationDetail({ id }: { id?: string }) {
   const [timeZone, setTimeZone] = useState('UTC');
   const [triggerSegmentId, setTriggerSegmentId] = useState<string | null>(null);
   const [triggerOn, setTriggerOn] = useState<'enter' | 'exit'>('enter');
+  // Exit / restart rules live in the definition JSON but OUTSIDE the canvas model
+  // (the graph mutations rebuild {startNode, nodes} and must not drop them).
+  const [exitRules, setExitRules] = useState<ExitRuleDsl[]>([]);
+  const [exitRulesOpen, setExitRulesOpen] = useState(false);
   const [segments, setSegments] = useState<SegmentLite[]>([]);
   // Topics list — fed into the per-send-node Topic picker in the node editor.
   // The dispatcher gates each send on its own node's topic_id (no automation-level
@@ -528,6 +538,7 @@ export function AutomationDetail({ id }: { id?: string }) {
     savedDescription.current = res.automation.description ?? '';
     setStatus(res.automation.status);
     setModel(parseDefinition(res.automation.definition));
+    setExitRules(readDefExitRules(res.automation.definition));
     setTriggerSegmentId(res.automation.trigger_segment_id ?? null);
     const to = res.automation.trigger_on === 'exit' ? 'exit' : 'enter';
     setTriggerOn(to);
@@ -690,8 +701,9 @@ export function AutomationDetail({ id }: { id?: string }) {
     overrideModel?: CanvasModel,
     overrideTriggerSeg?: string | null,
     overrideTriggerOn?: 'enter' | 'exit',
+    overrideExitRules?: ExitRuleDsl[],
   ): Promise<string> => {
-    const definition = buildDefinition(overrideModel ?? model);
+    const definition = withExitRules(buildDefinition(overrideModel ?? model), overrideExitRules ?? exitRules);
     const triggerSeg = overrideTriggerSeg !== undefined ? overrideTriggerSeg : triggerSegmentId;
     const to = overrideTriggerOn !== undefined ? overrideTriggerOn : triggerOn;
     if (editingId) {
@@ -789,6 +801,19 @@ export function AutomationDetail({ id }: { id?: string }) {
     setOpenNode(node);
   };
 
+  // Exit rules are part of the DRAFT definition — persist with the current model.
+  const saveExitRules = async (rules: ExitRuleDsl[]): Promise<void> => {
+    try {
+      await persist(undefined, undefined, undefined, rules);
+      setExitRules(rules);
+      await reloadList();
+      showToast('Exit rules saved to the draft', { tone: 'success' });
+    } catch (err) {
+      showToast((err as { error?: string })?.error ?? String(err), { tone: 'error' });
+      throw err;
+    }
+  };
+
   // The trigger segment + direction (enter|exit) are part of the DRAFT — persist them
   // (with the current model) through the draft writer so live is untouched until publish.
   const saveTriggerSegment = async (segmentId: string | null, on: 'enter' | 'exit'): Promise<void> => {
@@ -868,6 +893,7 @@ export function AutomationDetail({ id }: { id?: string }) {
         { body: { version_id: v.id } },
       );
       setModel(parseDefinition(res.definition));
+      setExitRules(readDefExitRules(res.definition));
       setTriggerSegmentId(res.trigger_segment_id ?? null);
       clearPublish();
       setError('');
@@ -907,7 +933,7 @@ export function AutomationDetail({ id }: { id?: string }) {
   // The unsaved-draft indicator: a fresh new automation (no live baseline) reads dirty
   // once it has been created; otherwise compare the local model to the published one.
   const isDirty = draftDiffersFrom(
-    buildDefinition(model),
+    withExitRules(buildDefinition(model), exitRules),
     liveDefinition,
     triggerSegmentId,
     liveTriggerSegmentId,
@@ -1029,7 +1055,17 @@ export function AutomationDetail({ id }: { id?: string }) {
             <Button data-testid="publish-version" onClick={openPublish}>
               Save &amp; publish
             </Button>
+            <Button data-testid="exit-rules-open" variant="ghost" onClick={() => setExitRulesOpen(true)}>
+              Exit rules{exitRules.length ? ` (${exitRules.length})` : ''}
+            </Button>
           </div>
+          {exitRules.length ? (
+            <ul data-testid="exit-rules-summary" class="mt-2 space-y-1 text-sm text-stone-600">
+              {exitRules.map((r) => (
+                <li key={r.id}>• {summarizeExitRule(r, (sid) => segments.find((sg) => sg.id === sid)?.name)}</li>
+              ))}
+            </ul>
+          ) : null}
           {publishReason ? (
             <p
               data-testid="publish-reason"
@@ -1120,6 +1156,23 @@ export function AutomationDetail({ id }: { id?: string }) {
               setOpenNode(null);
               setCenterTick((t) => t + 1); // returning from the drawer → re-center the selected node
             }}
+          />
+        ) : null}
+      </Drawer>
+      <Drawer
+        open={exitRulesOpen}
+        onClose={() => setExitRulesOpen(false)}
+        title="Exit rules"
+        subtitle="Take people out of this journey, or start them over, when something happens."
+        testId="exit-rules-drawer"
+      >
+        {exitRulesOpen ? (
+          <ExitRulesEditor
+            rules={exitRules}
+            segments={segments}
+            triggerNode={model.nodes.find((n) => n.node.type === 'trigger')?.node as { kind?: string; eventType?: string } | null ?? null}
+            onSave={saveExitRules}
+            onDone={() => setExitRulesOpen(false)}
           />
         ) : null}
       </Drawer>
@@ -1237,8 +1290,13 @@ function AutomationJourneys({
                 {e.status}
               </Badge>
               {/* Current step (human label from the loaded definition). */}
-              <span class="min-w-0 truncate text-sm text-stone-600" title={nodeLabel(e.current_node)}>
-                {nodeLabel(e.current_node)}
+              <span
+                class="min-w-0 truncate text-sm text-stone-600"
+                title={e.exit_reason ?? nodeLabel(e.current_node)}
+                data-testid="journey-step"
+              >
+                {e.status === 'exited' && e.exit_reason ? e.exit_reason : nodeLabel(e.current_node)}
+                {e.restarts ? <span class="ml-2 text-xs text-stone-400">restarted ×{e.restarts}</span> : null}
               </span>
               {/* Enrolled at. */}
               <span class="text-xs text-stone-400" title="Enrolled">
@@ -1254,4 +1312,15 @@ function AutomationJourneys({
       )}
     </Card>
   );
+}
+
+/** The exit rules carried on a stored definition ([] when none). */
+function readDefExitRules(def: AutomationDefinition | null | undefined): ExitRuleDsl[] {
+  const rules = (def as { exitRules?: unknown } | null | undefined)?.exitRules;
+  return Array.isArray(rules) ? (rules as ExitRuleDsl[]) : [];
+}
+
+/** Attach exit rules to a built definition (omitted entirely when there are none). */
+function withExitRules(def: AutomationDefinition, rules: readonly ExitRuleDsl[]): AutomationDefinition {
+  return rules.length ? ({ ...def, exitRules: rules } as AutomationDefinition) : def;
 }

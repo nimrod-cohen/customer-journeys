@@ -233,7 +233,7 @@ function TriggerEditor(props: NodeEditorProps) {
  * Distinct from the full RuleBuilder (the IF editor / segments use that) — here
  * the event type is fixed, so only its attributes can narrow enrollment.
  */
-function EventPayloadFilter(props: {
+export function EventPayloadFilter(props: {
   form: EventFilterForm;
   eventType: string;
   onChange: (form: EventFilterForm) => void;
