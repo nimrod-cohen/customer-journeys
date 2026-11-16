@@ -1055,7 +1055,7 @@ export function AutomationDetail({ id }: { id?: string }) {
             <Button data-testid="publish-version" onClick={openPublish}>
               Save &amp; publish
             </Button>
-            <Button data-testid="exit-rules-open" variant="ghost" onClick={() => setExitRulesOpen(true)}>
+            <Button data-testid="exit-rules-open" variant="secondary" onClick={() => setExitRulesOpen(true)}>
               Exit rules{exitRules.length ? ` (${exitRules.length})` : ''}
             </Button>
           </div>
@@ -1149,6 +1149,11 @@ export function AutomationDetail({ id }: { id?: string }) {
             triggerNode={model.nodes.find((n) => n.node.type === 'trigger')?.node as { kind?: string; eventType?: string } | undefined}
             onSaveNode={(patch) => saveNode(openNode.id, patch)}
             onSaveTriggerSegment={saveTriggerSegment}
+            exitRuleCount={exitRules.length}
+            onOpenExitRules={() => {
+              setOpenNode(null);
+              setExitRulesOpen(true);
+            }}
             onReloadAutomation={async () => {
               if (editingId) await openById(editingId);
             }}
