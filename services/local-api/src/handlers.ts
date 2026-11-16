@@ -157,6 +157,7 @@ import {
 } from './transactional-send.js';
 import { createSmtpEmailClient, smtpTransportFromEnv, buildIcs } from '@cdp/email';
 import { renderExpression } from '@cdp/shared';
+import { describeDeliveryStatus } from './delivery-status.js';
 import {
   verifySelfHostedDomain,
   nodeDnsResolver,
@@ -6417,19 +6418,29 @@ export const listActivity: Handler = async (ctx, pool, req) => {
   const type = q.type || null;
   const outcome = q.outcome || null;
   const source = q.source || null;
-  const { rows } = await pool.query(
-    `SELECT a.at, a.source, a.type, a.outcome, a.profile_id, a.detail, a.ref_id, a.retryable, p.email
+  const { rows } = await pool.query<ActivityQueryRow>(
+    `SELECT a.at, a.source, a.type, a.outcome,
+            -- A bounce report knows only the message id; the message knows the person.
+            coalesce(a.profile_id, m.profile_id) AS profile_id,
+            a.detail, a.ref_id, a.retryable, a.raw, p.email,
+            m.sent_at AS message_sent_at, m.status AS message_status,
+            coalesce(m.subject, bt.subject) AS message_subject,
+            b.id AS broadcast_id, b.name AS broadcast_name,
+            au.id AS automation_id, au.name AS automation_name
        FROM (
+        SELECT * FROM (
          SELECT occurred_at AS at, 'event'::text AS source, type,
                 'info'::text AS outcome, profile_id, payload::text AS detail,
-                NULL::uuid AS ref_id, false AS retryable
+                NULL::uuid AS ref_id, false AS retryable,
+                NULL::text AS message_ref, NULL::jsonb AS raw
            FROM events WHERE workspace_id = $1
          UNION ALL
          SELECT occurred_at, 'email', type,
                 CASE WHEN type IN ('delivery','open','click') THEN 'success'
                      WHEN type IN ('bounce','complaint') THEN 'failure'
                      ELSE 'info' END,
-                profile_id, coalesce(sub_type, ''), NULL::uuid, false
+                profile_id, coalesce(sub_type, ''), NULL::uuid, false,
+                ses_message_id, raw
            FROM email_events WHERE workspace_id = $1
          UNION ALL
          SELECT sent_at, 'send', medium,
@@ -6446,7 +6457,8 @@ export const listActivity: Handler = async (ctx, pool, req) => {
                       AND s.status = 'sent'
                       AND ( (messages_log.automation_id IS NOT NULL AND s.automation_id = messages_log.automation_id)
                          OR (messages_log.broadcast_id IS NOT NULL AND s.broadcast_id = messages_log.broadcast_id) )
-                )) AS retryable
+                )) AS retryable,
+                NULL::text, NULL::jsonb
            FROM messages_log WHERE workspace_id = $1
          UNION ALL
          -- Messages still in the outbox that have NOT gone out: retrying after a
@@ -6462,26 +6474,103 @@ export const listActivity: Handler = async (ctx, pool, req) => {
                      ELSE 'not sent yet — ' || last_error || ' (attempt ' || attempts ||
                           coalesce(', next try ' || to_char(next_attempt_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC', '') || ')'
                 END,
-                NULL::uuid, false
+                NULL::uuid, false, NULL::text, NULL::jsonb
            FROM outbox
           WHERE workspace_id = $1
             AND ((status IN ('pending', 'sending') AND last_error IS NOT NULL) OR status = 'refused')
          UNION ALL
-         SELECT at, source, type, outcome, profile_id, detail, NULL::uuid, false
+         SELECT at, source, type, outcome, profile_id, detail, NULL::uuid, false, NULL::text, NULL::jsonb
            FROM activity_log WHERE workspace_id = $1
+        ) u
+        WHERE ($2::timestamptz IS NULL OR u.at >= $2::timestamptz)
+          AND ($3::timestamptz IS NULL OR u.at <= $3::timestamptz)
+          AND ($4::text IS NULL OR u.type = $4)
+          AND ($5::text IS NULL OR u.outcome = $5)
+          AND ($6::text IS NULL OR u.source = $6)
+        ORDER BY u.at DESC
+        LIMIT 200
        ) a
-       LEFT JOIN profiles p ON p.id = a.profile_id AND p.workspace_id = $1
-      WHERE ($2::timestamptz IS NULL OR a.at >= $2::timestamptz)
-        AND ($3::timestamptz IS NULL OR a.at <= $3::timestamptz)
-        AND ($4::text IS NULL OR a.type = $4)
-        AND ($5::text IS NULL OR a.outcome = $5)
-        AND ($6::text IS NULL OR a.source = $6)
-      ORDER BY a.at DESC
-      LIMIT 200`,
+       -- The message a row is about: the send itself, or the one a report names.
+       LEFT JOIN LATERAL (
+         SELECT ml.profile_id, ml.sent_at, ml.status, ml.broadcast_id, ml.automation_id, ml.subject
+           FROM messages_log ml
+          WHERE ml.workspace_id = $1
+            AND ( (a.ref_id IS NOT NULL AND ml.id = a.ref_id)
+               OR (a.message_ref IS NOT NULL AND ml.ses_message_id = a.message_ref) )
+          ORDER BY ml.sent_at DESC
+          LIMIT 1
+       ) m ON true
+       LEFT JOIN broadcasts b ON b.id = m.broadcast_id AND b.workspace_id = $1
+       -- Sends from before the subject was recorded: the broadcast's own subject line
+       -- (merge tags unrendered) is still better than nothing.
+       LEFT JOIN email_templates bt ON bt.id = b.template_id AND bt.workspace_id = $1
+       LEFT JOIN automations au ON au.id = m.automation_id AND au.workspace_id = $1
+       LEFT JOIN profiles p ON p.id = coalesce(a.profile_id, m.profile_id) AND p.workspace_id = $1
+      ORDER BY a.at DESC`,
     [ctx.workspaceId, from, to, type, outcome, source],
   );
-  return ok({ activity: rows });
+  return ok({ activity: rows.map(toActivityRow) });
 };
+
+interface ActivityQueryRow {
+  at: string;
+  source: string;
+  type: string;
+  outcome: string;
+  profile_id: string | null;
+  detail: string | null;
+  ref_id: string | null;
+  retryable: boolean;
+  raw: Record<string, unknown> | null;
+  email: string | null;
+  message_sent_at: string | null;
+  message_status: string | null;
+  message_subject: string | null;
+  broadcast_id: string | null;
+  broadcast_name: string | null;
+  automation_id: string | null;
+  automation_name: string | null;
+}
+
+/**
+ * Shape one feed row. Send rows and delivery reports gain a `context`: which
+ * broadcast/automation the message came from and — for a bounce or complaint —
+ * which address failed and what the remote server's code means in plain words.
+ */
+export function toActivityRow(r: ActivityQueryRow) {
+  const { raw, message_sent_at, message_status, message_subject, broadcast_id, broadcast_name, automation_id, automation_name, ...row } = r;
+  const message =
+    broadcast_id || automation_id || message_sent_at
+      ? {
+          kind: broadcast_id ? 'broadcast' : automation_id ? 'automation' : 'transactional',
+          id: broadcast_id ?? automation_id ?? null,
+          name: broadcast_name ?? automation_name ?? 'Transactional / API',
+          sent_at: message_sent_at,
+          status: message_status,
+          subject: message_subject?.trim() || null,
+        }
+      : null;
+  let failure: Record<string, unknown> | null = null;
+  if (r.source === 'email' && (r.type === 'bounce' || r.type === 'complaint')) {
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+    const status = describeDeliveryStatus(r.detail);
+    failure =
+      r.type === 'complaint'
+        ? { meaning: 'The recipient reported this message as spam. They are suppressed from all email.' }
+        : {
+            code: status?.code ?? str(r.detail),
+            permanent: status?.permanent ?? null,
+            meaning: status
+              ? `${status.meaning} ${status.permanent ? 'Permanent — this address will not be emailed again.' : 'Temporary — the mail server keeps retrying.'}`
+              : null,
+            server_said: str(raw?.diagnostic),
+          };
+    const failed = str(raw?.recipient);
+    if (failed) failure.address = failed;
+  }
+  return { ...row, context: message || failure ? { message, failure } : null };
+}
+
 
 /** Re-dispatch ONE outbox row NOW (the manual retry path). Builds the same
  *  DispatchDeps as dispatchBroadcastNow. Returns the dispatch outcome string. */
@@ -7950,9 +8039,9 @@ async function sendOneTransactionalEmail(args: {
   // failed, and without this there is no way to tell whether that address was even
   // on this message — so a report naming anyone at all would suppress them.
   await pool.query(
-    `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, cc_addresses, bcc_addresses)
-     VALUES ($1, $2, $3, 'sent', 'email', $4, $5)`,
-    [ws, profileId, messageId, [...cc], [...bcc]],
+    `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, cc_addresses, bcc_addresses, subject)
+     VALUES ($1, $2, $3, 'sent', 'email', $4, $5, $6)`,
+    [ws, profileId, messageId, [...cc], [...bcc], rendered.subject],
   );
   // Attachment bytes are metered per MESSAGE: with several recipients the same file
   // crosses the wire once per message, so that is what it costs.

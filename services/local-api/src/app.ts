@@ -373,6 +373,7 @@ export function createApp(opts: CreateAppOptions): Hono {
       const q = buildMessageLookup(messageId);
       const { rows } = await opts.pool.query<{
         workspace_id: string;
+        profile_id: string;
         recipient_email: string | null;
         cc_addresses: string[] | null;
         bcc_addresses: string[] | null;
@@ -381,6 +382,7 @@ export function createApp(opts: CreateAppOptions): Hono {
       return r
         ? {
             workspaceId: r.workspace_id,
+            profileId: r.profile_id,
             recipient: r.recipient_email,
             // The copies come along so the report's named address can be checked
             // against the addresses this message actually reached.
@@ -408,10 +410,16 @@ export function createApp(opts: CreateAppOptions): Hono {
     const statements = [
       buildEmailEventInsert(ws, {
         sesMessageId: cls.sesMessageId,
-        profileId: null,
+        profileId: decision.profileId,
         type: cls.type,
         subType: cls.subType,
-        raw: { reason: decision.reason, source: 'self-hosted-mta' },
+        // Enough for the activity log to say WHO failed and WHY without re-parsing.
+        raw: {
+          reason: decision.reason,
+          source: 'self-hosted-mta',
+          recipient: email,
+          diagnostic: decision.diagnostic,
+        },
       }),
     ];
 

@@ -140,6 +140,38 @@ describeMaybe('activity log (real Postgres)', () => {
     const rows = await activity({ type: 'complaint' });
     expect(rows).toHaveLength(0);
   });
+  // A self-hosted bounce report knows only the message id. The feed must still
+  // name the person (via the message) and say what failed, in plain words, and
+  // which broadcast/automation sent it.
+  it('links a profile-less bounce to its message, profile and explanation', async () => {
+    await world.pool.query(
+      "INSERT INTO messages_log (workspace_id, profile_id, status, ses_message_id, subject, sent_at) VALUES ($1,$2,'sent','msg-bounce-1','Your March invoice','2026-02-01T00:00:00Z')",
+      [WS_A, P_A],
+    );
+    await world.pool.query(
+      `INSERT INTO email_events (workspace_id, ses_message_id, profile_id, type, sub_type, raw, occurred_at)
+       VALUES ($1,'msg-bounce-1',NULL,'bounce','5.7.1',
+               '{"recipient":"a1@acme.com","diagnostic":"550 5.7.1 Message rejected"}'::jsonb,'2026-02-01T00:01:00Z')`,
+      [WS_A],
+    );
+    try {
+      const rows = (await call(world.env, 'GET', '/activity', {
+        token: tokA(),
+        query: { from: '2026-02-01T00:00:30Z', to: '2026-02-01T00:02:00Z' },
+      })).body as { activity: Array<Row & { profile_id: string | null; context: any }> };
+      const b = rows.activity.find((r) => r.type === 'bounce')!;
+      expect(b.profile_id).toBe(P_A);
+      expect(b.email).toBe('a1@acme.com');
+      expect(b.context.failure).toMatchObject({ code: '5.7.1', permanent: true, address: 'a1@acme.com' });
+      expect(b.context.failure.server_said).toBe('550 5.7.1 Message rejected');
+      // What the send was about — the subject the person actually received.
+      expect(b.context.message).toMatchObject({ kind: 'transactional', subject: 'Your March invoice' });
+    } finally {
+      await world.pool.query("DELETE FROM email_events WHERE ses_message_id = 'msg-bounce-1'");
+      await world.pool.query("DELETE FROM messages_log WHERE ses_message_id = 'msg-bounce-1'");
+    }
+  });
+
   // A message that is queued but has not gone out writes no messages_log row. It must
   // still be visible, with its reason — otherwise a broadcast reads "sent" with zero
   // sends and nothing anywhere says why.

@@ -619,7 +619,7 @@ export async function dispatchOutbox(
         ...(openToken
           ? [buildTrackedOpenInsert(workspaceId, openToken, broadcastId, ob.automation_id ?? null, profile.id)]
           : []),
-        buildMessagesLogInsert(workspaceId, profile.id, ob.automation_id, sesMessageId, broadcastId, 'email'),
+        buildMessagesLogInsert(workspaceId, profile.id, ob.automation_id, sesMessageId, broadcastId, 'email', input.subject),
         buildUsageCounterIncrement(workspaceId, now),
         buildOutboxMarkSent(workspaceId, outboxId),
       ]);
