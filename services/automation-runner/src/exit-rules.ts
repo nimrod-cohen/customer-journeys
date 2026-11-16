@@ -30,7 +30,7 @@
 //     Capped at MAX_RESTARTS so a chatty producer cannot spam someone forever.
 import { buildBranchMatchQuery, rewriteTriggerEventLeaves, rewriteJourneyLeaves } from './core.js';
 import { evaluateEventPayloadFilter, type SqlStatement } from './core.js';
-import { describeExitRule, exitRulesOf, type ExitRule } from './exit-rules-dsl.js';
+import { describeExitRule, eventTypesOf, exitRulesOf, UNSUBSCRIBED_EXIT_RULE, type ExitRule } from './exit-rules-dsl.js';
 import type { AstNode } from '@cdp/segments';
 
 /** Most restarts one enrollment may take (runaway guard). */
@@ -68,7 +68,7 @@ export function ruleFiresOnSignal(rule: ExitRule, signal: ExitSignal): boolean {
   const w = rule.when;
   switch (w.kind) {
     case 'event':
-      if (signal.kind !== 'event' || signal.type !== w.eventType) return false;
+      if (signal.kind !== 'event' || !eventTypesOf(w).includes(signal.type)) return false;
       if (!w.filter) return true;
       try {
         return evaluateEventPayloadFilter(w.filter, signal.payload);
@@ -410,9 +410,8 @@ export async function evaluateTickExitRules(
   },
   automationName: string | null,
 ): Promise<{ decision: ExitDecision; statements: SqlStatement[] }> {
-  const rules = exitRulesOf(definition);
-  const none: ExitDecision = { action: null, rule: null, latches: null };
-  if (!rules.some((r) => r.when.kind === 'profile_match')) return { decision: none, statements: [] };
+  // The automation's own rules, plus the built-in "unsubscribed → exit".
+  const rules = [...exitRulesOf(definition), UNSUBSCRIBED_EXIT_RULE];
   const e: ActiveEnrollment = {
     id: row.id,
     automation_id: row.automation_id,

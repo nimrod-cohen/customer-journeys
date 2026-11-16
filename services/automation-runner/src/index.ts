@@ -105,6 +105,8 @@ export {
   exitRulesOf,
   exitRuleSegmentIds,
   describeExitRule,
+  eventTypesOf,
+  UNSUBSCRIBED_EXIT_RULE,
   MAX_EXIT_RULES,
   type ExitRule,
   type ExitRuleWhen,

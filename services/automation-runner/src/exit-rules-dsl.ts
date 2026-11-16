@@ -13,8 +13,12 @@ export type ExitRuleAction = 'exit' | 'restart';
 
 /** What a rule watches for. */
 export type ExitRuleWhen =
-  /** An event of `eventType` (optionally matching a payload.* filter) is received. */
-  | { readonly kind: 'event'; readonly eventType: string; readonly filter?: AstNode }
+  /**
+   * An event of `eventType` — or of ANY type in `eventTypes`, when set — is
+   * received (optionally matching a payload.* filter). `eventType` stays the
+   * first type so older readers keep working.
+   */
+  | { readonly kind: 'event'; readonly eventType: string; readonly eventTypes?: readonly string[]; readonly filter?: AstNode }
   /** The person leaves the segment. */
   | { readonly kind: 'segment_exit'; readonly segmentId: string }
   /** The person enters the segment. */
@@ -70,6 +74,12 @@ export function validateExitRules(rules: unknown): void {
     switch (w.kind) {
       case 'event':
         if (typeof w.eventType !== 'string' || w.eventType.trim() === '') fail(`${where} needs an event type`);
+        if (w.eventTypes !== undefined) {
+          if (!Array.isArray(w.eventTypes) || w.eventTypes.some((t) => typeof t !== 'string' || t.trim() === '')) {
+            fail(`${where} event types must be a list of names`);
+          }
+          if (w.eventTypes.length > 20) fail(`${where} can watch at most 20 event types`);
+        }
         if (w.filter !== undefined) {
           if (!isObject(w.filter)) fail(`${where} filter must be a rule object`);
           validateAst(w.filter as unknown as AstNode);
@@ -86,6 +96,19 @@ export function validateExitRules(rules: unknown): void {
     }
   });
 }
+
+/**
+ * BUILT-IN rule applied to every automation: a person who unsubscribed from
+ * everything (`attributes.unsubscribed = true`) leaves the journey. The
+ * unsubscribe itself already exits them eagerly; this catches any other path that
+ * sets the flag (an import, a profile edit) at their next journey step.
+ */
+export const UNSUBSCRIBED_EXIT_RULE: ExitRule = {
+  id: '__unsubscribed',
+  label: 'Unsubscribed',
+  when: { kind: 'profile_match', ast: { field: 'attributes.unsubscribed', operator: '=', value: 'true' } as AstNode },
+  action: 'exit',
+};
 
 /** The exit rules of a (validated) definition — [] when there are none. */
 export function exitRulesOf(def: unknown): readonly ExitRule[] {
@@ -107,7 +130,9 @@ export function describeExitRule(rule: ExitRule): string {
   if (rule.label && rule.label.trim()) return rule.label.trim();
   switch (rule.when.kind) {
     case 'event':
-      return `event "${rule.when.eventType}"`;
+      return `event ${eventTypesOf(rule.when)
+        .map((t) => `"${t}"`)
+        .join(' or ')}`;
     case 'segment_exit':
       return 'left a segment';
     case 'segment_entry':
@@ -115,4 +140,9 @@ export function describeExitRule(rule: ExitRule): string {
     case 'profile_match':
       return 'profile matched a condition';
   }
+}
+
+/** Every event type an event rule watches (eventType first, no duplicates). */
+export function eventTypesOf(w: { readonly eventType: string; readonly eventTypes?: readonly string[] }): string[] {
+  return [...new Set([w.eventType, ...(w.eventTypes ?? [])])];
 }

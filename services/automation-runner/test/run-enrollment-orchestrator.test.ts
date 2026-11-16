@@ -83,6 +83,10 @@ function makeDeps(opts: FakeOpts = {}) {
             : ([] as unknown as T[]),
         };
       }
+      if (/FROM profiles[\s\S]*LEFT JOIN profile_features/.test(text) && values?.includes('unsubscribed')) {
+        // The built-in "unsubscribed → exit" check: this person is subscribed.
+        return { rows: [] as T[] };
+      }
       if (/FROM profiles[\s\S]*LEFT JOIN profile_features/.test(text)) {
         // Branch match query.
         return { rows: (conditionMatches ? [{ id: 'p1' }] : []) as unknown as T[] };

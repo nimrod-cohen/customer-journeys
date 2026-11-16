@@ -184,6 +184,39 @@ export function buildUnsubscribedAttribute(workspaceId: string, email: string): 
 }
 
 /**
+ * A full unsubscribe also takes the person OUT of every automation they are in:
+ * their still-pending automation sends are cancelled and each active enrollment
+ * ends with exit_reason 'unsubscribed'. Someone who asked to be left alone should
+ * not sit in a journey whose every step would now be skipped. Two statements,
+ * cancel first (it keys on the enrollments still being active). Workspace-scoped.
+ * The runner also applies this as a built-in rule on every tick (any other path
+ * that sets `unsubscribed = true` is caught there).
+ */
+export function buildUnsubscribeExitAutomations(workspaceId: string, email: string): SqlStatement[] {
+  if (!workspaceId) {
+    throw new Error('buildUnsubscribeExitAutomations: workspaceId is required (tenant-isolation guard)');
+  }
+  return [
+    {
+      text: `UPDATE outbox o SET status = 'cancelled', last_error = 'unsubscribed'
+              FROM automation_enrollments e, profiles p
+             WHERE o.workspace_id = $1 AND o.status = 'pending' AND o.automation_id = e.automation_id
+               AND o.profile_id = e.profile_id AND e.workspace_id = $1 AND e.status = 'active'
+               AND p.id = e.profile_id AND p.workspace_id = $1 AND p.email = $2`,
+      values: [workspaceId, email],
+    },
+    {
+      text: `UPDATE automation_enrollments e
+                SET status = 'exited', exit_reason = 'unsubscribed', next_run_at = NULL, updated_at = clock_timestamp()
+               FROM profiles p
+              WHERE e.workspace_id = $1 AND e.status = 'active'
+                AND p.id = e.profile_id AND p.workspace_id = $1 AND p.email = $2`,
+      values: [workspaceId, email],
+    },
+  ];
+}
+
+/**
  * Record the full opt-out against the PROFILE as well as the address, by writing
  * `channel_optouts` rows for both medium groups.
  *
