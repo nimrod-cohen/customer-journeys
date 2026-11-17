@@ -4,7 +4,7 @@
 import type { Pool } from 'pg';
 import type { Handler, HandlerResponse } from './handlers.js';
 
-export const MAX_TEMPLATE_HISTORY = 100;
+export const MAX_TEMPLATE_HISTORY = 50;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ok = (body: unknown, status = 200): HandlerResponse => ({ status, body });
 

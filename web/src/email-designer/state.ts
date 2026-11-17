@@ -84,7 +84,7 @@ export interface HistoryEntry {
 }
 export const undoStack = signal<HistoryEntry[]>([]);
 export const redoStack = signal<HistoryEntry[]>([]);
-export const MAX_HISTORY = 100;
+export const MAX_HISTORY = 50;
 
 // The history the HOST persists, so it survives leaving the editor. Every document
 // transition — a change, an undo, a redo — appends its BEFORE-state here, which
