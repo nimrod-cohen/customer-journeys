@@ -1,5 +1,5 @@
 // Integration (real Postgres): the designer's edit history is saved with each
-// autosave, read back oldest-first, trimmed to the newest 100, and scoped.
+// autosave, read back oldest-first, trimmed to the newest 50, and scoped.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { hasDatabaseUrl } from '@cdp/db';
 import { makeWorld, tokenFor, call, type TestWorld } from './seed.js';
@@ -36,7 +36,7 @@ describeMaybe('email template history (real Postgres)', () => {
     }
   }
 
-  it('saves, reads back in order, trims to 100 and stays in its workspace', async () => {
+  it('saves, reads back in order, trims to 50 and stays in its workspace', async () => {
     const tok = tokenFor(USER, WS);
     const mjml = '<mjml><mj-body></mj-body></mjml>';
     const c = await call(world.env, 'POST', '/templates', {
@@ -50,10 +50,10 @@ describeMaybe('email template history (real Postgres)', () => {
     const h = await call(world.env, 'GET', `/templates/${id}/history`, { token: tok });
     expect(h.status).toBe(200);
     const list = (h.body as { history: { action: string; snapshot: string }[] }).history;
-    expect(list).toHaveLength(100);
-    expect(list[0]!.action).toBe('Edit 11');
-    expect(list[99]!.action).toBe('Edit 110');
-    expect(JSON.parse(list[99]!.snapshot)).toEqual(design(110));
+    expect(list).toHaveLength(50);
+    expect(list[0]!.action).toBe('Edit 61');
+    expect(list[49]!.action).toBe('Edit 110');
+    expect(JSON.parse(list[49]!.snapshot)).toEqual(design(110));
 
     expect((await call(world.env, 'GET', `/templates/${id}/history`, { token: tokenFor(USER2, WS2) })).status).toBe(404);
   });
