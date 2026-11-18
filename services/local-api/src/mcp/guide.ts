@@ -68,6 +68,10 @@ automation also: {"triggerEvent":true,"filter":Rule over "payload.<key>"} and
 ## Merge tags
 {{customer.<field or attribute>}}, {{event.<payload path>}} (the event that enrolled them),
 {{journey.<key>}}, {{unsubscribe}} (email body).
+A tag starting with "return" is JavaScript, evaluated per recipient in every message text
+(subject, body, To, SMS/WhatsApp): {{ return customer.first_name ? customer.first_name + ", " : "" }}.
+It reads customer, event, journey (and data on API sends) with real types; it cannot contain "}}";
+an error or timeout inserts nothing. In an email body the result is escaped; {{{ return … }}} is raw.
 
 ## Broadcasts
 A broadcast is a one-off send to an audience (a Rule, or a segment id). Drafts you create

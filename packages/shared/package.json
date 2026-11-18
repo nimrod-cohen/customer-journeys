@@ -13,6 +13,10 @@
     "./email-design": {
       "types": "./dist/email-design/index.d.ts",
       "default": "./dist/email-design/index.js"
+    },
+    "./js-sandbox": {
+      "types": "./dist/js-sandbox.d.ts",
+      "default": "./dist/js-sandbox.js"
     }
   },
   "scripts": {

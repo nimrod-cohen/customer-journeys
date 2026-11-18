@@ -16,6 +16,7 @@ import type { SesEmailClient, SendEmailInput, SendEmailResult } from '@cdp/email
 import {
   runEnrollment,
   enrollProfileManually,
+  enrollFromEvent,
   buildSweepQuery,
   runStatementsInWorkspaceTx,
   withWorkspaceTx,
@@ -242,6 +243,56 @@ describeMaybe('multi-channel automation send node (real Postgres)', () => {
     );
     return r.rows[0]!.id;
   }
+
+  it('{{ return … }} code in a text body runs against the real customer + TYPED trigger event', async () => {
+    const def = {
+      startNode: 't',
+      nodes: {
+        t: { type: 'trigger', kind: 'event', eventType: 'order_placed', next: 's' },
+        s: {
+          type: 'action',
+          kind: 'send',
+          medium: 'sms',
+          text_body:
+            '{{ return customer.first_name?.length ? customer.first_name + ", " : "" }}{{ return event.items.length }} items{{ return event.total > 100 ? " (big)" : "" }}',
+          next: 'x',
+        },
+        x: { type: 'exit' },
+      },
+    };
+    const camp = await makeAutomation(WS, def, null);
+    const profileId = await makeProfile(WS, 'code@example.com', '+972529461577', 'Noa');
+    await enrollFromEvent(enrollDeps(), {
+      workspace_id: WS,
+      profile_id: profileId,
+      type: 'order_placed',
+      payload: { items: [{ sku: 'A' }, { sku: 'B' }, { sku: 'C' }], total: 250 },
+      event_id: '0c0d0ed0-0000-4000-8000-0000000000e9',
+    });
+    const now = new Date();
+    await sweepAndAdvance(now);
+
+    // The runner hands the dispatcher the event UNFLATTENED, so code keeps real types.
+    const ob = await admin.query<{ payload: Record<string, unknown> }>(
+      'SELECT payload FROM outbox WHERE workspace_id = $1 AND automation_id = $2',
+      [WS, camp],
+    );
+    expect(ob.rows[0]!.payload.js_ctx).toMatchObject({ event: { total: 250 } });
+
+    const bodies: string[] = [];
+    const deps = {
+      ...dispatchDeps(new CountingSes(), now),
+      resolveChannel: () => ({
+        send: async (m: { body: string }) => {
+          bodies.push(m.body);
+          return { providerMessageId: 'cap-1' };
+        },
+      }),
+    };
+    const out = await dispatchOutbox(deps as never, await pendingId(camp));
+    expect(out.result).toBe('send');
+    expect(bodies).toEqual(['Noa, 3 items (big)']);
+  });
 
   it('idempotent re-tick: a second sweep + dispatch adds no second outbox/send', async () => {
     const camp = await makeAutomation(WS, smsDef(), null);

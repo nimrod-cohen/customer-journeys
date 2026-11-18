@@ -59,7 +59,7 @@ function makeDeps(scn: Scenario): HandlerDeps {
           ],
         };
       }
-      if (t.startsWith('SELECT id, email, external_id, email_status, created_at, attributes')) {
+      if (t.startsWith('SELECT id, email, phone, external_id, email_status, created_at, attributes')) {
         return {
           rows: [
             { id: PROFILE, email: 'r@example.com', external_id: null, email_status: 'active', created_at: null, attributes: {} } as unknown as T,

@@ -417,6 +417,15 @@ async function chainTick(
           ...journeyMerge(tickJourney),
         };
         if (Object.keys(extraMerge).length > 0) payload.merge = extraMerge;
+        // The same values UNFLATTENED, for `{{ return … }}` code: it needs real types
+        // (a number to compare, an array's .length), which the string merge map loses.
+        const hasJourney = Object.keys(tickJourney).length > 0;
+        if (resolveCtx.event !== undefined || hasJourney) {
+          payload.js_ctx = {
+            ...(resolveCtx.event !== undefined ? { event: resolveCtx.event } : {}),
+            ...(hasJourney ? { journey: tickJourney } : {}),
+          };
+        }
         writes.push(
           buildAutomationOutboxInsert(
             workspaceId,

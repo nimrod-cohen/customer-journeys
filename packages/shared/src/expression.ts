@@ -95,11 +95,59 @@ function isSpecObject(v: unknown): v is { kind?: unknown } {
  * resolution must never write a raw `{{...}}` into a profile attribute). Tokens are
  * looked up by the canonical (customer-expanded) key first, then the raw key.
  */
-export function renderExpression(template: string, merge: Readonly<Record<string, string>>): string {
-  return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, key: string) => {
-    const value = merge[expandCustomerToken(key)] ?? merge[key];
+export function renderExpression(
+  template: string,
+  merge: Readonly<Record<string, string>>,
+  js?: TemplateJs,
+): string {
+  return template.replace(PLAIN_TOKEN_RE, (match: string, rawCode: string | undefined, code: string | undefined, key: string | undefined) => {
+    const c = rawCode ?? code;
+    if (c !== undefined) return js ? js(c) : match;
+    const value = merge[expandCustomerToken(key!)] ?? merge[key!];
     return value === undefined ? '' : value;
   });
+}
+
+// ── {{ return … }} — JavaScript inside merge braces ─────────────────────────────
+//
+// A block whose content STARTS WITH `return` is code; every other `{{ … }}` stays a
+// plain merge tag, so existing templates cannot change meaning. The renderers only
+// recognise the block — the code is handed to an injected `TemplateJs` runner
+// (`@cdp/shared/js-sandbox`, Node-only, since this module is isomorphic). With no
+// runner the block is left exactly as written: visible, never silently dropped.
+// The code cannot itself contain `}}` (the block ends at the first one).
+
+/** Runs one `{{ return … }}` block for one message; returns the text to insert. */
+export type TemplateJs = (code: string) => string;
+
+/** Plain-text sinks: `{{{ return … }}}`, `{{ return … }}`, or a `{{ path }}` tag. */
+const PLAIN_TOKEN_RE = /\{\{\{\s*(return\b[\s\S]*?)\s*\}\}\}|\{\{\s*(return\b[\s\S]*?)\s*\}\}|\{\{\s*([\w.]+)\s*\}\}/g;
+
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: '\u00a0',
+};
+
+/**
+ * Turn code as the email editor SAVED it back into the code that was typed: the
+ * editor HTML-encodes `>` `&` `'` `"` and may wrap parts of it in formatting tags or
+ * insert a `<br>`. Tags are markup there (a real `<` in the code is saved as `&lt;`),
+ * so they are dropped, then entities decoded. Applied to HTML sinks only.
+ */
+export function decodeHtmlCode(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m: string, e: string) => {
+      if (e[0] === '#') {
+        const n = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+        return Number.isFinite(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+      }
+      return NAMED_ENTITIES[e.toLowerCase()] ?? m;
+    });
 }
 
 /**
@@ -161,10 +209,25 @@ export function renderExpressionHtml(
   merge: Readonly<Record<string, string>>,
   onUnknown: 'empty' | 'keep' = 'empty',
   rawKeys: ReadonlySet<string> = SYSTEM_HTML_MERGE_KEYS,
+  js?: TemplateJs,
 ): string {
   return template.replace(
-    /\{\{\{\s*([\w.]+)\s*\}\}\}|\{\{\s*([\w.]+)\s*\}\}/g,
-    (match: string, rawKey: string | undefined, escKey: string | undefined) => {
+    // Code blocks lead, so `{{ return … }}` is never mistaken for anything else; the
+    // triple (raw) form of each leads its double (escaped) form.
+    /\{\{\{\s*(return\b[\s\S]*?)\s*\}\}\}|\{\{\s*(return\b[\s\S]*?)\s*\}\}|\{\{\{\s*([\w.]+)\s*\}\}\}|\{\{\s*([\w.]+)\s*\}\}/g,
+    (
+      match: string,
+      rawCode: string | undefined,
+      escCode: string | undefined,
+      rawKey: string | undefined,
+      escKey: string | undefined,
+    ) => {
+      if (rawCode !== undefined || escCode !== undefined) {
+        if (!js) return match;
+        const out = js(decodeHtmlCode((rawCode ?? escCode)!));
+        // Code output is data like any merge value: escaped unless asked for raw.
+        return rawCode !== undefined ? out : newlinesToBreaks(escapeHtmlValue(out));
+      }
       const key = rawKey ?? escKey ?? '';
       const value = merge[expandCustomerToken(key)] ?? merge[key];
       if (value === undefined) return onUnknown === 'keep' ? match : '';

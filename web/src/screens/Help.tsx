@@ -349,6 +349,36 @@ export function Help() {
           </p>
         </div>
 
+        {/* 6. code */}
+        <div class="mt-6 border-l-2 border-violet-300 pl-4">
+          <h3 class="font-bold text-ink-900">
+            6. Code in braces: <Code>{'{{ return … }}'}</Code>
+          </h3>
+          <p class="mt-1 text-sm text-stone-600">
+            When a tag starts with <Code>return</Code>, it runs as JavaScript and the result is inserted. It works in
+            every message: email subject, body and To, SMS and WhatsApp. The code can read{' '}
+            <Code>customer</Code>, <Code>event</Code>, <Code>journey</Code> and, for API sends, <Code>data</Code>,
+            with their real types (numbers, lists, true/false).
+          </p>
+          <ul class="mt-2 space-y-1 text-sm text-stone-600">
+            <li>
+              • <Code>{'{{ return customer.first_name ? customer.first_name + ", " : "" }}'}</Code> — a name and a
+              comma, or nothing
+            </li>
+            <li>
+              • <Code>{'{{ return event.items.length }}'}</Code> — how many items the order had
+            </li>
+            <li>
+              • <Code>{'{{ return event.total > 100 ? "Free shipping!" : "" }}'}</Code>
+            </li>
+          </ul>
+          <p class="mt-2 text-xs text-stone-500">
+            Join text with <Code>+</Code>. The code can&apos;t contain <Code>{'}}'}</Code>. If it fails or runs longer
+            than a tenth of a second, it inserts nothing. In an email body the result is inserted as text like any
+            other value; use three braces, <Code>{'{{{ return … }}}'}</Code>, to insert HTML you build yourself.
+          </p>
+        </div>
+
         <p class="mt-5 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600 ring-1 ring-inset ring-stone-200">
           Whitespace around tokens is tolerated (<Code>{'{{ customer.email }}'}</Code> works the same).
           The same tokens are also valid in an <b>Update profile</b> / <b>Update journey</b>{' '}

@@ -23,7 +23,7 @@
 // sending reputation of every other tenant on the IP and cannot help the recipient.
 //
 // `suppressions` mixes both kinds behind one row, so the check is by REASON.
-import { renderExpression, renderExpressionHtml, sanitizeHrefSchemes, absolutizeUrls } from '@cdp/shared';
+import { renderExpression, renderExpressionHtml, sanitizeHrefSchemes, absolutizeUrls, type TemplateJs } from '@cdp/shared';
 
 /** The app's public origin — what a root-relative asset path must be resolved against. */
 export function appBaseUrl(): string {
@@ -161,17 +161,18 @@ export function renderTransactional(
   parts: { subject: string; html: string },
   merge: Record<string, string>,
   baseUrl: string = appBaseUrl(),
+  js?: TemplateJs,
 ): { subject: string; html: string } {
   return {
     // The subject is PLAIN TEXT: entity-escaping it would put a literal `&amp;` in
     // front of the recipient in their inbox list.
-    subject: renderExpression(parts.subject ?? '', merge),
+    subject: renderExpression(parts.subject ?? '', merge, js),
     // The body is HTML, so values are escaped — a `data.*` parameter carrying
     // `<b>` or `&` should show as text, not reshape the message. A caller that
     // genuinely passes a designed HTML block asks for it with `{{{data.body_html}}}`.
     // Absolute last: an uploaded image is stored as `/assets/<id>`, which resolves
     // in the designer's browser and to nothing in a mail client.
-    html: absolutizeUrls(sanitizeHrefSchemes(renderExpressionHtml(parts.html ?? '', merge)), baseUrl),
+    html: absolutizeUrls(sanitizeHrefSchemes(renderExpressionHtml(parts.html ?? '', merge, 'empty', undefined, js)), baseUrl),
   };
 }
 

@@ -80,7 +80,7 @@ function makeReader(state: FakeState): { reader: Reader; claimAttempts: number }
           ],
         };
       }
-      if (t.startsWith('SELECT id, email, external_id, email_status, created_at, attributes')) {
+      if (t.startsWith('SELECT id, email, phone, external_id, email_status, created_at, attributes')) {
         return {
           rows: [
             {

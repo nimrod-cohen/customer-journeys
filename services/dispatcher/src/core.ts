@@ -18,6 +18,7 @@ import {
   absolutizeUrls,
   zonedComponents,
   type WorkspaceStatus,
+  type TemplateJs,
 } from '@cdp/shared';
 import type { ChannelMessage, Medium, MediumGroup } from '@cdp/channels';
 
@@ -97,6 +98,12 @@ export interface DispatchContext {
   readonly phone?: string | null;
   /** Merge values substituted into the compiled HTML. */
   readonly merge: Readonly<Record<string, string>>;
+  /**
+   * Runs `{{ return … }}` blocks for THIS recipient (`@cdp/shared/js-sandbox`
+   * makeTemplateJs over their customer / event / journey). Absent → blocks are left
+   * as written.
+   */
+  readonly js?: TemplateJs;
   /** Frequency cap (max messages per rolling `days` window); null → no cap. */
   readonly frequencyCap: FrequencyCap | null;
   /** Per-weekday quiet schedule; null → never quiet. Evaluated in `timeZone`. */
@@ -264,11 +271,19 @@ export function nextSendableAt(now: Date, schedule: QuietSchedule | null, timeZo
 export function renderTemplateBody(
   compiledHtml: string,
   merge: Readonly<Record<string, string>>,
+  js?: TemplateJs,
 ): string {
-  return compiledHtml.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, key: string) => {
-    const value = merge[expandCustomerToken(key)] ?? merge[key];
-    return value === undefined ? match : value;
-  });
+  // `{{ return … }}` blocks run through `js` (the per-message sandbox runner); a
+  // plain `{{token}}` with no value is KEPT (unlike renderExpression, which empties).
+  return compiledHtml.replace(
+    /\{\{\{\s*(return\b[\s\S]*?)\s*\}\}\}|\{\{\s*(return\b[\s\S]*?)\s*\}\}|\{\{\s*([\w.]+)\s*\}\}/g,
+    (match: string, rawCode: string | undefined, code: string | undefined, key: string | undefined) => {
+      const c = rawCode ?? code;
+      if (c !== undefined) return js ? js(c) : match;
+      const value = merge[expandCustomerToken(key!)] ?? merge[key!];
+      return value === undefined ? match : value;
+    },
+  );
 }
 
 /**
@@ -444,7 +459,7 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
   // The To token (default {{customer.email}}) renders to the recipient; fall back
   // to the profile email when blank. Suppression/unsubscribe still key on the
   // profile email — the person — regardless of the rendered To.
-  const renderedTo = ctx.toAddress ? renderTemplateBody(ctx.toAddress, ctx.merge).trim() : '';
+  const renderedTo = ctx.toAddress ? renderTemplateBody(ctx.toAddress, ctx.merge, ctx.js).trim() : '';
   const to = renderedTo || email;
   const headers = buildListUnsubscribeHeaders({
     baseUrl: ctx.unsubscribeBaseUrl,
@@ -466,13 +481,13 @@ export function buildSendEmailInput(ctx: DispatchContext): SendEmailInput {
     to,
     // The subject is personalized too — merge tags ({{customer.*}}) render per
     // recipient, exactly like the To and the body.
-    subject: renderTemplateBody(ctx.subject, ctx.merge),
+    subject: renderTemplateBody(ctx.subject, ctx.merge, ctx.js),
     // The BODY is the one HTML sink among renderTemplateBody's callers, so it is
     // the one that escapes. The merge map here carries PROFILE ATTRIBUTES, which
     // anyone holding the public `pk_live_` write key can set on any profile by
     // email — rendered raw, a trait becomes a working link in mail signed by the
     // workspace's own domain. `{{{token}}}` opts a value back out.
-    html: sanitizeHrefSchemes(renderExpressionHtml(ctx.template.compiledHtml, ctx.merge, 'keep')),
+    html: sanitizeHrefSchemes(renderExpressionHtml(ctx.template.compiledHtml, ctx.merge, 'keep', undefined, ctx.js)),
     ...(configSet ? { configurationSetName: configSet } : {}),
     headers: { ...headers },
   };
@@ -878,7 +893,7 @@ export function buildMessagesLogFailure(
  */
 export function resolveTextRecipient(ctx: DispatchContext): string {
   if (ctx.toAddress) {
-    const rendered = renderTemplateBody(ctx.toAddress, ctx.merge).trim();
+    const rendered = renderTemplateBody(ctx.toAddress, ctx.merge, ctx.js).trim();
     // A still-unresolved `{{...}}` token means the merge had no value → no phone.
     if (rendered && !rendered.includes('{{')) return rendered;
   }
@@ -900,13 +915,13 @@ export function buildChannelMessage(ctx: DispatchContext): ChannelMessage {
   const tpl = ctx.medium === 'whatsapp' && ctx.whatsappTemplate ? ctx.whatsappTemplate : null;
   return {
     to,
-    body: renderTemplateBody(ctx.textBody ?? '', ctx.merge),
+    body: renderTemplateBody(ctx.textBody ?? '', ctx.merge, ctx.js),
     ...(tpl
       ? {
           template: {
             name: tpl.name,
             language: tpl.language,
-            bodyParams: tpl.params.map((p) => renderTemplateBody(p, ctx.merge)),
+            bodyParams: tpl.params.map((p) => renderTemplateBody(p, ctx.merge, ctx.js)),
           },
         }
       : {}),
