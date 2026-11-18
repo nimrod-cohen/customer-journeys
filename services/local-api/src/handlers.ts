@@ -133,6 +133,7 @@ import {
   type EnrollDeps,
   type AutomationDefinition,
   type RunDeps,
+  evaluateEventPayloadFilter,
 } from '@cdp/service-automation-runner';
 import { fetchWebhookClient } from '@cdp/runner-webhook';
 import { runBroadcast, buildDueScheduledBroadcastsQuery } from '@cdp/service-broadcast';
@@ -171,6 +172,7 @@ import {
 import { createSmtpEmailClient, smtpTransportFromEnv, buildIcs } from '@cdp/email';
 import { renderExpression } from '@cdp/shared';
 import { describeDeliveryStatus } from './delivery-status.js';
+import { findSendStep, testSendMerge, withTestPrefix } from './test-send.js';
 import {
   verifySelfHostedDomain,
   nodeDnsResolver,
@@ -4892,6 +4894,326 @@ export const attachAutomationSendTemplate: Handler = async (ctx, pool, req) => {
   return ok({ template: { id: copyId } }, 201);
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** How many recent "would have triggered" customers a test send offers. */
+const TEST_SEND_CANDIDATES = 10;
+/** How far back an event trigger scans before applying its payload filter in memory. */
+const TEST_SEND_EVENT_SCAN = 1000;
+
+/**
+ * GET /automations/:id/test-send/candidates — the last 10 customers the automation's
+ * DRAFT trigger would have enrolled, so a test send uses a real one without searching
+ * (the automation is usually still being built, so nobody is actually enrolled).
+ *
+ *   event          → latest distinct profiles that fired the event AND pass its payload
+ *                    filter, each carrying that event (its payload feeds {{event.*}})
+ *   segment_entry  → last to enter — or exit, per the trigger direction — the segment
+ *   profile        → newest created / most recently updated (per profileChange)
+ *   manual         → most recently updated customers: a manual trigger has no history
+ */
+export const listTestSendCandidates: Handler = async (ctx, pool, req) => {
+  const ws = ctx.workspaceId;
+  const a = await pool.query<{
+    definition: AutomationDefinition;
+    draft_definition: AutomationDefinition | null;
+    trigger_segment_id: string | null;
+    trigger_on: string | null;
+    draft_trigger_segment_id: string | null;
+    draft_trigger_on: string | null;
+  }>(
+    `SELECT definition, draft_definition, trigger_segment_id, trigger_on, draft_trigger_segment_id, draft_trigger_on
+       FROM automations WHERE workspace_id = $1 AND id = $2`,
+    [ws, req.params.id!],
+  );
+  const row = a.rows[0];
+  if (!row) return ok({ error: 'not found' }, 404);
+  const onDraft = row.draft_definition !== null;
+  const def = row.draft_definition ?? row.definition;
+  const trigger = (def.nodes?.[def.startNode] ?? {}) as {
+    kind?: string;
+    eventType?: string;
+    filter?: unknown;
+    profileChange?: string;
+  };
+  const kind = trigger.kind ?? 'manual';
+
+  // (profile_id, at, event?) in order, newest first; profiles are joined afterwards.
+  let picks: { profile_id: string; at: Date; event_id?: string; event_type?: string }[] = [];
+  let segmentDirection: 'enter' | 'exit' | null = null;
+  if (kind === 'event') {
+    if (trigger.eventType) {
+      const { rows } = await pool.query<{ event_id: string; profile_id: string; occurred_at: Date; payload: Record<string, unknown> }>(
+        `SELECT event_id, profile_id, occurred_at, payload FROM events
+          WHERE workspace_id = $1 AND type = $2 ORDER BY occurred_at DESC LIMIT ${TEST_SEND_EVENT_SCAN}`,
+        [ws, trigger.eventType],
+      );
+      const seen = new Set<string>();
+      for (const e of rows) {
+        if (seen.has(e.profile_id)) continue;
+        let matches = false;
+        try {
+          // The same in-memory filter enrollment applies, so the list is exactly who
+          // WOULD have been enrolled.
+          matches = evaluateEventPayloadFilter(trigger.filter as never, e.payload ?? {});
+        } catch {
+          matches = false;
+        }
+        if (!matches) continue;
+        seen.add(e.profile_id);
+        picks.push({ profile_id: e.profile_id, at: e.occurred_at, event_id: e.event_id, event_type: trigger.eventType });
+        if (picks.length >= TEST_SEND_CANDIDATES) break;
+      }
+    }
+  } else if (kind === 'segment_entry') {
+    const segmentId = onDraft ? row.draft_trigger_segment_id : row.trigger_segment_id;
+    const direction = (onDraft ? row.draft_trigger_on : row.trigger_on) ?? row.trigger_on;
+    if (segmentId) {
+      // Entry also counts a current membership's entered_at: a hand-picked or
+      // imported member joins without a change-log row.
+      const exit = direction === 'exit';
+      segmentDirection = exit ? 'exit' : 'enter';
+      const { rows } = await pool.query<{ profile_id: string; at: Date }>(
+        `SELECT profile_id, max(at) AS at FROM (
+           SELECT profile_id, occurred_at AS at FROM segment_change_log
+            WHERE workspace_id = $1 AND segment_id = $2 AND action = $3
+           ${exit ? '' : 'UNION ALL SELECT profile_id, entered_at FROM segment_memberships WHERE workspace_id = $1 AND segment_id = $2'}
+         ) x GROUP BY profile_id ORDER BY at DESC LIMIT ${TEST_SEND_CANDIDATES}`,
+        [ws, segmentId, exit ? 'exited' : 'entered'],
+      );
+      picks = rows;
+    }
+  } else {
+    const created = kind === 'profile' && trigger.profileChange === 'created';
+    const updatedOnly = kind === 'profile' && trigger.profileChange === 'updated';
+    const { rows } = await pool.query<{ profile_id: string; at: Date }>(
+      `SELECT id AS profile_id, ${created ? 'created_at' : 'updated_at'} AS at FROM profiles
+        WHERE workspace_id = $1${updatedOnly ? ' AND updated_at > created_at' : ''}
+        ORDER BY at DESC LIMIT ${TEST_SEND_CANDIDATES}`,
+      [ws],
+    );
+    picks = rows;
+  }
+
+  const profiles = new Map<string, { email: string | null; phone: string | null }>();
+  if (picks.length > 0) {
+    const { rows } = await pool.query<{ id: string; email: string | null; phone: string | null }>(
+      'SELECT id, email, phone FROM profiles WHERE workspace_id = $1 AND id = ANY($2::uuid[])',
+      [ws, picks.map((x) => x.profile_id)],
+    );
+    for (const r of rows) profiles.set(r.id, { email: r.email, phone: r.phone });
+  }
+  const candidates = picks
+    .filter((x) => profiles.has(x.profile_id))
+    .map((x) => ({ ...x, ...profiles.get(x.profile_id)! }));
+  return ok({
+    trigger: kind,
+    ...(kind === 'profile' ? { profileChange: trigger.profileChange ?? 'any' } : {}),
+    ...(segmentDirection ? { triggerOn: segmentDirection } : {}),
+    candidates,
+  });
+};
+
+/**
+ * POST /automations/:id/send-nodes/:nodeId/test-send — QA a step's message with a
+ * REAL customer's data, delivered to the person testing it.
+ *
+ * Body: `{ profile_id, event_id?, to? }`. `to` is an email for an email step
+ * (default: the signed-in user's address) and a phone for an SMS/WhatsApp step
+ * (required). The step is read from the DRAFT, since that is what is being edited.
+ *
+ * Writes NOTHING about the customer (no enrollment, outbox, messages_log or profile
+ * change), so it never shows in their timeline or in any automation metric. The
+ * only record is an `activity_log` row (source 'test_send', no profile_id). Consent
+ * is judged on the TEST recipient; the email envelope + verified-domain gates still
+ * apply, so a test proves the step can actually send.
+ */
+export const testSendAutomationStep: Handler = async (ctx, pool, req, deps) => {
+  const id = req.params.id!;
+  const nodeId = req.params.nodeId!;
+  const ws = ctx.workspaceId;
+  const b = asObject(req.body);
+  const profileId = typeof b.profile_id === 'string' ? b.profile_id.trim() : '';
+  if (!profileId) return ok({ error: 'Choose a customer to test with.' }, 400);
+  const eventId = typeof b.event_id === 'string' && b.event_id.trim() ? b.event_id.trim() : null;
+  const rawTo = typeof b.to === 'string' ? b.to.trim() : '';
+
+  const a = await pool.query<{ name: string; definition: unknown; draft_definition: unknown }>(
+    'SELECT name, definition, draft_definition FROM automations WHERE workspace_id = $1 AND id = $2',
+    [ws, id],
+  );
+  if (!a.rows[0]) return ok({ error: 'not found' }, 404);
+  const step = findSendStep(a.rows[0].draft_definition ?? a.rows[0].definition, nodeId);
+  if (step === 'missing') return ok({ error: 'not found' }, 404);
+  if (step === 'not_send') return ok({ error: 'Only a send step can be test-sent.' }, 400);
+
+  // The customer and their event, both scoped to this workspace (inv.2) — and the
+  // event must be THIS customer's, or the render would mix two people's data.
+  if (!UUID_RE.test(profileId) || (eventId && !UUID_RE.test(eventId))) return ok({ error: 'not found' }, 404);
+  const p = await pool.query<{
+    id: string;
+    email: string | null;
+    phone: string | null;
+    external_id: string | null;
+    email_status: string | null;
+    created_at: Date;
+    attributes: Record<string, unknown> | null;
+  }>(
+    'SELECT id, email, phone, external_id, email_status, created_at, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
+    [ws, profileId],
+  );
+  const profile = p.rows[0];
+  if (!profile) return ok({ error: 'not found' }, 404);
+  let eventPayload: unknown = null;
+  let eventType: string | null = null;
+  if (eventId) {
+    const e = await pool.query<{ type: string; payload: unknown }>(
+      'SELECT type, payload FROM events WHERE workspace_id = $1 AND profile_id = $2 AND event_id = $3',
+      [ws, profileId, eventId],
+    );
+    if (!e.rows[0]) return ok({ error: 'not found' }, 404);
+    eventPayload = e.rows[0].payload;
+    eventType = e.rows[0].type;
+  }
+  const merge = testSendMerge(profile, eventPayload);
+  const customerLabel = profile.email ?? profile.phone ?? profile.id;
+
+  const logTestSend = async (medium: string, to: string, outcome: 'success' | 'skipped' | 'failed', note: string) => {
+    const detail = `${a.rows[0]!.name} › ${nodeId}: test ${medium} to ${to} with ${customerLabel}'s data${
+      eventType ? ` (event ${eventType})` : ''
+    }${note ? ` — ${note}` : ''}`;
+    await pool.query(
+      `INSERT INTO activity_log (workspace_id, profile_id, source, type, outcome, detail)
+       VALUES ($1, NULL, 'test_send', $2, $3, $4)`,
+      [ws, medium, outcome, detail],
+    );
+  };
+
+  // ── SMS / WhatsApp ───────────────────────────────────────────────────────────
+  if (step.medium !== 'email') {
+    if (!step.textBody.trim() && !step.waTemplate) return ok({ error: 'Add a message body to this step first.' }, 409);
+    if (!rawTo) return ok({ error: 'Enter the phone number to send the test to.' }, 400);
+    const phone = normalizePhone(rawTo, await defaultPhoneCountry(pool, ws));
+    if (!phone) return ok({ error: `'${rawTo}' is not a valid phone number.` }, 400);
+    const st = await pool.query<{ status: string }>('SELECT status FROM workspaces WHERE id = $1', [ws]);
+    if (st.rows[0]?.status !== 'active') return ok({ error: 'This workspace is not active, so it cannot send.' }, 409);
+
+    // Consent is the TEST phone's: an opt-out on whoever owns that number blocks it.
+    const o = await pool.query(
+      `SELECT 1 FROM profiles pr JOIN channel_optouts co
+          ON co.workspace_id = pr.workspace_id AND co.profile_id = pr.id AND co.medium_group = 'sms_whatsapp'
+        WHERE pr.workspace_id = $1 AND pr.phone = $2`,
+      [ws, phone],
+    );
+    const verdict = decideTransactionalText({ phone, optedOut: (o.rowCount ?? 0) > 0 });
+    if (!verdict.send) {
+      const reason = 'that number opted out of SMS/WhatsApp';
+      await logTestSend(step.medium, phone, 'skipped', reason);
+      return ok({ sent: false, medium: step.medium, to: phone, reason });
+    }
+
+    const body = withTestPrefix(renderExpression(step.textBody, merge));
+    const reader = {
+      query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+        const r = await pool.query(text, values ? [...values] : undefined);
+        return { rows: r.rows as T[] };
+      },
+    };
+    const cfg = await channelConfigForWorkspace(reader, ws, step.medium);
+    const provider = resolveChannelProvider(step.medium, cfg ?? undefined, deps.channelHttp);
+    try {
+      await provider.send({
+        to: phone,
+        body,
+        // An approved WhatsApp template has fixed wording, so the [TEST] prefix
+        // cannot be added to it — only its parameters carry the customer's data.
+        ...(step.waTemplate
+          ? {
+              template: {
+                name: step.waTemplate.name,
+                language: step.waTemplate.language,
+                bodyParams: step.waTemplate.params.map((x) => renderExpression(x, merge)),
+              },
+            }
+          : {}),
+      });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : 'send failed';
+      await logTestSend(step.medium, phone, 'failed', error);
+      return ok({ sent: false, medium: step.medium, to: phone, error }, 502);
+    }
+    await logTestSend(step.medium, phone, 'success', '');
+    return ok({ sent: true, medium: step.medium, to: phone, body, ...(step.waTemplate ? { template: step.waTemplate.name } : {}) });
+  }
+
+  // ── Email ────────────────────────────────────────────────────────────────────
+  if (!step.templateId) return ok({ error: 'Design this step’s email first.' }, 409);
+  const t = await pool.query<{ subject: string | null; compiled_html: string | null; sender_id: string | null }>(
+    'SELECT subject, compiled_html, sender_id FROM email_templates WHERE workspace_id = $1 AND id = $2',
+    [ws, step.templateId],
+  );
+  const tpl = t.rows[0];
+  if (!tpl || !tpl.compiled_html) return ok({ error: 'Design this step’s email first.' }, 409);
+
+  const { ses, mode, trusted } = await emailSenderForWorkspace(pool, ws, deps);
+  // The same gates as a real send (sendBroadcast / the publish gate): Resend vouches
+  // for its own From and domain; otherwise a named sender and a verified domain.
+  let from = '';
+  if (tpl.sender_id) {
+    const s = await pool.query<{ name: string; email: string }>(
+      'SELECT name, email FROM domain_senders WHERE workspace_id = $1 AND id = $2',
+      [ws, tpl.sender_id],
+    );
+    if (s.rows[0]) from = `${s.rows[0].name} <${s.rows[0].email}>`;
+  }
+  if (!from && !trusted) {
+    return ok({ error: 'Choose who the email is from — open the email and pick a sender (add one under Sending domains).' }, 409);
+  }
+  if (!tpl.subject || !tpl.subject.trim()) return ok({ error: 'Add a subject line to the email first.' }, 409);
+  if (!trusted) {
+    const vq = scopedQuery(ws, 'SELECT 1 FROM sending_domains WHERE verified = true');
+    if (!(await pool.query(vq.text, vq.values)).rowCount) {
+      return ok({ error: 'No verified sending domain. Verify one in Workspace settings → Sending domains first.' }, 409);
+    }
+  }
+
+  const to = rawTo || (await resolveEmail(pool, ctx.userId));
+  if (!isEmailAddress(to)) return ok({ error: `'${to}' is not a valid email address.` }, 400);
+
+  // Suppression, bounce and consent state of the TEST address — never the
+  // customer's, who is not receiving anything.
+  const r = await pool.query<{ email_status: string | null; reason: string | null }>(
+    `SELECT pr.email_status, s.reason
+       FROM (SELECT $2::citext AS email) x
+       LEFT JOIN profiles pr ON pr.workspace_id = $1 AND pr.email = x.email
+       LEFT JOIN suppressions s ON s.workspace_id = $1 AND s.email = x.email`,
+    [ws, to],
+  );
+  const verdict = decideTransactionalSend(
+    { email: to, suppressionReason: r.rows[0]?.reason ?? null, emailStatus: r.rows[0]?.email_status ?? null },
+  );
+  if (!verdict.send) {
+    // The shared decision speaks to API callers; say it in the app's words.
+    const reason = r.rows[0]?.reason === 'unsubscribe' ? 'that address unsubscribed from this workspace’s email' : verdict.reason;
+    await logTestSend('email', to, 'skipped', reason);
+    return ok({ sent: false, medium: 'email', to, reason });
+  }
+
+  const rendered = renderTransactional({ subject: tpl.subject, html: tpl.compiled_html }, merge);
+  const subject = withTestPrefix(rendered.subject);
+  try {
+    // No List-Unsubscribe header and no tracking: both would be the customer's.
+    await ses.sendEmail({ from, to, subject, html: rendered.html, messageId: randomUUID() });
+  } catch (e) {
+    const error = e instanceof Error ? e.message : 'send failed';
+    await logTestSend('email', to, 'failed', error);
+    return ok({ sent: false, medium: 'email', to, error }, 502);
+  }
+  const simulated = mode !== 'real';
+  await logTestSend('email', to, 'success', simulated ? 'simulated, no email provider connected' : '');
+  return ok({ sent: true, medium: 'email', to, subject, ...(simulated ? { simulated: true } : {}) });
+};
+
 /**
  * The shared PUBLISH GATE (§9B/§10) over a automation DEFINITION: validate the graph
  * (typed 400), then mirror sendBroadcast's ORDERED per-send-node 409s (sender_id →
@@ -8411,6 +8733,8 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /automations/:id/resume': resumeAutomation,
   'POST /automations/:id/archive': archiveAutomation,
   'POST /automations/:id/send-nodes/:nodeId/attach-template': attachAutomationSendTemplate,
+  'POST /automations/:id/send-nodes/:nodeId/test-send': testSendAutomationStep,
+  'GET /automations/:id/test-send/candidates': listTestSendCandidates,
   'POST /automations/:id/enroll': enrollIntoAutomation,
   'GET /profiles': listProfiles,
   'POST /profiles/query': queryProfiles,

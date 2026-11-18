@@ -65,6 +65,7 @@ import {
   type WebhookHeaderRow,
 } from '../node-config.js';
 import { SECRET_NO_AUTOFILL } from '../../ui/autofill.js';
+import { TestSendPanel } from './TestSendPanel.js';
 
 interface SegmentLite {
   id: string;
@@ -1108,6 +1109,9 @@ function SendEditor(props: NodeEditorProps) {
         </Button>
           </>
         )}
+        {medium === sendNodeMedium(props.node.node) ? (
+          <TestSendPanel automationId={props.automationId} nodeId={props.node.id} medium={medium} />
+        ) : null}
       </div>
     );
   }
@@ -1190,6 +1194,9 @@ function SendEditor(props: NodeEditorProps) {
           </Button>
         </div>
         <p class="text-xs text-stone-400">From, To and Subject must all be set before you can publish.</p>
+        {medium === sendNodeMedium(props.node.node) ? (
+          <TestSendPanel automationId={props.automationId} nodeId={props.node.id} medium="email" />
+        ) : null}
       </div>
     );
   }
