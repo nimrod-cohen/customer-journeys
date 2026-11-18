@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.163.1',
+    date: '2026-11-18',
+    changes: [
+      'You can now actually type a decimal like 1.4 into the line height fields; the value applies when you leave the field or press Enter. (Typing 1.4 used to turn into 3.)',
+    ],
+  },
+  {
     version: '0.163.0',
     date: '2026-11-18',
     changes: [

@@ -11,3 +11,12 @@ export function parseLineHeight(raw: string): number | undefined {
   if (!Number.isFinite(n)) return undefined;
   return Math.min(3, Math.max(1, n));
 }
+
+/** "12" (or "12.4") → 12 px, 0–60; blank or junk → undefined (the default). */
+export function parseParagraphSpacing(raw: string): number | undefined {
+  const s = raw.trim().replace(',', '.');
+  if (s === '') return undefined;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.min(60, Math.max(0, Math.round(n)));
+}
