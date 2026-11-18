@@ -154,7 +154,7 @@ import {
   type IdentityResult,
 } from './identity.js';
 import { postmasterFromEnv, syncDomainWithPostmaster } from './postmaster.js';
-import { customerMerge } from '@cdp/shared';
+import { customerMerge, UNTITLED_AUTOMATION_NAME } from '@cdp/shared';
 import {
   parseTransactionalRequest,
   decideTransactionalSend,
@@ -5165,9 +5165,12 @@ export const publishAutomation: Handler = async (ctx, pool, req) => {
          status = 'active',
          draft_definition = NULL,
          draft_trigger_segment_id = NULL,
-         draft_trigger_on = NULL
+         draft_trigger_on = NULL,
+         -- An automation still carrying the placeholder takes the version's name:
+         -- the publish dialog is where people name it. A real name is never touched.
+         name = CASE WHEN btrim(name) IN ('', $7) THEN $8 ELSE name END
        WHERE workspace_id = $5 AND id = $6`,
-      [JSON.stringify(def), triggerSegmentId, triggerOn, versionId, ctx.workspaceId, id],
+      [JSON.stringify(def), triggerSegmentId, triggerOn, versionId, ctx.workspaceId, id, UNTITLED_AUTOMATION_NAME, name],
     );
 
     // (e) backfill on the SAME client so the just-set status='active' is visible to

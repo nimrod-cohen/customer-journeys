@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.158.1',
+    date: '2026-11-18',
+    changes: [
+      'Publishing an automation you never named now gives it the name you type in the publish dialog, instead of leaving it as "Untitled automation".',
+    ],
+  },
+  {
     version: '0.158.0',
     date: '2026-11-18',
     changes: [

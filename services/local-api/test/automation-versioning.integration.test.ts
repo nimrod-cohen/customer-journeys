@@ -258,6 +258,20 @@ describeMaybe('automation versioning + publish-scope (real Postgres)', () => {
     expect(live2.rows[0]!.definition.nodes.x.label).toBe('v2');
   });
 
+  it('POST /publish names an UNTITLED automation after the version, but never renames a named one', async () => {
+    const untitled = await makeAutomation(WS, linearDef());
+    await world.pool.query("UPDATE automations SET name = 'Untitled automation' WHERE id = $1", [untitled]);
+    const r1 = await call(world.env, 'POST', `/automations/${untitled}/publish`, { token: tok(), body: { name: 'Split names', scope: 'forward' } });
+    expect(r1.status).toBe(200);
+    const n1 = await world.pool.query<{ name: string }>('SELECT name FROM automations WHERE id = $1', [untitled]);
+    expect(n1.rows[0]!.name).toBe('Split names');
+
+    const named = await makeAutomation(WS, linearDef()); // name 'C'
+    await call(world.env, 'POST', `/automations/${named}/publish`, { token: tok(), body: { name: 'v1 notes', scope: 'forward' } });
+    const n2 = await world.pool.query<{ name: string }>('SELECT name FROM automations WHERE id = $1', [named]);
+    expect(n2.rows[0]!.name).toBe('C');
+  });
+
   it('POST /publish with NO draft publishes the current live definition (idempotent re-publish)', async () => {
     const camp = await makeAutomation(WS, linearDef('only'));
     const res = await call(world.env, 'POST', `/automations/${camp}/publish`, { token: tok(), body: { name: 'Live as-is', scope: 'forward' } });
