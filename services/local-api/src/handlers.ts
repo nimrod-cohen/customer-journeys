@@ -5205,16 +5205,19 @@ export const testSendAutomationStep: Handler = async (ctx, pool, req, deps) => {
     return ok({ sent: false, medium: 'email', to, reason });
   }
 
-  // The unsubscribe link is the TESTER's own (signed for their address, no
-  // automation attribution), so it is real and clickable yet never acts on the
-  // customer. GET only shows the preference center; nothing changes until a POST.
+  // The unsubscribe link is the TESTED CUSTOMER's own preference-center link — what
+  // they would really receive — so the tester can check where it leads. Opening it
+  // changes nothing (GET only shows the page; a choice needs a POST), but SUBMITTING
+  // it acts on that customer. No automation attribution, so it never counts in metrics.
   const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
-  const unsubscribeUrl = buildUnsubscribeUrl({
-    baseUrl: `${base}/manage-subscription`,
-    workspaceId: ws,
-    email: to,
-    secret: unsubscribeLinkSecret(),
-  });
+  const unsubscribeUrl = profile.email
+    ? buildUnsubscribeUrl({
+        baseUrl: `${base}/manage-subscription`,
+        workspaceId: ws,
+        email: profile.email,
+        secret: unsubscribeLinkSecret(),
+      })
+    : null;
   const merge = testSendMerge(profile, eventPayload, unsubscribeUrl);
   const rendered = renderTransactional({ subject: tpl.subject, html: tpl.compiled_html }, merge, undefined, testJs);
   const subject = withTestPrefix(rendered.subject);

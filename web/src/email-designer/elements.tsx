@@ -26,6 +26,8 @@ import {
   type Style,
 } from './canvas-styles.js';
 import { askText } from '../ui/dialog.tsx';
+import { showToast } from '../ui/toast.tsx';
+import { textWasCleared } from './text-guard.js';
 import { Baseline, Highlighter } from './icons.tsx';
 import type { DesignElement, GridElement, LeafElement } from './model.js';
 
@@ -117,8 +119,22 @@ function TextEl({ element }: { element: LeafElement & { type: 'text' } }): JSX.E
 
   const save = (): void => {
     const html = ref.current?.innerHTML ?? '';
-    if (html !== element.props.html) {
+    const before = element.props.html ?? '';
+    if (html !== before) {
       mutate('Edit text', () => updateElementProps(element.id, { html }));
+      // Saving an EMPTY block is legal (and undoable), but it is also how a whole
+      // email body vanished unnoticed. Say so, and offer to put just this block's
+      // text back — a targeted restore, so it is right even after further edits.
+      if (textWasCleared(before, html)) {
+        showToast('This text block is now empty.', {
+          tone: 'info',
+          ttl: 10000,
+          action: {
+            label: 'Undo',
+            onClick: () => mutate('Restore cleared text', () => updateElementProps(element.id, { html: before })),
+          },
+        });
+      }
     }
   };
 

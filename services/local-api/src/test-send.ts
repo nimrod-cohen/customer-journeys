@@ -7,12 +7,9 @@
 //   - The message goes to the TESTER. Nothing is written about the customer — no
 //     enrollment, no outbox row, no messages_log row (that is what every metric and
 //     the customer's own timeline read), no profile change.
-//   - The customer's `{{unsubscribe}}` link is NOT rendered: it is a signed link that
-//     really opts its owner out, and a tester clicking it in a QA email would
-//     unsubscribe the customer. The test carries the TESTER's own link instead — real
-//     and clickable, so the link itself can be checked, but it only ever acts on the
-//     tester's address. (An inert `#` href was tried first; Gmail drops it, so the
-//     link looked broken.)
+//   - `{{unsubscribe}}` is the CUSTOMER's real preference-center link (what they would
+//     receive), so the tester can check it; opening it changes nothing, but submitting
+//     it acts on that customer. It carries no automation attribution (no metric).
 import { customerMerge, eventMerge } from '@cdp/shared';
 import type { Medium } from '@cdp/channels';
 
@@ -64,8 +61,8 @@ export function findSendStep(definition: unknown, nodeId: string): TestSendStep 
  * the chosen trigger event, and NO `journey.*` (a test has no enrollment, so those
  * tokens render empty — the same as a fresh enrollment's).
  *
- * `unsubscribeUrl` is the TESTER's own preference-center link (or null for a text
- * message, which has none); it fills `{{unsubscribe_url}}` and `{{unsubscribe}}`.
+ * `unsubscribeUrl` is the customer's preference-center link (or null for a text
+ * message, or a customer with no email); it fills `{{unsubscribe_url}}` and `{{unsubscribe}}`.
  *
  * Profile values win over event keys, exactly as the dispatcher orders them.
  */

@@ -193,13 +193,13 @@ describeMaybe('automation step test send (real Postgres)', () => {
     expect(sent.subject).toBe('[TEST] Your order A-77');
     expect(sent.from).toBe('Acme <team@mail.acme.com>');
     expect(sent.html).toContain('Hi Dana, order A-77[]');
-    // The unsubscribe link is a REAL, clickable preference-center link — but signed
-    // for the TESTER's address, never the customer's (clicking it in a test must not
-    // opt the customer out), and with no automation attribution (no metric).
+    // The unsubscribe link is the TESTED CUSTOMER's real preference-center link —
+    // exactly what they would get, so the tester can check it — with no automation
+    // attribution, so a test click never counts in the automation's metrics.
     const href = /href="([^"]*manage-subscription[^"]*)"/.exec(sent.html)?.[1]?.replace(/&amp;/g, '&');
     expect(href).toBeTruthy();
     const t = new URL(href!).searchParams.get('t')!;
-    expect(unpackSubscriptionToken(unsubscribeLinkSecret(), t)).toMatchObject({ workspaceId: WS, email: TESTER });
+    expect(unpackSubscriptionToken(unsubscribeLinkSecret(), t)).toMatchObject({ workspaceId: WS, email: 'real.customer@example.com' });
     expect(new URL(href!).searchParams.get('c')).toBeNull();
     expect(sent.headers?.['List-Unsubscribe']).toBeUndefined();
 
