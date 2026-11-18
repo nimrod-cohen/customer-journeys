@@ -19,6 +19,7 @@ import { WorkspaceSettings } from './screens/WorkspaceSettings.js';
 import { CompanySettings } from './screens/CompanySettings.js';
 import { SendingDomainDetail } from './screens/SendingDomainDetail.tsx';
 import { AccountSettings } from './screens/AccountSettings.tsx';
+import { Changelog } from './screens/Changelog.tsx';
 import { SystemAdminConsole } from './screens/SystemAdminConsole.js';
 import { Dashboards, ProfileExplorer, SuppressionList } from './screens/SimpleScreens.js';
 import { ProfileDetail } from './screens/ProfileDetail.js';
@@ -105,6 +106,7 @@ function screenFor(path: string): JSX.Element {
   if (path === '/company/sending') return <CompanySettings tab="connectors" />; // legacy alias
   if (path === '/company/billing') return <CompanySettings tab="billing" />;
   if (path === '/account') return <AccountSettings />;
+  if (path === '/changelog') return <Changelog />;
   switch (path) {
     case '/broadcasts':
       return <BroadcastComposer />;
@@ -219,8 +221,8 @@ export function AppShell(): JSX.Element {
   // still permitted for anyone who can manage content (i.e. has those screens).
   const canEditor =
     (route === '/editor' || route.startsWith('/editor/') || route.startsWith('/components/')) && nav.some((n) => n.id === 'broadcasts');
-  // The account screen has no nav item — any signed-in user may edit their own details.
-  const canAccount = route === '/account';
+  // The account and changelog screens have no nav item — any signed-in user may open them.
+  const canAccount = route === '/account' || route === '/changelog';
   // The Setup summary page has no nav item — it's reached from the settings-nav badges;
   // permitted for anyone who can see a settings screen.
   const canViewSetup = (route === '/setup' || route.startsWith('/setup/')) && canSeeSettings;
@@ -373,10 +375,16 @@ export function AppShell(): JSX.Element {
           >
             Log out
           </button>
-          <p data-testid="app-version" class="mt-2 text-center text-[10px] lowercase tracking-wide text-stone-500">
+          <button
+            data-testid="app-version"
+            type="button"
+            onClick={() => navigate('/changelog')}
+            title="What’s new"
+            class="mt-2 w-full rounded text-center text-[10px] lowercase tracking-wide text-stone-500 transition hover:text-stone-300 hover:underline"
+          >
             v{__APP_VERSION__}
             {__APP_COMMIT__ ? ` · ${__APP_COMMIT__}` : ''}
-          </p>
+          </button>
         </div>
       </aside>
 
