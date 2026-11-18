@@ -31,7 +31,7 @@ export const CORNER_RADIUS = 14;
  * pads against (PLUS_PAD === PLUS_DIAMETER): the line on each side of a `+` is at least
  * the circle's own height, so a `+` never visually touches a knee, node or another `+`.
  */
-export const PLUS_DIAMETER = 28;
+export const PLUS_DIAMETER = 24;
 
 /**
  * PLUS_PAD — RULE 1 (v0.42.0; tightened v0.42.2): the MINIMUM length (px) of straight
@@ -81,7 +81,7 @@ export const MIN_SEGMENT = 2 * PLUS_PAD + PLUS_DIAMETER; // 3·PLUS_DIAMETER = 8
  * Choosing a FIXED inset (not a fraction of the drop) keeps the anchorable run tall
  * regardless of row height — pushing the turn to the bottom, the (+) to the top.
  */
-const RAIL_INSET = 22;
+const RAIL_INSET = 14;
 
 /**
  * orthogonalPath(from, to, laneX?, radius?) — a rounded orthogonal path from `from`

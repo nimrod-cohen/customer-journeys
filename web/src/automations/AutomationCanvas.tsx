@@ -11,6 +11,7 @@ import { useStore } from '../store/store.js';
 import { appearanceStore } from '../store/appearance.js';
 import { layoutDefinition, conditionMergeAnchors, LAYOUT, type LayoutEdge } from './layout.js';
 import { orthogonalPath, verticalAnchor } from './orthogonal-path.js';
+import { Minimap } from './Minimap.js';
 import { buildDefinition, displayType, type CanvasModel, type CanvasEdge, type CanvasNode } from './model.js';
 import { nodeSummary, canDropOnEdge, canPlaceAfterBranch } from './mutate.js';
 
@@ -632,6 +633,14 @@ export function AutomationCanvas({
           </div>
         </div>
       </div>
+
+      <Minimap
+        layout={layout}
+        viewportRef={viewportRef}
+        pad={pad}
+        pxPerLayout={scale * unit}
+        selectedNodeId={selectedNodeId}
+      />
     </div>
   );
 }
