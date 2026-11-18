@@ -18,6 +18,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.163.0',
+    date: '2026-11-18',
+    changes: [
+      'Set the space between paragraphs for a whole email under Template → Paragraph spacing (in px). The editor now also shows paragraphs spaced the way they arrive in the inbox.',
+    ],
+  },
+  {
+    version: '0.162.1',
+    date: '2026-11-18',
+    changes: [
+      'Line height fields in the email editor now take decimals like 1.4 (or 1,4), both for the whole email and for a single text block.',
+    ],
+  },
+  {
     version: '0.162.0',
     date: '2026-11-18',
     changes: [

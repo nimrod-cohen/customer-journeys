@@ -68,6 +68,8 @@ export function Canvas(): JSX.Element {
   if (st.fontFamily) bodyStyle.fontFamily = `${st.fontFamily}, Helvetica, Arial, sans-serif`;
   if (st.baseFontSize) bodyStyle.fontSize = `${st.baseFontSize}px`;
   if (st.lineHeight) bodyStyle.lineHeight = String(st.lineHeight);
+  const pGap = typeof st.paragraphSpacing === 'number' ? st.paragraphSpacing : null;
+  if (pGap !== null) (bodyStyle as Record<string, string>)['--nm-p-gap'] = `${pGap}px`;
 
   return (
     <main
@@ -78,7 +80,7 @@ export function Canvas(): JSX.Element {
     >
       <div
         ref={pageRef}
-        class={`nm-canvas-page nm-vp-${vp} ${dragging.value ? 'nm-drag-active' : ''}`}
+        class={`nm-canvas-page nm-vp-${vp} ${dragging.value ? 'nm-drag-active' : ''} ${pGap !== null ? 'nm-p-gap' : ''}`}
         dir={st.direction === 'rtl' ? 'rtl' : 'ltr'}
         style={bodyStyle}
         onDragOver={(e) => {

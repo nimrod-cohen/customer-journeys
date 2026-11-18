@@ -255,6 +255,12 @@ function headToMjml(settings: DesignSettings): string {
   if (rtl) {
     parts.push('<mj-style>.cdp-rtl div{direction:rtl;}</mj-style>');
   }
+  // Paragraph spacing is INLINED onto every <p> (mj-style inline): a <style> block
+  // alone is ignored by some clients, and a pasted paragraph's own margin would win.
+  if (typeof settings.paragraphSpacing === 'number' && Number.isFinite(settings.paragraphSpacing)) {
+    const px = Math.max(0, Math.round(settings.paragraphSpacing));
+    parts.push(`<mj-style inline="inline">p{margin:0 0 ${px}px;}</mj-style>`);
+  }
   return parts.length ? `<mj-head>${parts.join('')}</mj-head>` : '';
 }
 

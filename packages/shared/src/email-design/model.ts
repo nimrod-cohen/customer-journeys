@@ -28,6 +28,11 @@ export interface DesignSettings {
    * A block's own `lineHeight` still overrides it.
    */
   readonly lineHeight?: number;
+  /**
+   * Gap under every paragraph, in px (0 allowed). Unset → the client's default
+   * (about one line). Compiled onto each <p> so it holds in Gmail/Outlook.
+   */
+  readonly paragraphSpacing?: number;
   /** Email body width in px (default 600). */
   readonly bodyWidth?: number;
   /** Page background behind the body. */

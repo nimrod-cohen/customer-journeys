@@ -631,6 +631,11 @@
   margin: 0.4em 0;
   padding-inline-start: 24px;
 }
+/* Paragraph spacing. Tailwind's preflight zeroes <p> margins, so the canvas used to
+   show paragraphs tight while mail clients spread them ~1em apart. Default: what a
+   client does; with the Template setting: exactly the compiled margin. */
+.nm-text-editable p { margin: 1em 0; }
+.nm-p-gap .nm-text-editable p { margin: 0 0 var(--nm-p-gap); }
 .nm-text-editable ul { list-style: disc; }
 .nm-text-editable ol { list-style: decimal; }
 .nm-text-editable ul ul { list-style: circle; }
