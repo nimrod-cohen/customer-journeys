@@ -18,6 +18,11 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.157.1',
+    date: '2026-11-18',
+    changes: ['Behind-the-scenes update; nothing changes in how you use the app.'],
+  },
+  {
     version: '0.157.0',
     date: '2026-11-18',
     changes: ['New: this “What’s new” page. Click the version number at the bottom of the sidebar to open it.'],
