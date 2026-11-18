@@ -3,6 +3,7 @@
 // row / element / grid cell. Every commit goes through mutate() so it is undoable
 // and notifies the host.
 import { parseLineHeight } from './decimal.js';
+import { CommitInput } from './CommitInput.js';
 import type { ComponentChildren, JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import {
@@ -417,20 +418,14 @@ function ElementPanel({ id }: { id: string }): JSX.Element {
           <SelectField label="Font size" value={el.props.fontSize ?? ''} options={FONT_SIZE_OPTIONS} onCommit={(v) => commit({ fontSize: v || undefined })} />
           <AlignField value={el.props.textAlign} onCommit={(v) => commit({ textAlign: v })} />
           <Field label="Line height">
-            <input
+            <CommitInput
               class="nm-prop-input"
               data-testid="prop-line-height"
-              type="text"
               inputMode="decimal"
-              value={el.props.lineHeight ?? ''}
               placeholder="email default"
-              onChange={(e) => {
-                // "1.4" or "1,4" → 1.4 (1–3); blank → follow the email's default.
-                const input = e.target as HTMLInputElement;
-                const v = parseLineHeight(input.value);
-                input.value = v === undefined ? '' : String(v);
-                commit({ lineHeight: v });
-              }}
+              value={el.props.lineHeight}
+              parse={parseLineHeight}
+              onCommit={(v) => commit({ lineHeight: v })}
             />
           </Field>
           <PaddingField value={el.props.padding} onCommit={(v) => commit({ padding: v })} />
