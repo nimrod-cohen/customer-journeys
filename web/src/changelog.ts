@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.160.0',
+    date: '2026-11-18',
+    changes: [
+      'Automations with a manual trigger now have an “Enroll…” button: start the journey for one customer or for everyone currently in a segment. You can also enroll a customer from their profile (⋮ → Enroll in automation…). People already in the automation are never enrolled twice, and you are told how many were new.',
+    ],
+  },
+  {
     version: '0.159.0',
     date: '2026-11-18',
     changes: [

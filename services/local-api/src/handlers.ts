@@ -4516,9 +4516,11 @@ export const listAutomations: Handler = async (ctx, pool, req) => {
     description: string | null;
     status: string;
     published: boolean;
+    trigger_kind: string;
     hasDraft: boolean;
   }>(
     `SELECT id, name, description, status, (active_version_id IS NOT NULL) AS published,
+            COALESCE(definition->'nodes'->(definition->>'startNode')->>'kind', 'manual') AS trigger_kind,
             (draft_definition IS NOT NULL AND draft_definition::text IS DISTINCT FROM definition::text) AS "hasDraft"
        FROM automations WHERE ${where} ORDER BY created_at DESC${pc.text}`,
     [...params, ...pc.values],
@@ -5613,32 +5615,56 @@ export const enrollIntoAutomation: Handler = async (ctx, pool, req) => {
   if (hasSegment && !segmentId) return ok({ error: 'segment_id must be a non-empty string' }, 400);
 
   // The automation must belong to the token's workspace (else 404 — inv.2).
-  if (!(await ownsResource(pool, ctx.workspaceId, 'automations', id))) {
-    return ok({ error: 'not found' }, 404);
+  const st = await pool.query<{ status: string }>('SELECT status FROM automations WHERE workspace_id = $1 AND id = $2', [
+    ctx.workspaceId,
+    id,
+  ]);
+  if (!st.rows[0]) return ok({ error: 'not found' }, 404);
+  // Only a live automation enrolls (the runner refuses anything else). Say what to do
+  // rather than letting the enroll core throw.
+  const status = st.rows[0].status;
+  if (status !== 'active') {
+    return ok(
+      {
+        error:
+          status === 'paused'
+            ? 'This automation is paused — resume it before enrolling people.'
+            : status === 'archived'
+              ? 'This automation is archived, so it can’t take new people.'
+              : 'Publish this automation before enrolling people.',
+      },
+      409,
+    );
   }
+
+  // The 'once' policy makes a repeat a silent no-op, so count real inserts: report
+  // who is new and who was ALREADY in it, instead of claiming everyone was enrolled.
+  const countEnrolled = async (): Promise<number> =>
+    (
+      await pool.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM automation_enrollments WHERE workspace_id = $1 AND automation_id = $2',
+        [ctx.workspaceId, id],
+      )
+    ).rows[0]!.n;
 
   const deps = enrollDepsOnPool(pool);
+  let targeted: number;
+  const before = await countEnrolled();
   if (hasProfile) {
     // The profile must exist in THIS workspace (mirrors sendProfileEvent).
+    if (!UUID_RE.test(profileId)) return ok({ error: 'not found' }, 404);
     const present = await pool.query('SELECT 1 FROM profiles WHERE workspace_id = $1 AND id = $2', [ctx.workspaceId, profileId]);
     if (!present.rowCount) return ok({ error: 'not found' }, 404);
-    const res = await enrollProfileManually(deps, {
-      workspaceId: ctx.workspaceId,
-      automationId: id,
-      profileId,
-    });
-    return ok({ enrolled: res.enrolled });
+    targeted = (await enrollProfileManually(deps, { workspaceId: ctx.workspaceId, automationId: id, profileId })).enrolled;
+  } else {
+    // segment snapshot: the segment must exist in THIS workspace.
+    if (!UUID_RE.test(segmentId)) return ok({ error: 'not found' }, 404);
+    const seg = await pool.query('SELECT 1 FROM segments WHERE workspace_id = $1 AND id = $2', [ctx.workspaceId, segmentId]);
+    if (!seg.rowCount) return ok({ error: 'not found' }, 404);
+    targeted = (await enrollSegmentSnapshot(deps, { workspaceId: ctx.workspaceId, automationId: id, segmentId })).enrolled;
   }
-
-  // segment snapshot: the segment must exist in THIS workspace.
-  const seg = await pool.query('SELECT 1 FROM segments WHERE workspace_id = $1 AND id = $2', [ctx.workspaceId, segmentId]);
-  if (!seg.rowCount) return ok({ error: 'not found' }, 404);
-  const res = await enrollSegmentSnapshot(deps, {
-    workspaceId: ctx.workspaceId,
-    automationId: id,
-    segmentId,
-  });
-  return ok({ enrolled: res.enrolled });
+  const enrolled = (await countEnrolled()) - before;
+  return ok({ enrolled, already: Math.max(0, targeted - enrolled) });
 };
 
 /**

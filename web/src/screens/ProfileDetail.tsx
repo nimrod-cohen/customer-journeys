@@ -16,6 +16,7 @@ import { showToast } from '../ui/toast.tsx';
 import { askConfirm } from '../ui/dialog.tsx';
 import { MergeProfileDrawer } from './MergeProfileDrawer.js';
 import { SendEventDrawer } from './SendEventDrawer.js';
+import { EnrollProfileDrawer } from '../automations/EnrollDrawer.js';
 import { ChatThread } from '../whatsapp/ChatThread.tsx';
 import { useWhatsAppLive } from '../whatsapp/live.js';
 import type { Conversation } from '../whatsapp/logic.js';
@@ -118,6 +119,7 @@ export function ProfileDetail({ id }: { id: string }) {
   const [notFound, setNotFound] = useState(false);
   const [merging, setMerging] = useState(false);
   const [sendingEvent, setSendingEvent] = useState(false);
+  const [enrolling, setEnrolling] = useState(false);
   // Bumped after a manual event is recorded so the Events tab remounts + refetches.
   const [eventsReloadKey, setEventsReloadKey] = useState(0);
 
@@ -195,6 +197,7 @@ export function ProfileDetail({ id }: { id: string }) {
 
   const profileActions: ActionMenuItem[] = [
     { label: 'Send event', onSelect: () => setSendingEvent(true), 'data-testid': 'send-event-action' },
+    { label: 'Enroll in automation…', onSelect: () => setEnrolling(true), 'data-testid': 'enroll-automation-action' },
     ...(profile?.email && session.workspaceId
       ? [{ label: 'Copy subscription link', onSelect: copyPrefLink, 'data-testid': 'copy-subscription-link' } satisfies ActionMenuItem]
       : []),
@@ -231,6 +234,15 @@ export function ProfileDetail({ id }: { id: string }) {
             if (survivingId === id) void load();
             else navigate(`/profiles/${survivingId}`);
           }}
+        />
+      ) : null}
+
+      {profile ? (
+        <EnrollProfileDrawer
+          open={enrolling}
+          profileId={profile.id}
+          onClose={() => setEnrolling(false)}
+          onEnrolled={() => setEnrolling(false)}
         />
       ) : null}
 
