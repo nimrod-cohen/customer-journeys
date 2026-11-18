@@ -3,6 +3,7 @@
 // Google font (curated list incl. Hebrew-capable families — serialized as
 // mj-font), base font size, body width, page background and the color palette
 // (quick-pick chips in the color fields).
+import { parseLineHeight } from './decimal.js';
 import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import { settings, updateSettings } from './state.js';
@@ -93,17 +94,16 @@ export function SettingsPanel(): JSX.Element {
         <input
           class="nm-prop-input"
           data-testid="settings-line-height"
-          type="number"
-          min={1}
-          max={3}
-          step={0.1}
-          placeholder="Default"
+          type="text"
+          inputMode="decimal"
+          placeholder="Default (e.g. 1.5)"
           value={st.lineHeight ?? ''}
           onChange={(e) => {
-            // Blank → back to the default; otherwise a multiplier kept in a sane range.
-            const raw = (e.target as HTMLInputElement).value.trim();
-            const n = Number(raw);
-            updateSettings({ lineHeight: raw === '' || !Number.isFinite(n) ? undefined : Math.min(3, Math.max(1, n)) });
+            // Blank → back to the default; "1.4" or "1,4" → 1.4, kept within 1–3.
+            const el = e.target as HTMLInputElement;
+            const v = parseLineHeight(el.value);
+            el.value = v === undefined ? '' : String(v);
+            updateSettings({ lineHeight: v });
           }}
         />
       </label>
