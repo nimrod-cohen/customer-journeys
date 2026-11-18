@@ -3,6 +3,7 @@
 // which can render below the fold on a long list). Imperative API:
 //   showToast('Broadcast queued')                       → success (default)
 //   showToast('Could not send…', { tone: 'error' })     → error, stays longer
+//   showToast('Text cleared', { action: { label: 'Undo', onClick } }) → one button
 // A single <ToastHost/> (mounted once in AppShell) renders the stack, portaled
 // to document.body. aria-live announces toasts without stealing focus.
 import { useEffect } from 'preact/hooks';
@@ -12,11 +13,18 @@ import { createStore, useStore } from '../store/store.js';
 
 export type ToastTone = 'success' | 'error' | 'info';
 
+/** One button on a toast (e.g. Undo). Running it also closes the toast. */
+export interface ToastAction {
+  readonly label: string;
+  readonly onClick: () => void;
+}
+
 interface Toast {
   readonly id: number;
   readonly message: string;
   readonly tone: ToastTone;
   readonly ttl: number;
+  readonly action?: ToastAction;
 }
 
 const toastStore = createStore<readonly Toast[]>([]);
@@ -25,17 +33,33 @@ const toastStore = createStore<readonly Toast[]>([]);
 let nextId = 1;
 
 /** Show a floating toast. Returns its id (so it can be dismissed early). */
-export function showToast(message: string, opts: { tone?: ToastTone; ttl?: number } = {}): number {
+export function showToast(
+  message: string,
+  opts: { tone?: ToastTone; ttl?: number; action?: ToastAction } = {},
+): number {
   const tone = opts.tone ?? 'success';
   // Errors linger (they need reading + may carry a recovery hint); successes are brief.
-  const ttl = opts.ttl ?? (tone === 'error' ? 6000 : 3500);
+  // A toast with an action lingers too — it needs time to be clicked.
+  const ttl = opts.ttl ?? (tone === 'error' || opts.action ? 6000 : 3500);
   const id = nextId++;
-  toastStore.set([...toastStore.get(), { id, message, tone, ttl }]);
+  toastStore.set([...toastStore.get(), { id, message, tone, ttl, ...(opts.action ? { action: opts.action } : {}) }]);
   return id;
 }
 
 export function dismissToast(id: number): void {
   toastStore.set(toastStore.get().filter((t) => t.id !== id));
+}
+
+/** Run a toast's action once and close it (a second click finds nothing). */
+export function runToastAction(id: number): void {
+  const t = toastStore.get().find((x) => x.id === id);
+  dismissToast(id);
+  t?.action?.onClick();
+}
+
+/** The toasts on screen now (tests and diagnostics). */
+export function currentToasts(): readonly Toast[] {
+  return toastStore.get();
 }
 
 const TONE: Record<ToastTone, { box: string; icon: JSX.Element }> = {
@@ -83,6 +107,16 @@ function ToastRow({ toast }: { toast: Toast }): JSX.Element {
     >
       {tone.icon}
       <span class="min-w-0 flex-1 break-words">{toast.message}</span>
+      {toast.action ? (
+        <button
+          type="button"
+          data-testid="toast-action"
+          class="shrink-0 rounded px-1.5 font-semibold text-brand-700 hover:bg-stone-100"
+          onClick={() => runToastAction(toast.id)}
+        >
+          {toast.action.label}
+        </button>
+      ) : null}
       <button
         type="button"
         data-testid="toast-dismiss"
