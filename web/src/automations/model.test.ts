@@ -161,3 +161,16 @@ describe('defaultNodeConfig stubs', () => {
     expect(defaultNodeConfig('exit', now)).toEqual({ type: 'exit' });
   });
 });
+
+describe('nodeAfterReload', () => {
+  it('opens the RELOADED step (its own email copy), not the one captured before the save', async () => {
+    const { nodeAfterReload } = await import('./model.js');
+    const before = { id: 's2', node: { type: 'action', kind: 'send', template_id: 'shared', next: 'x' } } as never;
+    const reloaded = {
+      nodes: [{ id: 's2', node: { type: 'action', kind: 'send', template_id: 'own-copy', next: 'x' } }],
+      edges: [],
+    } as never;
+    expect((nodeAfterReload(reloaded, before) as unknown as { node: { template_id: string } }).node.template_id).toBe('own-copy');
+    expect(nodeAfterReload(null, before)).toBe(before);
+  });
+});

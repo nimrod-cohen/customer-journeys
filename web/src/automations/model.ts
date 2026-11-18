@@ -257,3 +257,12 @@ export function starterModel(): CanvasModel {
     },
   });
 }
+
+/**
+ * The node to open after a save that may have RELOADED the model (the server gave a
+ * duplicated email step its own copy): the reloaded node by id, else the original.
+ * Opening the pre-save node would edit the other step's email.
+ */
+export function nodeAfterReload(reloaded: CanvasModel | null, node: CanvasNode): CanvasNode {
+  return reloaded?.nodes.find((n) => n.id === node.id) ?? node;
+}
