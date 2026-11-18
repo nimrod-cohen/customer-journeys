@@ -25,6 +25,23 @@ const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 2.0;
 const ZOOM_STEP = 0.1;
 
+/** Screen px of breathing room kept between the last visible step and the edge. */
+export const PAN_EDGE_MARGIN = 24;
+
+/**
+ * How far past the map the canvas may scroll, in screen px, on each side. Panning
+ * stops once the step nearest the opposite edge reaches that edge (the top step at
+ * the bottom of the screen, the leftmost step at the right), keeping it fully in view.
+ * The layout's own margin (padX/padY) already sits between the map edge and its
+ * outermost card, so it counts toward that distance.
+ */
+export function panPadding(view: { w: number; h: number }, pxPerLayout: number): { x: number; y: number } {
+  return {
+    x: Math.max(0, Math.round(view.w - PAN_EDGE_MARGIN - (LAYOUT.padX + LAYOUT.cardWidth) * pxPerLayout)),
+    y: Math.max(0, Math.round(view.h - PAN_EDGE_MARGIN - (LAYOUT.padY + LAYOUT.cardHeight) * pxPerLayout)),
+  };
+}
+
 // Elements that must keep their own click/drag behavior — a pointerdown on (or
 // inside) any of these must NOT start a background pan. The board background is
 // "anything that doesn't match this selector".
@@ -152,17 +169,18 @@ export function AutomationCanvas({
   const [scale, setScale] = useState(1);
   const clampZoom = (z: number): number => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
 
-  // Panning headroom: pad the scrollable area by a FULL VIEWPORT on every side so the
-  // whole map can be panned completely off-screen in any direction (the user's rule).
-  // `pad` = the viewport's client size; a ResizeObserver keeps it current, and the
-  // spacer below derives from layout.width/height × scale + 2·pad, so it recomputes
-  // automatically on every node addition and at every zoom level.
-  const [pad, setPad] = useState({ x: 0, y: 0 });
+  // Panning headroom: the scrollable area is padded so the map can be panned until
+  // its LAST step reaches the opposite edge — the top step sitting at the bottom of
+  // the screen, the leftmost at the right — and no further (`panPadding`). The
+  // viewport size comes from a ResizeObserver; the pad is derived every render, so it
+  // follows node additions, zoom and text size.
+  const [viewSize, setViewSize] = useState({ w: 0, h: 0 });
   // Layout geometry is computed in px at the 16px design size but RENDERED in rem
   // (`rem()`), so cards, connectors and (+)s scale together with the user's text size.
   // `unit` = rendered px per layout px, for the numeric scroll/spacer math.
   useStore(appearanceStore); // re-render when the text size changes
   const unit = rootRemPx() / 16;
+  const pad = panPadding(viewSize, scale * unit);
   const padRef = useRef(pad);
   padRef.current = pad;
 
@@ -170,6 +188,7 @@ export function AutomationCanvas({
   // scrollLeft/scrollTop directly for drag-to-pan, and attach a NON-PASSIVE wheel
   // listener to it for pinch-zoom (Preact's onWheel is passive → can't preventDefault).
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const fitHeight = useFitToWindow(viewportRef);
 
   // Drag-to-pan state. A pan begins ONLY when the pointerdown lands on the board
   // BACKGROUND (not a card / + / menu / banner — see INTERACTIVE_SELECTOR), so node
@@ -246,10 +265,12 @@ export function AutomationCanvas({
         // Defer scroll fixup to after the re-render applies the new spacer size. The
         // constant padding (p.x/p.y) is NOT scaled — only the content portion is, so
         // anchor around the padded origin.
-        const p = padRef.current;
+        // The pad depends on the zoom too, so read the NEW one after the re-render.
+        const p0 = padRef.current;
         requestAnimationFrame(() => {
-          container.scrollLeft = p.x + (cx - p.x) * ratio - (e.clientX - rect.left);
-          container.scrollTop = p.y + (cy - p.y) * ratio - (e.clientY - rect.top);
+          const p1 = padRef.current;
+          container.scrollLeft = p1.x + (cx - p0.x) * ratio - (e.clientX - rect.left);
+          container.scrollTop = p1.y + (cy - p0.y) * ratio - (e.clientY - rect.top);
         });
         return next;
       });
@@ -258,17 +279,38 @@ export function AutomationCanvas({
     return () => container.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Measure the viewport so the padding equals one full screen on each side; a
-  // ResizeObserver keeps it correct as the window / surrounding layout changes.
+  // Zoom with the buttons around the middle of the screen, so the step you are looking
+  // at stays put (the pad changes with the zoom, so the scroll is fixed after render).
+  const zoomTo = (next: number): void => {
+    const el = viewportRef.current;
+    if (!el || next === scale) {
+      setScale(next);
+      return;
+    }
+    const p0 = padRef.current;
+    const ratio = next / scale;
+    const cx = el.scrollLeft + el.clientWidth / 2;
+    const cy = el.scrollTop + el.clientHeight / 2;
+    setScale(next);
+    requestAnimationFrame(() => {
+      const p1 = padRef.current;
+      el.scrollLeft = p1.x + (cx - p0.x) * ratio - el.clientWidth / 2;
+      el.scrollTop = p1.y + (cy - p0.y) * ratio - el.clientHeight / 2;
+    });
+  };
+
+  // Measure the viewport (it drives the pan padding); a ResizeObserver keeps it
+  // correct as the window / surrounding layout changes.
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return undefined;
-    const measure = (): void => setPad({ x: el.clientWidth, y: el.clientHeight });
+    const measure = (): void => setViewSize({ w: el.clientWidth, h: el.clientHeight });
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+    // Re-measured when the fitted height lands, without waiting on the observer.
+  }, [fitHeight]);
 
   // Center the SELECTED node in the viewport (accounting for pad + scale). The node's
   // center in content coords is (pos.x, pos.y + cardHeight/2); the content is offset
@@ -276,7 +318,7 @@ export function AutomationCanvas({
   const centerOnNode = (nodeId: string): boolean => {
     const el = viewportRef.current;
     const pos = layout.positions.get(nodeId);
-    if (!el || !pos || padRef.current.x === 0) return false;
+    if (!el || !pos || el.clientWidth === 0) return false;
     const cx = padRef.current.x + pos.x * scale * unit;
     const cy = padRef.current.y + (pos.y + LAYOUT.cardHeight / 2) * scale * unit;
     el.scrollLeft = cx - el.clientWidth / 2;
@@ -291,22 +333,22 @@ export function AutomationCanvas({
   const didInitScroll = useRef(false);
   useEffect(() => {
     const el = viewportRef.current;
-    if (!el || didInitScroll.current || pad.x === 0) return;
+    if (!el || didInitScroll.current || viewSize.w === 0) return;
     didInitScroll.current = true;
     if (!(selectedNodeId && centerOnNode(selectedNodeId))) {
       el.scrollLeft = pad.x;
       el.scrollTop = pad.y;
     }
-  }, [pad.x, pad.y]);
+  }, [viewSize.w, viewSize.h]);
 
   // Re-center whenever the selection changes OR `centerTick` is bumped (the owner bumps
   // it after the drawer closes so we return to the selected node even if the user
   // panned away). Skipped while the user is actively panning. Runs after `pad` is known.
   useEffect(() => {
-    if (pad.x === 0 || panning) return;
+    if (viewSize.w === 0 || panning) return;
     if (selectedNodeId) centerOnNode(selectedNodeId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedNodeId, centerTick, pad.x]);
+  }, [selectedNodeId, centerTick, viewSize.w]);
 
   return (
     <div class="relative">
@@ -339,7 +381,7 @@ export function AutomationCanvas({
           data-testid="canvas-zoom-out"
           aria-label="Zoom out"
           disabled={scale <= ZOOM_MIN}
-          onClick={() => setScale((s) => clampZoom(s - ZOOM_STEP))}
+          onClick={() => zoomTo(clampZoom(scale - ZOOM_STEP))}
           class="flex h-7 w-7 items-center justify-center rounded-md text-base font-bold hover:bg-stone-100 disabled:opacity-30"
         >
           −
@@ -348,7 +390,7 @@ export function AutomationCanvas({
           type="button"
           data-testid="canvas-zoom-reset"
           aria-label="Reset zoom"
-          onClick={() => setScale(1)}
+          onClick={() => zoomTo(1)}
           class="min-w-[3rem] rounded-md px-1 text-xs font-semibold tabular-nums hover:bg-stone-100"
         >
           <span data-testid="canvas-zoom-level">{Math.round(scale * 100)}%</span>
@@ -358,7 +400,7 @@ export function AutomationCanvas({
           data-testid="canvas-zoom-in"
           aria-label="Zoom in"
           disabled={scale >= ZOOM_MAX}
-          onClick={() => setScale((s) => clampZoom(s + ZOOM_STEP))}
+          onClick={() => zoomTo(clampZoom(scale + ZOOM_STEP))}
           class="flex h-7 w-7 items-center justify-center rounded-md text-base font-bold hover:bg-stone-100 disabled:opacity-30"
         >
           +
@@ -377,11 +419,10 @@ export function AutomationCanvas({
           panning ? 'cursor-grabbing select-none' : 'cursor-grab'
         }`}
         style={{
-          // Fill the available viewport: subtract the header / tabs / action-
-          // button rows above & below (≈220px) so the canvas eats the empty
-          // footer space instead of capping at a fixed 60vh.
-          maxHeight: 'calc(100vh - 220px)',
-          minHeight: '320px',
+          // Exactly fill the window below the page header (useFitToWindow), so the
+          // whole canvas is visible without scrolling the page.
+          height: fitHeight ? `${fitHeight}px` : 'calc(100vh - 220px)',
+          minHeight: `${MIN_CANVAS_HEIGHT}px`,
           // Light grid dots blanket the WHOLE canvas (constant density, independent
           // of zoom). `local` attachment tiles across the full scrollable area and
           // scrolls with the content rather than sticking to the viewport box.
@@ -643,6 +684,52 @@ export function AutomationCanvas({
       />
     </div>
   );
+}
+
+const MIN_CANVAS_HEIGHT = 320;
+
+/**
+ * The height that makes `ref`'s element end exactly at the bottom of the window:
+ * the window height, minus where the element starts on the page, minus whatever
+ * the page puts below it (following siblings and the bottom padding of each
+ * container up to the app's main area). Re-measured on window resize and whenever
+ * the page's content changes size (an error banner appearing above it, the text
+ * size changing). Absolutely positioned siblings (the mini-map) take no room.
+ */
+function useFitToWindow(ref: { readonly current: HTMLElement | null }): number | null {
+  const [height, setHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const px = (v: string): number => parseFloat(v) || 0;
+    const measure = (): void => {
+      let below = px(getComputedStyle(el).marginBottom);
+      let node: HTMLElement = el;
+      while (node.parentElement && node.dataset.testid !== 'app-body') {
+        for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
+          const cs = getComputedStyle(sib);
+          if (cs.position === 'absolute' || cs.position === 'fixed' || cs.display === 'none') continue;
+          below += sib.getBoundingClientRect().height + px(cs.marginTop) + px(cs.marginBottom);
+        }
+        const parent: HTMLElement = node.parentElement;
+        if (parent.dataset.testid === 'app-body') break;
+        const pcs = getComputedStyle(parent);
+        below += px(pcs.paddingBottom) + px(pcs.borderBottomWidth) + px(pcs.marginBottom);
+        node = parent;
+      }
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      setHeight(Math.max(MIN_CANVAS_HEIGHT, Math.floor(window.innerHeight - top - below)));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    const ro = new ResizeObserver(measure);
+    ro.observe(document.body);
+    return () => {
+      window.removeEventListener('resize', measure);
+      ro.disconnect();
+    };
+  }, [ref]);
+  return height;
 }
 
 function Connector({ edge }: { edge: LayoutEdge }): JSX.Element {

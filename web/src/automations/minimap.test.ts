@@ -15,3 +15,14 @@ describe('minimap geometry', () => {
     expect(r).toEqual({ x: 100, y: 50, w: 500, h: 300 });
   });
 });
+
+describe('pan limits', () => {
+  it('lets the map scroll until its outermost step reaches the opposite edge, with a margin', async () => {
+    const { panPadding, PAN_EDGE_MARGIN } = await import('./AutomationCanvas.js');
+    const { LAYOUT } = await import('./layout.js');
+    const p = panPadding({ w: 1000, h: 600 }, 1.25);
+    expect(p.x).toBe(Math.round(1000 - PAN_EDGE_MARGIN - (LAYOUT.padX + LAYOUT.cardWidth) * 1.25));
+    expect(p.y).toBe(Math.round(600 - PAN_EDGE_MARGIN - (LAYOUT.padY + LAYOUT.cardHeight) * 1.25));
+    expect(panPadding({ w: 100, h: 100 }, 2)).toEqual({ x: 0, y: 0 });
+  });
+});

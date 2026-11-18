@@ -18,6 +18,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.157.2',
+    date: '2026-11-18',
+    changes: [
+      'Automation builder: the canvas now fits the screen, so you no longer scroll the page to see all of it.',
+      'Panning stops at the edge of the journey: the last step always stays in view, whether you drag, scroll or use the mini-map.',
+    ],
+  },
+  {
     version: '0.157.1',
     date: '2026-11-18',
     changes: ['Behind-the-scenes update; nothing changes in how you use the app.'],
