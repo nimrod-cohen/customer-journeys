@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.159.0',
+    date: '2026-11-18',
+    changes: [
+      'Send yourself a test of any automation email, SMS or WhatsApp step, filled in with a real customer’s details (and one of their real trigger events). It is marked [TEST], goes only to you, and the customer receives nothing and is not enrolled.',
+    ],
+  },
+  {
     version: '0.158.1',
     date: '2026-11-18',
     changes: [
