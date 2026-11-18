@@ -141,6 +141,19 @@ describeMaybe('POST /v1/send (real Postgres)', () => {
     expect(rows[0]!.n).toBe(1);
   });
 
+  it('runs {{ return … }} code over the caller\'s data, keeping its types', async () => {
+    await pool.query(
+      `INSERT INTO email_templates (workspace_id, name, kind, mjml, subject, sender_id, to_address, compiled_html, transactional_key)
+       VALUES ($1,'Code','library','<mjml/>',$3,$2,'{{customer.email}}','<p>x</p>','code-subject')`,
+      [WS, SENDER, '{{ return data.items.length }} items{{ return data.vip ? " for a VIP" : "" }}'],
+    );
+    const res = await send({ template: 'code-subject', to: 'coder@example.com', data: { items: [1, 2], vip: true } });
+    const body = await res.json();
+    expect(body.sent).toBe(true);
+    const { rows } = await pool.query<{ subject: string }>('SELECT subject FROM messages_log WHERE ses_message_id = $1', [body.message_id]);
+    expect(rows[0]!.subject).toBe('2 items for a VIP');
+  });
+
   // Conservative by default; the caller opts out per request when the message is
   // genuinely essential.
   it('does NOT send to an unsubscribed recipient by default', async () => {

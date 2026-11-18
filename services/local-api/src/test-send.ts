@@ -9,7 +9,10 @@
 //     the customer's own timeline read), no profile change.
 //   - The customer's `{{unsubscribe}}` link is NOT rendered: it is a signed link that
 //     really opts its owner out, and a tester clicking it in a QA email would
-//     unsubscribe the customer. It becomes an inert placeholder.
+//     unsubscribe the customer. The test carries the TESTER's own link instead — real
+//     and clickable, so the link itself can be checked, but it only ever acts on the
+//     tester's address. (An inert `#` href was tried first; Gmail drops it, so the
+//     link looked broken.)
 import { customerMerge, eventMerge } from '@cdp/shared';
 import type { Medium } from '@cdp/channels';
 
@@ -56,24 +59,30 @@ export function findSendStep(definition: unknown, nodeId: string): TestSendStep 
   };
 }
 
-/** The placeholder a test send renders in place of the customer's unsubscribe link. */
-export const TEST_UNSUBSCRIBE_URL = '#test-send-unsubscribe';
-
 /**
  * The merge map for a test send: `customer.*` from the chosen profile, `event.*` from
  * the chosen trigger event, and NO `journey.*` (a test has no enrollment, so those
  * tokens render empty — the same as a fresh enrollment's).
+ *
+ * `unsubscribeUrl` is the TESTER's own preference-center link (or null for a text
+ * message, which has none); it fills `{{unsubscribe_url}}` and `{{unsubscribe}}`.
  *
  * Profile values win over event keys, exactly as the dispatcher orders them.
  */
 export function testSendMerge(
   profile: { email?: string | null; phone?: string | null; attributes?: Record<string, unknown> | null } & Record<string, unknown>,
   eventPayload: unknown,
+  unsubscribeUrl: string | null = null,
 ): Record<string, string> {
   return {
     ...(eventPayload === undefined || eventPayload === null ? {} : eventMerge(eventPayload)),
     ...customerMerge(profile),
-    unsubscribe_url: TEST_UNSUBSCRIBE_URL,
-    unsubscribe: `<a href="${TEST_UNSUBSCRIBE_URL}">Unsubscribe</a>`,
+    ...(unsubscribeUrl
+      ? { unsubscribe_url: unsubscribeUrl, unsubscribe: `<a href="${escapeAttr(unsubscribeUrl)}">Unsubscribe</a>` }
+      : { unsubscribe_url: '', unsubscribe: '' }),
   };
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }

@@ -898,6 +898,30 @@ OUR domain. Not XSS (clients strip `<script>`); worse for a sending platform.
   href is left alone; anything else has the attribute REMOVED. Whitespace and control
   characters are stripped before the scheme is read (`java\tscript:` runs in clients).
 
+## `{{ return … }}` — JavaScript in message text
+
+A merge tag whose content STARTS WITH `return` is code; every other `{{ … }}` stays a plain
+tag, so existing templates cannot change meaning. It works in every message sink (email
+subject/body/To, SMS/WhatsApp body, WhatsApp template params, ICS fields) for broadcasts,
+automations, `/v1/send` and test sends.
+
+- **The renderers only recognise the block** (`renderExpression`, `renderExpressionHtml`,
+  dispatcher `renderTemplateBody` take an optional `TemplateJs` runner). With no runner the
+  block is left as written — visible, never silently dropped. Every send sink passes one.
+- **The runner is `@cdp/shared/js-sandbox`** (`makeTemplateJs`), a NODE-ONLY subpath — the
+  package root stays isomorphic and the web bundle never imports it. It is the SAME sandbox as
+  update-profile JS values (`evaluateJsValue` delegates to `runSandboxedJs`): empty context,
+  data parsed inside it, 100 ms timeout, result coerced inside, any failure → ''. Code that
+  timed out once is not re-run in that process (a broadcast would pay the timeout per
+  recipient). Node's `vm` is not a hard boundary; accepted (2026-11-18), as for JS values.
+- **Code sees TYPED objects**, not the flat string merge map: `customer` from the profile row
+  (`customerJsObject`), `data` from the API body, `event`/`journey` from the outbox payload's
+  `js_ctx` (written by the runner; `varsFromMerge` rebuilds them from the flat map for older
+  rows).
+- **HTML sinks decode the code first** (`decodeHtmlCode`): the editor saves `>` `&` `'` `"`
+  as entities and may wrap parts in tags. The result is ESCAPED like any merge value;
+  `{{{ return … }}}` writes it raw. The code cannot contain `}}`.
+
 ## `customer.*` namespace (extends §8/§11)
 
 One systemwide token scheme for referring to a profile in **both** segment rules and merge tags. `customer.email` / `customer.phone` / `customer.external_id` / `customer.email_status` / `customer.created_at` map to profile columns; `customer.attributes.<key>` is a custom attribute; and **`customer.<key>` is shorthand for `customer.attributes.<key>`** — so `{{customer.tier}}` ≡ `{{customer.attributes.tier}}`, and in a rule `customer.tier` ≡ `attributes.tier`. Single source of truth: `packages/shared/src/customer.ts` (`expandCustomerPath`, `expandCustomerToken`, `resolveCustomerField`, `customerMerge`). The segment compiler normalizes the field BEFORE the whitelist (inv.6 unchanged). Legacy bare `attributes.*` / scalar names still work.

@@ -18,6 +18,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.161.0',
+    date: '2026-11-18',
+    changes: [
+      'Merge tags can now run code: write {{ return … }} in any email subject, body, SMS or WhatsApp message, e.g. {{ return customer.first_name ? customer.first_name + ", " : "" }} to add a name and comma only when there is a name. See Help → Personalization tokens.',
+    ],
+  },
+  {
+    version: '0.160.1',
+    date: '2026-11-18',
+    changes: [
+      'The unsubscribe link in a test email now works: it opens your own subscription page (never the customer’s), so you can check the link without affecting them.',
+    ],
+  },
+  {
     version: '0.160.0',
     date: '2026-11-18',
     changes: [

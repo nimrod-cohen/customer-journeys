@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findSendStep, testSendMerge, withTestPrefix, TEST_UNSUBSCRIBE_URL } from '../src/test-send.js';
+import { findSendStep, testSendMerge, withTestPrefix } from '../src/test-send.js';
 
 describe('test-send helpers', () => {
   it('prefixes once', () => {
@@ -22,11 +22,13 @@ describe('test-send helpers', () => {
     expect(findSendStep(def, 'toString')).toBe('missing');
   });
 
-  it('merges customer over event and neutralizes the unsubscribe link', () => {
-    const m = testSendMerge({ email: 'c@x.com', attributes: { first_name: 'Dana' } }, { order: { id: 'A1' } });
+  it('merges customer over event and uses the link it is given for unsubscribe', () => {
+    const url = 'https://app.test/manage-subscription?t=abc&x=1';
+    const m = testSendMerge({ email: 'c@x.com', attributes: { first_name: 'Dana' } }, { order: { id: 'A1' } }, url);
     expect(m['customer.attributes.first_name']).toBe('Dana');
     expect(m['event.order.id']).toBe('A1');
-    expect(m.unsubscribe_url).toBe(TEST_UNSUBSCRIBE_URL);
-    expect(m.unsubscribe).not.toContain('manage-subscription');
+    expect(m.unsubscribe_url).toBe(url);
+    expect(m.unsubscribe).toBe('<a href="https://app.test/manage-subscription?t=abc&amp;x=1">Unsubscribe</a>');
+    expect(testSendMerge({}, null).unsubscribe).toBe('');
   });
 });

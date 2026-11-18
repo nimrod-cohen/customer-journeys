@@ -155,7 +155,8 @@ import {
   type IdentityResult,
 } from './identity.js';
 import { postmasterFromEnv, syncDomainWithPostmaster } from './postmaster.js';
-import { customerMerge, UNTITLED_AUTOMATION_NAME } from '@cdp/shared';
+import { customerMerge, UNTITLED_AUTOMATION_NAME, type TemplateJs } from '@cdp/shared';
+import { makeTemplateJs, customerJsObject } from '@cdp/shared/js-sandbox';
 import {
   parseTransactionalRequest,
   decideTransactionalSend,
@@ -5077,7 +5078,9 @@ export const testSendAutomationStep: Handler = async (ctx, pool, req, deps) => {
     eventPayload = e.rows[0].payload;
     eventType = e.rows[0].type;
   }
-  const merge = testSendMerge(profile, eventPayload);
+  const baseMerge = testSendMerge(profile, eventPayload);
+  // `{{ return … }}` code sees the same customer + event; journey is empty (no enrollment).
+  const testJs = makeTemplateJs({ customer: customerJsObject(profile), event: eventPayload ?? {}, journey: {} });
   const customerLabel = profile.email ?? profile.phone ?? profile.id;
 
   const logTestSend = async (medium: string, to: string, outcome: 'success' | 'skipped' | 'failed', note: string) => {
@@ -5114,7 +5117,8 @@ export const testSendAutomationStep: Handler = async (ctx, pool, req, deps) => {
       return ok({ sent: false, medium: step.medium, to: phone, reason });
     }
 
-    const body = withTestPrefix(renderExpression(step.textBody, merge));
+    const merge = baseMerge;
+    const body = withTestPrefix(renderExpression(step.textBody, merge, testJs));
     const reader = {
       query: async <T = Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
         const r = await pool.query(text, values ? [...values] : undefined);
@@ -5134,7 +5138,7 @@ export const testSendAutomationStep: Handler = async (ctx, pool, req, deps) => {
               template: {
                 name: step.waTemplate.name,
                 language: step.waTemplate.language,
-                bodyParams: step.waTemplate.params.map((x) => renderExpression(x, merge)),
+                bodyParams: step.waTemplate.params.map((x) => renderExpression(x, merge, testJs)),
               },
             }
           : {}),
@@ -5201,7 +5205,18 @@ export const testSendAutomationStep: Handler = async (ctx, pool, req, deps) => {
     return ok({ sent: false, medium: 'email', to, reason });
   }
 
-  const rendered = renderTransactional({ subject: tpl.subject, html: tpl.compiled_html }, merge);
+  // The unsubscribe link is the TESTER's own (signed for their address, no
+  // automation attribution), so it is real and clickable yet never acts on the
+  // customer. GET only shows the preference center; nothing changes until a POST.
+  const base = process.env.LOCAL_APP_BASE_URL ?? `http://localhost:${process.env.LOCAL_API_PORT ?? '8787'}`;
+  const unsubscribeUrl = buildUnsubscribeUrl({
+    baseUrl: `${base}/manage-subscription`,
+    workspaceId: ws,
+    email: to,
+    secret: unsubscribeLinkSecret(),
+  });
+  const merge = testSendMerge(profile, eventPayload, unsubscribeUrl);
+  const rendered = renderTransactional({ subject: tpl.subject, html: tpl.compiled_html }, merge, undefined, testJs);
   const subject = withTestPrefix(rendered.subject);
   try {
     // No List-Unsubscribe header and no tracking: both would be the customer's.
@@ -8145,11 +8160,12 @@ async function sendOneTransactionalText(args: {
   }
 
   const profile = await pool.query<{ email: string | null; phone: string | null; attributes: Record<string, unknown> | null }>(
-    'SELECT email, phone, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
+    'SELECT id, email, phone, external_id, email_status, created_at, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
     [ws, profileId],
   );
   const merge = { ...customerMerge(profile.rows[0] ?? {}), ...dataMerge(parsed.data) };
-  const body = renderTemplateBody(tpl.body, merge);
+  const js = makeTemplateJs({ customer: customerJsObject(profile.rows[0] ?? {}), data: parsed.data });
+  const body = renderTemplateBody(tpl.body, merge, js);
 
   let providerMessageId: string;
   try {
@@ -8373,9 +8389,9 @@ function organizerFromHeader(from: string): { email: string; name?: string } {
  */
 function buildRecipientInvite(
   cal: ParsedCalendar,
-  args: { to: string; cc: readonly string[]; from: string; subject: string; merge: Record<string, string> },
+  args: { to: string; cc: readonly string[]; from: string; subject: string; merge: Record<string, string>; js?: TemplateJs },
 ): { ics: string; method: 'REQUEST' | 'CANCEL' } {
-  const r = (v: string | undefined): string | undefined => (v === undefined ? undefined : renderExpression(v, args.merge));
+  const r = (v: string | undefined): string | undefined => (v === undefined ? undefined : renderExpression(v, args.merge, args.js));
   const organizer = cal.organizer ?? organizerFromHeader(args.from);
   return {
     method: cal.method,
@@ -8447,13 +8463,14 @@ async function sendOneTransactionalEmail(args: {
   }
 
   const profile = await pool.query<{ email: string | null; attributes: Record<string, unknown> | null }>(
-    'SELECT email, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
+    'SELECT id, email, phone, external_id, email_status, created_at, attributes FROM profiles WHERE workspace_id = $1 AND id = $2',
     [ws, profileId],
   );
   // Rendered per recipient: this is what makes several `to` addresses different
   // from cc, where everyone reads the primary's name.
   const merge = { ...customerMerge(profile.rows[0] ?? {}), ...dataMerge(parsed.data) };
-  const rendered = renderTransactional({ subject: tpl.subject ?? '', html: tpl.compiled_html }, merge);
+  const js = makeTemplateJs({ customer: customerJsObject(profile.rows[0] ?? {}), data: parsed.data });
+  const rendered = renderTransactional({ subject: tpl.subject ?? '', html: tpl.compiled_html }, merge, undefined, js);
 
   const messageId = randomUUID();
   try {
@@ -8474,6 +8491,7 @@ async function sendOneTransactionalEmail(args: {
               from,
               subject: rendered.subject,
               merge,
+              js,
             }),
           }
         : {}),

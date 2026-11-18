@@ -23,7 +23,7 @@
 //   5. vm.runInContext(src, ctx, { timeout: 100, displayErrors:false }). Coerce the
 //      result: undefined/null → '' ; else String(result). On ANY throw/timeout →
 //      return '' (safe-empty; NEVER throw to the tick).
-import vm from 'node:vm';
+import { runSandboxedJs } from '@cdp/shared/js-sandbox';
 import {
   customerMerge,
   eventMerge,
@@ -41,9 +41,6 @@ export interface JsValueContext {
 
 /** Matches a {{ token }} placeholder (whitespace-tolerant, dotted keys). */
 const PLACEHOLDER_RE = /\{\{\s*([\w.]+)\s*\}\}/g;
-
-/** Whether the snippet already contains a `return` statement (vs a bare expression). */
-const RETURN_RE = /\breturn\b/;
 
 /**
  * Build the `customer` object the sandbox sees:
@@ -89,33 +86,10 @@ function interpolatePlaceholders(code: string, profile: CustomerProfile, event: 
  */
 export function evaluateJsValue(code: string, ctx: JsValueContext): string {
   if (typeof code !== 'string') return '';
-  try {
-    const customerObj = buildCustomerObject(ctx.profile);
-    const eventObj = buildEventObject(ctx.event);
-    // The data is passed as JSON STRINGS and parsed INSIDE the context, so the
-    // resulting objects are context-native (their prototype chain leads to the
-    // context's intrinsics, never the host realm).
-    const cjson = JSON.stringify(JSON.stringify(customerObj));
-    const ejson = JSON.stringify(JSON.stringify(eventObj));
-    const interpolated = interpolatePlaceholders(code, ctx.profile, ctx.event);
-    const body = RETURN_RE.test(interpolated) ? interpolated : `return (${interpolated});`;
-    // Coerce the result to a string INSIDE the context, under the timeout — so a
-    // returned object with a looping/throwing toString is bounded by the vm timeout
-    // (a host-side String(result) would run that toString OUTSIDE the guard). Only a
-    // string PRIMITIVE crosses the boundary back to the host (realm-agnostic, safe).
-    const src =
-      `"use strict";(function(){` +
-      `const customer=JSON.parse(${cjson});const event=JSON.parse(${ejson});` +
-      `const __v=(function(){${body}})();` +
-      `return (__v===undefined||__v===null)?'':String(__v);` +
-      `})()`;
-
-    // EMPTY context: no host globals. Only the context's own intrinsics exist.
-    const context = vm.createContext(Object.create(null) as object);
-    const result = vm.runInContext(src, context, { timeout: 100, displayErrors: false });
-    return typeof result === 'string' ? result : '';
-  } catch {
-    // Any throw (syntax/runtime/timeout/escape) → safe-empty. Never to the tick.
-    return '';
-  }
+  // The sandbox itself (empty context, context-native data, timeout, in-context
+  // string coercion) is shared with `{{ return … }}` message blocks.
+  return runSandboxedJs(interpolatePlaceholders(code, ctx.profile, ctx.event), {
+    customer: buildCustomerObject(ctx.profile),
+    event: buildEventObject(ctx.event),
+  });
 }

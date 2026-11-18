@@ -53,6 +53,7 @@ import {
   type TrackedLink,
 } from './core.js';
 import { customerMerge, expandCustomerToken } from '@cdp/shared';
+import { makeTemplateJs, customerJsObject, varsFromMerge } from '@cdp/shared/js-sandbox';
 import {
   resolveChannelProvider,
   normalizePhone,
@@ -280,12 +281,13 @@ export async function dispatchOutbox(
     const { rows: profRows } = await deps.reader.query<{
       id: string;
       email: string | null;
+      phone: string | null;
       external_id: string | null;
       email_status: string | null;
       created_at: string | null;
       attributes: Record<string, unknown> | null;
     }>(
-      `SELECT id, email, external_id, email_status, created_at, attributes
+      `SELECT id, email, phone, external_id, email_status, created_at, attributes
        FROM profiles WHERE workspace_id = $1 AND id = $2`,
       [workspaceId, ob.profile_id],
     );
@@ -389,6 +391,19 @@ export async function dispatchOutbox(
     // per-send `payload.merge` provides any extra tags. Profile-derived customer
     // values are authoritative (override a stale payload customer key).
     const merge: Record<string, string> = { ...asStringRecord(payload['merge']), ...customerMerge(profile) };
+    // `{{ return … }}` blocks see the real, TYPED objects: the customer from their
+    // profile; the trigger event + journey vars from the runner's `js_ctx` (rebuilt
+    // from the flat merge map for a row queued before it carried one).
+    const flatVars = varsFromMerge(merge);
+    const jsCtx = (payload['js_ctx'] && typeof payload['js_ctx'] === 'object' ? payload['js_ctx'] : {}) as {
+      event?: unknown;
+      journey?: unknown;
+    };
+    const js = makeTemplateJs({
+      customer: customerJsObject(profile),
+      event: jsCtx.event ?? flatVars.event,
+      journey: jsCtx.journey ?? flatVars.journey,
+    });
     // `{{unsubscribe}}` / `{{unsubscribe_url}}` resolve to THIS recipient's
     // workspace-scoped PREFERENCE CENTER (manage your subscription) — where they
     // can opt out of specific topics / a channel group, or unsubscribe from
@@ -531,6 +546,7 @@ export async function dispatchOutbox(
       whatsappTemplate,
       phone,
       merge,
+      js,
       frequencyCap,
       quietHours,
       timeZone,
@@ -582,7 +598,7 @@ export async function dispatchOutbox(
     // EMAIL: a recipient with NO usable address is SKIPPED cleanly (never a throw
     // / retry) — mirrors the text no-phone skip. Email is the identity key so
     // 'no email' is rare, but a CUSTOM To token that renders empty must skip too.
-    const renderedTo = ctx.toAddress ? renderTemplateBody(ctx.toAddress, ctx.merge).trim() : '';
+    const renderedTo = ctx.toAddress ? renderTemplateBody(ctx.toAddress, ctx.merge, ctx.js).trim() : '';
     const emailTo = renderedTo || profile.email || '';
     if (!emailTo) {
       await deps.runInWorkspaceTx(workspaceId, [
