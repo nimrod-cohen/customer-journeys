@@ -104,7 +104,7 @@ export interface LayoutEdge {
  * a card's bottom and the next card's top — the space every connector's vertical run
  * is carved from. It is kept comfortably above `MIN_SEGMENT` (orthogonal-path.ts) so
  * each edge's anchorable V run (the trunk V, a branch arm lane, the merged trunk)
- * clears the floor with room for its (+) and an inserted node. With rowHeight 200 /
+ * clears the floor with room for its (+) and an inserted node. With rowHeight 168 /
  * cardHeight 72 the drop is 128px (v0.42.2, raised from 112 when PLUS_PAD grew to the
  * +-circle height ⇒ MIN_SEGMENT 84); the rail-inset routing keeps even the worst run
  * (the lane middle V = drop − 2·RAIL_INSET = 84px, the jog upper leg ≈ 92px) ≥ MIN_SEGMENT.
@@ -117,7 +117,7 @@ export interface LayoutEdge {
  */
 export const LAYOUT = {
   colWidth: 240,
-  rowHeight: 200,
+  rowHeight: 168,
   cardWidth: 200,
   cardHeight: 72,
   padX: 80,
