@@ -9,6 +9,7 @@
 //     writeAuditEntry.
 //
 // SES/SQS/DNS are mocked at the boundary (deps injected); Postgres is real.
+import { deliveryRates } from './delivery-rates.js';
 import { listMcpTokens, createMcpToken, revokeMcpToken } from './mcp/tokens.js';
 import {
   listEmailComponents,
@@ -6853,11 +6854,7 @@ export const dashboardDeliveryHealth: Handler = async (ctx, pool, req) => {
   const bounced = evBy.get('bounce') ?? 0;
   const complained = evBy.get('complaint') ?? 0;
   const sent = sentRes.rows[0]?.c ?? 0;
-  // Rates are over delivery attempts (delivered + bounced) — the standard SES
-  // denominator; complaints are measured against delivered mail.
-  const attempts = delivered + bounced;
-  const bounceRate = attempts > 0 ? bounced / attempts : 0;
-  const complaintRate = delivered > 0 ? complained / delivered : 0;
+  const rates = deliveryRates({ sent, delivered, bounced, complained });
 
   const suppBy = new Map(suppRes.rows.map((r) => [r.reason, r.c]));
   const suppression = {
@@ -6871,7 +6868,7 @@ export const dashboardDeliveryHealth: Handler = async (ctx, pool, req) => {
   return ok({
     window_days: days,
     outcomes: { sent, delivered, bounced, complained },
-    rates: { bounce: bounceRate, complaint: complaintRate },
+    rates,
     suppression,
     trend: trendRes.rows,
   });
