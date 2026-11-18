@@ -1,20 +1,32 @@
 // "Send test" for an automation send step: render the step's message with a REAL
-// customer's data (and, for an event trigger, one of their real trigger events) and
-// deliver it to the person testing — never to the customer. The server
-// (POST /automations/:id/send-nodes/:nodeId/test-send) writes nothing about the
-// customer; this panel only collects who to impersonate and where to send it.
+// customer's data and deliver it to the person testing — never to the customer.
+//
+// No search: the panel lists the last 10 customers the automation's trigger WOULD
+// have enrolled (GET /automations/:id/test-send/candidates) — the latest to fire the
+// trigger event (each with that event, so {{event.*}} renders from it), to enter or
+// exit the trigger segment, or to be created/updated. The server
+// (POST /automations/:id/send-nodes/:nodeId/test-send) writes nothing about them.
 import { useEffect, useState } from 'preact/hooks';
 import { api, sessionStore } from '../../store/session.js';
 import { useStore } from '../../store/store.js';
-import { Button, Field, Input, Select } from '../../ui/kit.js';
-import { ProfilePicker, type PickedProfile } from '../../ui/ProfilePicker.js';
+import { Button, Field, Input } from '../../ui/kit.js';
 import { showToast } from '../../ui/toast.js';
 import type { SendMedium } from '../node-config.js';
 
-interface ProfileEvent {
-  event_id: string;
-  type: string;
-  occurred_at: string;
+interface Candidate {
+  profile_id: string;
+  email: string | null;
+  phone: string | null;
+  at: string;
+  event_id?: string;
+  event_type?: string;
+}
+
+interface CandidatesResponse {
+  trigger: string;
+  profileChange?: string;
+  triggerOn?: 'enter' | 'exit';
+  candidates: Candidate[];
 }
 
 interface TestSendResult {
@@ -24,56 +36,79 @@ interface TestSendResult {
   simulated?: boolean;
 }
 
-export function TestSendPanel(props: {
-  automationId: string | null;
-  nodeId: string;
-  medium: SendMedium;
-  /** The automation's trigger node — an event trigger offers the customer's real events. */
-  triggerNode?: { kind?: string; eventType?: string; eventTypes?: readonly string[] } | null | undefined;
-}) {
+/** What made this customer a candidate, in a few words. */
+function triggerVerb(res: CandidatesResponse, c: Candidate): string {
+  switch (res.trigger) {
+    case 'event':
+      return `fired ${c.event_type ?? 'the event'}`;
+    case 'segment_entry':
+      return res.triggerOn === 'exit' ? 'left the segment' : 'entered the segment';
+    case 'profile':
+      return res.profileChange === 'created' ? 'created' : 'updated';
+    default:
+      return 'last updated';
+  }
+}
+
+/** The empty-list explanation, per trigger. */
+function emptyText(trigger: string): string {
+  switch (trigger) {
+    case 'event':
+      return 'Nobody has fired this trigger event yet (with its filter applied). Set the trigger event first, or wait for one to arrive.';
+    case 'segment_entry':
+      return 'Nobody has entered or left the trigger segment yet. Choose the segment on the trigger first.';
+    default:
+      return 'No customers yet.';
+  }
+}
+
+export function TestSendPanel(props: { automationId: string | null; nodeId: string; medium: SendMedium }) {
   const session = useStore(sessionStore);
   const [open, setOpen] = useState(false);
-  const [profile, setProfile] = useState<PickedProfile | null>(null);
-  const [events, setEvents] = useState<ProfileEvent[]>([]);
-  const [eventId, setEventId] = useState('');
+  const [list, setList] = useState<CandidatesResponse | null>(null);
+  const [picked, setPicked] = useState<Candidate | null>(null);
   const isText = props.medium !== 'email';
   const [to, setTo] = useState('');
-  const isEventTrigger = props.triggerNode?.kind === 'event';
-  const triggerTypes = new Set(
-    [...(props.triggerNode?.eventTypes ?? []), props.triggerNode?.eventType ?? ''].filter((t) => t),
-  );
 
   // The recipient defaults to the signed-in user's own email; a text step needs a phone.
   useEffect(() => {
     setTo(isText ? '' : session.email ?? '');
   }, [isText, session.email]);
 
-  // The picked customer's real trigger events, newest first — the first one is preselected.
+  // Re-read every time the panel opens: the trigger may have just been edited.
   useEffect(() => {
-    setEvents([]);
-    setEventId('');
-    if (!profile || !isEventTrigger) return;
+    if (!open || !props.automationId) return;
+    setList(null);
+    setPicked(null);
     void api
-      .get<{ events: ProfileEvent[] }>(`/profiles/${profile.id}/events`)
+      .get<CandidatesResponse>(`/automations/${props.automationId}/test-send/candidates`)
       .then((r) => {
-        const matching = r.events.filter((e) => triggerTypes.size === 0 || triggerTypes.has(e.type));
-        setEvents(matching);
-        setEventId(matching[0]?.event_id ?? '');
+        setList(r);
+        setPicked(r.candidates[0] ?? null);
       })
-      .catch(() => setEvents([]));
-  }, [profile?.id, isEventTrigger]);
+      .catch((e: unknown) => {
+        setList({ trigger: '', candidates: [] });
+        showToast((e as { error?: string })?.error ?? 'Could not load recent customers.', { tone: 'error' });
+      });
+  }, [open, props.automationId]);
 
   if (!props.automationId) return null;
 
   const send = async (): Promise<void> => {
-    if (!profile) {
+    if (!picked) {
       showToast('Choose a customer to test with.', { tone: 'error' });
       return;
     }
     try {
       const res = await api.post<TestSendResult>(
         `/automations/${props.automationId}/send-nodes/${props.nodeId}/test-send`,
-        { body: { profile_id: profile.id, ...(eventId ? { event_id: eventId } : {}), ...(to.trim() ? { to: to.trim() } : {}) } },
+        {
+          body: {
+            profile_id: picked.profile_id,
+            ...(picked.event_id ? { event_id: picked.event_id } : {}),
+            ...(to.trim() ? { to: to.trim() } : {}),
+          },
+        },
       );
       if (!res.sent) {
         showToast(`Test not sent: ${res.reason ?? 'refused'}.`, { tone: 'error' });
@@ -101,8 +136,8 @@ export function TestSendPanel(props: {
         <div>
           <p class="text-sm font-semibold text-ink-900">Send a test</p>
           <p class="text-xs text-stone-500">
-            Uses a real customer&apos;s data, but goes only to you, marked [TEST]. The customer gets nothing and isn&apos;t
-            enrolled. Sends this step as last saved.
+            Pick one of the last customers this automation would have enrolled. The message uses their data but goes only
+            to you, marked [TEST] — they get nothing and aren&apos;t enrolled. Sends this step as last saved.
           </p>
         </div>
         <button
@@ -116,27 +151,41 @@ export function TestSendPanel(props: {
         </button>
       </div>
       <Field label="Customer">
-        <ProfilePicker testId="send-test-profile" value={profile} onChange={setProfile} />
+        {list === null ? (
+          <p class="text-sm text-stone-400">Loading recent customers…</p>
+        ) : list.candidates.length === 0 ? (
+          <p data-testid="send-test-empty" class="text-sm text-stone-500">
+            {emptyText(list.trigger)}
+          </p>
+        ) : (
+          <div role="radiogroup" data-testid="send-test-candidates" class="divide-y divide-stone-100 rounded-lg border border-stone-200 bg-surface">
+            {list.candidates.map((c) => {
+              const selected = picked?.profile_id === c.profile_id;
+              return (
+                <button
+                  key={c.profile_id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  data-testid="send-test-candidate"
+                  onClick={() => setPicked(c)}
+                  class={`flex w-full items-center gap-3 px-3 py-2 text-left ${selected ? 'bg-brand-50' : 'hover:bg-stone-50'}`}
+                >
+                  <span
+                    class={`h-3.5 w-3.5 shrink-0 rounded-full border ${selected ? 'border-4 border-brand-600' : 'border-stone-300'}`}
+                  />
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate text-sm text-ink-900">{c.email ?? c.phone ?? c.profile_id}</span>
+                    <span class="block truncate text-xs text-stone-500">
+                      {triggerVerb(list, c)} · {new Date(c.at).toLocaleString()}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </Field>
-      {isEventTrigger && profile ? (
-        <Field
-          label="Trigger event"
-          {...(events.length ? {} : { hint: 'This customer has no matching events — event fields will be empty.' })}
-        >
-          <Select
-            data-testid="send-test-event"
-            value={eventId}
-            onChange={(e: Event) => setEventId((e.target as HTMLSelectElement).value)}
-          >
-            <option value="">No event</option>
-            {events.map((ev) => (
-              <option key={ev.event_id} value={ev.event_id}>
-                {ev.type} · {new Date(ev.occurred_at).toLocaleString()}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      ) : null}
       <Field label={isText ? 'Send to phone' : 'Send to'}>
         <Input
           data-testid="send-test-to"
@@ -146,7 +195,7 @@ export function TestSendPanel(props: {
           onInput={(e: Event) => setTo((e.target as HTMLInputElement).value)}
         />
       </Field>
-      <Button data-testid="send-test-submit" disabled={!profile || !to.trim()} onClick={send}>
+      <Button data-testid="send-test-submit" disabled={!picked || !to.trim()} onClick={send}>
         Send test
       </Button>
     </div>

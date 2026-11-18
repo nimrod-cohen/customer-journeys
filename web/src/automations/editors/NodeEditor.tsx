@@ -1110,7 +1110,7 @@ function SendEditor(props: NodeEditorProps) {
           </>
         )}
         {medium === sendNodeMedium(props.node.node) ? (
-          <TestSendPanel automationId={props.automationId} nodeId={props.node.id} medium={medium} triggerNode={props.triggerNode} />
+          <TestSendPanel automationId={props.automationId} nodeId={props.node.id} medium={medium} />
         ) : null}
       </div>
     );
@@ -1195,7 +1195,7 @@ function SendEditor(props: NodeEditorProps) {
         </div>
         <p class="text-xs text-stone-400">From, To and Subject must all be set before you can publish.</p>
         {medium === sendNodeMedium(props.node.node) ? (
-          <TestSendPanel automationId={props.automationId} nodeId={props.node.id} medium="email" triggerNode={props.triggerNode} />
+          <TestSendPanel automationId={props.automationId} nodeId={props.node.id} medium="email" />
         ) : null}
       </div>
     );

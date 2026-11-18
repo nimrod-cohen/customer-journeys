@@ -186,6 +186,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'POST /automations/:id/archive': 'manage_content',
   'POST /automations/:id/send-nodes/:nodeId/attach-template': 'manage_content',
   'POST /automations/:id/send-nodes/:nodeId/test-send': 'manage_content',
+  'GET /automations/:id/test-send/candidates': 'manage_content',
   'POST /automations/:id/enroll': 'manage_content',
 
   // --- profiles (manage_content) ---

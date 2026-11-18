@@ -133,6 +133,7 @@ import {
   type EnrollDeps,
   type AutomationDefinition,
   type RunDeps,
+  evaluateEventPayloadFilter,
 } from '@cdp/service-automation-runner';
 import { fetchWebhookClient } from '@cdp/runner-webhook';
 import { runBroadcast, buildDueScheduledBroadcastsQuery } from '@cdp/service-broadcast';
@@ -4895,6 +4896,124 @@ export const attachAutomationSendTemplate: Handler = async (ctx, pool, req) => {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** How many recent "would have triggered" customers a test send offers. */
+const TEST_SEND_CANDIDATES = 10;
+/** How far back an event trigger scans before applying its payload filter in memory. */
+const TEST_SEND_EVENT_SCAN = 1000;
+
+/**
+ * GET /automations/:id/test-send/candidates — the last 10 customers the automation's
+ * DRAFT trigger would have enrolled, so a test send uses a real one without searching
+ * (the automation is usually still being built, so nobody is actually enrolled).
+ *
+ *   event          → latest distinct profiles that fired the event AND pass its payload
+ *                    filter, each carrying that event (its payload feeds {{event.*}})
+ *   segment_entry  → last to enter — or exit, per the trigger direction — the segment
+ *   profile        → newest created / most recently updated (per profileChange)
+ *   manual         → most recently updated customers: a manual trigger has no history
+ */
+export const listTestSendCandidates: Handler = async (ctx, pool, req) => {
+  const ws = ctx.workspaceId;
+  const a = await pool.query<{
+    definition: AutomationDefinition;
+    draft_definition: AutomationDefinition | null;
+    trigger_segment_id: string | null;
+    trigger_on: string | null;
+    draft_trigger_segment_id: string | null;
+    draft_trigger_on: string | null;
+  }>(
+    `SELECT definition, draft_definition, trigger_segment_id, trigger_on, draft_trigger_segment_id, draft_trigger_on
+       FROM automations WHERE workspace_id = $1 AND id = $2`,
+    [ws, req.params.id!],
+  );
+  const row = a.rows[0];
+  if (!row) return ok({ error: 'not found' }, 404);
+  const onDraft = row.draft_definition !== null;
+  const def = row.draft_definition ?? row.definition;
+  const trigger = (def.nodes?.[def.startNode] ?? {}) as {
+    kind?: string;
+    eventType?: string;
+    filter?: unknown;
+    profileChange?: string;
+  };
+  const kind = trigger.kind ?? 'manual';
+
+  // (profile_id, at, event?) in order, newest first; profiles are joined afterwards.
+  let picks: { profile_id: string; at: Date; event_id?: string; event_type?: string }[] = [];
+  let segmentDirection: 'enter' | 'exit' | null = null;
+  if (kind === 'event') {
+    if (trigger.eventType) {
+      const { rows } = await pool.query<{ event_id: string; profile_id: string; occurred_at: Date; payload: Record<string, unknown> }>(
+        `SELECT event_id, profile_id, occurred_at, payload FROM events
+          WHERE workspace_id = $1 AND type = $2 ORDER BY occurred_at DESC LIMIT ${TEST_SEND_EVENT_SCAN}`,
+        [ws, trigger.eventType],
+      );
+      const seen = new Set<string>();
+      for (const e of rows) {
+        if (seen.has(e.profile_id)) continue;
+        let matches = false;
+        try {
+          // The same in-memory filter enrollment applies, so the list is exactly who
+          // WOULD have been enrolled.
+          matches = evaluateEventPayloadFilter(trigger.filter as never, e.payload ?? {});
+        } catch {
+          matches = false;
+        }
+        if (!matches) continue;
+        seen.add(e.profile_id);
+        picks.push({ profile_id: e.profile_id, at: e.occurred_at, event_id: e.event_id, event_type: trigger.eventType });
+        if (picks.length >= TEST_SEND_CANDIDATES) break;
+      }
+    }
+  } else if (kind === 'segment_entry') {
+    const segmentId = onDraft ? row.draft_trigger_segment_id : row.trigger_segment_id;
+    const direction = (onDraft ? row.draft_trigger_on : row.trigger_on) ?? row.trigger_on;
+    if (segmentId) {
+      // Entry also counts a current membership's entered_at: a hand-picked or
+      // imported member joins without a change-log row.
+      const exit = direction === 'exit';
+      segmentDirection = exit ? 'exit' : 'enter';
+      const { rows } = await pool.query<{ profile_id: string; at: Date }>(
+        `SELECT profile_id, max(at) AS at FROM (
+           SELECT profile_id, occurred_at AS at FROM segment_change_log
+            WHERE workspace_id = $1 AND segment_id = $2 AND action = $3
+           ${exit ? '' : 'UNION ALL SELECT profile_id, entered_at FROM segment_memberships WHERE workspace_id = $1 AND segment_id = $2'}
+         ) x GROUP BY profile_id ORDER BY at DESC LIMIT ${TEST_SEND_CANDIDATES}`,
+        [ws, segmentId, exit ? 'exited' : 'entered'],
+      );
+      picks = rows;
+    }
+  } else {
+    const created = kind === 'profile' && trigger.profileChange === 'created';
+    const updatedOnly = kind === 'profile' && trigger.profileChange === 'updated';
+    const { rows } = await pool.query<{ profile_id: string; at: Date }>(
+      `SELECT id AS profile_id, ${created ? 'created_at' : 'updated_at'} AS at FROM profiles
+        WHERE workspace_id = $1${updatedOnly ? ' AND updated_at > created_at' : ''}
+        ORDER BY at DESC LIMIT ${TEST_SEND_CANDIDATES}`,
+      [ws],
+    );
+    picks = rows;
+  }
+
+  const profiles = new Map<string, { email: string | null; phone: string | null }>();
+  if (picks.length > 0) {
+    const { rows } = await pool.query<{ id: string; email: string | null; phone: string | null }>(
+      'SELECT id, email, phone FROM profiles WHERE workspace_id = $1 AND id = ANY($2::uuid[])',
+      [ws, picks.map((x) => x.profile_id)],
+    );
+    for (const r of rows) profiles.set(r.id, { email: r.email, phone: r.phone });
+  }
+  const candidates = picks
+    .filter((x) => profiles.has(x.profile_id))
+    .map((x) => ({ ...x, ...profiles.get(x.profile_id)! }));
+  return ok({
+    trigger: kind,
+    ...(kind === 'profile' ? { profileChange: trigger.profileChange ?? 'any' } : {}),
+    ...(segmentDirection ? { triggerOn: segmentDirection } : {}),
+    candidates,
+  });
+};
+
 /**
  * POST /automations/:id/send-nodes/:nodeId/test-send — QA a step's message with a
  * REAL customer's data, delivered to the person testing it.
@@ -8615,6 +8734,7 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'POST /automations/:id/archive': archiveAutomation,
   'POST /automations/:id/send-nodes/:nodeId/attach-template': attachAutomationSendTemplate,
   'POST /automations/:id/send-nodes/:nodeId/test-send': testSendAutomationStep,
+  'GET /automations/:id/test-send/candidates': listTestSendCandidates,
   'POST /automations/:id/enroll': enrollIntoAutomation,
   'GET /profiles': listProfiles,
   'POST /profiles/query': queryProfiles,
