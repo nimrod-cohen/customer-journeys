@@ -38,6 +38,7 @@ import {
 } from '../automations/model.js';
 import { backfillAllowed, draftDiffersFrom, type PublishScope } from '../automations/versioning.js';
 import { PublishVersionModal } from '../automations/PublishVersionModal.js';
+import { EnrollIntoAutomationDrawer } from '../automations/EnrollDrawer.js';
 import { nodeSummary } from '../automations/mutate.js';
 import { applyNodeConfig } from '../automations/node-config.js';
 import {
@@ -489,6 +490,7 @@ export function AutomationDetail({ id }: { id?: string }) {
   // automation has no live baseline (so any edit reads as an unsaved draft).
   const [tab, setTab] = useState<'builder' | 'history' | 'journeys' | 'settings'>('builder');
   const [liveDefinition, setLiveDefinition] = useState<AutomationDefinition | null>(null);
+  const [enrollOpen, setEnrollOpen] = useState(false);
   const [liveTriggerSegmentId, setLiveTriggerSegmentId] = useState<string | null>(null);
   const [liveTriggerOn, setLiveTriggerOn] = useState<'enter' | 'exit'>('enter');
   const [versions, setVersions] = useState<AutomationVersion[] | null>(null);
@@ -959,6 +961,14 @@ export function AutomationDetail({ id }: { id?: string }) {
   );
   const canBackfill = backfillAllowed(buildDefinition(model), triggerSegmentId);
 
+  // Manual enrollment is offered for a manual-trigger automation: the LIVE trigger once
+  // published (that is what enrollment runs), the draft's while it never has been.
+  const liveTriggerKind = (() => {
+    const def = status === 'draft' || !liveDefinition ? null : liveDefinition;
+    if (def) return (def.nodes?.[def.startNode] as { kind?: string } | undefined)?.kind ?? null;
+    return (model.nodes.find((n) => n.node.type === 'trigger')?.node as { kind?: string } | undefined)?.kind ?? null;
+  })();
+
   return (
     <section data-testid="automation-builder">
       {/* Inline header: title + automation-name input on a single row, with
@@ -979,6 +989,19 @@ export function AutomationDetail({ id }: { id?: string }) {
           class="max-w-sm flex-1"
         />
         <div class="ml-auto flex items-center gap-2">
+          {editingId && liveTriggerKind === 'manual' ? (
+            <span title={status === 'active' ? undefined : 'Publish (or resume) this automation to enroll people.'}>
+              <Button
+                data-testid="automation-enroll"
+                variant="secondary"
+                size="sm"
+                disabled={status !== 'active'}
+                onClick={() => setEnrollOpen(true)}
+              >
+                Enroll…
+              </Button>
+            </span>
+          ) : null}
           {editingId && status === 'active' ? (
             <Button data-testid="automation-pause" variant="secondary" size="sm" onClick={() => lifecycle('pause')}>
               Pause
@@ -1153,6 +1176,19 @@ export function AutomationDetail({ id }: { id?: string }) {
           })}
         </div>
       </Drawer>
+
+      {editingId ? (
+        <EnrollIntoAutomationDrawer
+          open={enrollOpen}
+          automationId={editingId}
+          segments={segments}
+          onClose={() => setEnrollOpen(false)}
+          onEnrolled={() => {
+            setEnrollOpen(false);
+            void reloadEnrollments(editingId);
+          }}
+        />
+      ) : null}
 
       {/* The per-node config editor (a side drawer, one body per node type). */}
       <Drawer

@@ -166,4 +166,40 @@ describeMaybe('POST /automations/:id/enroll (real Postgres)', () => {
     const row = rows.find((x) => x.profile_id === prof)!;
     expect(row.workspace_id).toBe(WS); // ctx, never the body
   });
+  it('reports who was ALREADY enrolled rather than counting them again', async () => {
+    const prof = await newProfile(WS, 'again-1');
+    await call(world.env, 'POST', `/automations/${campA}/enroll`, { token: tok(), body: { profile_id: prof } });
+    const r = await call(world.env, 'POST', `/automations/${campA}/enroll`, { token: tok(), body: { profile_id: prof } });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ enrolled: 0, already: 1 });
+
+    const seg4 = '0c0d0e91-0000-4000-8000-0000000000d4';
+    await world.pool.query("INSERT INTO segments (id, workspace_id, name, kind, status) VALUES ($1,$2,'seg4','manual','active')", [seg4, WS]);
+    await addMember(WS, seg4, prof);
+    await addMember(WS, seg4, await newProfile(WS, 'again-2'));
+    const s = await call(world.env, 'POST', `/automations/${campA}/enroll`, { token: tok(), body: { segment_id: seg4 } });
+    expect(s.body).toMatchObject({ enrolled: 1, already: 1 });
+  });
+
+  it('an unpublished or paused automation is a 409 that says what to do, and enrolls nobody', async () => {
+    const prof = await newProfile(WS, 'not-live');
+    for (const [status, re] of [['draft', /publish/i], ['paused', /resume/i]] as const) {
+      const camp = (
+        await world.pool.query(
+          "INSERT INTO automations (workspace_id, name, definition, status) VALUES ($1,'NL',$2::jsonb,$3) RETURNING id",
+          [WS, JSON.stringify(DEF), status],
+        )
+      ).rows[0].id;
+      const r = await call(world.env, 'POST', `/automations/${camp}/enroll`, { token: tok(), body: { profile_id: prof } });
+      expect(r.status).toBe(409);
+      expect((r.body as { error: string }).error).toMatch(re);
+      expect((await enrollRows(WS, camp)).length).toBe(0);
+    }
+  });
+
+  it('GET /automations names each automation\'s trigger kind (the profile page offers manual ones)', async () => {
+    const r = await call(world.env, 'GET', '/automations', { token: tok() });
+    const a = (r.body as { automations: { id: string; trigger_kind: string }[] }).automations.find((x) => x.id === campA)!;
+    expect(a.trigger_kind).toBe('manual');
+  });
 });
