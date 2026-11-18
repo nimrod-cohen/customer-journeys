@@ -67,6 +67,7 @@ export function Canvas(): JSX.Element {
   };
   if (st.fontFamily) bodyStyle.fontFamily = `${st.fontFamily}, Helvetica, Arial, sans-serif`;
   if (st.baseFontSize) bodyStyle.fontSize = `${st.baseFontSize}px`;
+  if (st.lineHeight) bodyStyle.lineHeight = String(st.lineHeight);
 
   return (
     <main

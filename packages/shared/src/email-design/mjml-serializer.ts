@@ -241,6 +241,11 @@ function headToMjml(settings: DesignSettings): string {
     parts.push(`<mj-font name="${esc(fam)}" href="${esc(href)}" />`);
     attributeParts.push(`<mj-all font-family="${esc(`${fam}, Helvetica, Arial, sans-serif`)}" />`);
   }
+  // The email-wide default line height for every text block (mj-text also carries
+  // headings and lists). A block's own line-height is on its element and wins.
+  if (settings.lineHeight) {
+    attributeParts.push(`<mj-text line-height="${esc(String(settings.lineHeight))}" />`);
+  }
   if (rtl) {
     attributeParts.push('<mj-text css-class="cdp-rtl" align="right" />');
   }

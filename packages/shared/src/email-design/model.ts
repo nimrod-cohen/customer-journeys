@@ -23,6 +23,11 @@ export interface DesignSettings {
   readonly fontFamily?: string;
   /** Base font size in px (default 16) — size keys scale from it. */
   readonly baseFontSize?: number;
+  /**
+   * Default line height for all text (a multiplier, e.g. 1.5). Unset → MJML's own.
+   * A block's own `lineHeight` still overrides it.
+   */
+  readonly lineHeight?: number;
   /** Email body width in px (default 600). */
   readonly bodyWidth?: number;
   /** Page background behind the body. */

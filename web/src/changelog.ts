@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.162.0',
+    date: '2026-11-18',
+    changes: [
+      'Set the line height for a whole email under Template in the email editor (e.g. 1.5). Every text block follows it unless you give a block its own line height.',
+    ],
+  },
+  {
     version: '0.161.1',
     date: '2026-11-18',
     changes: [
