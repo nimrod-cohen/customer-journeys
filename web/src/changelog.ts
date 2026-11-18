@@ -18,6 +18,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.161.1',
+    date: '2026-11-18',
+    changes: [
+      'Clearing all the text from a block in the email editor now shows a notice with an Undo button, so a whole message body can no longer disappear unnoticed.',
+      'The unsubscribe link in a test email is now the tested customer’s own link, so you see exactly where theirs leads. Opening it changes nothing; submitting the page would update that customer.',
+    ],
+  },
+  {
     version: '0.161.0',
     date: '2026-11-18',
     changes: [
