@@ -109,6 +109,27 @@ export function SettingsPanel(): JSX.Element {
       </label>
 
       <label class="nm-prop-field">
+        <span class="nm-prop-label">Paragraph spacing (px)</span>
+        <input
+          class="nm-prop-input"
+          data-testid="settings-paragraph-spacing"
+          type="text"
+          inputMode="numeric"
+          placeholder="Default (about one line)"
+          value={st.paragraphSpacing ?? ''}
+          onChange={(e) => {
+            // Blank → the client's default; otherwise whole px, 0–60.
+            const el = e.target as HTMLInputElement;
+            const raw = el.value.trim().replace(',', '.');
+            const n = Number(raw);
+            const v = raw === '' || !Number.isFinite(n) ? undefined : Math.min(60, Math.max(0, Math.round(n)));
+            el.value = v === undefined ? '' : String(v);
+            updateSettings({ paragraphSpacing: v });
+          }}
+        />
+      </label>
+
+      <label class="nm-prop-field">
         <span class="nm-prop-label">Email width (px)</span>
         <input
           class="nm-prop-input"
