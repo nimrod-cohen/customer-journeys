@@ -89,6 +89,26 @@ export function SettingsPanel(): JSX.Element {
       </label>
 
       <label class="nm-prop-field">
+        <span class="nm-prop-label">Line height</span>
+        <input
+          class="nm-prop-input"
+          data-testid="settings-line-height"
+          type="number"
+          min={1}
+          max={3}
+          step={0.1}
+          placeholder="Default"
+          value={st.lineHeight ?? ''}
+          onChange={(e) => {
+            // Blank → back to the default; otherwise a multiplier kept in a sane range.
+            const raw = (e.target as HTMLInputElement).value.trim();
+            const n = Number(raw);
+            updateSettings({ lineHeight: raw === '' || !Number.isFinite(n) ? undefined : Math.min(3, Math.max(1, n)) });
+          }}
+        />
+      </label>
+
+      <label class="nm-prop-field">
         <span class="nm-prop-label">Email width (px)</span>
         <input
           class="nm-prop-input"
