@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.160.1',
+    date: '2026-11-18',
+    changes: [
+      'The unsubscribe link in a test email now works: it opens your own subscription page (never the customer’s), so you can check the link without affecting them.',
+    ],
+  },
+  {
     version: '0.160.0',
     date: '2026-11-18',
     changes: [

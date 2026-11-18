@@ -12,7 +12,7 @@
 //   - a foreign automation / profile / event is a 404 (inv.2).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { hasDatabaseUrl, adminPool } from '@cdp/db';
-import type { SesEmailClient, SendEmailInput, SendEmailResult } from '@cdp/email';
+import { unpackSubscriptionToken, unsubscribeLinkSecret, type SesEmailClient, type SendEmailInput, type SendEmailResult } from '@cdp/email';
 import { tokenFor, call } from './seed.js';
 import { makePgLookups, makeLocalDeps } from '../src/index.js';
 import type { DispatchEnv } from '../src/index.js';
@@ -193,9 +193,14 @@ describeMaybe('automation step test send (real Postgres)', () => {
     expect(sent.subject).toBe('[TEST] Your order A-77');
     expect(sent.from).toBe('Acme <team@mail.acme.com>');
     expect(sent.html).toContain('Hi Dana, order A-77[]');
-    // The customer's real unsubscribe link must not ride along — clicking it in a
-    // test would opt the CUSTOMER out.
-    expect(sent.html).not.toContain('manage-subscription');
+    // The unsubscribe link is a REAL, clickable preference-center link — but signed
+    // for the TESTER's address, never the customer's (clicking it in a test must not
+    // opt the customer out), and with no automation attribution (no metric).
+    const href = /href="([^"]*manage-subscription[^"]*)"/.exec(sent.html)?.[1]?.replace(/&amp;/g, '&');
+    expect(href).toBeTruthy();
+    const t = new URL(href!).searchParams.get('t')!;
+    expect(unpackSubscriptionToken(unsubscribeLinkSecret(), t)).toMatchObject({ workspaceId: WS, email: TESTER });
+    expect(new URL(href!).searchParams.get('c')).toBeNull();
     expect(sent.headers?.['List-Unsubscribe']).toBeUndefined();
 
     // No trace on the customer.
