@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.157.3',
+    date: '2026-11-18',
+    changes: [
+      'Delivery health: the bounce rate is now measured against everything you sent, so one bounce no longer shows as 100% when your mail server only reports failures.',
+    ],
+  },
+  {
     version: '0.157.2',
     date: '2026-11-18',
     changes: [
