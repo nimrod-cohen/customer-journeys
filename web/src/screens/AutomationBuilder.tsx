@@ -53,6 +53,7 @@ import {
 import { NodeEditorBody, nodeEditorTestId, nodeEditorTitle } from '../automations/editors/NodeEditor.js';
 import { ExitRulesEditor } from '../automations/ExitRulesEditor.js';
 import type { ExitRuleDsl } from '../automations/exit-rules.js';
+import { UNTITLED_AUTOMATION_NAME } from '@cdp/shared';
 
 /** Enrollment-status buckets surfaced per automation on the list. */
 interface EnrollmentCounts {
@@ -394,7 +395,7 @@ export function AutomationsList() {
       {/* Publish from the list — the same modal the detail builder uses. */}
       {publishing ? (
         <PublishVersionModal
-          defaultName={publishing.name || 'Untitled automation'}
+          defaultName={publishing.name || UNTITLED_AUTOMATION_NAME}
           canBackfill={publishing.canBackfill}
           reason={publishReason}
           onPublish={publish}
@@ -720,7 +721,7 @@ export function AutomationDetail({ id }: { id?: string }) {
     // live + draft). Subsequent edits go to the draft via the branch above.
     const r = await api.post<{ automation: { id: string } }>('/automations', {
       body: {
-        name: name || 'Untitled automation',
+        name: name || UNTITLED_AUTOMATION_NAME,
         description,
         definition,
         trigger_on: to,
@@ -729,7 +730,7 @@ export function AutomationDetail({ id }: { id?: string }) {
     });
     setEditingId(r.automation.id);
     savedDescription.current = description;
-    savedName.current = (name || 'Untitled automation').trim();
+    savedName.current = (name || UNTITLED_AUTOMATION_NAME).trim();
     // Point the URL at the new automation so a REFRESH reloads it instead of a blank
     // /automations/new (which orphaned the draft + minted a new "Untitled" each retry).
     // Silent (no remount) so an in-flight edit / open node editor isn't disrupted.
@@ -1194,7 +1195,7 @@ export function AutomationDetail({ id }: { id?: string }) {
       {/* Save-version modal: a required name + forward/backfill scope. */}
       {publishOpen ? (
         <PublishVersionModal
-          defaultName={name || 'Untitled automation'}
+          defaultName={name || UNTITLED_AUTOMATION_NAME}
           canBackfill={canBackfill}
           reason={publishReason}
           onPublish={publish}

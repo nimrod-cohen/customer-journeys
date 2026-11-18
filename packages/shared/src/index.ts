@@ -20,6 +20,13 @@ export * from './timezone.js';
 // The single email-channel readiness rule (local-api readiness + automation runner).
 export * from './email-readiness.js';
 
+/**
+ * The placeholder name a new automation gets when none was typed. Publishing
+ * such an automation adopts the version name, since the publish dialog is the
+ * only place most people are ever asked for a name.
+ */
+export const UNTITLED_AUTOMATION_NAME = 'Untitled automation';
+
 /** Workspace-scoped roles stored in workspace_users.role (§3A). */
 export type WorkspaceRole = 'owner' | 'marketer' | 'accounting';
 
