@@ -25,6 +25,7 @@ import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
 import { ingestTrack, ingestIdentify, sendTransactional, r2StorageForWorkspace } from './handlers.js';
 import { decideMailEvent, buildMessageLookup, type MessageRef } from './mail-events.js';
+import { parseDeliveryLog, attributeDeliveries } from './mail-deliveries.js';
 import { storeWebhook, processInboxRow } from './whatsapp-inbound.js';
 import { sharedWhatsAppHub, type WhatsAppEventHub } from './whatsapp-stream.js';
 import { streamSSE } from 'hono/streaming';
@@ -354,11 +355,41 @@ export function createApp(opts: CreateAppOptions): Hono {
   // workspace is still resolved from `messages_log` via a VERIFIED VERP token,
   // never from the request body, so even a leaked bearer cannot be used to
   // suppress an arbitrary address in an arbitrary workspace (invariant 2).
-  app.post('/internal/mail-events', async (c) => {
+  /** The mail-agent's shared bearer — a door, never a source of tenancy. */
+  const mailAgentRefusal = (authorization: string | undefined): { error: string; status: 401 | 503 } | null => {
     const expected = process.env.MAIL_AGENT_SECRET;
-    if (!expected) return c.json({ error: 'ingestion not configured' }, 503);
-    const auth = c.req.header('authorization') ?? '';
-    if (auth !== `Bearer ${expected}`) return c.json({ error: 'unauthorized' }, 401);
+    if (!expected) return { error: 'ingestion not configured', status: 503 };
+    if ((authorization ?? '') !== `Bearer ${expected}`) return { error: 'unauthorized', status: 401 };
+    return null;
+  };
+
+  /** Workspace, profile and recipients of a message, by the id a VERIFIED VERP token names. */
+  const lookupSentMessage = async (messageId: string): Promise<MessageRef | null> => {
+    const q = buildMessageLookup(messageId);
+    const { rows } = await opts.pool.query<{
+      workspace_id: string;
+      profile_id: string;
+      recipient_email: string | null;
+      cc_addresses: string[] | null;
+      bcc_addresses: string[] | null;
+    }>(q.text, q.values as unknown[]);
+    const r = rows[0];
+    return r
+      ? {
+          workspaceId: r.workspace_id,
+          profileId: r.profile_id,
+          recipient: r.recipient_email,
+          // The copies come along so a report's named address can be checked
+          // against the addresses this message actually reached.
+          cc: r.cc_addresses ?? [],
+          bcc: r.bcc_addresses ?? [],
+        }
+      : null;
+  };
+
+  app.post('/internal/mail-events', async (c) => {
+    const refused = mailAgentRefusal(c.req.header('authorization'));
+    if (refused) return c.json({ error: refused.error }, refused.status);
 
     let body: { raw?: string; originalTo?: string | null };
     try {
@@ -370,33 +401,10 @@ export function createApp(opts: CreateAppOptions): Hono {
       return c.json({ error: 'raw message is required' }, 400);
     }
 
-    const lookup = async (messageId: string): Promise<MessageRef | null> => {
-      const q = buildMessageLookup(messageId);
-      const { rows } = await opts.pool.query<{
-        workspace_id: string;
-        profile_id: string;
-        recipient_email: string | null;
-        cc_addresses: string[] | null;
-        bcc_addresses: string[] | null;
-      }>(q.text, q.values as unknown[]);
-      const r = rows[0];
-      return r
-        ? {
-            workspaceId: r.workspace_id,
-            profileId: r.profile_id,
-            recipient: r.recipient_email,
-            // The copies come along so the report's named address can be checked
-            // against the addresses this message actually reached.
-            cc: r.cc_addresses ?? [],
-            bcc: r.bcc_addresses ?? [],
-          }
-        : null;
-    };
-
     const decision = await decideMailEvent(
       { raw: body.raw, originalTo: body.originalTo ?? null },
       unsubscribeLinkSecret(),
-      lookup,
+      lookupSentMessage,
     );
 
     // Unattributable reports are acknowledged with 200 so the agent deletes them
@@ -441,6 +449,57 @@ export function createApp(opts: CreateAppOptions): Hono {
     // that narrow exemption and enforces workspace scoping on everything else.
     await runFeedbackStatementsInTx(opts.pool, ws, statements);
     return c.json({ ok: true, action: decision.action, reason: decision.reason }, 200);
+  });
+
+  // ── Successful deliveries from our own mail server ──────────────────────────
+  // Postfix reports only failures by mail, but logs every handoff. The agent posts
+  // those log lines; each delivery is attributed through the same signed VERP token
+  // as a bounce, so a leaked bearer can at worst mark one of OUR messages delivered.
+  // Idempotent (one delivery per message), so the agent may overlap its windows.
+  /** One agent request; the agent batches well under this. */
+  const MAX_DELIVERY_LOG_LINES = 20_000;
+  app.post('/internal/mail-deliveries', async (c) => {
+    const refused = mailAgentRefusal(c.req.header('authorization'));
+    if (refused) return c.json({ error: refused.error }, refused.status);
+
+    let body: { lines?: unknown };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: 'invalid json' }, 400);
+    }
+    const lines = body?.lines;
+    if (!Array.isArray(lines) || !lines.every((l) => typeof l === 'string')) {
+      return c.json({ error: 'lines must be an array of strings' }, 400);
+    }
+    if (lines.length > MAX_DELIVERY_LOG_LINES) {
+      return c.json({ error: `at most ${MAX_DELIVERY_LOG_LINES} lines per request` }, 400);
+    }
+
+    const { attributed, ignored } = await attributeDeliveries(
+      parseDeliveryLog(lines as string[]),
+      unsubscribeLinkSecret(),
+      lookupSentMessage,
+    );
+    const byWorkspace = new Map<string, typeof attributed>();
+    for (const d of attributed) byWorkspace.set(d.workspaceId, [...(byWorkspace.get(d.workspaceId) ?? []), d]);
+    for (const [ws, ds] of byWorkspace) {
+      await runFeedbackStatementsInTx(
+        opts.pool,
+        ws,
+        ds.map((d) =>
+          buildEmailEventInsert(ws, {
+            sesMessageId: d.messageId,
+            profileId: d.profileId,
+            type: 'delivery',
+            subType: null,
+            raw: { source: 'self-hosted-mta', relay: d.relay, dsn: d.dsn },
+            occurredAt: d.at,
+          }),
+        ),
+      );
+    }
+    return c.json({ ok: true, delivered: attributed.length, ignored }, 200);
   });
 
   app.post('/v1/track', async (c) => {

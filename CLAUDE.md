@@ -443,6 +443,14 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   encoded-word where a mailbox belongs and the message would be unroutable. Words are
   split on CHARACTER boundaries (a multi-byte character cut across two words decodes
   to replacement characters) and kept under the 75-char limit.
+- **Deliveries come from Postfix's LOG, not from mail.** Postfix reports only failures
+  by mail, so without this "Delivered" stays 0 forever. The agent forwards the
+  `qmgr from=<bounce+…>` and `smtp … status=sent` lines to `POST /internal/mail-deliveries`
+  (`mail-deliveries.ts`), which pairs them by queue id and attributes each through the
+  SAME signed VERP token as a bounce — one `delivery` event per message, stamped with the
+  log time, idempotent so the agent re-reads overlapping windows freely. While the box
+  relays through relay1, `status=sent` means our relay accepted it; a receiver's later
+  rejection still arrives as a bounce.
 - **The MTA agent is a thin forwarder** (`services/mail-agent/mail-agent.mjs`): read
   Maildir, post raw, delete on 2xx. It parses nothing, so a parser fix is an app deploy
   rather than an ssh session on a mail server.

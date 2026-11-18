@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.158.0',
+    date: '2026-11-18',
+    changes: [
+      'Email sent through the internal mail server now shows as Delivered, on the delivery-health dashboard, the broadcast funnel and each profile, including the last 30 days of past sends.',
+    ],
+  },
+  {
     version: '0.157.3',
     date: '2026-11-18',
     changes: [

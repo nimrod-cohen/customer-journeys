@@ -273,6 +273,8 @@ export interface EmailEventRow {
   readonly subType: string | null;
   readonly profileId: string | null;
   readonly raw: unknown;
+  /** When it happened, if the report says (a mail-server log line does). Defaults to now. */
+  readonly occurredAt?: string | null;
 }
 
 /**
@@ -284,8 +286,8 @@ export interface EmailEventRow {
 export function buildEmailEventInsert(workspaceId: string, row: EmailEventRow): SqlStatement {
   if (!workspaceId) throw new Error('buildEmailEventInsert: workspaceId is required');
   return {
-    text: `INSERT INTO email_events (workspace_id, ses_message_id, profile_id, type, sub_type, raw)
-           VALUES ($1, $2, $3, $4, $5, $6)
+    text: `INSERT INTO email_events (workspace_id, ses_message_id, profile_id, type, sub_type, raw, occurred_at)
+           VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, now()))
            ON CONFLICT (workspace_id, ses_message_id, type) DO NOTHING`,
     values: [
       workspaceId,
@@ -294,6 +296,7 @@ export function buildEmailEventInsert(workspaceId: string, row: EmailEventRow): 
       row.type,
       row.subType,
       row.raw === undefined ? null : JSON.stringify(row.raw),
+      row.occurredAt ?? null,
     ],
   };
 }
