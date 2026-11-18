@@ -28,6 +28,7 @@ import { showToast } from '../ui/toast.js';
 import { AutomationCanvas, type Placement } from '../automations/AutomationCanvas.js';
 import {
   parseDefinition,
+  nodeAfterReload,
   buildDefinition,
   starterModel,
   type AutomationDefinition,
@@ -491,6 +492,8 @@ export function AutomationDetail({ id }: { id?: string }) {
   const [tab, setTab] = useState<'builder' | 'history' | 'journeys' | 'settings'>('builder');
   const [liveDefinition, setLiveDefinition] = useState<AutomationDefinition | null>(null);
   const [enrollOpen, setEnrollOpen] = useState(false);
+  /** The model the last persist reloaded (when the server repointed an email step), else null. */
+  const reloadedModel = useRef<CanvasModel | null>(null);
   const [liveTriggerSegmentId, setLiveTriggerSegmentId] = useState<string | null>(null);
   const [liveTriggerOn, setLiveTriggerOn] = useState<'enter' | 'exit'>('enter');
   const [versions, setVersions] = useState<AutomationVersion[] | null>(null);
@@ -520,7 +523,7 @@ export function AutomationDetail({ id }: { id?: string }) {
   // `definition` is the DRAFT to edit (draft ?? live); `liveDefinition` is the last
   // published one (the diff baseline for the unsaved-draft indicator). Also carries
   // the workspace timezone + trigger_segment_id (draft trigger) for the editors.
-  const openById = async (cid: string): Promise<void> => {
+  const openById = async (cid: string): Promise<CanvasModel> => {
     const res = await api.get<{
       automation: {
         id: string;
@@ -541,7 +544,8 @@ export function AutomationDetail({ id }: { id?: string }) {
     setDescription(res.automation.description ?? '');
     savedDescription.current = res.automation.description ?? '';
     setStatus(res.automation.status);
-    setModel(parseDefinition(res.automation.definition));
+    const loaded = parseDefinition(res.automation.definition);
+    setModel(loaded);
     setExitRules(readDefExitRules(res.automation.definition));
     setTriggerSegmentId(res.automation.trigger_segment_id ?? null);
     const to = res.automation.trigger_on === 'exit' ? 'exit' : 'enter';
@@ -565,6 +569,7 @@ export function AutomationDetail({ id }: { id?: string }) {
       if (!exists && saved) sessionStorage.removeItem(`cdp.automationSelected:${res.automation.id}`);
       setCenterTick((t) => t + 1);
     }
+    return loaded;
   };
 
   // Refresh ONLY the version history (History tab). Workspace-scoped server-side.
@@ -716,7 +721,7 @@ export function AutomationDetail({ id }: { id?: string }) {
       });
       // The server gave a duplicated email step its own copy: reload so the model
       // carries the new id (a later save would otherwise point it back).
-      if (r?.repointed) await openById(editingId);
+      reloadedModel.current = r?.repointed ? await openById(editingId) : null;
       return editingId;
     }
     // First persist of a NEW automation: create the row (definition is its initial
@@ -817,7 +822,11 @@ export function AutomationDetail({ id }: { id?: string }) {
       showToast((err as { error?: string })?.error ?? String(err), { tone: 'error' });
       return;
     }
-    setOpenNode(node);
+    // That persist may have given this step its OWN email copy (two steps that
+    // shared one, e.g. from a duplicate made before steps got separate copies). Open
+    // the step as RELOADED, not as captured before the save: the stale node still
+    // pointed at the other step's email, so this step's edits landed in that one.
+    setOpenNode(nodeAfterReload(reloadedModel.current, node));
   };
 
   // Exit rules are part of the DRAFT definition — persist with the current model.

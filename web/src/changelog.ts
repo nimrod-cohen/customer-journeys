@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.163.2',
+    date: '2026-11-18',
+    changes: [
+      'In an automation, an email step that had been duplicated before steps got their own email copies now opens its own email. It used to open the other step’s email the first time, so your changes landed in the wrong email.',
+    ],
+  },
+  {
     version: '0.163.1',
     date: '2026-11-18',
     changes: [
