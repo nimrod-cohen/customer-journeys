@@ -76,7 +76,7 @@ export async function decideMailEvent(
 
   // The agent may pass X-Original-To separately if it had to read it from the
   // Maildir filename rather than the headers.
-  const token = parsed.verpToken ?? extractToken(mail.originalTo ?? null);
+  const token = parsed.verpToken ?? extractVerpToken(mail.originalTo ?? null);
   if (!token) {
     return none('no VERP token — cannot attribute this report to a message');
   }
@@ -144,7 +144,8 @@ function none(reason: string): MailEventDecision {
   };
 }
 
-function extractToken(recipient: string | null): string | null {
+/** The token in a `bounce+<token>@…` address (our VERP Return-Path), or null. */
+export function extractVerpToken(recipient: string | null): string | null {
   if (!recipient) return null;
   const addr = recipient.trim().replace(/^</, '').replace(/>$/, '');
   const at = addr.lastIndexOf('@');
