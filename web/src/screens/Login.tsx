@@ -246,6 +246,10 @@ export function Login() {
             <a data-testid="docs-link" href="/docs" class="font-semibold text-brand-700 hover:underline">
               API documentation →
             </a>
+            <span class="mx-2 text-stone-300">·</span>
+            <a data-testid="privacy-link" href="/privacy" class="font-semibold text-brand-700 hover:underline">
+              Privacy policy
+            </a>
           </p>
 
           <p class="mt-3 text-center text-[11px] text-stone-400" data-testid="app-version">

@@ -18,6 +18,11 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.164.0',
+    date: '2026-11-19',
+    changes: ['There is now a public privacy policy at /privacy, linked from the sign-in page.'],
+  },
+  {
     version: '0.163.2',
     date: '2026-11-18',
     changes: [
