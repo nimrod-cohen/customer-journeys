@@ -10,6 +10,7 @@ import { SetPassword } from './screens/SetPassword.js';
 import { AppShell } from './AppShell.js';
 import { PublicDocs } from './screens/ApiDocs.js';
 import { PrivacyPolicy } from './screens/Privacy.js';
+import { TermsOfService } from './screens/Terms.js';
 
 export function App() {
   const session = useStore(sessionStore);
@@ -18,6 +19,7 @@ export function App() {
   // Checked before the auth gate; the server serves the SPA shell at that path.
   if (typeof window !== 'undefined' && window.location.pathname === '/docs') return <PublicDocs />;
   if (typeof window !== 'undefined' && window.location.pathname === '/privacy') return <PrivacyPolicy />;
+  if (typeof window !== 'undefined' && window.location.pathname === '/terms') return <TermsOfService />;
   // Public system-auth links from email (shown even when logged out): accept an
   // invite / reset a password via a one-time token in the URL.
   if (route.startsWith('/accept-invite')) return <SetPassword mode="invite" />;
