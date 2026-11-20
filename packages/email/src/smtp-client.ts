@@ -104,18 +104,33 @@ function safeMimeType(v: string): string {
 }
 
 /**
- * One `multipart/mixed` part per file. The filename is written TWICE — the plain
- * `filename=` for old clients and RFC 2231's `filename*=UTF-8''…` — so a Hebrew or
- * accented name survives instead of arriving as underscores.
+ * One `multipart/mixed` part per file. An ASCII name is written plainly. A Hebrew
+ * or accented one is written as an RFC 2047 encoded-word in `name=` and
+ * `filename=`, plus RFC 2231's `filename*=UTF-8''…`. Gmail reads the quoted
+ * parameters and ignores `filename*` when they are present, so an ASCII fallback
+ * there is what the recipient sees — a row of underscores.
  */
 function attachmentPart(a: EmailAttachment): string {
-  const name = asciiFilename(a.filename);
-  const encoded = encodeURIComponent(safeFilename(a.filename)).replace(/'/g, '%27');
+  const safe = safeFilename(a.filename);
+  const ascii = asciiFilename(a.filename);
   const type = safeMimeType(a.contentType);
+  // eslint-disable-next-line no-control-regex
+  if (!/[^\x20-\x7E]/.test(safe)) {
+    return [
+      `Content-Type: ${type}; name="${ascii}"`,
+      'Content-Transfer-Encoding: base64',
+      `Content-Disposition: attachment; filename="${ascii}"`,
+      '',
+      wrapBase64(a.content),
+    ].join('\r\n');
+  }
+  // Base64 encoded-words hold no quote, backslash or line break of the caller's.
+  const word = encodeHeaderWord(safe);
+  const encoded = encodeURIComponent(safe).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return [
-    `Content-Type: ${type}; name="${name}"`,
+    `Content-Type: ${type}; name="${word}"`,
     'Content-Transfer-Encoding: base64',
-    `Content-Disposition: attachment; filename="${name}"; filename*=UTF-8''${encoded}`,
+    `Content-Disposition: attachment; filename="${word}"; filename*=UTF-8''${encoded}`,
     '',
     wrapBase64(a.content),
   ].join('\r\n');
