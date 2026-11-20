@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.165.1',
+    date: '2026-11-20',
+    changes: [
+      'Email attachments with Hebrew or other non-English file names now keep their name in Gmail instead of showing underscores.',
+    ],
+  },
+  {
     version: '0.165.0',
     date: '2026-11-19',
     changes: ['There are now public terms of service at /terms, linked from the sign-in page.'],
