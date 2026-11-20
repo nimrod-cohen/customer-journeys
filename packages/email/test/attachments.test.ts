@@ -119,6 +119,29 @@ describe('self-hosted SMTP transport', () => {
     expect(raw.endsWith(`--${boundary}--\r\n`)).toBe(true);
   });
 
+  // Gmail shows the quoted `name=`/`filename=` and ignores `filename*`, so a
+  // non-ASCII name must be an encoded-word there, not an underscore fallback.
+  it('keeps a Hebrew filename readable', async () => {
+    const { sent, transport } = fakeTransport();
+    const filename = 'דוח חודשי משקיעים Nov-2026 - 452 SCR, Dublin.pdf';
+    await createSmtpEmailClient(
+      { host: 'mail.x', port: 587, bounceDomain: 'bounce.x', verpSecret: 's' },
+      transport,
+    ).sendEmail(input({ attachments: [{ filename, contentType: 'application/pdf', content: PDF }] }));
+    const raw = sent[0]!.raw;
+
+    const decode = (param: string): string => {
+      const value = new RegExp(`${param}="([^"]+)"`).exec(raw)?.[1] ?? '';
+      return [...value.matchAll(/=\?UTF-8\?B\?([^?]+)\?=/g)]
+        .map((m) => Buffer.from(m[1]!, 'base64').toString('utf8'))
+        .join('');
+    };
+    expect(decode(' name')).toBe(filename);
+    expect(decode(' filename')).toBe(filename);
+    expect(raw).toContain(`filename*=UTF-8''${encodeURIComponent(filename)}`);
+    expect(raw).not.toContain('___');
+  });
+
   // RFC 2045 caps an encoded line at 76 characters; some MTAs reject longer ones
   // and others silently wrap mid-stream, corrupting the file.
   it('wraps base64 at 76 characters', async () => {
