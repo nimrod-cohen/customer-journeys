@@ -120,6 +120,9 @@ export function buildFeedbackPlan(input: FeedbackPlanInput): SqlStatement[] {
     plan.push(buildSuppressionUpsert(workspaceId, email, 'complaint', 'feedback'));
     plan.push(buildProfileEmailStatusUpdate(workspaceId, email, 'complained'));
     markFailed('complained');
+  } else if (classified.category === 'policy_block') {
+    // The receiver refused the SENDER. This message failed; the address is fine.
+    markFailed('bounced');
   } else if (classified.category === 'soft_bounce') {
     // Every soft bounce marks its own message failed (no retry). Once the address
     // has soft-bounced on N distinct days (no delivery in between) it becomes

@@ -62,6 +62,7 @@ export {
   parseDeliveryStatus,
   classifyDeliveryStatus,
   classifyInboundReport,
+  isPolicyBlock,
   parseHeaders,
   splitMessage,
   type DsnReport,

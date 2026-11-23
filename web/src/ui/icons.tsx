@@ -94,6 +94,7 @@ export const ICONS: Record<string, JSX.Element> = {
   ),
   onboarding: <I d="M4 7h16M4 12h16M4 17h10M19 15l2 2-2 2" />,
   admin: <I d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4Z" />,
+  'mail-health': <I d="M3 12h4l2.5-6 4 12 2.5-6h5" />,
   help: (
     <I>
       <circle cx="12" cy="12" r="9" />

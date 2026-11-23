@@ -25,6 +25,7 @@ import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
 import { ingestTrack, ingestIdentify, sendTransactional, r2StorageForWorkspace } from './handlers.js';
 import { decideMailEvent, buildMessageLookup, type MessageRef } from './mail-events.js';
+import { parseProbeReport, recordMailHealthReport } from './mail-health.js';
 import { parseDeliveryLog, attributeDeliveries } from './mail-deliveries.js';
 import { storeWebhook, processInboxRow } from './whatsapp-inbound.js';
 import { sharedWhatsAppHub, type WhatsAppEventHub } from './whatsapp-stream.js';
@@ -449,6 +450,24 @@ export function createApp(opts: CreateAppOptions): Hono {
     // that narrow exemption and enforces workspace scoping on everything else.
     await runFeedbackStatementsInTx(opts.pool, ws, statements);
     return c.json({ ok: true, action: decision.action, reason: decision.reason }, 200);
+  });
+
+  // ── Deliverability checks from each mail server ─────────────────────────────
+  // Platform data about our own IPs, so it touches no tenant. A report for an IP
+  // that is not one of ours is refused.
+  app.post('/internal/mail-health', async (c) => {
+    const refused = mailAgentRefusal(c.req.header('authorization'));
+    if (refused) return c.json({ error: refused.error }, refused.status);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid json' }, 400);
+    }
+    const parsed = parseProbeReport(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    await recordMailHealthReport(opts.pool, parsed.report);
+    return c.json({ ok: true }, 200);
   });
 
   // ── Successful deliveries from our own mail server ──────────────────────────

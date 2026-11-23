@@ -4,12 +4,15 @@ import {
   parseDeliveryStatus,
   classifyDeliveryStatus,
   classifyInboundReport,
+  isPolicyBlock,
   parseHeaders,
   splitMessage,
 } from '../src/dsn.js';
 
 const TOKEN = 'AbCdEf123456';
 const TAB = '\t';
+const MICROSOFT_S3150 =
+  "smtp; 550 5.7.1 Unfortunately, messages from [194.195.243.92] weren't sent. Please contact your Internet service provider since part of their network is on our block list (S3150).";
 
 // A real Postfix hard bounce, as it arrives at the VERP address.
 const HARD_BOUNCE = [
@@ -98,9 +101,49 @@ describe('delivery status', () => {
     const at = (status: string | null, action: string | null) =>
       classifyDeliveryStatus({ status, action, recipient: null, diagnostic: null });
     expect(at('5.1.1', 'failed')).toBe('hard_bounce');
-    expect(at('5.7.1', null)).toBe('hard_bounce');
+    expect(at('5.5.0', null)).toBe('hard_bounce');
     expect(at('4.2.2', 'delayed')).toBe('soft_bounce');
     expect(at('4.4.1', null)).toBe('soft_bounce');
+  });
+
+  // A refusal of the SENDER says nothing about whether the mailbox exists.
+  it('classifies a 5.7.x refusal as a policy block, not a hard bounce', () => {
+    const at = (status: string, diagnostic: string | null) =>
+      classifyDeliveryStatus({ status, action: 'failed', recipient: null, diagnostic });
+    expect(at('5.7.1', MICROSOFT_S3150)).toBe('policy_block');
+    expect(at('5.7.1', null)).toBe('policy_block');
+    expect(at('5.7.26', 'smtp; 550 5.7.26 unauthenticated email')).toBe('policy_block');
+  });
+
+  it('keeps a 5.7.x that names a missing mailbox as a hard bounce', () => {
+    const at = (diagnostic: string) =>
+      classifyDeliveryStatus({ status: '5.7.1', action: 'failed', recipient: null, diagnostic });
+    expect(at('smtp; 550 5.7.1 <a@b.com>: Recipient address rejected: User unknown')).toBe('hard_bounce');
+    expect(at('smtp; 550 5.7.1 No such user here')).toBe('hard_bounce');
+    expect(at('smtp; 550 5.7.1 The mailbox does not exist')).toBe('hard_bounce');
+  });
+
+  it('isPolicyBlock answers from the status and the server text', () => {
+    expect(isPolicyBlock('5.7.1', MICROSOFT_S3150)).toBe(true);
+    expect(isPolicyBlock('5.1.1', MICROSOFT_S3150)).toBe(false);
+    expect(isPolicyBlock('4.7.1', null)).toBe(false);
+    expect(isPolicyBlock(null, MICROSOFT_S3150)).toBe(false);
+  });
+
+  // Postfix folds a long Diagnostic-Code; the block code sits on a later line.
+  it('reads a folded Diagnostic-Code in full', () => {
+    const raw = [
+      'Final-Recipient: rfc822; person@live.com',
+      'Action: failed',
+      'Status: 5.7.1',
+      'Diagnostic-Code: smtp; 550 5.7.1 Unfortunately, messages from [194.195.243.92]',
+      "    weren't sent. Please contact your Internet service provider since part of",
+      '    their network is on our block list (S3150).',
+      '',
+      'Next-Field: not part of the diagnostic',
+    ].join('\r\n');
+    const d = parseDeliveryStatus(raw)!;
+    expect(d.diagnostic).toBe(MICROSOFT_S3150);
   });
 
   it('falls back to the action verb when no enhanced status is present', () => {

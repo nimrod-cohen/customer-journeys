@@ -350,9 +350,13 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   `classifyInboundReport` (`@cdp/service-feedback` `dsn.ts`) folds a DSN or ARF into the
   same `ClassifiedEvent` `classifySesEvent` produces, so suppression, `email_events`,
   `email_status` and soft-bounce counting have ONE implementation.
-- **Only permanent failures suppress.** `5.x.x` -> hard bounce -> suppress; `4.x.x` ->
-  transient, still being retried by the MTA -> recorded, **never** suppressed. A
-  complaint always suppresses. Suppressing on transient failures destroys a list.
+- **Only permanent failures of the ADDRESS suppress.** `5.x.x` -> hard bounce ->
+  suppress; `4.x.x` -> transient, still being retried by the MTA -> recorded, **never**
+  suppressed. A complaint always suppresses. Suppressing on transient failures destroys
+  a list. **`5.7.x` is a `policy_block`** (`isPolicyBlock`): the receiver refused the
+  SENDER (Microsoft's S3150 blocks a whole network), which says nothing about the
+  mailbox, so it is recorded and never suppresses, unless the server's text names a
+  missing user. Otherwise one IP block lands valid people on the cross-workspace list.
 - **`POST /internal/mail-events`** ingests raw reports from the MTA agent, authenticated
   by `MAIL_AGENT_SECRET`. That bearer only gets a caller through the door — workspace and
   recipient still come from the verified VERP token, so a leaked bearer cannot suppress
@@ -451,6 +455,15 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   log time, idempotent so the agent re-reads overlapping windows freely. While the box
   relays through relay1, `status=sent` means our relay accepted it; a receiver's later
   rejection still arrives as a bounce.
+- **Mail health (`/mail-health`, system-admin) needs three sources.** A provider
+  reveals an IP block only to a connection FROM that IP, so
+  `services/mail-agent/deliverability-probe.py` runs hourly ON each server and stops at
+  `MAIL FROM`, sending nothing. Apple's HM08 arrives after the body, which no such probe
+  can see, so real 5.7.x rejections from `email_events` are the third source. **An
+  empty DNSBL answer counts as clean only from a resolver that passed that list's
+  `127.0.0.2` test entry**: Spamhaus refuses shared resolvers (`127.255.255.x`), and
+  reading that as clean would hide a listing. A server whose reports stop is an issue,
+  never a pass. All verdicts live in `services/local-api/src/mail-health.ts`.
 - **The MTA agent is a thin forwarder** (`services/mail-agent/mail-agent.mjs`): read
   Maildir, post raw, delete on 2xx. It parses nothing, so a parser fix is an app deploy
   rather than an ssh session on a mail server.

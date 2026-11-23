@@ -235,6 +235,7 @@ export const ROUTE_TABLE: Readonly<Record<RouteKey, Capability | null>> = {
   'DELETE /admin/workspaces/:id': 'view_all_workspaces',
   'GET /admin/workspaces': 'view_all_workspaces',
   'GET /admin/workspaces/:id': 'view_all_workspaces',
+  'GET /admin/mail-health': 'view_all_workspaces',
 };
 
 /** Look up the capability for a route key. Throws if the route is unknown. */

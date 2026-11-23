@@ -86,20 +86,38 @@ export function parseDeliveryStatus(raw: string): DsnReport | null {
     /^Final-Recipient:\s*[^;]*;\s*(.+)$/im.exec(raw)?.[1] ??
     /^Original-Recipient:\s*[^;]*;\s*(.+)$/im.exec(raw)?.[1] ??
     null;
-  const diag = /^Diagnostic-Code:\s*(.+)$/im.exec(raw)?.[1] ?? null;
+  // Postfix folds a long diagnostic across lines, and the part that says WHY (a
+  // provider's block code, say) is usually on a later one.
+  const diag = /^Diagnostic-Code:[ \t]*(.+(?:\r?\n[ \t]+.*)*)/im.exec(raw)?.[1] ?? null;
 
   if (!status && !action && !rcpt) return null;
   return {
     status,
     action,
     recipient: lc(rcpt?.replace(/^</, '').replace(/>$/, '') ?? null),
-    diagnostic: diag ? diag.trim().slice(0, 500) : null,
+    diagnostic: diag ? diag.replace(/\r?\n[ \t]+/g, ' ').trim().slice(0, 1000) : null,
   };
+}
+
+/** Wording that means the MAILBOX is the problem, even under a 5.7.x status. */
+const MISSING_MAILBOX =
+  /user unknown|unknown user|no such (user|mailbox|recipient)|unknown recipient|recipient not found|mailbox not found|invalid recipient|does not exist/i;
+
+/**
+ * True when the receiver refused the SENDER (its IP, domain or authentication)
+ * rather than the address. RFC 3463 reserves x.7.x for security and policy, so it
+ * says nothing about whether the mailbox exists: Microsoft's S3150 block of a
+ * whole network is a 5.7.1. A few servers do report a missing user under 5.7.x,
+ * and those stay hard bounces.
+ */
+export function isPolicyBlock(status: string | null, diagnostic: string | null): boolean {
+  return !!status?.startsWith('5.7.') && !MISSING_MAILBOX.test(diagnostic ?? '');
 }
 
 /**
  * Classify a delivery status into our internal category.
  *
+ *   5.7.x -> policy_block (the sender was refused: recorded, never suppresses)
  *   5.x.x -> hard_bounce  (permanent: no such mailbox, no such domain)
  *   4.x.x -> soft_bounce  (transient: mailbox full, greylisted, deferred)
  *
@@ -114,6 +132,7 @@ export function parseDeliveryStatus(raw: string): DsnReport | null {
  */
 export function classifyDeliveryStatus(dsn: DsnReport | null): FeedbackCategory {
   if (!dsn) return 'other';
+  if (isPolicyBlock(dsn.status, dsn.diagnostic)) return 'policy_block';
   const cls = dsn.status?.[0];
   if (cls === '5') return 'hard_bounce';
   if (cls === '4') return 'soft_bounce';
