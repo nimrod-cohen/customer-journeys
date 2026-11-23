@@ -64,6 +64,15 @@ describe('decideMailEvent', () => {
     expect(d.reason).toMatch(/not suppressed/);
   });
 
+  // Microsoft refusing OUR IP must not cost a customer a valid recipient.
+  it('records but does NOT suppress a policy block', async () => {
+    const d = await decideMailEvent({ raw: bounce('5.7.1') }, SECRET, found);
+    expect(d.action).toBe('record');
+    expect(d.classified?.category).toBe('policy_block');
+    expect(d.classified?.type).toBe('bounce');
+    expect(d.reason).toMatch(/not suppressed/);
+  });
+
   it('suppresses on a spam complaint', async () => {
     const d = await decideMailEvent({ raw: complaint() }, SECRET, found);
     expect(d.action).toBe('suppress');

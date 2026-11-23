@@ -173,6 +173,7 @@ import {
 import { createSmtpEmailClient, smtpTransportFromEnv, buildIcs } from '@cdp/email';
 import { renderExpression } from '@cdp/shared';
 import { describeDeliveryStatus } from './delivery-status.js';
+import { isPolicyBlock } from '@cdp/service-feedback';
 import { findSendStep, testSendMerge, withTestPrefix } from './test-send.js';
 import {
   verifySelfHostedDomain,
@@ -7023,16 +7024,21 @@ export function toActivityRow(r: ActivityQueryRow) {
   if (r.source === 'email' && (r.type === 'bounce' || r.type === 'complaint')) {
     const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
     const status = describeDeliveryStatus(r.detail);
+    const serverSaid = str(raw?.diagnostic);
+    const policyBlock = isPolicyBlock(status?.code ?? null, serverSaid);
+    const outcome = policyBlock
+      ? 'The sender was refused, which says nothing about this address, so it is not suppressed.'
+      : status?.permanent
+        ? 'Permanent — this address will not be emailed again.'
+        : 'Temporary — the mail server keeps retrying.';
     failure =
       r.type === 'complaint'
         ? { meaning: 'The recipient reported this message as spam. They are suppressed from all email.' }
         : {
             code: status?.code ?? str(r.detail),
-            permanent: status?.permanent ?? null,
-            meaning: status
-              ? `${status.meaning} ${status.permanent ? 'Permanent — this address will not be emailed again.' : 'Temporary — the mail server keeps retrying.'}`
-              : null,
-            server_said: str(raw?.diagnostic),
+            permanent: policyBlock ? false : (status?.permanent ?? null),
+            meaning: status ? `${status.meaning} ${outcome}` : null,
+            server_said: serverSaid,
           };
     const failed = str(raw?.recipient);
     if (failed) failure.address = failed;

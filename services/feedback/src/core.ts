@@ -22,7 +22,7 @@ export interface SqlStatement {
 // ── classify ─────────────────────────────────────────────────────────────────
 
 /** Our internal categorization of an SES feedback notification. */
-export type FeedbackCategory = 'hard_bounce' | 'soft_bounce' | 'complaint' | 'other';
+export type FeedbackCategory = 'hard_bounce' | 'soft_bounce' | 'policy_block' | 'complaint' | 'other';
 
 /** The raw email_events.type label we store (delivery|bounce|complaint|open|click). */
 export type EmailEventType = 'delivery' | 'bounce' | 'complaint' | 'open' | 'click' | 'other';

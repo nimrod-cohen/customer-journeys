@@ -350,9 +350,13 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   `classifyInboundReport` (`@cdp/service-feedback` `dsn.ts`) folds a DSN or ARF into the
   same `ClassifiedEvent` `classifySesEvent` produces, so suppression, `email_events`,
   `email_status` and soft-bounce counting have ONE implementation.
-- **Only permanent failures suppress.** `5.x.x` -> hard bounce -> suppress; `4.x.x` ->
-  transient, still being retried by the MTA -> recorded, **never** suppressed. A
-  complaint always suppresses. Suppressing on transient failures destroys a list.
+- **Only permanent failures of the ADDRESS suppress.** `5.x.x` -> hard bounce ->
+  suppress; `4.x.x` -> transient, still being retried by the MTA -> recorded, **never**
+  suppressed. A complaint always suppresses. Suppressing on transient failures destroys
+  a list. **`5.7.x` is a `policy_block`** (`isPolicyBlock`): the receiver refused the
+  SENDER (Microsoft's S3150 blocks a whole network), which says nothing about the
+  mailbox, so it is recorded and never suppresses, unless the server's text names a
+  missing user. Otherwise one IP block lands valid people on the cross-workspace list.
 - **`POST /internal/mail-events`** ingests raw reports from the MTA agent, authenticated
   by `MAIL_AGENT_SECRET`. That bearer only gets a caller through the door — workspace and
   recipient still come from the verified VERP token, so a leaked bearer cannot suppress

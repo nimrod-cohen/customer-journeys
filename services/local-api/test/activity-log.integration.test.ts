@@ -162,7 +162,8 @@ describeMaybe('activity log (real Postgres)', () => {
       const b = rows.activity.find((r) => r.type === 'bounce')!;
       expect(b.profile_id).toBe(P_A);
       expect(b.email).toBe('a1@acme.com');
-      expect(b.context.failure).toMatchObject({ code: '5.7.1', permanent: true, address: 'a1@acme.com' });
+      // 5.7.x refuses the sender, so it is not a permanent failure of this address.
+      expect(b.context.failure).toMatchObject({ code: '5.7.1', permanent: false, address: 'a1@acme.com' });
       expect(b.context.failure.server_said).toBe('550 5.7.1 Message rejected');
       // What the send was about — the subject the person actually received.
       expect(b.context.message).toMatchObject({ kind: 'transactional', subject: 'Your March invoice' });

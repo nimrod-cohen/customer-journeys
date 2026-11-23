@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.165.2',
+    date: '2026-11-23',
+    changes: [
+      'When a mail provider blocks our sending server, recipients are no longer marked as bounced, so valid addresses keep receiving your email once the block clears.',
+    ],
+  },
+  {
     version: '0.165.1',
     date: '2026-11-20',
     changes: [

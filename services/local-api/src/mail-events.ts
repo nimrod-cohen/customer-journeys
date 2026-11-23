@@ -114,9 +114,11 @@ export async function decideMailEvent(
         ? 'spam complaint — permanent removal'
         : classified.category === 'hard_bounce'
           ? `permanent failure ${classified.subType ?? ''}`.trim()
-          : classified.category === 'soft_bounce'
-            ? `transient failure ${classified.subType ?? ''} — recorded, not suppressed`.trim()
-            : 'unrecognised report — recorded only',
+          : classified.category === 'policy_block'
+            ? `sender refused by policy ${classified.subType ?? ''} — recorded, not suppressed`
+            : classified.category === 'soft_bounce'
+              ? `transient failure ${classified.subType ?? ''} — recorded, not suppressed`.trim()
+              : 'unrecognised report — recorded only',
     workspaceId: ref.workspaceId,
     messageId,
     recipient,
