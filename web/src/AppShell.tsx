@@ -21,6 +21,7 @@ import { SendingDomainDetail } from './screens/SendingDomainDetail.tsx';
 import { AccountSettings } from './screens/AccountSettings.tsx';
 import { Changelog } from './screens/Changelog.tsx';
 import { SystemAdminConsole } from './screens/SystemAdminConsole.js';
+import { MailHealth, type MailHealthData } from './screens/MailHealth.js';
 import { Dashboards, ProfileExplorer, SuppressionList } from './screens/SimpleScreens.js';
 import { ProfileDetail } from './screens/ProfileDetail.js';
 import { TemplatesList } from './screens/TemplatesList.js';
@@ -124,6 +125,8 @@ function screenFor(path: string): JSX.Element {
       return <SuppressionList />;
     case '/admin':
       return <SystemAdminConsole />;
+    case '/mail-health':
+      return <MailHealth />;
     case '/help':
       return <Help />;
     case '/activity':
@@ -210,6 +213,24 @@ export function AppShell(): JSX.Element {
     const t = setInterval(load, 60_000);
     return () => clearInterval(t);
   }, [whatsappOn, session.workspaceId, route, whatsappUnreadTick]);
+
+  // A problem with our sending IPs must be visible from any screen, so a system admin
+  // finds out before a customer's bounces do.
+  const canSeeMailHealth = nav.some((n) => n.id === 'mail-health');
+  const [mailHealth, setMailHealth] = useState<{ count: number; critical: boolean }>({ count: 0, critical: false });
+  useEffect(() => {
+    if (!canSeeMailHealth) return;
+    const load = (): void =>
+      void api
+        .get<{ health: MailHealthData }>('/admin/mail-health')
+        .then(({ health }) =>
+          setMailHealth({ count: health.issues.length, critical: health.status === 'critical' }),
+        )
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 15 * 60_000);
+    return () => clearInterval(t);
+  }, [canSeeMailHealth]);
 
   const setupBadgeFor = (id: string): number =>
     id === 'company' ? companyErrors : id === 'settings' ? workspaceErrors : 0;
@@ -321,6 +342,15 @@ export function AppShell(): JSX.Element {
                     class="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-white"
                   >
                     {whatsappUnread}
+                  </span>
+                ) : null}
+                {item.id === 'mail-health' && mailHealth.count > 0 ? (
+                  <span
+                    data-testid="nav-mail-health-badge"
+                    title={`${mailHealth.count} mail health issue${mailHealth.count === 1 ? '' : 's'}`}
+                    class={`ml-auto grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-[11px] font-bold text-white ${mailHealth.critical ? 'bg-rose-500' : 'bg-amber-500'}`}
+                  >
+                    {mailHealth.count}
                   </span>
                 ) : null}
                 {setupBadgeFor(item.id) > 0 ? (

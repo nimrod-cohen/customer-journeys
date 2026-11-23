@@ -153,38 +153,47 @@ test('PINCH: ctrl+wheel up zooms IN, ctrl+wheel down zooms OUT; plain wheel does
   expect(await zoomLevel(page)).toBe(beforePlain);
 });
 
-test('PAN headroom: a full viewport of padding on every side lets the map pan completely off-screen', async ({ page }) => {
+test('PAN bounds: panning stops with the nearest step still in view at the opposite edge', async ({ page }) => {
   await openSeededAutomation(page);
   const canvas = page.getByTestId('automation-canvas');
+  // The canvas sets its opening scroll position once it has measured itself. Wait for
+  // that, or it lands after the scroll below and moves the map.
+  await expect.poll(() => canvas.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+  const view = await canvas.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { left: r.left + el.clientLeft, top: r.top + el.clientTop, right: r.left + el.clientLeft + el.clientWidth, bottom: r.top + el.clientTop + el.clientHeight };
+  });
+  /** The outer edges of the whole map, in screen px, at the current scroll. */
+  const mapEdges = () =>
+    canvas.evaluate((el) => {
+      const cards = [...el.querySelectorAll('[data-node-id]')].map((c) => c.getBoundingClientRect());
+      return {
+        firstRight: Math.min(...cards.map((c) => c.right)),
+        firstBottom: Math.min(...cards.map((c) => c.bottom)),
+        lastLeft: Math.max(...cards.map((c) => c.left)),
+        lastTop: Math.max(...cards.map((c) => c.top)),
+      };
+    });
+  // PAN_EDGE_MARGIN (24px), plus room for sub-pixel rounding.
+  const NEAR_EDGE = 40;
 
-  // The scroll area exceeds the viewport by at least one full screen on each axis
-  // (a viewport of headroom past the content on every side — the user's rule).
-  const dims = await canvas.evaluate((el) => ({
-    sw: el.scrollWidth,
-    sh: el.scrollHeight,
-    cw: el.clientWidth,
-    ch: el.clientHeight,
-  }));
-  expect(dims.sw - dims.cw).toBeGreaterThanOrEqual(dims.cw);
-  expect(dims.sh - dims.ch).toBeGreaterThanOrEqual(dims.ch);
-
-  const cv = (await canvas.boundingBox())!;
-
-  // Pan fully one way on each axis → the trigger card is pushed entirely off the
-  // opposite edge (the whole map can become invisible).
   await canvas.evaluate((el) => {
     el.scrollLeft = 0;
     el.scrollTop = 0;
   });
-  let box = (await page.getByTestId('node-trigger').boundingBox())!;
-  expect(box.x).toBeGreaterThanOrEqual(cv.x + cv.width - 2); // off the RIGHT edge
-  expect(box.y).toBeGreaterThanOrEqual(cv.y + cv.height - 2); // off the BOTTOM edge
+  let edges = await mapEdges();
+  expect(edges.firstRight).toBeLessThanOrEqual(view.right);
+  expect(edges.firstRight).toBeGreaterThanOrEqual(view.right - NEAR_EDGE);
+  expect(edges.firstBottom).toBeLessThanOrEqual(view.bottom);
+  expect(edges.firstBottom).toBeGreaterThanOrEqual(view.bottom - NEAR_EDGE);
 
   await canvas.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
     el.scrollTop = el.scrollHeight;
   });
-  box = (await page.getByTestId('node-trigger').boundingBox())!;
-  expect(box.x + box.width).toBeLessThanOrEqual(cv.x + 2); // off the LEFT edge
-  expect(box.y + box.height).toBeLessThanOrEqual(cv.y + 2); // off the TOP edge
+  edges = await mapEdges();
+  expect(edges.lastLeft).toBeGreaterThanOrEqual(view.left);
+  expect(edges.lastLeft).toBeLessThanOrEqual(view.left + NEAR_EDGE);
+  expect(edges.lastTop).toBeGreaterThanOrEqual(view.top);
+  expect(edges.lastTop).toBeLessThanOrEqual(view.top + NEAR_EDGE);
 });

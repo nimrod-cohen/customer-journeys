@@ -18,9 +18,10 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '0.165.2',
+    version: '0.166.0',
     date: '2026-11-23',
     changes: [
+      'System admins get a new Mail health screen showing whether Google, Microsoft, Apple or Spamhaus are blocking our mail servers, with a warning badge in the menu.',
       'When a mail provider blocks our sending server, recipients are no longer marked as bounced, so valid addresses keep receiving your email once the block clears.',
     ],
   },

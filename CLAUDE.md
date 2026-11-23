@@ -455,6 +455,15 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   log time, idempotent so the agent re-reads overlapping windows freely. While the box
   relays through relay1, `status=sent` means our relay accepted it; a receiver's later
   rejection still arrives as a bounce.
+- **Mail health (`/mail-health`, system-admin) needs three sources.** A provider
+  reveals an IP block only to a connection FROM that IP, so
+  `services/mail-agent/deliverability-probe.py` runs hourly ON each server and stops at
+  `MAIL FROM`, sending nothing. Apple's HM08 arrives after the body, which no such probe
+  can see, so real 5.7.x rejections from `email_events` are the third source. **An
+  empty DNSBL answer counts as clean only from a resolver that passed that list's
+  `127.0.0.2` test entry**: Spamhaus refuses shared resolvers (`127.255.255.x`), and
+  reading that as clean would hide a listing. A server whose reports stop is an issue,
+  never a pass. All verdicts live in `services/local-api/src/mail-health.ts`.
 - **The MTA agent is a thin forwarder** (`services/mail-agent/mail-agent.mjs`): read
   Maildir, post raw, delete on 2xx. It parses nothing, so a parser fix is an app deploy
   rather than an ssh session on a mail server.

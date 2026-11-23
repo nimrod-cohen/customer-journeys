@@ -174,6 +174,7 @@ import { createSmtpEmailClient, smtpTransportFromEnv, buildIcs } from '@cdp/emai
 import { renderExpression } from '@cdp/shared';
 import { describeDeliveryStatus } from './delivery-status.js';
 import { isPolicyBlock } from '@cdp/service-feedback';
+import { loadMailHealth } from './mail-health.js';
 import { findSendStep, testSendMerge, withTestPrefix } from './test-send.js';
 import {
   verifySelfHostedDomain,
@@ -7854,6 +7855,15 @@ export const adminListWorkspaces: Handler = async (ctx, pool) => {
   return ok({ workspaces: rows });
 };
 
+/** GET /admin/mail-health — platform-wide deliverability. Aggregate, and audited. */
+export const adminMailHealth: Handler = async (ctx, pool) => {
+  const health = await loadMailHealth(pool, new Date());
+  await writeAuditEntry(
+    recordCrossTenantAccess(ctx.userId ?? '', null, 'admin.mail_health', { status: health.status }),
+  );
+  return ok({ health });
+};
+
 /** GET /admin/workspaces/:id — read ANOTHER workspace (cross-tenant). Audited. */
 export const adminGetWorkspace: Handler = async (ctx, pool, req) => {
   const targetId = req.params.id!;
@@ -8824,4 +8834,5 @@ export const HANDLERS: Readonly<Record<string, Handler>> = {
   'DELETE /admin/workspaces/:id': adminDeleteWorkspace,
   'GET /admin/workspaces': adminListWorkspaces,
   'GET /admin/workspaces/:id': adminGetWorkspace,
+  'GET /admin/mail-health': adminMailHealth,
 };
