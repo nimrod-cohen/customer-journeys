@@ -14,6 +14,14 @@ interface ProviderRow {
   code: number | null;
   block_code: string | null;
   reply: string | null;
+  delivering?: boolean;
+}
+interface RouteRow {
+  provider: string;
+  label: string;
+  via_ip: string | null;
+  planned_ip: string | null;
+  reason: string | null;
 }
 interface ListRow {
   zone: string;
@@ -48,6 +56,7 @@ interface Rejection {
 export interface MailHealthData {
   status: 'ok' | 'warning' | 'critical';
   issues: Issue[];
+  routes?: RouteRow[];
   servers: ServerRow[];
   rejections: Rejection[];
   generated_at: string;
@@ -93,6 +102,7 @@ function ServerCard({ server }: { server: ServerRow }) {
             <div class="flex items-center justify-between gap-3">
               <span class="text-sm text-ink-900">{p.label}</span>
               <span class="flex items-center gap-2">
+                {p.delivering ? <span class="text-xs text-stone-500">Sends this mail</span> : null}
                 {p.block_code ? <code class="text-xs text-stone-500">{p.block_code}</code> : null}
                 <Badge tone={PROVIDER_STATUS[p.status].tone}>{PROVIDER_STATUS[p.status].label}</Badge>
               </span>
@@ -182,6 +192,31 @@ export function MailHealth() {
               </ul>
             ) : null}
           </Card>
+
+          {health.routes?.length ? (
+            <Card class="p-5">
+              <h2 class="text-lg font-semibold text-ink-900">Current routes</h2>
+              <p class="mt-1 text-sm text-stone-500">
+                If a provider blocks its server, its mail moves automatically to a healthy one at the next hourly check.
+              </p>
+              <ul class="mt-2 divide-y divide-stone-200">
+                {health.routes.map((r) => {
+                  const name = (ip: string | null) => health.servers.find((s) => s.ip === ip)?.name ?? 'Unknown';
+                  return (
+                    <li data-testid="mail-health-route" data-provider={r.provider} key={r.provider} class="py-2">
+                      <div class="flex items-center justify-between gap-3">
+                        <span class="text-sm text-ink-900">{r.label}</span>
+                        <span class="text-sm text-stone-500">
+                          {r.planned_ip !== r.via_ip ? `${name(r.via_ip)} → ${name(r.planned_ip)}` : name(r.via_ip)}
+                        </span>
+                      </div>
+                      {r.reason ? <p class="mt-1 text-xs text-stone-500">{r.reason}</p> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          ) : null}
 
           <div class="grid gap-4 lg:grid-cols-2">
             {health.servers.map((s) => (

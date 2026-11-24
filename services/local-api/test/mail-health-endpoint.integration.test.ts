@@ -80,6 +80,15 @@ describeMaybe('mail health (real Postgres)', () => {
     expect(h.delivering_ip).toBe(LINODE_IP);
   });
 
+  it('answers Hetzner with its route plan, and Linode with none', async () => {
+    const fromLinode = await post(report(LINODE_IP, 550, '550 5.7.1 on our block list (S3150)'));
+    expect(((await fromLinode.json()) as { direct_domains?: unknown }).direct_domains).toBeUndefined();
+    const fromHetzner = await post(report(HETZNER_IP, 250, '250 OK'));
+    const body = (await fromHetzner.json()) as { direct_domains: string[] };
+    expect(body.direct_domains).toContain('hotmail.com');
+    expect(body.direct_domains).not.toContain('gmail.com');
+  });
+
   it('counts real rejections by provider without exposing the address', async () => {
     await pool.query(
       `INSERT INTO email_events (workspace_id, ses_message_id, profile_id, type, sub_type, raw, occurred_at)

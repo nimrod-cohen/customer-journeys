@@ -464,6 +464,15 @@ Design and operational detail: `docs/plans/2026-08-04-self-hosted-mail-server-de
   `127.0.0.2` test entry**: Spamhaus refuses shared resolvers (`127.255.255.x`), and
   reading that as clean would hide a listing. A server whose reports stop is an issue,
   never a pass. All verdicts live in `services/local-api/src/mail-health.ts`.
+- **Routes follow health, per provider** (`computeMailRoutes`). The app decides from the
+  hourly probes; its answer to Hetzner's report is a list of recipient domains to deliver
+  directly, and `services/mail-agent/apply-mail-routes.py` (root, after the unprivileged
+  probe) writes that to Postfix's transport map. A provider moves ONLY when a fresh check
+  shows its current server refused AND the other is fresh, accepted and on no blocklist.
+  **It never moves back on recovery** (flipping between IPs hurts both reputations), and
+  anything uncertain holds the current route. Routing is by recipient DOMAIN, so company
+  domains hosted on Microsoft 365 or Google Workspace are not covered, and a block visible
+  only after the message body (Apple's HM08) cannot trigger a move.
 - **The MTA agent is a thin forwarder** (`services/mail-agent/mail-agent.mjs`): read
   Maildir, post raw, delete on 2xx. It parses nothing, so a parser fix is an app deploy
   rather than an ssh session on a mail server.

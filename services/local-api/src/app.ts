@@ -25,7 +25,7 @@ import type { AuthorizerLookups } from './auth.js';
 import { buildHealth, type HealthDeps } from './health.js';
 import { ingestTrack, ingestIdentify, sendTransactional, r2StorageForWorkspace } from './handlers.js';
 import { decideMailEvent, buildMessageLookup, type MessageRef } from './mail-events.js';
-import { parseProbeReport, recordMailHealthReport } from './mail-health.js';
+import { HETZNER_IP, loadDirectDomains, parseProbeReport, recordMailHealthReport } from './mail-health.js';
 import { parseDeliveryLog, attributeDeliveries } from './mail-deliveries.js';
 import { storeWebhook, processInboxRow } from './whatsapp-inbound.js';
 import { sharedWhatsAppHub, type WhatsAppEventHub } from './whatsapp-stream.js';
@@ -467,7 +467,10 @@ export function createApp(opts: CreateAppOptions): Hono {
     const parsed = parseProbeReport(body);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     await recordMailHealthReport(opts.pool, parsed.report);
-    return c.json({ ok: true }, 200);
+    // Only Hetzner routes mail. A null plan means "keep what you have".
+    if (parsed.report.ip !== HETZNER_IP) return c.json({ ok: true }, 200);
+    const directDomains = await loadDirectDomains(opts.pool, new Date());
+    return c.json({ ok: true, ...(directDomains ? { direct_domains: directDomains } : {}) }, 200);
   });
 
   // ── Successful deliveries from our own mail server ──────────────────────────
