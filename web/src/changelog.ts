@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.167.0',
+    date: '2026-11-23',
+    changes: [
+      'If Google, Microsoft or Apple blocks one of our mail servers, their mail now moves automatically to a healthy server. The Mail health screen shows which server carries each provider.',
+    ],
+  },
+  {
     version: '0.166.0',
     date: '2026-11-23',
     changes: [

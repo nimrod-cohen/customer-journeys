@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeMailHealth,
+  computeMailRoutes,
   parseProbeReport,
   redactAddresses,
   HETZNER_IP,
@@ -180,7 +181,90 @@ describe('computeMailHealth', () => {
   });
 });
 
+describe('computeMailRoutes', () => {
+  const blocked = (provider: string) => ({ provider, mx: 'm', stage: 'mail', code: 550, reply: S3150 });
+  const without = (provider: string) => allAccepted().filter((r) => r.provider !== provider);
+  const route = (r: ReturnType<typeof computeMailRoutes>, provider: string) => r.routes.find((x) => x.provider === provider)!;
+  const routes = (reports: ProbeReport[]) => computeMailRoutes(reports, NOW);
+  const MICROSOFT_DIRECT = ['hotmail.com', 'outlook.com', 'live.com', 'msn.com'];
+
+  it('leaves every provider on the relay while it is accepted', () => {
+    const r = routes([report(HETZNER_IP), report(LINODE_IP)]);
+    expect(r.direct_domains).toEqual([]);
+    expect(route(r, 'microsoft')).toMatchObject({ via_ip: LINODE_IP, planned_ip: LINODE_IP });
+  });
+
+  it('moves only the blocked provider to the healthy server', () => {
+    const r = routes([report(HETZNER_IP), report(LINODE_IP, { smtp: [...without('microsoft'), blocked('microsoft')] })]);
+    expect(route(r, 'microsoft').planned_ip).toBe(HETZNER_IP);
+    expect(route(r, 'google').planned_ip).toBe(LINODE_IP);
+    expect(r.direct_domains).toEqual(expect.arrayContaining(MICROSOFT_DIRECT));
+    expect(r.direct_domains).not.toContain('gmail.com');
+  });
+
+  it('moves a provider back when its direct route becomes blocked', () => {
+    const r = routes([
+      report(HETZNER_IP, { direct_domains: ['hotmail.com'], smtp: [...without('microsoft'), blocked('microsoft')] }),
+      report(LINODE_IP),
+    ]);
+    expect(route(r, 'microsoft')).toMatchObject({ via_ip: HETZNER_IP, planned_ip: LINODE_IP });
+    expect(r.direct_domains).toEqual([]);
+  });
+
+  // Moving back on recovery would flip a provider between IPs and hurt both reputations.
+  it('stays on the working route after the old server recovers', () => {
+    const r = routes([report(HETZNER_IP, { direct_domains: MICROSOFT_DIRECT }), report(LINODE_IP)]);
+    expect(route(r, 'microsoft').planned_ip).toBe(HETZNER_IP);
+  });
+
+  it('holds the route when both servers are blocked', () => {
+    const smtp = [...without('microsoft'), blocked('microsoft')];
+    const r = routes([report(HETZNER_IP, { smtp }), report(LINODE_IP, { smtp })]);
+    expect(route(r, 'microsoft').planned_ip).toBe(LINODE_IP);
+    expect(route(r, 'microsoft').reason).toMatch(/no healthy/i);
+  });
+
+  it.each([
+    ['is stale', { checked_at: '2026-11-23T09:00:00.000Z' }],
+    ['cannot be reached', { smtp: [...allAccepted().filter((x) => x.provider !== 'microsoft'), { provider: 'microsoft', mx: 'm', stage: 'connect', code: null, reply: 'timed out' }] }],
+    ['is throttled', { smtp: [...allAccepted().filter((x) => x.provider !== 'microsoft'), { provider: 'microsoft', mx: 'm', stage: 'mail', code: 421, reply: 'later' }] }],
+    ['is on a blocklist', { dnsbl: cleanLists(HETZNER_IP).map((x) => (x.target === HETZNER_IP && x.zone === 'bl.spamcop.net' ? { ...x, answers: ['127.0.0.2'] } : x)) }],
+  ])('never moves mail to a server that %s', (_name, over) => {
+    const r = routes([report(HETZNER_IP, over as Partial<ProbeReport>), report(LINODE_IP, { smtp: [...without('microsoft'), blocked('microsoft')] })]);
+    expect(route(r, 'microsoft').planned_ip).toBe(LINODE_IP);
+  });
+
+  it('does not act on a stale block', () => {
+    const r = routes([
+      report(HETZNER_IP),
+      report(LINODE_IP, { checked_at: '2026-11-23T09:00:00.000Z', smtp: [...without('microsoft'), blocked('microsoft')] }),
+    ]);
+    expect(route(r, 'microsoft').planned_ip).toBe(LINODE_IP);
+  });
+
+  it('issues no plan without a Hetzner report or when it has no relay', () => {
+    expect(routes([report(LINODE_IP)]).direct_domains).toBeNull();
+    expect(routes([report(HETZNER_IP, { relayhost: '' }), report(LINODE_IP)]).direct_domains).toBeNull();
+  });
+
+  it('does not call a block critical once that provider is routed elsewhere', () => {
+    const h = health([
+      report(HETZNER_IP, { direct_domains: MICROSOFT_DIRECT }),
+      report(LINODE_IP, { smtp: [...without('microsoft'), blocked('microsoft')] }),
+    ]);
+    expect(h.status).toBe('warning');
+    expect(h.routes.find((x) => x.provider === 'microsoft')!.via_ip).toBe(HETZNER_IP);
+    expect(server(h, HETZNER_IP).delivering).toBe(true);
+    expect(server(h, LINODE_IP).delivering).toBe(true);
+  });
+});
+
 describe('parseProbeReport', () => {
+  it('keeps valid direct domains and refuses unsafe ones', () => {
+    const ok = parseProbeReport({ ...report(HETZNER_IP), direct_domains: ['hotmail.com'] });
+    expect(ok.ok && ok.report.direct_domains).toEqual(['hotmail.com']);
+    expect(parseProbeReport({ ...report(HETZNER_IP), direct_domains: ['bad domain\nx'] }).ok).toBe(false);
+  });
   it('accepts a report from a known server', () => {
     expect(parseProbeReport(report(LINODE_IP)).ok).toBe(true);
   });

@@ -27,6 +27,18 @@ const PROVIDERS = [
 ] as const;
 export type ProviderId = (typeof PROVIDERS)[number]['id'];
 
+/** The recipient domains a route covers. Postfix routes by domain, so this list IS the route. */
+const PROVIDER_DOMAINS: Record<ProviderId, readonly string[]> = {
+  google: ['gmail.com', 'googlemail.com'],
+  microsoft: [
+    'hotmail.com', 'hotmail.co.uk', 'hotmail.fr', 'hotmail.de', 'hotmail.it', 'hotmail.es',
+    'outlook.com', 'outlook.co.il', 'outlook.fr', 'outlook.de', 'outlook.es',
+    'live.com', 'live.co.uk', 'live.fr', 'live.de', 'live.it',
+    'msn.com', 'windowslive.com', 'passport.com',
+  ],
+  apple: ['icloud.com', 'me.com', 'mac.com'],
+};
+
 const BLOCKLISTS = [
   { zone: 'zen.spamhaus.org', name: 'Spamhaus' },
   { zone: 'bl.spamcop.net', name: 'SpamCop' },
@@ -43,6 +55,8 @@ const KEEP_REPORTS_DAYS = 30;
 const MAX_SMTP_RESULTS = 20;
 const MAX_DNSBL_RESULTS = 60;
 const MAX_REPLY_CHARS = 1000;
+const MAX_DIRECT_DOMAINS = 100;
+const DOMAIN_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 
 export interface SmtpResult {
   readonly provider: string;
@@ -62,6 +76,8 @@ export interface ProbeReport {
   readonly checked_at: string;
   /** Postfix `relayhost` on this server. Empty means it delivers directly. */
   readonly relayhost: string | null;
+  /** Recipient domains this server currently delivers itself instead of relaying. */
+  readonly direct_domains?: readonly string[];
   readonly smtp: readonly SmtpResult[];
   readonly dnsbl: readonly DnsblResult[];
 }
@@ -95,12 +111,20 @@ const isIpv4 = (v: unknown): v is string => typeof v === 'string' && /^\d{1,3}(\
 export function parseProbeReport(body: unknown): { ok: true; report: ProbeReport } | { ok: false; error: string } {
   const fail = (error: string) => ({ ok: false as const, error });
   if (!isObject(body)) return fail('report must be an object');
-  const { ip, checked_at: checkedAt, relayhost, smtp, dnsbl } = body;
+  const { ip, checked_at: checkedAt, relayhost, direct_domains: directDomains, smtp, dnsbl } = body;
   if (!SERVERS.some((s) => s.ip === ip)) return fail('unknown server ip');
   if (typeof checkedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(checkedAt) || Number.isNaN(Date.parse(checkedAt))) {
     return fail('checked_at must be an ISO timestamp');
   }
   if (relayhost !== undefined && relayhost !== null && typeof relayhost !== 'string') return fail('invalid relayhost');
+  if (
+    directDomains !== undefined &&
+    (!Array.isArray(directDomains) ||
+      directDomains.length > MAX_DIRECT_DOMAINS ||
+      !directDomains.every((d) => typeof d === 'string' && DOMAIN_RE.test(d)))
+  ) {
+    return fail('invalid direct domains');
+  }
   if (!Array.isArray(smtp) || smtp.length > MAX_SMTP_RESULTS) return fail('invalid smtp results');
   if (!Array.isArray(dnsbl) || dnsbl.length > MAX_DNSBL_RESULTS) return fail('invalid blocklist results');
 
@@ -131,7 +155,14 @@ export function parseProbeReport(body: unknown): { ok: true; report: ProbeReport
   }
   return {
     ok: true,
-    report: { ip: ip as string, checked_at: checkedAt, relayhost: (relayhost as string | null | undefined) ?? null, smtp: smtpOut, dnsbl: dnsblOut },
+    report: {
+      ip: ip as string,
+      checked_at: checkedAt,
+      relayhost: (relayhost as string | null | undefined) ?? null,
+      ...(directDomains ? { direct_domains: directDomains as string[] } : {}),
+      smtp: smtpOut,
+      dnsbl: dnsblOut,
+    },
   };
 }
 
@@ -204,6 +235,47 @@ function blocklistRow(list: (typeof BLOCKLISTS)[number], target: string, reports
   return { zone: list.zone, name: list.name, status, detail };
 }
 
+const isFresh = (report: ProbeReport | undefined, now: Date): report is ProbeReport =>
+  !!report && now.getTime() - Date.parse(report.checked_at) <= STALE_AFTER_MS;
+
+/**
+ * Which server should carry each provider's mail. A provider moves ONLY when a fresh
+ * check shows its current server refused, and the other server is fresh, accepted and
+ * on no blocklist. It does not move back when the old server recovers: flipping between
+ * IPs hurts the reputation of both. Anything uncertain holds the current route.
+ */
+export function computeMailRoutes(reports: readonly ProbeReport[], now: Date) {
+  const byIp = new Map(reports.map((r) => [r.ip, r]));
+  const hetzner = byIp.get(HETZNER_IP);
+  const known = !!hetzner && hetzner.relayhost !== null;
+  const relayed = known && hetzner.relayhost!.trim() !== '';
+  const direct = new Set(hetzner?.direct_domains ?? []);
+  const statusOn = (ip: string, p: (typeof PROVIDERS)[number]) => providerRow(p, byIp.get(ip)).status;
+  const canCarry = (ip: string, p: (typeof PROVIDERS)[number]) =>
+    isFresh(byIp.get(ip), now) &&
+    statusOn(ip, p) === 'ok' &&
+    !BLOCKLISTS.some((l) => blocklistRow(l, ip, reports).status === 'listed');
+
+  const routes = PROVIDERS.map((p) => {
+    const base = { provider: p.id, label: p.label };
+    if (!known) return { ...base, via_ip: null, planned_ip: null, reason: null };
+    const viaIp = !relayed || PROVIDER_DOMAINS[p.id].some((d) => direct.has(d)) ? HETZNER_IP : LINODE_IP;
+    if (!relayed) return { ...base, via_ip: viaIp, planned_ip: viaIp, reason: null };
+    const otherIp = viaIp === HETZNER_IP ? LINODE_IP : HETZNER_IP;
+    const name = (ip: string) => SERVERS.find((s) => s.ip === ip)!.name;
+    if (!isFresh(byIp.get(viaIp), now) || statusOn(viaIp, p) !== 'blocked') {
+      return { ...base, via_ip: viaIp, planned_ip: viaIp, reason: null };
+    }
+    return canCarry(otherIp, p)
+      ? { ...base, via_ip: viaIp, planned_ip: otherIp, reason: `${p.label} is blocking ${name(viaIp)}, moving to ${name(otherIp)}` }
+      : { ...base, via_ip: viaIp, planned_ip: viaIp, reason: `${p.label} is blocking ${name(viaIp)}, and no healthy server is available` };
+  });
+  const directDomains = relayed
+    ? routes.filter((r) => r.planned_ip === HETZNER_IP).flatMap((r) => PROVIDER_DOMAINS[r.provider])
+    : null;
+  return { routes, direct_domains: directDomains };
+}
+
 export function computeMailHealth(input: {
   reports: readonly ProbeReport[];
   rejections: readonly ProviderRejection[];
@@ -215,13 +287,19 @@ export function computeMailHealth(input: {
   // Unknown route: treat both as delivering, so a block is never played down.
   const deliveringIp = relayhost === undefined || relayhost === null ? null : relayhost.trim() ? LINODE_IP : HETZNER_IP;
 
+  const { routes } = computeMailRoutes(reports, now);
+  const carries = (ip: string, provider: string) => {
+    const via = routes.find((r) => r.provider === provider)?.via_ip ?? null;
+    return via === null || via === ip;
+  };
+
   const issues: HealthIssue[] = [];
   const servers = SERVERS.map((s) => {
     const report = byIp.get(s.ip);
-    const delivering = deliveringIp === null || deliveringIp === s.ip;
+    const delivering = deliveringIp === null || PROVIDERS.some((p) => carries(s.ip, p.id));
     const severity = delivering ? ('critical' as const) : ('warning' as const);
     const stale = !report || now.getTime() - Date.parse(report.checked_at) > STALE_AFTER_MS;
-    const providers = PROVIDERS.map((p) => providerRow(p, report));
+    const providers = PROVIDERS.map((p) => ({ ...providerRow(p, report), delivering: routes.find((r) => r.provider === p.id)?.via_ip === s.ip }));
     const blocklists = BLOCKLISTS.map((l) => blocklistRow(l, s.ip, reports));
 
     if (!report) {
@@ -232,7 +310,9 @@ export function computeMailHealth(input: {
     for (const p of providers) {
       const help = PROVIDERS.find((x) => x.id === p.provider)!.help;
       if (p.status === 'blocked') {
-        issues.push({ severity, title: `${p.label} is blocking ${s.name} (${s.ip})`, detail: p.reply, help });
+        // A block on a route this provider's mail no longer uses stops nothing.
+        const blockSeverity = carries(s.ip, p.provider) ? ('critical' as const) : ('warning' as const);
+        issues.push({ severity: blockSeverity, title: `${p.label} is blocking ${s.name} (${s.ip})`, detail: p.reply, help });
       } else if (p.status === 'throttled') {
         issues.push({ severity: 'warning', title: `${p.label} is temporarily refusing ${s.name}`, detail: p.reply, help });
       } else if (p.status === 'unreachable' && report) {
@@ -247,7 +327,7 @@ export function computeMailHealth(input: {
         issues.push({ severity: 'warning', title: `Could not check ${s.name} on Spamhaus`, detail: l.detail, help: null });
       }
     }
-    return { ip: s.ip, name: s.name, role: s.role, delivering: deliveringIp === s.ip, checked_at: report?.checked_at ?? null, stale, providers, blocklists };
+    return { ip: s.ip, name: s.name, role: s.role, delivering: routes.some((r) => r.via_ip === s.ip), checked_at: report?.checked_at ?? null, stale, providers, blocklists };
   });
 
   const rejectionRows = rejections.map((r) => {
@@ -264,7 +344,7 @@ export function computeMailHealth(input: {
 
   issues.sort((a, b) => Number(b.severity === 'critical') - Number(a.severity === 'critical'));
   const status: HealthStatus = issues.some((i) => i.severity === 'critical') ? 'critical' : issues.length ? 'warning' : 'ok';
-  return { status, issues, delivering_ip: deliveringIp, servers, rejections: rejectionRows, generated_at: now.toISOString() };
+  return { status, issues, delivering_ip: deliveringIp, routes, servers, rejections: rejectionRows, generated_at: now.toISOString() };
 }
 
 const providerOfDomain = (domain: string | null): ProviderId | null => {
@@ -332,10 +412,20 @@ async function loadProviderRejections(pool: Pool, now: Date): Promise<ProviderRe
   }));
 }
 
-export async function loadMailHealth(pool: Pool, now: Date) {
+async function latestReports(pool: Pool): Promise<ProbeReport[]> {
   const { rows } = await pool.query<{ report: ProbeReport }>(
     `SELECT DISTINCT ON (ip) report FROM mail_health_reports ORDER BY ip, checked_at DESC`,
   );
+  return rows.map((r) => r.report);
+}
+
+/** The domains Hetzner should deliver itself, or null when there is no safe plan. */
+export async function loadDirectDomains(pool: Pool, now: Date): Promise<string[] | null> {
+  return computeMailRoutes(await latestReports(pool), now).direct_domains;
+}
+
+export async function loadMailHealth(pool: Pool, now: Date) {
+  const reports = await latestReports(pool);
   const rejections = await loadProviderRejections(pool, now);
-  return computeMailHealth({ reports: rows.map((r) => r.report), rejections, now });
+  return computeMailHealth({ reports, rejections, now });
 }

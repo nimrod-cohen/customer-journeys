@@ -11,7 +11,9 @@ Like mail-agent it is deliberately thin. It forwards raw answers and decides not
 Standard library only, because the relay box has no Node.
 
 Install: /opt/mail-agent/deliverability-probe.py, run by a systemd timer.
-Env: MAIL_AGENT_SECRET, PROBE_IP, PROBE_EHLO, optional HEALTH_URL.
+Env: MAIL_AGENT_SECRET, PROBE_IP, PROBE_EHLO, optional HEALTH_URL, and on the server
+that routes mail ROUTE_PLAN_FILE: the app's answer is saved there for apply-mail-routes.py,
+which runs as root. This script runs unprivileged and never touches Postfix.
 """
 import datetime
 import json
@@ -28,6 +30,8 @@ PROBE_IP = os.environ.get("PROBE_IP", "")
 EHLO = os.environ.get("PROBE_EHLO", socket.getfqdn())
 MAIL_FROM = os.environ.get("PROBE_MAIL_FROM", "postmaster@bounce.journeys.on-grow.com")
 SMTP_TIMEOUT = 20
+ROUTE_PLAN_FILE = os.environ.get("ROUTE_PLAN_FILE", "")
+TRANSPORT_FILE = "/etc/postfix/transport"
 
 TARGETS = [
     ("google", "gmail-smtp-in.l.google.com"),
@@ -102,6 +106,25 @@ def relayhost():
         return None
 
 
+def direct_domains():
+    try:
+        with open(TRANSPORT_FILE, encoding="utf-8") as handle:
+            lines = [line.split() for line in handle if line.strip() and not line.startswith("#")]
+        return sorted({parts[0] for parts in lines if len(parts) == 2})
+    except FileNotFoundError:
+        return []
+
+
+def save_plan(answer):
+    domains = answer.get("direct_domains")
+    if not ROUTE_PLAN_FILE or not isinstance(domains, list):
+        return
+    temp = ROUTE_PLAN_FILE + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        json.dump({"direct_domains": domains}, handle)
+    os.replace(temp, ROUTE_PLAN_FILE)
+
+
 def main():
     if not SECRET or not PROBE_IP:
         print("MAIL_AGENT_SECRET and PROBE_IP are required", file=sys.stderr)
@@ -111,6 +134,7 @@ def main():
         "ip": PROBE_IP,
         "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "relayhost": relayhost(),
+        **({"direct_domains": direct_domains()} if ROUTE_PLAN_FILE else {}),
         "smtp": [probe_smtp(provider, mx) for provider, mx in TARGETS],
         "dnsbl": [lookup(target, zone) for zone in ZONES for target in [TEST_POINT, *OUR_IPS]],
     }
@@ -124,6 +148,7 @@ def main():
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
+        save_plan(json.loads(response.read() or b"{}"))
         print(json.dumps({"status": response.status, "ip": PROBE_IP}))
     return 0
 

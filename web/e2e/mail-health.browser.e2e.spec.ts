@@ -9,6 +9,10 @@ const health = {
   status: 'critical',
   generated_at: '2026-11-23T15:00:00.000Z',
   delivering_ip: '194.195.243.92',
+  routes: [
+    { provider: 'google', label: 'Google', via_ip: '194.195.243.92', planned_ip: '194.195.243.92', reason: null },
+    { provider: 'microsoft', label: 'Microsoft', via_ip: '2.28.76.169', planned_ip: '2.28.76.169', reason: null },
+  ],
   issues: [
     {
       severity: 'critical',
@@ -51,6 +55,7 @@ test('a system admin sees who is blocking which server', async ({ page }) => {
   await expect(microsoft).toContainText('Blocked');
   await expect(microsoft).toContainText('S3150');
   await expect(server.locator('[data-zone="zen.spamhaus.org"]')).toContainText('Not listed');
+  await expect(page.locator('[data-testid="mail-health-route"][data-provider="google"]')).toContainText('Linode');
 });
 
 test('a marketer has no Mail health screen', async ({ page }) => {
