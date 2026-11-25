@@ -921,6 +921,8 @@ interface DeliveryMessage {
   reason: string | null;
   message_id: string | null;
   source: { kind: string; name: string };
+  subject: string | null;
+  link_hosts: string[];
   cc: string[];
   bcc_count: number;
   events: Array<{ type: string; sub_type: string | null; occurred_at: string }>;
@@ -958,6 +960,18 @@ function MessageRow({ m }: { m: DeliveryMessage }) {
           <dd>
             {m.source.name} <span class="text-stone-400">({m.source.kind})</span>
           </dd>
+          {m.subject ? (
+            <>
+              <dt class="text-stone-400">Subject</dt>
+              <dd data-testid="delivery-message-subject">{m.subject}</dd>
+            </>
+          ) : null}
+          {m.link_hosts.length > 0 ? (
+            <>
+              <dt class="text-stone-400">Links to</dt>
+              <dd data-testid="delivery-message-links" class="break-all">{m.link_hosts.join(', ')}</dd>
+            </>
+          ) : null}
           {m.reason ? (
             <>
               <dt class="text-stone-400">Reason</dt>

@@ -154,6 +154,25 @@ describeMaybe('POST /v1/send (real Postgres)', () => {
     expect(rows[0]!.subject).toBe('2 items for a VIP');
   });
 
+  // When a receiver refuses a message, its content is the evidence: we keep no
+  // body, so the row must say which template sent it and where its links pointed.
+  it('records the template key and the link domains the recipient received', async () => {
+    await pool.query(
+      `INSERT INTO email_templates (workspace_id, name, kind, mjml, subject, sender_id, to_address, compiled_html, transactional_key)
+       VALUES ($1,'Wrapper','library','<mjml/>','{{data.subject}}',$2,'{{customer.email}}','<div>{{{data.html}}}</div>','wrapper-links')`,
+      [WS, SENDER],
+    );
+    const html = '<a href="https://Shop.Example.com/a">a</a><a href="https://shop.example.com/b">b</a><a href="mailto:x@y.z">m</a><a href="http://bit.ly/q">q</a>';
+    const res = await send({ template: 'WRAPPER-LINKS', to: 'links@example.com', data: { subject: 'Hi', html } });
+    const body = await res.json();
+    expect(body.sent).toBe(true);
+    const { rows } = await pool.query<{ template_key: string; link_hosts: string[]; subject: string }>(
+      'SELECT template_key, link_hosts, subject FROM messages_log WHERE ses_message_id = $1',
+      [body.message_id],
+    );
+    expect(rows[0]).toEqual({ template_key: 'wrapper-links', link_hosts: ['bit.ly', 'shop.example.com'], subject: 'Hi' });
+  });
+
   // Conservative by default; the caller opts out per request when the message is
   // genuinely essential.
   it('does NOT send to an unsubscribed recipient by default', async () => {

@@ -4,6 +4,7 @@ import {
   dataMerge,
   renderTransactional,
   parseTransactionalRequest,
+  linkHosts,
 } from '../src/transactional-send.js';
 
 const base = { email: 'a@b.com', suppressionReason: null, emailStatus: 'active' };
@@ -219,5 +220,21 @@ describe('parseTransactionalRequest', () => {
       template: 'otp',
       to: ['a@b.com'],
     });
+  });
+});
+
+describe("linkHosts — where a message's links pointed", () => {
+  it('lists each http(s) link host once, lowercased and sorted', () => {
+    const html = `<a href="https://B.example/x">1</a><a href='http://a.example:8080/y'>2</a><a href="https://b.example/z">3</a>`;
+    expect(linkHosts(html)).toEqual(['a.example', 'b.example']);
+  });
+
+  it('ignores mailto, tel, anchors, relative links and unrendered tokens', () => {
+    expect(linkHosts('<a href="mailto:a@b.c">m</a><a href="tel:1">t</a><a href="#top">#</a><a href="/p">p</a><a href="{{url}}">u</a>')).toEqual([]);
+  });
+
+  it('caps the list so one message cannot fill the row', () => {
+    const html = Array.from({ length: 40 }, (_, i) => `<a href="https://h${String(i).padStart(2, '0')}.example">x</a>`).join('');
+    expect(linkHosts(html)).toHaveLength(20);
   });
 });

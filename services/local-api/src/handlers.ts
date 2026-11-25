@@ -165,6 +165,7 @@ import {
   renderTransactional,
   normalizeTransactionalKey,
   validateTransactionalKey,
+  linkHosts,
   decideTransactionalText,
   isEmailAddress,
   type TransactionalRequest,
@@ -6756,11 +6757,14 @@ export const getProfileDelivery: Handler = async (ctx, pool, req) => {
     ses_message_id: string | null;
     cc_addresses: string[] | null;
     bcc_addresses: string[] | null;
+    subject: string | null;
+    template_key: string | null;
+    link_hosts: string[] | null;
     broadcast_name: string | null;
     automation_name: string | null;
   }>(
     `SELECT m.id, m.sent_at, m.medium, m.status, m.reason, m.ses_message_id,
-            m.cc_addresses, m.bcc_addresses,
+            m.cc_addresses, m.bcc_addresses, m.subject, m.template_key, m.link_hosts,
             b.name AS broadcast_name, a.name AS automation_name
        FROM messages_log m
        LEFT JOIN broadcasts b ON b.id = m.broadcast_id AND b.workspace_id = m.workspace_id
@@ -6807,7 +6811,9 @@ export const getProfileDelivery: Handler = async (ctx, pool, req) => {
         ? { kind: 'broadcast', name: m.broadcast_name }
         : m.automation_name
           ? { kind: 'automation', name: m.automation_name }
-          : { kind: 'transactional', name: 'Transactional / API' },
+          : { kind: 'transactional', name: m.template_key ? `Transactional / API · ${m.template_key}` : 'Transactional / API' },
+      subject: m.subject,
+      link_hosts: m.link_hosts ?? [],
       cc: m.cc_addresses ?? [],
       // Counted, never listed — a blind copy stays blind wherever it is displayed.
       bcc_count: (m.bcc_addresses ?? []).length,
@@ -8195,9 +8201,9 @@ async function sendOneTransactionalText(args: {
 
   await withTx(pool, async (c) => {
     await c.query(
-      `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium)
-       VALUES ($1, $2, $3, 'sent', $4)`,
-      [ws, profileId, providerMessageId, medium],
+      `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, template_key)
+       VALUES ($1, $2, $3, 'sent', $4, $5)`,
+      [ws, profileId, providerMessageId, medium, parsed.template],
     );
     // WhatsApp is two-way: an API send also lands in the person's conversation.
     if (medium === 'whatsapp') {
@@ -8521,11 +8527,13 @@ async function sendOneTransactionalEmail(args: {
 
   // The copies are recorded ON the message. A bounce report names the address that
   // failed, and without this there is no way to tell whether that address was even
-  // on this message — so a report naming anyone at all would suppress them.
+  // on this message — so a report naming anyone at all would suppress them. The
+  // template key and link hosts are what a refusal can be traced back to: the body
+  // is not kept, and a caller may supply all of it.
   await pool.query(
-    `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, cc_addresses, bcc_addresses, subject)
-     VALUES ($1, $2, $3, 'sent', 'email', $4, $5, $6)`,
-    [ws, profileId, messageId, [...cc], [...bcc], rendered.subject],
+    `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, cc_addresses, bcc_addresses, subject, template_key, link_hosts)
+     VALUES ($1, $2, $3, 'sent', 'email', $4, $5, $6, $7, $8)`,
+    [ws, profileId, messageId, [...cc], [...bcc], rendered.subject, parsed.template, linkHosts(rendered.html)],
   );
   // Attachment bytes are metered per MESSAGE: with several recipients the same file
   // crosses the wire once per message, so that is what it costs.

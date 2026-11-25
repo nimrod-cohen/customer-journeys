@@ -93,6 +93,24 @@ describeMaybe('profile delivery health (real Postgres)', () => {
     await world.pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [WS]);
   });
 
+  // A transactional message names its template, subject and link domains, so a
+  // refusal can be traced to what was actually sent.
+  it('shows a transactional message\'s template, subject and link domains', async () => {
+    await world.pool.query(
+      `INSERT INTO messages_log (workspace_id, profile_id, ses_message_id, status, medium, subject, template_key, link_hosts)
+       VALUES ($1,$2,'msg-traced','sent','email','Your receipt','receipt',ARRAY['shop.example.com'])`,
+      [WS, P],
+    );
+    const body = (await call(world.env, 'GET', `/profiles/${P}/delivery`, { token: tok() })).body as Record<string, unknown>;
+    const m = (body.messages as Array<Record<string, unknown>>)[0]!;
+    expect(m).toMatchObject({
+      subject: 'Your receipt',
+      link_hosts: ['shop.example.com'],
+      source: { kind: 'transactional', name: 'Transactional / API · receipt' },
+    });
+    await world.pool.query('DELETE FROM messages_log WHERE workspace_id = $1', [WS]);
+  });
+
   // A blind copy stays blind wherever it is displayed.
   it('counts bcc recipients on a message but never names them', async () => {
     await world.pool.query(

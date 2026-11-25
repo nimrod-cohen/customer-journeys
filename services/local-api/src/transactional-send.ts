@@ -640,3 +640,20 @@ export function parseCalendar(raw: unknown): { calendar: ParsedCalendar | null }
     },
   };
 }
+
+/** Most link hosts recorded for one message — enough to name every real destination. */
+export const MAX_LINK_HOSTS = 20;
+
+/**
+ * The distinct hosts a rendered message's http(s) links point to, lowercased and
+ * sorted. Recorded on the message because a refusal is often about a link domain,
+ * and the body itself is not kept.
+ */
+export function linkHosts(html: string): string[] {
+  const hosts = new Set<string>();
+  for (const m of html.matchAll(/href\s*=\s*["']\s*https?:\/\/([^/"'?#\s]+)/gi)) {
+    const host = m[1]!.replace(/^[^@]*@/, '').replace(/:\d+$/, '').toLowerCase();
+    if (host) hosts.add(host);
+  }
+  return [...hosts].sort().slice(0, MAX_LINK_HOSTS);
+}
