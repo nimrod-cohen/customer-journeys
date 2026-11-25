@@ -617,6 +617,10 @@ never the body (inv.2).
   and the attendee is this recipient — built per message, so a fan-out names each
   person, a `cc` joins the guest list and **a `bcc` is never an ATTENDEE** (that line
   is printed in a guest list everyone can read).
+- **Each message records its `template_key` and `link_hosts`** (`messages_log`, beside
+  `subject`): the body is never kept, and a caller can supply all of it through
+  `{{{data.*}}}`, so when a receiver refuses a message (Apple's HM08 reads the content)
+  these are the only evidence of what was sent. Shown on the profile's Delivery tab.
 - **Consent vs deliverability are separate gates** (`decideTransactionalSend`, pure).
   Hard bounce, permanent soft bounce and complaint ALWAYS block — no flag overrides
   them, because mailing a dead box or a complainant damages the shared IP and cannot

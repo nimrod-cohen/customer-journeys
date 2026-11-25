@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.168.0',
+    date: '2026-11-25',
+    changes: [
+      "A message sent through the API now shows which template it used and which websites its links pointed to, on the person's Delivery tab. If a provider refuses a message, you can see what it was.",
+    ],
+  },
+  {
     version: '0.167.0',
     date: '2026-11-23',
     changes: [
